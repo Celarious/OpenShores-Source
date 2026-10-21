@@ -321,6 +321,22 @@ double AuGeologicalFeatures::AdjustAltMSLUndeveloped(const DaWorldLL& llworld, c
 	return altMSL;
 }
 
+bool AuGeologicalFeatures::PavementEdgeDistance(const DaWorldLL& llworld, const AuGlobeLL& ll, float& dist) const
+{
+	// Overlapping pavement is a union, so the nearest edge wins.
+	bool found = false;
+	for(const_iterator fi = constBegin(); fi != constEnd(); fi++)
+	{
+		float featureDist;
+		if(!(*fi)->PavementEdgeDistance(llworld, ll, featureDist))
+			continue;
+		if(!found || featureDist < dist)
+			dist = featureDist;
+		found = true;
+	}
+	return found;
+}
+
 void AuGeologicalFeatures::RenderCursor(const DaWorldLL& world, const AuMatrix4x4& projection, const AuMatrix4x4& model,
 		AuGLEffects& re, const AuPoint& nearLoc, const AuGlobeLLF& hitRoad, const QColor& hitColor, const QColor& roadColor) const
 {
@@ -3409,23 +3425,11 @@ void AuGeoRoadGrade::operator<<(QDataStream& in)
 	}
 }
 
-// Adjusts 'altMSL' at 'adjLL' on 'llworld' based on this geological feature.
-// Returns the adjusted altitude. Will be the same as 'altMSL' if no adjustment is made.
-double AuGeoRoadGrade::AdjustAltMSL(const DaWorldLL& llworld, const AuGlobeLL& adjLL, double altMSL, bool& hideRocks,
-		int& hideGrass, bool& hideShrubs, bool& hideTrees, WORLDTEX_TYPE& pavementType, int& onRoadOrGrader, AuTime& newest) const
+void AuGeoRoadGrade::ClosestSegmentPoint(const DaWorldLL& llworld, const AuGlobeLL& ll, float& segFrac, float& segAltMSL,
+		AuPoint& segLoc) const
 {
-	// Graded segment
-	Q_UNUSED(hideRocks);
-	Q_UNUSED(hideGrass);
-	Q_UNUSED(hideShrubs);
-	Q_UNUSED(hideTrees);
-	Q_UNUSED(newest);
-	// Calculate the closest point on this road segment to 'adjLL'.
-	float segFrac;
-	AuGlobeLLF tll(adjLL.ToLLF());
+	AuGlobeLLF tll(ll.ToLLF());
 	AuGlobeLLF segLL = tll.CoordOnSegment(m_StartLL, m_LL, &segFrac, llworld.LLShape());
-	float segAltMSL;
-	AuPoint segLoc;
 	if(segFrac <= 0)
 	{
 		// Closest point is the starting location.
@@ -3444,6 +3448,22 @@ double AuGeoRoadGrade::AdjustAltMSL(const DaWorldLL& llworld, const AuGlobeLL& a
 		segAltMSL = m_StartMSL + (m_EndMSL - m_StartMSL) * segFrac;
 		segLoc = llworld.LocOfLL(segLL, segAltMSL);
 	}
+}
+
+// Adjusts 'altMSL' at 'adjLL' on 'llworld' based on this geological feature.
+// Returns the adjusted altitude. Will be the same as 'altMSL' if no adjustment is made.
+double AuGeoRoadGrade::AdjustAltMSL(const DaWorldLL& llworld, const AuGlobeLL& adjLL, double altMSL, bool& hideRocks,
+		int& hideGrass, bool& hideShrubs, bool& hideTrees, WORLDTEX_TYPE& pavementType, int& onRoadOrGrader, AuTime& newest) const
+{
+	// Graded segment
+	Q_UNUSED(hideRocks);
+	Q_UNUSED(hideGrass);
+	Q_UNUSED(hideShrubs);
+	Q_UNUSED(hideTrees);
+	Q_UNUSED(newest);
+	float segFrac, segAltMSL;
+	AuPoint segLoc;
+	ClosestSegmentPoint(llworld, adjLL, segFrac, segAltMSL, segLoc);
 
 	// Calculate the location of adjLL at the altitude of the segment location.
 	AuPoint adjLoc = llworld.LocOfLL(adjLL, segAltMSL);
@@ -3529,30 +3549,9 @@ double AuGeoRoadGrade::AdjustAltMSL(const DaWorldLL& llworld, const AuGlobeLL& a
 {
 	Q_UNUSED(newest);
 	// Graded segment
-	// Calculate the closest point on this road segment to 'adjLL'.
-	float segFrac;
-	AuGlobeLLF tll(adjLL.ToLLF());
-	AuGlobeLLF segLL = tll.CoordOnSegment(m_StartLL, m_LL, &segFrac, llworld.LLShape());
-	float segAltMSL;
+	float segFrac, segAltMSL;
 	AuPoint segLoc;
-	if(segFrac <= 0)
-	{
-		// Closest point is the starting location.
-		segAltMSL = m_StartMSL;
-		segLoc = llworld.LocOfLL(m_StartLL, segAltMSL);
-	}
-	else if(segFrac >= 1)
-	{
-		// Closest point is the ending location.
-		segAltMSL = m_EndMSL;
-		segLoc = llworld.LocOfLL(m_LL, segAltMSL);
-	}
-	else
-	{
-		// Calculate the location along this road segment.
-		segAltMSL = m_StartMSL + (m_EndMSL - m_StartMSL) * segFrac;
-		segLoc = llworld.LocOfLL(segLL, segAltMSL);
-	}
+	ClosestSegmentPoint(llworld, adjLL, segFrac, segAltMSL, segLoc);
 
 	// Calculate the location of adjLL at the altitude of the segment location.
 	AuPoint adjLoc = llworld.LocOfLL(adjLL, segAltMSL);
@@ -3634,6 +3633,25 @@ double AuGeoRoadGrade::AdjustAltMSLUndeveloped(const DaWorldLL& llworld, const A
 	Q_UNUSED(llworld);
 	Q_UNUSED(adjLL);
 	return altMSL;
+}
+
+bool AuGeoRoadGrade::PavementEdgeDistance(const DaWorldLL& llworld, const AuGlobeLL& adjLL, float& dist) const
+{
+	// A finished grade paints nothing. Construction zones and dirt, asphalt and concrete roads paint the same strip.
+	if(Type() == AuGeoRoadGrade::GeoType() && !IsUnderConstruction())
+		return false;
+
+	// Same measurement as AdjustAltMSL, whose pavement zone is the strip between the end points within the build radius.
+	float segFrac, segAltMSL;
+	AuPoint segLoc;
+	ClosestSegmentPoint(llworld, adjLL, segFrac, segAltMSL, segLoc);
+	float dist2 = (float)llworld.LocOfLL(adjLL, segAltMSL).Distance2(segLoc);
+	float bldRad = m_Width/2 + 8;
+
+	// The ends are cut square.
+	float segLen = (float)llworld.LocOfLL(m_StartLL, m_StartMSL).Distance(llworld.LocOfLL(m_LL, m_EndMSL));
+	dist = DaWorldLL::PavementStripEdgeDistance(dist2, segFrac, segLen, bldRad);
+	return true;
 }
 
 // 'worldGenSeed' is the GenSeed for this feature's world, in case we want to consistently generate a name.

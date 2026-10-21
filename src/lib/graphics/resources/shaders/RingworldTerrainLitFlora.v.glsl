@@ -195,6 +195,8 @@ in vec4									texCoordAltVeg;			// Incoming texture coordinate(xy), altitude(z
 in vec2									paveCity;				// Pavement coverage(x), city presence(y)
 
 out vec4								vertColor;				// Outgoing vertex color.
+out vec4								vertColorPaved;			// Outgoing vertex color without vegetation shading, for pavement.
+out vec4								vertColorHardPaved;		// Outgoing vertex color for hard pavement, fully lit by the city.
 out vec3								vertFogSnowPave;		// Outgoing fog density(x), snow cover(y), pavement cover(z)
 out vec4								vertTexCoordAltVeg;		// Outgoing texture coordinate(xy), altitude(z), veg density(w)
 flat out float							vertPaveType;			// Pavement type must not be interpolated.
@@ -206,7 +208,12 @@ void main()
 	vertTexCoordAltVeg = texCoordAltVeg;						// Pass unmodified texture coordinate to the fragment shader.
 
 	// Calculate lighting using object space position and normal.
+	// Paved vertices near an edge carry their natural vegetation for the grass edge, but pavement is not shaded by it.
+	// Hard pavement gets full city light (DaWorldLL::CityAmbientLight), which is not in the vertex city presence so it
+	// stops at the pavement edge. The fragment shader picks between these colors by its pavement coverage and type.
 	vertColor = vec4(computeLighting(light, position.xyz, normal.xyz, paveCity.y, texCoordAltVeg.w), 1);
+	vertColorPaved = vec4(computeLighting(light, position.xyz, normal.xyz, paveCity.y, 0.0), 1);
+	vertColorHardPaved = vec4(computeLighting(light, position.xyz, normal.xyz, 1.0, 0.0), 1);
 
 	// Calculate fog density but save the effect for the fragment program.
 	// Fog density value is 1 for full fog, 0 for no fog.

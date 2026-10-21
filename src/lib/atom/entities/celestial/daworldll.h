@@ -449,6 +449,7 @@ class AuGlobeTerrainAltInfo
 public:
 	float								m_CityAmbience;
 	int									m_HideGrass;			// 0=no, 1=yes, 2=mow, 3=lawn
+	float								m_PavementCover;		// See DaWorldLL::TerrainPavementCover.
 	WORLDTEX_TYPE						m_PavementType;
 	float								m_Shine;
 	float								m_Snow;
@@ -463,6 +464,7 @@ public:
 	{
 		m_CityAmbience = 0;
 		m_HideGrass = 0;
+		m_PavementCover = 0;
 		m_PavementType = WORLDTEX_Count;
 		m_Shine = 0;
 		m_Snow = 0;
@@ -726,7 +728,7 @@ class AuGlobeVertAltVegNPave : public AuGlobeVertAltVegN
 {
 public:
 	float								m_CityPresence;			// City presence ambient light intensity.
-	float								m_PavementCover;		// Pavement coverage 0 or 1.
+	float								m_PavementCover;		// Pavement coverage 0..1, encodes the pavement edge distance. See DaWorldLL::TerrainPavementCover.
 	float								m_PavementType;			// TERTEX index in the range 0..1
 
 public:
@@ -2746,6 +2748,21 @@ public:
 	double TerrainAltitudeMSLPave(const AuGlobeLL& ll, bool& hideRocks, int& hideGrass, bool& hideShrubs, bool& hideTrees,
 			WORLDTEX_TYPE& pavementType, COMMODITYID& farmShrub, double& farmShrubMSL, COMMODITYID& orchardTree,
 			double& orchardTreeMSL) const;
+
+	// Returns the terrain vertex pavement coverage at 'll' for 'pavementType', as returned by TerrainAltitudeMSLPave.
+	// The coverage encodes the signed distance to the pavement edge, so the terrain shaders can draw road and site edges
+	// straight across terrain triangles. See TerrainPaveEdgeRange.
+	float TerrainPavementCover(const AuGlobeLL& ll, WORLDTEX_TYPE pavementType) const;
+
+	// Pavement edge distances in feet are clamped to +-TerrainPaveEdgeRange and stored in the 0..1 vertex coverage, where 0.5
+	// is the edge and 1 is inside. It must exceed a terrain triangle edge so interpolation stays linear along an edge. The
+	// terrain fragment shaders decode it with the same range, TERRAIN_PAVE_EDGE_RANGE.
+	static float TerrainPaveEdgeRange();
+
+	// Returns the signed distance in feet to the edge of a pavement strip with square ends, negative inside. 'dist2' is the
+	// squared distance to the closest point of the strip's center segment, clamped to its end points. 'segFrac' is the
+	// unclamped fraction along the segment, 'segLen' its length and 'halfWidth' half the painted width.
+	static float PavementStripEdgeDistance(float dist2, float segFrac, float segLen, float halfWidth);
 
 	virtual TER_ELEV_TYPE TerrainElevationType(float altitudeMSL) const;
 

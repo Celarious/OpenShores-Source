@@ -66,6 +66,17 @@ public:
 	// Returns the adjusted altitude. Will be the same as 'altMSL' if no adjustment is made.
 	virtual double AdjustAltMSLUndeveloped(const DaWorldLL& llworld, const AuGlobeLL& ll, double altMSL) const = 0;
 
+	// Sets 'dist' to the signed distance in feet from 'll' to the edge of the pavement this feature paints, negative inside.
+	// Returns false if this feature paints no pavement. Terrain vertices carry the distance so pavement edges render straight
+	// between vertices instead of following the terrain triangles.
+	virtual bool PavementEdgeDistance(const DaWorldLL& llworld, const AuGlobeLL& ll, float& dist) const
+	{
+		Q_UNUSED(llworld);
+		Q_UNUSED(ll);
+		Q_UNUSED(dist);
+		return false;
+	}
+
 	virtual float AlignmentRot(const DaWorldLL& llworld, const AuGlobeLLF& alignLL) const
 	{
 		Q_UNUSED(llworld);
@@ -391,6 +402,10 @@ public:
 	// Ignores anything that can be man made, such as roads, landscapers and bomb craters.
 	// Returns the adjusted altitude. Will be the same as 'altMSL' if no adjustment is made.
 	double AdjustAltMSLUndeveloped(const DaWorldLL& llworld, const AuGlobeLL& ll, double altMSL) const;
+
+	// Sets 'dist' to the smallest signed pavement edge distance of all features at 'll', in feet, negative inside.
+	// Returns false if no feature paints pavement.
+	bool PavementEdgeDistance(const DaWorldLL& llworld, const AuGlobeLL& ll, float& dist) const;
 
 	// Returns 99.f if none is found.
 	// 'hitLL' is set to the LL of the geo that is found.
@@ -1227,6 +1242,12 @@ public:
 	AuGeoRoadGrade();
 	AuGeoRoadGrade(const AuGeoRoadGrade& c);
 
+protected:
+	// Finds the point on this road segment closest to 'll', clamped to the end points. 'segFrac' is the unclamped fraction
+	// along the segment, 'segAltMSL' is the road grade at the closest point and 'segLoc' is its location at that grade.
+	void ClosestSegmentPoint(const DaWorldLL& llworld, const AuGlobeLL& ll, float& segFrac, float& segAltMSL,
+			AuPoint& segLoc) const;
+
 public:
 	virtual bool operator==(const AuGeologicalFeature& c) const;
 	virtual void operator<<(QDataStream& in);
@@ -1240,6 +1261,8 @@ public:
 			int& onRoadOrGrader, AuTime& newest) const;
 
 	virtual double AdjustAltMSLUndeveloped(const DaWorldLL& llworld, const AuGlobeLL& ll, double altMSL) const;
+
+	virtual bool PavementEdgeDistance(const DaWorldLL& llworld, const AuGlobeLL& ll, float& dist) const;
 
 	virtual float AlignmentRot(const DaWorldLL& llworld, const AuGlobeLLF& alignLL) const;
 

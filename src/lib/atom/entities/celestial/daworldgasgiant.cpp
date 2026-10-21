@@ -5193,6 +5193,42 @@ void DaWorldGasGiant::CreateAtTerrainTriangles(QList<AuGlobeTriAltVegNPave>& tri
 		//qDebug() << "DaWorldGasGiant::CreateAtTerrainTriangles" << Id() << Name() << "tris" << tris.count() << "stopped";
 }
 
+// Fills 't' with the terrain at 'll', except for the texture coordinate.
+void DaWorldGasGiant::FillTerrainAltInfo(const AuGlobeLL& ll, AuGlobeTerrainAltInfo& t) const
+{
+	bool hideRocks, hideShrubs, hideTrees;
+	COMMODITYID farmShrub, orchardTree;
+	double farmShrubMSL, orchardTreeMSL;
+	t.m_TerAltMSL = TerrainAltitudeMSLPave(ll, hideRocks, t.m_HideGrass, hideShrubs, hideTrees, t.m_PavementType, farmShrub,
+			farmShrubMSL, orchardTree, orchardTreeMSL);
+	t.m_PavementCover = TerrainPavementCover(ll, t.m_PavementType);
+	// Without the hard pavement boost, which the terrain shaders apply per fragment so it stops at the pavement edge.
+	t.m_CityAmbience = CityAmbientLight(ll.ToLLF(), WORLDTEX_Count);
+	int inEnclosure = InEnclosure(ll, t.m_TerAltMSL);
+	if(inEnclosure < 0)
+		inEnclosure = 0;
+	t.m_TerCoord = GetTerrainLocation(ll, -2./12.);
+	t.m_TerNormal = TerrainNormal(t.m_TerCoord);
+	int irrigated = IsIrrigated(ll);
+
+	// Calculate vegetation density.
+	// Paved vertices near a pavement edge keep their natural density, so grass stops at the edge the shader draws.
+	bool paveEdge = t.m_PavementType != WORLDTEX_Count && t.m_PavementCover < 1;
+	if(t.m_HideGrass == 1 && !paveEdge)
+		t.m_Veg = 0;	// No grass at all.
+	else if(t.m_HideGrass == 3)
+		t.m_Veg = 100;	// Grassy lawn.
+	else if(t.m_TerAltMSL < 0 && inEnclosure != 2)
+		t.m_Veg = 0;
+	else
+		t.m_Veg = VegetationAt(ll, t.m_TerAltMSL, inEnclosure, irrigated);
+
+	// Calculate snow due to polar caps and mountain peaks.
+	// Do not put snow on pavement that is used on roads and around buildings. This allows snow in other "paved" areas such as
+	// yards and farmland.
+	t.m_Snow = PavementHidesSnow(t.m_PavementType) ? 0 : SnowCoverage(t.m_TerAltMSL, ll.Latitude(), inEnclosure);
+}
+
 void DaWorldGasGiant::CreateAtTerrainSurfaceTriangle(QList<AuGlobeTriAltVegNPave>& tris, const AuGlobeLL& ll0, const AuGlobeLL& ll1,
 		const AuGlobeLL& ll2, QMap<AuGlobeLL, AuGlobeTerrainAltInfo>& terAltInfo) const
 {
@@ -5211,37 +5247,11 @@ void DaWorldGasGiant::CreateAtTerrainSurfaceTriangle(QList<AuGlobeTriAltVegNPave
 
 	// Calculate triangle vertex altitudes above the center of the globe.
 	// Pavement type is the TERTEX tile index as a single linear value from 0..1.
-	bool hideRocks, hideShrubs, hideTrees;
-	COMMODITYID farmShrub, orchardTree;
-	double farmShrubMSL, orchardTreeMSL;
 	QMap<AuGlobeLL, AuGlobeTerrainAltInfo>::iterator ti0 = terAltInfo.find(ll0);
 	if(ti0 == terAltInfo.end())
 	{
 		AuGlobeTerrainAltInfo t;
-		t.m_TerAltMSL = TerrainAltitudeMSLPave(ll0, hideRocks, t.m_HideGrass, hideShrubs, hideTrees, t.m_PavementType, farmShrub,
-				farmShrubMSL, orchardTree, orchardTreeMSL);
-		t.m_CityAmbience = CityAmbientLight(ll0.ToLLF(), t.m_PavementType);
-		int inEnclosure = InEnclosure(ll0, t.m_TerAltMSL);
-		if(inEnclosure < 0)
-			inEnclosure = 0;
-		t.m_TerCoord = GetTerrainLocation(ll0, -2./12.);
-		t.m_TerNormal = TerrainNormal(t.m_TerCoord);
-		int irrigated = IsIrrigated(ll0);
-
-		// Calculate vegetation density.
-		if(t.m_HideGrass == 1)
-			t.m_Veg = 0;	// No grass at all.
-		else if(t.m_HideGrass == 3)
-			t.m_Veg = 100;	// Grassy lawn.
-		else if(t.m_TerAltMSL < 0 && inEnclosure != 2)
-			t.m_Veg = 0;
-		else
-			t.m_Veg = VegetationAt(ll0, t.m_TerAltMSL, inEnclosure, irrigated);
-
-		// Calculate snow due to polar caps and mountain peaks.
-		// Do not put snow on pavement that is used on roads and around buildings. This allows snow in other "paved" areas such as
-		// yards and farmland.
-		t.m_Snow = PavementHidesSnow(t.m_PavementType) ? 0 : SnowCoverage(t.m_TerAltMSL, ll0.Latitude(), inEnclosure);
+		FillTerrainAltInfo(ll0, t);
 		t.m_TerTex.setX((ll0long)/(PIf*2) * texreps * cosf(ll0.Latitude()));
 		t.m_TerTex.setY((ll0.Latitude() + PIf/2)/PIf * texreps);
 		ti0 = terAltInfo.insert(ll0, t);
@@ -5255,30 +5265,7 @@ void DaWorldGasGiant::CreateAtTerrainSurfaceTriangle(QList<AuGlobeTriAltVegNPave
 	if(ti1 == terAltInfo.end())
 	{
 		AuGlobeTerrainAltInfo t;
-		t.m_TerAltMSL = TerrainAltitudeMSLPave(ll1, hideRocks, t.m_HideGrass, hideShrubs, hideTrees, t.m_PavementType, farmShrub,
-				farmShrubMSL, orchardTree, orchardTreeMSL);
-		t.m_CityAmbience = CityAmbientLight(ll1.ToLLF(), t.m_PavementType);
-		int inEnclosure = InEnclosure(ll1, t.m_TerAltMSL);
-		if(inEnclosure < 0)
-			inEnclosure = 0;
-		t.m_TerCoord = GetTerrainLocation(ll1, -2./12.);
-		t.m_TerNormal = TerrainNormal(t.m_TerCoord);
-		int irrigated = IsIrrigated(ll1);
-
-		// Calculate vegetation density.
-		if(t.m_HideGrass == 1)
-			t.m_Veg = 0;	// No grass at all.
-		else if(t.m_HideGrass == 3)
-			t.m_Veg = 100;	// Grassy lawn.
-		else if(t.m_TerAltMSL < 0 && inEnclosure != 2)
-			t.m_Veg = 0;
-		else
-			t.m_Veg = VegetationAt(ll1, t.m_TerAltMSL, inEnclosure, irrigated);
-
-		// Calculate snow due to polar caps and mountain peaks.
-		// Do not put snow on pavement that is used on roads and around buildings. This allows snow in other "paved" areas such as
-		// yards and farmland.
-		t.m_Snow = PavementHidesSnow(t.m_PavementType) ? 0 : SnowCoverage(t.m_TerAltMSL, ll1.Latitude(), inEnclosure);
+		FillTerrainAltInfo(ll1, t);
 		t.m_TerTex.setX((ll1long)/(PIf*2) * texreps * cosf(ll1.Latitude()));
 		t.m_TerTex.setY((ll1.Latitude() + PIf/2)/PIf * texreps);
 		ti1 = terAltInfo.insert(ll1, t);
@@ -5292,30 +5279,7 @@ void DaWorldGasGiant::CreateAtTerrainSurfaceTriangle(QList<AuGlobeTriAltVegNPave
 	if(ti2 == terAltInfo.end())
 	{
 		AuGlobeTerrainAltInfo t;
-		t.m_TerAltMSL = TerrainAltitudeMSLPave(ll2, hideRocks, t.m_HideGrass, hideShrubs, hideTrees, t.m_PavementType, farmShrub,
-				farmShrubMSL, orchardTree, orchardTreeMSL);
-		t.m_CityAmbience = CityAmbientLight(ll2.ToLLF(), t.m_PavementType);
-		int inEnclosure = InEnclosure(ll2, t.m_TerAltMSL);
-		if(inEnclosure < 0)
-			inEnclosure = 0;
-		t.m_TerCoord = GetTerrainLocation(ll2, -2./12.);
-		t.m_TerNormal = TerrainNormal(t.m_TerCoord);
-		int irrigated = IsIrrigated(ll2);
-
-		// Calculate vegetation density.
-		if(t.m_HideGrass == 1)
-			t.m_Veg = 0;	// No grass at all.
-		else if(t.m_HideGrass == 3)
-			t.m_Veg = 100;	// Grassy lawn.
-		else if(t.m_TerAltMSL < 0 && inEnclosure != 2)
-			t.m_Veg = 0;
-		else
-			t.m_Veg = VegetationAt(ll2, t.m_TerAltMSL, inEnclosure, irrigated);
-
-		// Calculate snow due to polar caps and mountain peaks.
-		// Do not put snow on pavement that is used on roads and around buildings. This allows snow in other "paved" areas such as
-		// yards and farmland.
-		t.m_Snow = PavementHidesSnow(t.m_PavementType) ? 0 : SnowCoverage(t.m_TerAltMSL, ll2.Latitude(), inEnclosure);
+		FillTerrainAltInfo(ll2, t);
 		t.m_TerTex.setX((ll2long)/(PIf*2) * texreps * cosf(ll2.Latitude()));
 		t.m_TerTex.setY((ll2.Latitude() + PIf/2)/PIf * texreps);
 		ti2 = terAltInfo.insert(ll2, t);
@@ -5325,10 +5289,10 @@ void DaWorldGasGiant::CreateAtTerrainSurfaceTriangle(QList<AuGlobeTriAltVegNPave
 		(*ti2).m_TerTex.setX((ll2long)/(PIf*2) * texreps * cosf(ll2.Latitude()));
 	}
 
-	// Pavement coverage fades off to the vertexes with no pavement.
-	float paveCover0 = ((*ti0).m_PavementType == WORLDTEX_Count) ? 0 : 1;
-	float paveCover1 = ((*ti1).m_PavementType == WORLDTEX_Count) ? 0 : 1;
-	float paveCover2 = ((*ti2).m_PavementType == WORLDTEX_Count) ? 0 : 1;
+	// Pavement coverage carries the distance to the pavement edge, so the edge can cross the triangle.
+	float paveCover0 = (*ti0).m_PavementCover;
+	float paveCover1 = (*ti1).m_PavementCover;
+	float paveCover2 = (*ti2).m_PavementCover;
 
 	// We have to select only one of the pave values and use it for every vertex.
 	// Prefer the lowest numbered pavement type to look more consistent when different types areas collide.

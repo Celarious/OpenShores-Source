@@ -13,6 +13,7 @@
 #include "aucommpacket.h"
 #include "aufireparticles.h"
 #include "auglmodelmaker.h"
+#include "auglslconst.h"
 #include "aulegacybuildinggeometry.h"
 #include "aulegacycitycatalogue.h"
 #include "auqueryenvironment.h"
@@ -8729,6 +8730,48 @@ double DaWorldLL::TerrainAltitudeMSLPave(const AuGlobeLL& ll, bool& hideRocks, i
 		orchardTree = CID_Invalid;	// So we don't put orchard trees on roads.
 	}
 	return terAltMSL;
+}
+
+float DaWorldLL::TerrainPavementCover(const AuGlobeLL& ll, WORLDTEX_TYPE pavementType) const
+{
+	// Signed distance to the nearest pavement edge, negative inside. Roads and legacy city sites report it.
+	float dist = 0;
+	bool found = LockGeologicalFeatures().PavementEdgeDistance(*this, ll, dist);
+	UnlockGeologicalFeatures();
+	if(g_Au.IsLegacyGeneration())
+	{
+		DaAtomList subs; ListNormalSubatoms(subs);
+		for(const DaAtom* atom : subs)
+			if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+			{
+				float cityDist;
+				if(!city->SitePavementEdgeDistance(*this, ll, cityDist)) continue;
+				if(!found || cityDist < dist) dist = cityDist;
+				found = true;
+			}
+	}
+
+	// Pavement from something that reports no edge, such as modern buildings and landscapers, is fully on or off at this
+	// vertex. Its edge still follows the terrain triangles, halfway between paved and unpaved vertices.
+	const float range = TerrainPaveEdgeRange();
+	const bool paved = pavementType != WORLDTEX_Count;
+	if(!found || (dist <= 0) != paved)
+		dist = paved ? -range : range;
+	return 0.5f - qBound(-range, dist, range) / (2*range);
+}
+
+float DaWorldLL::TerrainPaveEdgeRange()
+{
+	return TERRAIN_PAVE_EDGE_RANGE;
+}
+
+float DaWorldLL::PavementStripEdgeDistance(float dist2, float segFrac, float segLen, float halfWidth)
+{
+	// 'beyondEnd' is the distance past the nearest end, negative between the end points.
+	// Beyond an end, 'dist2' is measured to the end point, so remove the along-road part to get the sideways distance.
+	float beyondEnd = qMax(-segFrac, segFrac - 1) * segLen;
+	float side = beyondEnd > 0 ? sqrtf(qMax(0.f, dist2 - beyondEnd*beyondEnd)) : sqrtf(dist2);
+	return qMax(side - halfWidth, beyondEnd);
 }
 
 void DaWorldLL::BuildingChanged(const AuMatrix4x4& bldM, double radius, AuGLModelMaker& mm)

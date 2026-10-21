@@ -42,14 +42,15 @@ static void LoadLegacyTerrainShaders()
 	// Keep its 18-entry pavement block separate from the modern seven-entry one.
 	QFile pavement(QStringLiteral(":/legacy-surface-shaders/LegacyPavement.glsl"));
 	if(!pavement.open(QIODevice::ReadOnly)) return;
-	const QByteArray block = pavement.readAll();
+	// Because this is a hard read on the shader directly, we need to account for potential CRLF ending
+	const QByteArray block = pavement.readAll().replace("\r\n", "\n");
 	const char* names[] = {"TerrainLit.f.glsl", "TerrainLitFlora.f.glsl", "RingworldTerrainLitFlora.f.glsl"};
 	for(const char* name : names)
 	{
 		const QString fileName = QString::fromLatin1(name);
 		QFile source(QStringLiteral(":/legacy-surface-shaders/") + fileName);
 		if(!source.open(QIODevice::ReadOnly)) continue;
-		QByteArray shader = source.readAll();
+		QByteArray shader = source.readAll().replace("\r\n", "\n");
 		shader.replace("texPavement[7]", "texPavement[18]");
 		const int start = shader.indexOf("\t// Pavement\n");
 		const int end = shader.indexOf("\n\t// ", start + 4) + 1;

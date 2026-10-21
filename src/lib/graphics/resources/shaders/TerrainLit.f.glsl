@@ -15,6 +15,7 @@ uniform sampler2D						texSnow;				// Snow texture.
 uniform sampler2D						texTerrain[5];			// Texture palette for terrain.
 
 in vec4									vertColor;				// Incoming fragment color interpolated from the vertex color.
+in vec4									vertColorHardPaved;		// Incoming fragment color for hard pavement, fully lit by the city.
 in vec3									vertFogSnowPave;		// Incoming fog density(x), snow coverage(y), pavement coverage(z)
 in vec3									vertTexCoordAlt;		// Incoming texture coordinate(xy), altitude(z)
 flat in float							vertPaveType;			// Pavement type must not be interpolated.
@@ -88,9 +89,18 @@ void main()
 		}
 	}
 
+	// Pavement coverage is the signed distance to the pavement edge in feet, negative inside, stored as
+	// 0.5 - dist/(2*TERRAIN_PAVE_EDGE_RANGE) so it stays in 0..1. It interpolates linearly across a triangle, so the edge
+	// is straight at any angle. Soften the edge over about a pixel, or a foot up close.
+	float paveDist = (0.5 - vertFogSnowPave.z) * (2.0 * TERRAIN_PAVE_EDGE_RANGE);
+	float paveSoft = max(fwidth(paveDist), 1.0);
+	float paveCover = 1.0 - smoothstep(-paveSoft, paveSoft, paveDist);
+	bool paveHard = false;										// Hard pavement, set by the pavement block.
+
 	// Pavement
 	{
 		int paveTileIndex = min(int(round(vertPaveType * 7)), 6);				// Tile index 0..6
+		paveHard = paveTileIndex <= TERRAIN_PAVE_HARD_MAX;						// See DaWorldLL::PavementHidesSnow.
 		vec4 paveColor;
 		if(paveTileIndex == 0)
 			paveColor = texture(texPavement[0], terCoord3);
@@ -108,7 +118,7 @@ void main()
 			paveColor = texture(texPavement[6], terCoord3);
 
 		// Combine pavement with terrain color.
-		fragColor = mix(fragColor, paveColor, vertFogSnowPave.z*paveColor.a);
+		fragColor = mix(fragColor, paveColor, paveCover*paveColor.a);
 	}
 
 	// Snow
@@ -122,8 +132,8 @@ void main()
 		fragColor = mix(fragColor, snowColor, vertFogSnowPave.y);
 	}
 
-	// Modulate with vertColor for lighting effect.
-	fragColor *= vertColor;
+	// Modulate with vertColor for lighting effect. Hard pavement is fully lit by the city.
+	fragColor *= mix(vertColor, paveHard ? vertColorHardPaved : vertColor, paveCover);
 
 	// Calculate fog effect on fragment color but do not modify the alpha using fog.
 	// Fog density value is 1 for full fog, 0 for no fog.

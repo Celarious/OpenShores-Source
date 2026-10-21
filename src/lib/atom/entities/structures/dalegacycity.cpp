@@ -644,6 +644,39 @@ struct DaLegacyCity::Runtime
 	double AdjustTerrain(const DaWorldLL& world, double altitudeMSL, const AuGlobeLL& ll,
 		int& levelSites, bool& hideRocks, int& hideGrass, bool& hideShrubs,
 		bool& hideTrees, WORLDTEX_TYPE& pavementType) const;
+	bool PavementEdgeDistance(const DaWorldLL& world, const AuGlobeLL& ll, float& dist) const;
+
+	// The old world's development lookup excluded distant sites before
+	// InBuildingSite. A tangent-plane projection alone also hits antipodes.
+	static bool SiteInRange(const Site& site, const AuPoint& worldLocation)
+	{
+		const double range = 2 * (site.radius + 32.8084);
+		return worldLocation.Distance2(site.placement.Translation()) <= range * range;
+	}
+
+	// DpGlobeRoad::AdjustAltMSL, 0x652140. Returns the squared distance from 'll'
+	// to the closest point of a road site's segment, clamped to the end points,
+	// at the road 'grade' there. 'fraction' is unclamped along the segment.
+	static float RoadDistance2(const Site& site, const DaWorldLL& world, const AuGlobeLL& ll, float& fraction, float& grade)
+	{
+		const auto& dev = site.state;
+		const AuGlobeLLF closest = ll.ToLLF().CoordOnSegment(site.roadStart, site.roadEnd, &fraction, world.LLShape());
+		grade = float(dev.roadStartAltitudeMSL + (dev.roadEndAltitudeMSL - dev.roadStartAltitudeMSL)
+			* qBound(0.f, fraction, 1.f));
+		const AuGlobeLLF segmentLL = fraction <= 0 ? site.roadStart : fraction >= 1 ? site.roadEnd : closest;
+		return float(world.LocOfLL(ll, grade).Distance2(world.LocOfLL(segmentLL, grade)));
+	}
+
+	// Original pavement index a road site paints, or WORLDTEX_Count for none.
+	static WORLDTEX_TYPE RoadPavementType(const AuLegacyCity::Development& dev)
+	{
+		if(!dev.constructed) return WORLDTEX_TYPE(0);
+		if(dev.constructionProcessId == 2) return WORLDTEX_TYPE(6);
+		if(dev.constructionProcessId == 3) return WORLDTEX_TYPE(4);
+		if(dev.constructionProcessId == 4) return WORLDTEX_TYPE(3);
+		if(dev.constructionProcessId == 7) return WORLDTEX_TYPE(2);
+		return WORLDTEX_Count;
+	}
 
 	void EnsureSites(const DaLegacyCity& city, const DaWorldLL& world)
 	{
@@ -1257,6 +1290,44 @@ double DaLegacyCity::AdjustSiteTerrain(const DaWorldLL& world, double altitudeMS
 	return m_Runtime->AdjustTerrain(world,altitudeMSL,ll,levelSites,hideRocks,hideGrass,hideShrubs,hideTrees,pavementType);
 }
 
+bool DaLegacyCity::SitePavementEdgeDistance(const DaWorldLL& world, const AuGlobeLL& ll, float& dist) const
+{
+	if(!g_Au.IsLegacyGeneration() || IsDead()) return false;
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->EnsureSites(*this, world);
+	return m_Runtime->PavementEdgeDistance(world,ll,dist);
+}
+
+bool DaLegacyCity::Runtime::PavementEdgeDistance(const DaWorldLL& world, const AuGlobeLL& ll, float& dist) const
+{
+	// Mirrors the pavement rules of AdjustTerrain. Overlapping sites are a union,
+	// so the nearest edge wins.
+	bool found = false;
+	for(const auto& site : sites)
+	{
+		const auto& dev = site.state;
+		const AuPoint worldLocation = world.LocOfLL(ll, dev.altitudeMSL);
+		if(!SiteInRange(site, worldLocation)) continue;
+		float siteDist;
+		if(dev.industryId == 2)
+		{
+			if(RoadPavementType(dev) == WORLDTEX_Count) continue;
+			float fraction, grade;
+			const float distance2 = RoadDistance2(site, world, ll, fraction, grade);
+			// Pavement stops square at the end points.
+			siteDist = DaWorldLL::PavementStripEdgeDistance(distance2, fraction, 2 * site.halfLength, site.halfWidth);
+		}
+		else
+		{
+			if(AuLegacyBd::Geometry::SiteTextureSlot(dev.materialId, dev.constructed && dev.components.isEmpty()) < 0) continue;
+			const AuPoint p = site.inverse.Project(worldLocation);
+			siteDist = std::max(float(std::abs(p.x))-site.halfWidth, float(std::abs(p.y))-site.halfLength);
+		}
+		if(!found || siteDist < dist) dist = siteDist;
+		found = true;
+	}
+	return found;
+}
+
 double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altitudeMSL, const AuGlobeLL& ll,
 	int& levelSites, bool& hideRocks, int& hideGrass, bool& hideShrubs,
 	bool& hideTrees, WORLDTEX_TYPE& pavementType) const
@@ -1267,20 +1338,13 @@ double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altit
 		// altitude. This keeps its square boundary stable on slopes and globes.
 		const auto& dev = site.state;
 		const AuPoint worldLocation = world.LocOfLL(ll, dev.altitudeMSL);
-		// The old world's development lookup excluded distant sites before
-		// InBuildingSite. A tangent-plane projection alone also hits antipodes.
-		const double range = 2 * (site.radius + 32.8084);
-		if(worldLocation.Distance2(site.placement.Translation()) > range * range) continue;
+		if(!SiteInRange(site, worldLocation)) continue;
 		if(dev.industryId == 2)
 		{
-			// DpGlobeRoad::AdjustAltMSL, 0x652140. Use the original LL segment
-			// query, including endpoint blend caps and the eight-foot side margin.
-			float fraction;
-			const AuGlobeLLF closest = ll.ToLLF().CoordOnSegment(site.roadStart, site.roadEnd, &fraction, world.LLShape());
-			const float grade = float(dev.roadStartAltitudeMSL + (dev.roadEndAltitudeMSL - dev.roadStartAltitudeMSL)
-				* qBound(0.f, fraction, 1.f));
-			const AuGlobeLLF segmentLL = fraction <= 0 ? site.roadStart : fraction >= 1 ? site.roadEnd : closest;
-			const float distance2 = float(world.LocOfLL(ll, grade).Distance2(world.LocOfLL(segmentLL, grade)));
+			// Use the original LL segment query, including endpoint blend caps
+			// and the eight-foot side margin.
+			float fraction, grade;
+			const float distance2 = RoadDistance2(site, world, ll, fraction, grade);
 			const float width = site.halfWidth;
 			const bool landscaping = dev.constructionProcessId == 74 || dev.constructionProcessId == 80 || dev.constructionProcessId == 81;
 			const bool endpoint = fraction <= 0 || fraction >= 1;
@@ -1310,11 +1374,8 @@ double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altit
 					hideRocks = hideShrubs = hideTrees = true;
 				}
 			}
-			if(!dev.constructed) pavementType = WORLDTEX_TYPE(0);
-			else if(dev.constructionProcessId == 2) pavementType = WORLDTEX_TYPE(6);
-			else if(dev.constructionProcessId == 3) pavementType = WORLDTEX_TYPE(4);
-			else if(dev.constructionProcessId == 4) pavementType = WORLDTEX_TYPE(3);
-			else if(dev.constructionProcessId == 7) pavementType = WORLDTEX_TYPE(2);
+			const WORLDTEX_TYPE roadPavement = RoadPavementType(dev);
+			if(roadPavement != WORLDTEX_Count) pavementType = roadPavement;
 			continue;
 		}
 		const AuPoint p = site.inverse.Project(worldLocation);

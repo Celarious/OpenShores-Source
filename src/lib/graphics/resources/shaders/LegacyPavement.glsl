@@ -3,6 +3,7 @@
 	// Pavement
 	{
 		int paveTileIndex = min(int(round(vertPaveType * 18)), 17);				// Tile index 0..17
+		paveHard = paveTileIndex <= 10;											// 2016 hard pavement is 0..10, see DaWorldLL::PavementHidesSnow.
 		vec4 paveColor;
 		if(paveTileIndex == 0)
 			paveColor = texture(texPavement[0], terCoord3);
@@ -42,6 +43,6 @@
 			paveColor = texture(texPavement[17], terCoord3);
 
 		// Combine pavement with terrain color.
-		fragColor = mix(fragColor, paveColor, vertFogSnowPave.z*paveColor.a);
+		fragColor = mix(fragColor, paveColor, paveCover*paveColor.a);
 	}
 

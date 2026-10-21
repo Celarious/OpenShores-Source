@@ -1046,6 +1046,8 @@ protected:
 
 	//void CreateAtGlobeVAO(float& maxAltMSL, float& minAltMSL, const AuPoint& viewer);
 
+	void FillTerrainAltInfo(const AuGlobeLL& ll, AuGlobeTerrainAltInfo& t) const;
+
 	void CreateAtTerrainSurfaceTriangle(QList<AuGlobeTriAltVegNPave>& tris, const AuGlobeLL& ll0, const AuGlobeLL& ll1,
 			const AuGlobeLL& ll2, QMap<AuGlobeLL, AuGlobeTerrainAltInfo>& terAltInfo) const;
 

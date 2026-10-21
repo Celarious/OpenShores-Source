@@ -130,6 +130,9 @@ public:
 	double AdjustSiteTerrain(const DaWorldLL& world, double altitudeMSL, const AuGlobeLL& ll,
 		int& levelSites, bool& hideRocks, int& hideGrass, bool& hideShrubs,
 		bool& hideTrees, WORLDTEX_TYPE& pavementType) const;
+	// Signed distance in feet from 'll' to the nearest edge of pavement that
+	// AdjustSiteTerrain paints, negative inside. False if no site paints pavement.
+	bool SitePavementEdgeDistance(const DaWorldLL& world, const AuGlobeLL& ll, float& dist) const;
 	void QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& locationWorld,
 		AuQueryEnvironment& result) const;
 	// Route positions are returned in the parent world's frame; source cell and
