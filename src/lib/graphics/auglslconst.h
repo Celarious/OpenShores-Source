@@ -9,5 +9,6 @@
 // Constants shared by C++ code and the shaders, which get them substituted by name when they are loaded.
 
 #define TERRAIN_PAVE_EDGE_RANGE 64		// Feet. See DaWorldLL::TerrainPaveEdgeRange.
+#define TERRAIN_PAVE_HARD_MAX 4
 
 #endif

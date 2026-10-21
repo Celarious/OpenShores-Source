@@ -2293,6 +2293,7 @@ int DaWorldLL::TerrainPavementCount()
 
 bool DaWorldLL::PavementHidesSnow(WORLDTEX_TYPE pavementType)
 {
+	static_assert(TERRAIN_PAVE_HARD_MAX == int(WORLDTEX_CobblestoneLight), "TERRAIN_PAVE_HARD_MAX must match WORLDTEX_CobblestoneLight");
 	// 2016 CreateAtTerrainSurfaceTriangle suppresses snow for WORLDTEX 0..10.
 	return int(pavementType) <= (g_Au.IsLegacyGeneration() ? 10 : int(WORLDTEX_CobblestoneLight));
 }

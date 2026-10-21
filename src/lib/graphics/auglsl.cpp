@@ -8,6 +8,7 @@
 //
 #include "augleffects.h"
 #include "auglslerr.h"
+#include "auglslconst.h"
 #include "auscface.h"
 #include "hashpack.h"
 #include <QFile>
@@ -1626,6 +1627,9 @@ AuGLSLShader::AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QStr
 		src.replace(QByteArray("#version 150"), QByteArray("#version 440"));
 	else if(GLMajorVersion == 4 && GLMinorVersion == 5)
 		src.replace(QByteArray("#version 150"), QByteArray("#version 450"));
+
+	src.replace(QByteArray("TERRAIN_PAVE_EDGE_RANGE"), QByteArray::number(TERRAIN_PAVE_EDGE_RANGE));
+	src.replace(QByteArray("TERRAIN_PAVE_HARD_MAX"), QByteArray::number(TERRAIN_PAVE_HARD_MAX));
 
 	// Resolve our special includes.
 	if(src.contains("#SunLightGlobe"))
