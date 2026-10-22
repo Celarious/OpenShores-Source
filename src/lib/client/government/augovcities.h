@@ -15,6 +15,7 @@
 #include <QWidget>
 
 class AuCitiesWidget;
+class QLabel;
 class QPushButton;
 class QSplitter;
 class QTextBrowser;
@@ -28,12 +29,14 @@ private:
 
 	// Widgets
 	AuCitiesWidget*						m_Cities;
+	QLabel* m_CitiesLabel;
 	QTextBrowser*						m_Facilities;
 	QPushButton*						m_QuitClaim;
 	QSplitter*							m_Splitter;
 	QPushButton*						renPlanetButton;
 	QPushButton*						renSectorButton;
 	QPushButton*						renSystemButton;
+	void UpdateGenerationUI();
 
 public:
 	AuGovCities(QWidget* parent=0);

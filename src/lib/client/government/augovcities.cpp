@@ -61,26 +61,10 @@ AuGovCities::AuGovCities(QWidget* parent) : QWidget(parent)
 				"This may be helpful to see recent changes to your empire's cities.</html>"));
 	connect(pbreq, SIGNAL(clicked(bool)), SLOT(RequestEmpireData()));
 
-	QLabel* lbcities = new QLabel(tr("Empire Cities"));
-	lbcities->setAlignment(Qt::AlignLeft|Qt::AlignVCenter);
-	lbcities->setToolTip(tr("<html><p><b>Empire Cities</b><br>"
-				"All cities of the empire are listed. "
-				"</p>"
-				"<p>"
-				"Right-click selected cities for options. "
-				"<u>You can only surrender cities founded by you, unless the founder is not a citizen of the empire.</u>"
-				"</p>"
-				"</html>"));
+	m_CitiesLabel = new QLabel(tr("Empire Cities"));
+	m_CitiesLabel->setAlignment(Qt::AlignLeft|Qt::AlignVCenter);
 
 	m_Cities = new AuCitiesWidget(this);
-	m_Cities->setToolTip(tr("<html><p><b>Empire Cities</b><br>"
-				"All cities of the empire are listed. "
-				"</p>"
-				"<p>"
-				"Right-click selected cities for options. "
-				"<u>You can only surrender cities founded by you, unless the founder is not a citizen of the empire.</u>"
-				"</p>"
-				"</html>"));
 	connect(m_Cities, SIGNAL(CityRightClicked(AuId)), SLOT(CityRightClicked(AuId)));
 	connect(m_Cities, SIGNAL(itemSelectionChanged()), SLOT(CitySelected()));
 
@@ -145,7 +129,7 @@ AuGovCities::AuGovCities(QWidget* parent) : QWidget(parent)
 	lay->addWidget(m_QuitClaim, row,0, 1,3);
 	lay->addWidget(renSectorButton, row,4, 1,4);
 	row++;
-	lay->addWidget(lbcities, row,0, 1,4);
+	lay->addWidget(m_CitiesLabel, row,0, 1,4);
 	lay->addWidget(pbreq, row,5, 1,3);
 	row++;
 	lay->addWidget(m_Splitter, row,0, 1,8);
@@ -162,10 +146,24 @@ AuGovCities::AuGovCities(QWidget* parent) : QWidget(parent)
 	QByteArray splitterstate;
 	g_Au.Settings().readEntry("Widget/GovCities/Splitter", splitterstate);
 	m_Splitter->restoreState(splitterstate);
+	UpdateGenerationUI();
+}
+
+void AuGovCities::UpdateGenerationUI()
+{
+	QString tooltip = tr("<html><p><b>Empire Cities</b><br>All cities of the empire are listed. </p>"
+		"<p>Right-click selected cities for options. ");
+	if(!g_Au.IsLegacyGeneration())
+		tooltip += tr("<u>You can only surrender cities founded by you, unless the founder is not a citizen of the empire.</u>");
+	tooltip += QStringLiteral("</p></html>");
+	m_CitiesLabel->setToolTip(tooltip);
+	m_Cities->setToolTip(tooltip);
+	m_Cities->setColumnHidden(6, g_Au.IsLegacyGeneration());
 }
 
 void AuGovCities::UpdateEmpireRecord()
 {
+	UpdateGenerationUI();
 	// If this widget is not visible, just clear the empire id to 0.
 	// setVisible calls us to really update the page when we become visible.
 	if(!isVisible())
@@ -344,9 +342,7 @@ void AuGovCities::SurrenderSelectedCities()
 	QString chooseMsg = tr("<html><p>"
 			"Surrender %2 selected cities."
 			"</p>"
-			"<p>"
-			"You have authority to surrender the cities because you are the founder or the founder is not a citizen of the empire. "
-			"</p>"
+			"%3"
 			"<p>"
 			"Choose an empire to receive the surrendered cities. "
 			"</p>"
@@ -359,7 +355,8 @@ void AuGovCities::SurrenderSelectedCities()
 			"%1 City surrenders your claim to the world, "
 			"if no cities belong to your empire after the surrender is complete.<br>"
 			"%1 Allegiance of troops at bases, new vehicles and new spacecraft is changed to the other empire."
-			"</html>").arg(g_Au.MiddleDotSymbol()).arg(cityIds.count());
+			"</html>").arg(g_Au.MiddleDotSymbol()).arg(cityIds.count())
+		.arg(g_Au.IsLegacyGeneration() ? QString() : tr("<p>You have authority to surrender the cities because you are the founder or the founder is not a citizen of the empire. </p>"));
 
 	// Get the id of the empire to surrender the city to.
 	AuChooseEmpire empiresDlg(chooseMsg, this);

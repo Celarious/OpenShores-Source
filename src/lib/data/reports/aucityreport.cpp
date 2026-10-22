@@ -15,7 +15,9 @@
 #include "aulegacycitypopulation.h"
 #include "aulegacycityproduction.h"
 #include <algorithm>
+#include <cmath>
 #include <initializer_list>
+#include <limits>
 #include <utility>
 
 #define d_AbandonDaysPerMoralePoint		(1)						// Days after d_AbandonDaysBegin per point of morale loss.
@@ -69,35 +71,232 @@ QString CityReportStockHtml(const AuItem& item, const QString& origin, bool lega
 	return text;
 }
 
+QString LegacyReportSpacing(QString html)
+{
+	// QTextBrowser collapses the trailing break in a div against the next
+	// block. Keep a blank line between report sections, including alerts.
+	html.replace(QStringLiteral("</div><b>"), QStringLiteral("</div><br><b>"));
+	html.replace(QStringLiteral("</div><b style="), QStringLiteral("</div><br><b style="));
+	return html;
+}
+
+AuLegacyCity::PopulationCycleResult LegacyReportPopulation(const AuCityReport& report)
+{
+	if(report.m_HasLegacyDetails) return report.m_LegacyReportedPopulation;
+	// Older saved reports predate the full snapshot. Recover all inputs that
+	// they retained; newly compiled reports carry the original cycle inputs.
+	AuLegacyCity::PopulationContext context;
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	if(catalogue)
+	{
+		for(auto industry = report.m_Industries.cbegin(); industry != report.m_Industries.cend(); ++industry)
+		{
+			const auto* historical = catalogue->IndustryForRuntimeId(quint8(industry.key()));
+			if(historical) context.levels[historical->id.value] = industry.value().Levels();
+		}
+		context.homes = AuLegacyCity::Homes(*catalogue, context.levels, &context.apartmentHomes);
+		const auto* town = catalogue->Industry(AuLegacyCity::IndustryId(1));
+		const auto* flag = catalogue->Industry(AuLegacyCity::IndustryId(10));
+		context.townSquareTroops = town ? std::abs(int(town->employees)) : 0;
+		context.militaryFlagTroops = flag ? std::abs(int(flag->employees)) : 0;
+	}
+	context.population = int(report.m_PopOrig);
+	context.unemployed = std::max(0, int(report.m_Unemployed));
+	context.satisfaction = report.m_SatOrig;
+	context.needsEnclosure = !report.m_HasBreathableAtmo;
+	context.hasPower = report.HasPower();
+	context.hasAir = report.m_AirSupply != 0;
+	context.airConsumed = quint32(std::max(0, int(report.m_AirConsumed)));
+	context.foodVariety = quint8(std::max(0, int(report.m_FoodTypes)));
+	context.ecoRole = quint8(report.Citizen().EcoRole());
+	context.ateFullMeal = report.m_AteEnoughFood;
+	context.loyalty = report.m_LoyaltyOrig;
+	context.indigenousWorld = report.m_IsHabitablePlanet;
+	context.differentNativeRace = report.m_IsHabitablePlanet && report.Citizen().IsAlien();
+	context.destroyedBuildings = report.m_HasDestroyedBuildings != 0;
+	context.isolated = report.m_IsIsolated;
+	context.environmentCapacity = int(report.m_MaxPop);
+	context.environmentPopulation = int(report.m_ZonePop);
+	context.daysSinceSystemVisit = report.m_LastVisit;
+	context.daysSinceCityVisit = report.m_LastAvatarAccountActive;
+	for(int index = 0; index < 3; ++index)
+		if(report.m_Decayed[index] != IID_None) ++context.decayedLevels;
+	const auto& data = g_Au.LockDataForRead();
+	context.reportExemptFromVisitPenalty = data.EmpireRole(report.EmpireId(0)) == EMPIRE_Agent;
+	g_Au.UnlockData();
+	return AuLegacyCity::PopulationReport(context);
+}
+
+QString LegacyMoraleHtml(const AuCityReport& report, const AuLegacyCity::PopulationCycleResult& population)
+{
+	// AuData13.dll AuCityReport::ReportHtml 0x35d50: factors precede the
+	// morale change/total, and every line retains its trailing break.
+	QString html = QStringLiteral("<b>MORALE</b><div style=\"margin-left: 10px;\">");
+	QString empire;
+	const auto& data = g_Au.LockDataForRead();
+	data.EmpireName(report.EmpireId(0), empire);
+	g_Au.UnlockData();
+	using Factor = AuLegacyCity::MoraleFactorType;
+	for(const auto& factor : population.moraleFactors)
+	{
+		const int cost = -factor.modifier;
+		switch(factor.type)
+		{
+		case Factor::HarshEnvironmentWithoutPower:
+			html += QObject::tr("-%1 Harsh Environment Without Power Penalty. Power Needed.<br>").arg(cost); break;
+		case Factor::HarshEnvironment:
+			html += QObject::tr("-%1 Harsh Environment Penalty.<br>").arg(cost); break;
+		case Factor::Suffocation:
+			html += QObject::tr("-%1 Suffocation Penalty. Air is needed.<br>").arg(cost); break;
+		case Factor::Gasping:
+			html += QObject::tr("-%1 Gasping Penalty. More air is needed.<br>").arg(cost); break;
+		case Factor::Starvation:
+			html += QObject::tr("-%1 Starvation Penalty. Food is needed.<br>").arg(cost); break;
+		case Factor::Hunger:
+			html += QObject::tr("-%1 Hunger Penalty. More food is needed.<br>").arg(cost); break;
+		case Factor::FoodVariety:
+			html += QObject::tr("+%1 Food Variety Bonus. %2 food types.<br>").arg(factor.modifier).arg(factor.detail); break;
+		case Factor::Loyalty:
+			html += QObject::tr("+%1 Loyalty Bonus. Citizens pledge allegiance to %2.<br>").arg(factor.modifier).arg(empire); break;
+		case Factor::Rebellious:
+			html += QObject::tr("Citizens are rebellious. No %1 avatar or officer has visited this system in %2 days.<br>")
+				.arg(empire).arg(factor.detail); break;
+		case Factor::IncreasinglyDisloyal:
+			html += QObject::tr("Citizens are increasingly disloyal. No %1 avatar or officer has visited this system in %2 days.<br>")
+				.arg(empire).arg(factor.detail); break;
+		case Factor::Disloyalty:
+			html += QObject::tr("-%1 Disloyalty Penalty. Citizens reject occupation by %2.<br>").arg(cost).arg(empire); break;
+		case Factor::AlienInvader:
+			html += QObject::tr("-%1 Alien Invader Penalty.<br>").arg(cost); break;
+		case Factor::ResourceZoneOverpopulation:
+			html += QObject::tr("-%1 Resource Zone Overpopulation Penalty. Zone population is %2.<br>").arg(cost).arg(factor.detail); break;
+		case Factor::Homelessness:
+			html += QObject::tr("-%1 Homelessness Penalty. More homes needed.<br>").arg(cost); break;
+		case Factor::Decay:
+			html += QObject::tr("-%1 Decay Penalty.<br>").arg(cost); break;
+		case Factor::Abandoned:
+			html += QObject::tr("Abandoned, no morale penalty yet. No on-line avatars have visited this system in %2 days.<br>")
+				.arg(factor.detail); break;
+		case Factor::Abandonment:
+			html += QObject::tr("-%1 Abandonment Penalty. No on-line avatars have visited this system in %2 days.<br>")
+				.arg(cost).arg(factor.detail); break;
+		case Factor::DestroyedBuildings:
+			html += QObject::tr("-1 Destroyed Buildings Penalty.<br>"); break;
+		case Factor::CrampedLivingConditions:
+			html += QObject::tr("-%1 Cramped Living Conditions Penalty. Need more homes that are not apartments.<br>").arg(cost); break;
+		case Factor::Unemployment:
+			html += QObject::tr("-%1 penalty, %2% Unemployment. More jobs needed.<br>").arg(cost).arg(factor.detail); break;
+		case Factor::Overworked:
+			html += QObject::tr("-%1 Overworked Penalty. Need homes for immigration of more citizens.<br>").arg(cost); break;
+		case Factor::Arena:
+			html += QObject::tr("%1 penalty, Arena wanted.<br>").arg(factor.modifier); break;
+		case Factor::Garrison:
+			html += QObject::tr("%1 penalty, too many garrison troops.<br>").arg(factor.modifier); break;
+		case Factor::Cantina:
+			html += (factor.modifier < 0 ? QObject::tr("%1 penalty, Cantina wanted.<br>")
+				: QObject::tr("+%1 Cantina bonus.<br>")).arg(factor.modifier); break;
+		case Factor::Casino:
+			html += QObject::tr("%1 penalty, Casino wanted.<br>").arg(factor.modifier); break;
+		case Factor::Church:
+			html += (factor.modifier < 0 ? QObject::tr("%1 penalty, Church wanted.<br>")
+				: QObject::tr("+%1 Church bonus.<br>")).arg(factor.modifier); break;
+		case Factor::Grocery:
+			html += QObject::tr("%1 penalty, Grocery wanted.<br>").arg(factor.modifier); break;
+		case Factor::Hospital:
+			html += QObject::tr("%1 penalty, Hospital wanted.<br>").arg(factor.modifier); break;
+		case Factor::Park:
+			html += QObject::tr("%1 penalty, Park wanted.<br>").arg(factor.modifier); break;
+		case Factor::PoliceStation:
+			html += QObject::tr("%1 penalty, Police Station wanted.<br>").arg(factor.modifier); break;
+		case Factor::RetailStore:
+			html += QObject::tr("%1 penalty, Retail Store wanted.<br>").arg(factor.modifier); break;
+		case Factor::University:
+			html += QObject::tr("%1 penalty, University wanted.<br>").arg(factor.modifier); break;
+		case Factor::Zoo:
+			html += QObject::tr("%1 penalty, Zoo wanted.<br>").arg(factor.modifier); break;
+		case Factor::NoCitizens:
+		case Factor::Count: break;
+		}
+	}
+	if(population.satisfaction < report.m_SatOrig)
+		html += QObject::tr("Morale decreased by %1 to %2.<br>").arg(report.m_SatOrig - population.satisfaction).arg(population.satisfaction);
+	else if(population.satisfaction > report.m_SatOrig)
+		html += QObject::tr("Morale increased by %1 to %2.<br>").arg(population.satisfaction - report.m_SatOrig).arg(population.satisfaction);
+	else html += QObject::tr("Morale remained steady at %1.<br>").arg(population.satisfaction);
+	return html + QStringLiteral("</div>");
+}
+
+bool ValidLegacyDetails(const AuCityReport& report)
+{
+	const auto& population = report.m_LegacyReportedPopulation;
+	if(population.population < 0 || population.unemployed < 0 || population.births < 0 || population.births > 2
+		|| population.suffocated < 0 || population.starved < 0 || population.immigrants < 0 || population.emigrants < 0
+		|| population.hospitalShortage < 0 || population.hospitalShortage > 2
+		|| qint64(population.suffocated) + population.starved > report.m_PopOrig
+		|| qint64(population.population) != qint64(report.m_PopOrig) - population.suffocated - population.starved
+			+ population.births + population.immigrants - population.emigrants
+		|| population.moraleFactors.size() > std::size_t(AuLegacyCity::MoraleFactorType::Count)
+		|| report.m_LegacyIndustryTechnology.size() > 256) return false;
+	qint64 morale = 0;
+	for(const auto& factor : population.moraleFactors)
+	{
+		if(factor.type >= AuLegacyCity::MoraleFactorType::Count
+			|| factor.modifier == std::numeric_limits<int>::min() || factor.detail < 0) return false;
+		morale += factor.modifier;
+	}
+	if(morale != population.moraleChange || population.satisfaction != (report.m_PopOrig
+		? std::max(qint64(-20), std::min(qint64(20), qint64(report.m_SatOrig) + morale)) : 1)) return false;
+	for(auto industry = report.m_LegacyIndustryTechnology.cbegin(); industry != report.m_LegacyIndustryTechnology.cend(); ++industry)
+		if(industry.value().first > industry.value().second) return false;
+	return true;
+}
+
 QString LegacyAccountsHtml(const QByteArray& bytes, double previousTribute)
 {
 	AuLegacyCity::AccountingState accounting; QString error;
 	if(!AuLegacyCity::DecodeAccounting(bytes, accounting, error)) return QString();
 	const auto& accounts = accounting.accounts;
 	const QString currency = g_Au.CurrencySymbol();
-	QString html;
+	QString html = QObject::tr("<b>BANK ACTIVITY</b><div style=\"margin-left: 10px;\">")
+		+ QStringLiteral("<table border=\"0\" cellpadding=\"2\" cellspacing=\"0\" style=\"background-color: rgb(56, 89, 56);\"><tbody>");
 	auto balance = [&html, &currency](const QString& label, double amount) {
-		html += QStringLiteral("<tr><td><b>%1</b></td><td></td><td style=\"text-align:right;\">%L2%3</td></tr>")
+		html += QStringLiteral("<tr><td style=\"vertical-align: top;\"><b>%1</b></td><td style=\"vertical-align: top;\"></td><td style=\"vertical-align: top;\"></td><td style=\"vertical-align: top; text-align: right;\">%L2%3</td></tr>")
 			.arg(label.toHtmlEscaped()).arg(amount, 0, 'f', 0).arg(currency);
+	};
+	auto account = [&html](const QString& label, bool lineBreak) {
+		html += QStringLiteral("<tr><td style=\"vertical-align: top;\">%1<span style=\"color: rgb(0, 0, 0);\"><b>%2</b></span></td><td style=\"vertical-align: top;\"></td><td style=\"vertical-align: top;\"></td><td style=\"vertical-align: top; text-align: right;\"></td></tr>")
+			.arg(lineBreak ? QStringLiteral("<br>") : QString()).arg(label.toHtmlEscaped());
 	};
 	auto entries = [&html, &currency, &balance](const QString& heading,
 		std::initializer_list<std::pair<const char*, double>> values, bool expense) {
 		double total = 0;
-		html += QStringLiteral("<tr><td><b>%1</b></td><td></td><td></td></tr>").arg(heading.toHtmlEscaped());
+		bool hasEntries = false;
 		for(const auto& value : values)
 		{
 			total += value.second;
+			hasEntries = hasEntries || value.second != 0;
+		}
+		if(!hasEntries)
+		{
+			balance(heading, 0);
+			return;
+		}
+		html += QStringLiteral("<tr><td style=\"vertical-align: top;\"><b>%1</b></td><td style=\"vertical-align: top;\"></td><td style=\"vertical-align: top;\"></td><td style=\"vertical-align: top;\"></td></tr>").arg(heading.toHtmlEscaped());
+		for(const auto& value : values)
+		{
 			if(value.second != 0)
-				html += QStringLiteral("<tr><td></td><td>%1</td><td style=\"text-align:right;\">%L2%3</td></tr>")
+				html += QStringLiteral("<tr><td style=\"vertical-align: top;\"></td><td style=\"vertical-align: top; text-align: right;\">%1</td><td style=\"vertical-align: top; text-align: right;\">%L2%3</td><td style=\"vertical-align: top;\"></td></tr>")
 					.arg(QObject::tr(value.first).toHtmlEscaped()).arg(value.second, 0, 'f', 0).arg(currency);
 		}
-		balance(QObject::tr("Sub Total"), expense ? -total : total);
+		html += QStringLiteral("<tr><td style=\"vertical-align: top;\"></td><td style=\"vertical-align: top; text-align: right;\">%1</td><td style=\"vertical-align: top;\"></td><td style=\"vertical-align: top; text-align: right;\">%2%L3%4</td></tr>")
+			.arg(QObject::tr("Sub Total")).arg(expense ? QStringLiteral("-") : QString())
+			.arg(total, 0, 'f', 0).arg(currency);
 	};
 	auto citizenIncome = [&accounts](AuLegacyCity::CitizenIncome category) { return accounts.citizenIncome[std::size_t(category)]; };
 	auto citizenExpense = [&accounts](AuLegacyCity::CitizenExpense category) { return accounts.citizenExpenses[std::size_t(category)]; };
 	auto governmentIncome = [&accounts](AuLegacyCity::GovernmentIncome category) { return accounts.governmentIncome[std::size_t(category)]; };
 	auto governmentExpense = [&accounts](AuLegacyCity::GovernmentExpense category) { return accounts.governmentExpenses[std::size_t(category)]; };
-	html += QObject::tr("<b>GOVERNMENT ACCOUNT</b><div style=\"margin-left:10px;\"><table border=\"0\" cellpadding=\"2\" cellspacing=\"0\">");
+	account(QObject::tr("Government Account"), false);
 	if(previousTribute > 0) balance(QObject::tr("Previous Tribute"), previousTribute);
 	balance(QObject::tr("Starting Balance"), accounts.BeginningGovernmentBalance());
 	using GI = AuLegacyCity::GovernmentIncome;
@@ -113,8 +312,7 @@ QString LegacyAccountsHtml(const QByteArray& bytes, double previousTribute)
 		{"Rewards", governmentExpense(GE::Rewards)}, {"Tribute", governmentExpense(GE::Tribute)},
 		{"Withdrawal by Govt Officials", governmentExpense(GE::Withdrawal)}}, true);
 	balance(QObject::tr("Current Balance"), accounts.government);
-	html += QStringLiteral("</table></div>");
-	html += QObject::tr("<b>CITIZEN ACCOUNTS</b><div style=\"margin-left:10px;\"><table border=\"0\" cellpadding=\"2\" cellspacing=\"0\">");
+	account(QObject::tr("Citizen Accounts"), true);
 	balance(QObject::tr("Starting Balance"), accounts.BeginningCitizenBalance());
 	using CI = AuLegacyCity::CitizenIncome;
 	using CE = AuLegacyCity::CitizenExpense;
@@ -123,13 +321,245 @@ QString LegacyAccountsHtml(const QByteArray& bytes, double previousTribute)
 		{"Bullion Production", citizenIncome(CI::Mint)}, {"Payroll", citizenIncome(CI::Salary)},
 		{"Product Sales", citizenIncome(CI::Sales)}, {"Wholesale Sales", citizenIncome(CI::Wholesale)}}, false);
 	entries(QObject::tr("Expenses"), {
-		{"Architect Commissions", citizenExpense(CE::Commission)}, {"Tax Levy by Government", citizenExpense(CE::Confiscated)},
+		{"Architect Commissions", citizenExpense(CE::Commission)}, {"Tax Levy By Government", citizenExpense(CE::Confiscated)},
 		{"Citizen Relocation", citizenExpense(CE::Emigrate)}, {"Citizen Loans", citizenExpense(CE::Loans)},
 		{"Payroll", citizenExpense(CE::Salary)}, {"Product Purchases", citizenExpense(CE::Purchases)},
 		{"Rewards", citizenExpense(CE::Rewards)}, {"Wholesale Purchases", citizenExpense(CE::Wholesale)},
 		{"Withdrawals", citizenExpense(CE::Withdrawn)}}, true);
 	balance(QObject::tr("Current Balance"), accounts.citizens);
-	html += QStringLiteral("</table></div>");
+	html += QStringLiteral("</tbody></table><br></div>");
+	return html;
+}
+
+QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
+{
+	// AuData13 AuCityReport::ReportHtml 0x35d50, population portion.
+	// Use the recorded report calculation, not the later city's migration rules.
+	QString html;
+	const AuLegacyCity::PopulationCycleResult result = LegacyReportPopulation(report);
+	int population = int(report.m_PopOrig);
+	{
+		if(result.suffocated)
+			html += result.suffocated == 1 ? QObject::tr("One citizen suffocated to death.<br>")
+				: QObject::tr("%1 citizens suffocated to death.<br>").arg(result.suffocated);
+		if(result.starved)
+			html += result.starved == 1 ? QObject::tr("One citizen starved to death.<br>")
+				: QObject::tr("%1 citizens starved to death.<br>").arg(result.starved);
+		population = std::max(0, population - result.suffocated - result.starved);
+		const bool noRoute = report.m_IsIsolated && !report.HasAirport();
+		const bool occupied = report.m_LegacyOccupied;
+		int migration = result.satisfaction;
+		auto suicide = [&html](int count) {
+			if(count == 1) html += QObject::tr("One citizen committed suicide due to isolation and despair.<br>");
+			else if(count) html += QObject::tr("%1 citizens committed suicide due to isolation and despair.<br>").arg(count);
+		};
+		if(population > int(homes))
+		{
+			if(report.m_HasDestroyedBuildings)
+			{
+				if(migration > 0) html += QObject::tr("Homeless intrepid citizens find shelter in rubble of destroyed buildings.<br>");
+				else if(migration < 0) html += QObject::tr("Homeless weary citizens eke shelter in rubble of destroyed buildings.<br>");
+				else html += QObject::tr("Homeless resolute citizens shelter in rubble of destroyed buildings.<br>");
+			}
+			else if(migration < 0)
+			{
+				int leaving = -migration;
+				bool isolatedDespair = false;
+				if(!report.m_IsHabitablePlanet)
+				{
+					if(report.m_HasBreathableAtmo)
+					{
+						if(leaving > 1)
+						{
+							html += QObject::tr("Frontier world reduces emigration of homeless citizens.<br>");
+							leaving = std::max(1, leaving * 2 / 3);
+						}
+					}
+					else if(noRoute)
+					{
+						html += QObject::tr("Isolation in harsh environment prevents emigration of homeless citizens. Airport needed.<br>");
+						isolatedDespair = true;
+					}
+					else if(leaving > 1)
+					{
+						html += QObject::tr("Harsh environment reduces emigration of homeless citizens.<br>");
+						leaving = std::max(1, leaving / 2);
+					}
+				}
+				if(isolatedDespair) suicide(result.emigrants);
+				else if(occupied)
+					html += leaving == 1 ? QObject::tr("Martial law of occupier prevented one homeless citizen from emigrating.<br>")
+						: QObject::tr("Martial law of occupier prevented %1 homeless citizens from emigrating.<br>").arg(leaving);
+				else if(leaving == population)
+					html += result.emigrants == 1 ? QObject::tr("One homeless citizen emigrated; the last citizen departed.<br>")
+						: QObject::tr("%1 homeless citizens emigrated; the last citizens departed.<br>").arg(leaving);
+				else
+					html += leaving == 1 ? QObject::tr("One homeless citizen emigrated.<br>")
+						: QObject::tr("%1 homeless citizens emigrated.<br>").arg(leaving);
+			}
+		}
+		else
+		{
+			const int potentialBirths = population > 1 ? std::min(2, int(homes) - population) : 0;
+			if(potentialBirths == 2 && result.hospitalShortage > 0)
+			{
+				html += QObject::tr("Infant mortality rate increased by insufficient hospitals.<br>");
+				html += result.births == 0 ? QObject::tr("Two babies were born but none of them survived.<br>")
+					: QObject::tr("Two babies were born but only one of them survived.<br>");
+			}
+			else if(result.births)
+				html += result.births == 1 ? QObject::tr("A baby was born.<br>") : QObject::tr("Two babies were born.<br>");
+			population += result.births;
+			bool blocked = false, isolatedDespair = false;
+			if(report.m_HasDestroyedBuildings && migration < 0 && population)
+			{
+				html += QObject::tr("Unhappy citizens pull together to rebuild the city; nobody chooses to leave.<br>");
+				blocked = true;
+			}
+			else if(!report.m_IsHabitablePlanet && migration && !(occupied && migration < 0))
+			{
+				if(!report.m_HasBreathableAtmo)
+				{
+					if(noRoute)
+					{
+						html += migration < 0 ? QObject::tr("Isolation in harsh environment prevents emigration. Airport needed.<br>")
+							: QObject::tr("Isolation in harsh environment prevents immigration. Airport needed.<br>");
+						isolatedDespair = migration < 0;
+						blocked = true;
+					}
+					else
+					{
+						if(migration > 1 && occupied)
+						{
+							html += QObject::tr("Martial law of occupier reduces immigration.<br>");
+							migration /= 2;
+						}
+						if(migration > 1 || migration < -1)
+						{
+							html += migration > 0 ? QObject::tr("Harsh environment reduces immigration.<br>")
+								: QObject::tr("Harsh environment reduces emigration.<br>");
+							migration /= 2;
+						}
+					}
+				}
+				else if(migration > 0 && noRoute)
+				{
+					html += QObject::tr("Isolation on frontier world prevents immigration. Airport needed.<br>");
+					blocked = true;
+				}
+				else
+				{
+					if(migration > 1 && occupied)
+					{
+						html += QObject::tr("Martial law of occupier reduces immigration.<br>");
+						migration /= 2;
+					}
+					if(migration > 1 || migration < -1)
+					{
+						html += migration > 0 ? QObject::tr("Frontier world reduces immigration.<br>")
+							: QObject::tr("Frontier world reduces emigration.<br>");
+						migration = migration * 2 / 3;
+					}
+				}
+			}
+			else if(report.m_IsHabitablePlanet && !report.m_Citizens.empty() && report.Citizen().IsAlien() && migration > 0)
+			{
+				if(noRoute)
+				{
+					html += QObject::tr("Isolation on alien world prevents immigration. Airport needed.<br>");
+					blocked = true;
+				}
+				else
+				{
+					if(migration > 1 && occupied)
+					{
+						html += QObject::tr("Martial law of occupier reduces immigration.<br>");
+						migration /= 2;
+					}
+					if(migration > 1)
+					{
+						html += QObject::tr("Alien world reduces immigration.<br>");
+						migration = std::max(1, migration * 3 / 4);
+					}
+				}
+			}
+			if(isolatedDespair) suicide(result.emigrants);
+			else if(!blocked && migration > 0)
+			{
+				if(result.immigrants == 0)
+					html += migration == 1 ? QObject::tr("Lack of a home prevented one person from immigrating.<br>")
+						: QObject::tr("Lack of homes prevented %1 people from immigrating.<br>").arg(migration);
+				else if(result.immigrants < migration)
+					html += result.immigrants == 1 ? QObject::tr("Immigration potential is %1 people but only one person arrived due to lack of homes.<br>").arg(migration)
+						: QObject::tr("Immigration potential is %1 people but only %2 people arrived due to lack of homes.<br>").arg(migration).arg(result.immigrants);
+				else html += result.immigrants == 1 ? QObject::tr("One person immigrated to this city.<br>")
+					: QObject::tr("%1 people immigrated to this city.<br>").arg(result.immigrants);
+			}
+			else if(!blocked && migration < 0)
+			{
+				const int potential = -migration;
+				if(occupied)
+					html += potential == 1 ? QObject::tr("Martial law of occupier prevented one citizen from emigrating.<br>")
+						: QObject::tr("Martial law of occupier prevented %1 citizens from emigrating.<br>").arg(potential);
+				else if(!population)
+					html += potential == 1 ? QObject::tr("Emigration potential is one citizen but nobody is here.<br>")
+						: QObject::tr("Emigration potential is %1 citizens but nobody is here.<br>").arg(potential);
+				else if(potential == 1) html += QObject::tr("One citizen emigrated from this city.<br>");
+				else if(result.emigrants == 1) html += QObject::tr("Emigration potential is %1 citizens; the last citizen departed.<br>").arg(potential);
+				else if(result.emigrants == population) html += QObject::tr("Emigration potential is %1 citizens; the last citizens departed.<br>").arg(potential);
+				else html += QObject::tr("Emigration potential is %1 citizens; %2 citizens departed.<br>").arg(potential).arg(result.emigrants);
+			}
+		}
+		population = result.population;
+		const AuLegacyCityCatalogue* catalogue = AuLegacyCityCatalogue::BuiltIn();
+		if(catalogue)
+		{
+			const AuLegacyCity::IndustryRecord* town = catalogue->Industry(AuLegacyCity::IndustryId(1));
+			const AuLegacyCity::IndustryRecord* flag = catalogue->Industry(AuLegacyCity::IndustryId(10));
+			const int bases = report.BuildingLevels(IID_BaseHeadquarters);
+			const int contingent = (town ? std::abs(int(town->employees)) : 0) + bases * (flag ? std::abs(int(flag->employees)) : 0);
+			if(contingent)
+			{
+				if(occupied) html += QObject::tr("Occupation prevents drafting local citizens into military service.<br>");
+				else
+				{
+					const int populationLimit = population / 7;
+					if(report.m_TroopsDrafted)
+					{
+						html += report.m_TroopsDrafted == 1 ? QObject::tr("One citizen was drafted into military service.<br>")
+							: QObject::tr("%1 citizens were drafted into military service.<br>").arg(report.m_TroopsDrafted);
+						population = std::max(0, population - report.m_TroopsDrafted);
+					}
+					html += QObject::tr("Garrison %1 troops. Contingent %2 troops.<br>").arg(report.m_TroopsAtCity).arg(contingent);
+					if(populationLimit < contingent) html += QObject::tr("Population limits garrison to %1 troops.<br>").arg(populationLimit);
+					const int buildings = report.BuildingLevels(IID_BaseWeapon) + report.BuildingLevels(IID_BaseShield) + report.BuildingLevels(IID_BaseAirTerminal);
+					if(buildings > bases * 2) html += QObject::tr("All %1 military base buildings cannot be manned. %2 base flags can only support %3 buildings.<br>")
+						.arg(buildings).arg(bases).arg(bases * 2);
+				}
+			}
+		}
+	}
+	if(quint32(population) < report.m_PopOrig)
+		html += QObject::tr("Population decreased by %1 to %2.<br>").arg(report.m_PopOrig - population).arg(population);
+	else if(quint32(population) > report.m_PopOrig)
+		html += QObject::tr("Population increased by %1 to %2.<br>").arg(population - report.m_PopOrig).arg(population);
+	else html += QObject::tr("Population remained steady at %1.<br>").arg(population);
+	if(population)
+	{
+		const quint32 originalLoyal = report.m_HasLegacyDetails ? report.m_LegacyLoyalPopulation
+			: quint32(std::max(0, qRound(report.m_LoyaltyOrig * float(report.m_PopOrig))));
+		const quint32 loyal = std::min(quint32(population), originalLoyal);
+		const int percent = qRound(float(loyal) / float(population) * 100.0f);
+		bool lonely = report.m_LastVisit > 6;
+		const DgData& data = g_Au.LockDataForRead();
+		lonely = lonely && data.EmpireRole(report.EmpireId(0)) != EMPIRE_Agent;
+		g_Au.UnlockData();
+		if(report.m_LegacyOccupied)
+			html += lonely ? QObject::tr("%1 lonely citizens (%2%) remain disloyal to the occupier.<br>").arg(loyal).arg(percent)
+				: QObject::tr("%1 citizens (%2%) remain disloyal to the occupier.<br>").arg(loyal).arg(percent);
+		else html += lonely ? QObject::tr("%1 lonely citizens (%2%) are still loyal.<br>").arg(loyal).arg(percent)
+			: QObject::tr("%1 citizens (%2%) are loyal.<br>").arg(loyal).arg(percent);
+	}
 	return html;
 }
 }
@@ -348,6 +778,12 @@ AuCityReport::~AuCityReport()
 
 AuCityReport::AuCityReport(const AuCityReport& c) : m_Bank(c.m_Bank), m_Industries(c.m_Industries)
 {
+	m_HasLegacyDetails = c.m_HasLegacyDetails;
+	m_LegacyReportedPopulation = c.m_LegacyReportedPopulation;
+	m_LegacyOccupied = c.m_LegacyOccupied;
+	m_LegacyAllegianceEmpire = c.m_LegacyAllegianceEmpire;
+	m_LegacyLoyalPopulation = c.m_LegacyLoyalPopulation;
+	m_LegacyIndustryTechnology = c.m_LegacyIndustryTechnology;
 	m_LegacyAccounting = c.m_LegacyAccounting;
 	m_LegacyMoraleChange = c.m_LegacyMoraleChange;
 	m_LegacyPopulationAfter = c.m_LegacyPopulationAfter;
@@ -438,6 +874,12 @@ AuCityReport::AuCityReport(const AuCityReport& c) : m_Bank(c.m_Bank), m_Industri
 
 const AuCityReport& AuCityReport::operator=(const AuCityReport& c)
 {
+	m_HasLegacyDetails = c.m_HasLegacyDetails;
+	m_LegacyReportedPopulation = c.m_LegacyReportedPopulation;
+	m_LegacyOccupied = c.m_LegacyOccupied;
+	m_LegacyAllegianceEmpire = c.m_LegacyAllegianceEmpire;
+	m_LegacyLoyalPopulation = c.m_LegacyLoyalPopulation;
+	m_LegacyIndustryTechnology = c.m_LegacyIndustryTechnology;
 	m_AirConsumed = c.m_AirConsumed;
 	m_AirSupply = c.m_AirSupply;
 	m_AteEnoughFood = c.m_AteEnoughFood;
@@ -532,6 +974,8 @@ const AuCityReport& AuCityReport::operator=(const AuCityReport& c)
 void AuCityReport::operator>>(QDataStream& out) const
 {
 	const bool legacyAccounts = !m_LegacyAccounting.isEmpty();
+	if(m_HasLegacyDetails && (!legacyAccounts || !ValidLegacyDetails(*this)))
+	{ out.setStatus(QDataStream::WriteFailed); return; }
 	if(legacyAccounts)
 	{
 		AuLegacyCity::AccountingState accounting; QString error;
@@ -571,7 +1015,7 @@ void AuCityReport::operator>>(QDataStream& out) const
 		bits |= 0x4000;
 	out << bits;
 
-	const quint8 version = extendedLegacyFlags ? 17 : legacyAccounts ? 16 : 15;
+	const quint8 version = m_HasLegacyDetails ? 18 : extendedLegacyFlags ? 17 : legacyAccounts ? 16 : 15;
 	out << version;
 
 	out << m_AirConsumed;
@@ -672,15 +1116,39 @@ void AuCityReport::operator>>(QDataStream& out) const
 	out << m_PopWanderersArr;
 	out << m_PopWanderersDep;
 	if(legacyAccounts) out << m_LegacyAccounting << m_LegacyMoraleChange << m_LegacyPopulationAfter;
-	if(extendedLegacyFlags)
+	if(extendedLegacyFlags || m_HasLegacyDetails)
 	{
 		out << quint16(m_Flags.size());
 		for(const auto& flag : m_Flags) flag >> out;
+	}
+	if(m_HasLegacyDetails)
+	{
+		const auto& population = m_LegacyReportedPopulation;
+		if(population.moraleFactors.size() > std::size_t(AuLegacyCity::MoraleFactorType::Count)
+			|| m_LegacyIndustryTechnology.size() > 256)
+		{ out.setStatus(QDataStream::WriteFailed); return; }
+		out << qint32(population.population) << qint32(population.unemployed) << qint32(population.satisfaction)
+			<< qint32(population.moraleChange) << qint32(population.suffocated) << qint32(population.starved)
+			<< qint32(population.births) << qint32(population.immigrants) << qint32(population.emigrants)
+			<< qint32(population.hospitalShortage);
+		out << quint8(population.moraleFactors.size());
+		for(const auto& factor : population.moraleFactors)
+			out << quint8(factor.type) << qint32(factor.modifier) << qint32(factor.detail);
+		out << m_LegacyOccupied << m_LegacyAllegianceEmpire << m_LegacyLoyalPopulation;
+		out << quint16(m_LegacyIndustryTechnology.size());
+		for(auto industry = m_LegacyIndustryTechnology.cbegin(); industry != m_LegacyIndustryTechnology.cend(); ++industry)
+			out << quint8(industry.key()) << industry.value().first << industry.value().second;
 	}
 }
 
 void AuCityReport::operator<<(QDataStream& in)
 {
+	m_HasLegacyDetails = false;
+	m_LegacyReportedPopulation = AuLegacyCity::PopulationCycleResult();
+	m_LegacyOccupied = false;
+	m_LegacyAllegianceEmpire = 0;
+	m_LegacyLoyalPopulation = 0;
+	m_LegacyIndustryTechnology.clear();
 	m_LegacyAccounting.clear();
 	m_LegacyMoraleChange = 0;
 	m_LegacyPopulationAfter = 0;
@@ -704,6 +1172,8 @@ void AuCityReport::operator<<(QDataStream& in)
 	quint8 version = 0;
 	if(bits & 0x8000)
 		in >> version;
+	if(version > 18)
+	{ in.setStatus(QDataStream::ReadCorruptData); return; }
 
 	in >> m_AirConsumed;
 	if(version < 14)
@@ -1083,8 +1553,9 @@ void AuCityReport::operator<<(QDataStream& in)
 	{
 		quint16 count = 0;
 		in >> count;
-		if(version != 17 || in.status() != QDataStream::Ok || m_CityType != CITY_City_Obsolete
-			|| m_LegacyAccounting.isEmpty() || count <= 255 || count > 4096 || m_Flags.size() != 255)
+		if(in.status() != QDataStream::Ok || m_CityType != CITY_City_Obsolete
+			|| m_LegacyAccounting.isEmpty() || count > 4096 || (version == 17 && count <= 255)
+			|| m_Flags.size() != std::min(int(count), 255))
 		{ in.setStatus(QDataStream::ReadCorruptData); return; }
 		AuFlagArray flags;
 		for(quint16 index = 0; index < count; ++index)
@@ -1097,6 +1568,50 @@ void AuCityReport::operator<<(QDataStream& in)
 			flags.append(flag);
 		}
 		m_Flags = flags;
+	}
+	if(version >= 18)
+	{
+		auto& population = m_LegacyReportedPopulation;
+		in >> population.population >> population.unemployed >> population.satisfaction
+			>> population.moraleChange >> population.suffocated >> population.starved
+			>> population.births >> population.immigrants >> population.emigrants >> population.hospitalShortage;
+		quint8 count = 0;
+		in >> count;
+		if(count > quint8(AuLegacyCity::MoraleFactorType::Count))
+		{ in.setStatus(QDataStream::ReadCorruptData); return; }
+		for(quint8 index = 0; index < count; ++index)
+		{
+			quint8 type = 0;
+			qint32 modifier = 0, detail = 0;
+			in >> type >> modifier >> detail;
+			if(type >= quint8(AuLegacyCity::MoraleFactorType::Count))
+			{ in.setStatus(QDataStream::ReadCorruptData); return; }
+			AuLegacyCity::MoraleFactor factor;
+			factor.type = AuLegacyCity::MoraleFactorType(type);
+			factor.modifier = int(modifier);
+			factor.detail = int(detail);
+			population.moraleFactors.push_back(factor);
+		}
+		in >> m_LegacyOccupied >> m_LegacyAllegianceEmpire >> m_LegacyLoyalPopulation;
+		quint16 industries = 0;
+		in >> industries;
+		if(industries > 256 || population.population < 0 || population.unemployed < 0
+			|| population.satisfaction < -20 || population.satisfaction > 20
+			|| population.suffocated < 0 || population.starved < 0 || population.births < 0
+			|| population.immigrants < 0 || population.emigrants < 0
+			|| population.hospitalShortage < 0 || population.hospitalShortage > 2)
+		{ in.setStatus(QDataStream::ReadCorruptData); return; }
+		for(quint16 index = 0; index < industries; ++index)
+		{
+			quint8 industry = 0, minimum = 0, maximum = 0;
+			in >> industry >> minimum >> maximum;
+			if(minimum > maximum || m_LegacyIndustryTechnology.contains(INDUSTRYID(industry)))
+			{ in.setStatus(QDataStream::ReadCorruptData); return; }
+			m_LegacyIndustryTechnology.insert(INDUSTRYID(industry), qMakePair(minimum, maximum));
+		}
+		if(in.status() == QDataStream::Ok && !ValidLegacyDetails(*this))
+			in.setStatus(QDataStream::ReadCorruptData);
+		m_HasLegacyDetails = in.status() == QDataStream::Ok;
 	}
 }
 
@@ -2115,9 +2630,15 @@ QString AuCityReport::ReportHtml(const AuCityReport& prevReport, bool mailFormat
 	return "";
 }
 
-QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFormat) const
+QString AuCityReport::LegacyAlertMailHtml() const
+{
+	return m_CityType == CITY_City_Obsolete ? ReportCapitol(*this, true, true) : QString();
+}
+
+QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFormat, bool alertOnly) const
 {
 	using CommoditySubKey = CityReportCommoditySubKey;
+	const bool legacyFormat = m_CityType == CITY_City_Obsolete;
 	QString rpt;	// This will be our return value.
 	if(mailFormat)
 	{
@@ -2153,7 +2674,8 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 	}
 
 	// Information about the city.
-	rpt += "<b>" + m_Name + "</b><p style=\"margin-left: 10px;\">";
+	rpt += "<b>" + m_Name + (legacyFormat ? "</b><div style=\"margin-left: 10px;\">"
+		: "</b><p style=\"margin-left: 10px;\">");
 	rpt += m_PlanetName + ", " + m_PlanetDesc + "<br>";		// Planet
 	rpt += m_SystemName + ' ' + m_SystemDesc + "<br>";
 	rpt += m_SectorName + ' ' + m_SectorDesc + "<br>";	// Sector
@@ -2167,13 +2689,24 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 	rpt += QObject::tr("%1, Resource Zone %2").arg(strLongLat).arg(m_Zone+1);
 	if(m_IsCapitalOfEmpire)
 		rpt += QObject::tr("<br>Empire Capital City");
-	if(m_IsCapitalOfGalaxy)
+	if(m_IsCapitalOfGalaxy && !legacyFormat)
 		rpt += QObject::tr("<br>Galaxy Capital City");
 	if(m_IsCapitalOfSector)
 		rpt += QObject::tr("<br>Sector Capital City");
-	if(!m_FounderId.IsNull())
+	if(!m_FounderId.IsNull() && !legacyFormat && !g_Au.IsLegacyGeneration())
 		rpt += QObject::tr("<br>Founder %1 <i>%2</i>").arg(m_FounderName).arg(m_FounderId.StringId());
-	rpt += "</p>";
+	rpt += legacyFormat ? "<br></div>" : "</p>";
+	if(legacyFormat && m_LegacyOccupied)
+	{
+		QString allegiance;
+		const auto& data = g_Au.LockDataForRead();
+		data.EmpireName(m_LegacyAllegianceEmpire, allegiance);
+		g_Au.UnlockData();
+		rpt += QObject::tr("<b style=\"color: rgb(200, 64, 11);\">OCCUPIED CITY</b><div style=\"margin-left: 10px;\">");
+		rpt += QObject::tr("<span style=\"color: rgb(200, 64, 11);\">The citizens remain loyal to %1. Production and construction are slowed. Buildings and roads may not be planned or demolished until the citizens change their allegiance to your empire.</span><br>")
+			.arg(allegiance);
+		rpt += "</div>";
+	}
 
 	// When reporting distress situations, we like to see the reasons right at the top of the  This index will
 	// help us to insert it there later.
@@ -2183,7 +2716,25 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 	// That is, one or more developed tiles per city report may be be deleted, saving the town square for last.
 	// When the town square is deleted, this city atom dies and the terrain itself becomes subject to decay.
 	int decayMod = 0;
-	if(HasDecay())
+	if(legacyFormat && HasDecay())
+	{
+		rpt += QObject::tr("<b>DECAY</b><div style=\"margin-left: 10px;\">");
+		if(m_PopOrig < 2) rpt += QObject::tr("The city is deserted.<br>");
+		for(int index = 0; index < (m_PopOrig < 2 ? 3 : 2); ++index)
+		{
+			if(m_Decayed[index] == IID_None) continue;
+			if(m_PopOrig >= 2)
+				rpt += index == 0 ? QObject::tr("There are more homes than the citizens can maintain.<br>")
+					: QObject::tr("There are more businesses than the citizens can maintain.<br>");
+			const auto& data = g_Au.LockDataForRead();
+			const QString industry = data.IndustryName(m_Decayed[index]);
+			g_Au.UnlockData();
+			rpt += QObject::tr("%1 crumbled away.<br>").arg(industry);
+			++decayMod;
+		}
+		rpt += "</div>";
+	}
+	else if(HasDecay())
 	{
 		rpt += QObject::tr("<b>DECAY</b><p style=\"margin-left: 10px;\">");
 		rpt += QObject::tr("The city is abandoned.<br>");
@@ -2213,6 +2764,14 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 			rpt += g_Au.DecodeUTCStrings(eventRpt);		// Report must decode UTC strings now.
 	}
 
+	if(legacyFormat && alertOnly)
+	{
+		// DaCity::CityCycle 0x2749d0 sends a brief automatic alert. The full
+		// city report remains available through an explicit mail request.
+		if(!m_DistressRpt.isEmpty()) rpt.insert(distressIdx, m_DistressRpt);
+		return LegacyReportSpacing(rpt);
+	}
+
 	// Get info about the locals.
 	bool isAlienCity = false;									// true if this city is inhabited by aliens on a habitable world
 	if(m_IsHabitablePlanet && !m_Citizens.empty() && Citizen().IsAlien())
@@ -2229,46 +2788,21 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 	// Tally homes.
 	unsigned int homesTotal = m_HomesLg + m_HomesMd + m_HomesSm;
 	const bool legacyCity = m_CityType == CITY_City_Obsolete && !m_LegacyAccounting.isEmpty();
-	if(legacyCity)
+	if(legacyFormat)
 		homesTotal = Homes(IID_Apartment) + Homes(IID_Hotel) + Homes(IID_Farm) + Homes(IID_House) + Homes(IID_Orchard);
 
 	// Adjust satisfaction based on various factors.
-	rpt += QObject::tr("<b>MORALE %1</b><p style=\"margin-left: 10px;\">").arg(Morale());
 	int iSatChange = 0;
 	int req_hospitals = 0;
-	if(legacyCity)
+	if(legacyFormat)
 	{
-		// The old city already applied its original morale and population
-		// rules. Replaying modern rules here gives incorrect guidance.
-		iSatChange = m_LegacyMoraleChange;
-		rpt += QObject::tr("Satisfaction %1 to %2.<br>").arg(m_SatOrig)
-			.arg(m_PopOrig ? std::max(-20, std::min(20, int(m_SatOrig) + iSatChange)) : 1);
-		if(m_PopOrig)
-		{
-			if(!m_HasBreathableAtmo && m_AirSupply < m_PopOrig)
-				rpt += QObject::tr("More air is needed.<br>");
-			if(!m_AteEnoughFood) rpt += QObject::tr("More food is needed.<br>");
-			if(m_PopOrig > homesTotal && !m_HasDestroyedBuildings)
-				rpt += QObject::tr("More homes needed: %L1.<br>").arg(m_PopOrig - homesTotal);
-			if(!m_HasDestroyedBuildings)
-			{
-				const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
-				for(const auto& service : {std::pair<int, int>{112, 175}, {105, 50}, {102, 200}, {120, 45},
-					{103, 100}, {121, 80}, {114, 90}, {124, 60}, {104, 55}, {125, 70}, {113, 150}})
-				{
-					if(!catalogue) break;
-					const auto* industry = catalogue->Industry(AuLegacyCity::IndustryId(service.first));
-					const int deficit = int(m_PopOrig / service.second)
-						- BuildingLevels(INDUSTRYID(catalogue->RuntimeIndustryId(AuLegacyCity::IndustryId(service.first))));
-					if(industry && deficit > 0)
-						rpt += QObject::tr("%1 wanted: %2.<br>").arg(industry->name.toHtmlEscaped()).arg(deficit);
-				}
-			}
-		}
-		else rpt += QObject::tr("No citizens.<br>");
+		const auto population = LegacyReportPopulation(*this);
+		iSatChange = population.moraleChange;
+		rpt += LegacyMoraleHtml(*this, population);
 	}
 	else
 	{
+	rpt += QObject::tr("<b>MORALE %1</b><p style=\"margin-left: 10px;\">").arg(Morale());
 	if(m_PopOrig)
 	{
 		// Air/Power Consumption
@@ -2410,18 +2944,18 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 			break;
 		case FOUNDER_Empire:
 			iSatChange += 2;
-			rpt += QObject::tr("+2 Founder is a famous city planner in our empire.<br>");
+			if(!g_Au.IsLegacyGeneration()) rpt += QObject::tr("+2 Founder is a famous city planner in our empire.<br>");
 			break;
 		case FOUNDER_Friend:
-			rpt += QObject::tr("+1 Founder remains an esteemed friend of our empire.<br>");
+			if(!g_Au.IsLegacyGeneration()) rpt += QObject::tr("+1 Founder remains an esteemed friend of our empire.<br>");
 			iSatChange += 1;
 			break;
 		case FOUNDER_Neutral:
-			rpt += QObject::tr("-1 Forsaken. Our empire is neutral to the founder's empire.<br>");
+			if(!g_Au.IsLegacyGeneration()) rpt += QObject::tr("-1 Forsaken. Our empire is neutral to the founder's empire.<br>");
 			iSatChange -= 1;
 			break;
 		case FOUNDER_Enemy:
-			rpt += QObject::tr("-2 Occupied. Our empire is an enemy of the founder.<br>");
+			if(!g_Au.IsLegacyGeneration()) rpt += QObject::tr("-2 Occupied. Our empire is an enemy of the founder.<br>");
 			iSatChange -= 2;
 			break;
 		}
@@ -2717,9 +3251,12 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 		rpt += QObject::tr("No citizens.<br>");
 	}
 
-	if(rpt.right(4) == "<br>")
-		rpt = rpt.left(rpt.count() - 4);	// Drop the trailing <br>.
-	rpt += "</p>";
+	if(!legacyFormat)
+	{
+		if(rpt.right(4) == "<br>")
+			rpt = rpt.left(rpt.count() - 4);	// Drop the trailing <br>.
+		rpt += "</p>";
+	}
 
 	// Adjust morale now so we can use the nu value to affect the population growth.
 	int nusat = iSatChange;
@@ -2729,19 +3266,13 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 		nusat = 127;
 
 	// Report population changes, based on nu morale, starvation and suffocation.
-	rpt += QObject::tr("<b>POPULATION %L1</b><p style=\"margin-left: 10px;\">")
-		.arg(legacyCity ? quint32(m_LegacyPopulationAfter) : m_PopOrig);
-	if(legacyCity)
-	{
-		const qint64 change = qint64(m_LegacyPopulationAfter) - m_PopOrig;
-		if(change) rpt += QObject::tr("Change %L1, from %L2 citizens.<br>").arg(change).arg(m_PopOrig);
-		else rpt += QObject::tr("No change.<br>");
-	}
-	else if(m_PopBirths || m_PopDeaths ||
+	rpt += legacyFormat ? QObject::tr("<b>POPULATION</b><div style=\"margin-left: 10px;\">")
+		: QObject::tr("<b>POPULATION %L1</b><p style=\"margin-left: 10px;\">").arg(m_PopOrig);
+	if(!legacyFormat && (m_PopBirths || m_PopDeaths ||
 			m_PopIndigenousArr || m_PopIndigenousDep ||
 			m_PopSeafarersArr || m_PopSeafarersDep ||
 			m_PopTravellersArr || m_PopTravellersDep ||
-			m_PopWanderersArr || m_PopWanderersDep)
+			m_PopWanderersArr || m_PopWanderersDep))
 	{
 		// Births and deaths.
 		if(m_PopBirths)
@@ -2842,7 +3373,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 				rpt += QObject::tr("-1 %2 A citizen departed to travel the stars.<br>").arg(g_Au.MiddleDotSymbol());
 		}
 	}
-	else
+	else if(!legacyFormat)
 		rpt += QObject::tr("No change.<br>");
 
 	// Describe the locals.
@@ -2879,20 +3410,26 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 	}
 
 	// Report if the parent planet has a ship captain available.
-	if(!m_CaptName.isEmpty())
-		rpt += QObject::tr("University graduate %1 is ready for command assignment aboard a spacecraft.<br>")
+	if(!m_CaptName.isEmpty() && (!legacyFormat || !m_LegacyOccupied))
+		rpt += (legacyFormat ? QObject::tr("Star Fleet Academy Cadet %1 is ready for assignment aboard a spacecraft.<br>")
+			: QObject::tr("University graduate %1 is ready for command assignment aboard a spacecraft.<br>"))
 			.arg(m_CaptName);
 
-	if(rpt.right(4) == "<br>")
+	if(legacyFormat)
+		rpt += LegacyPopulationHtml(*this, homesTotal);
+	else if(rpt.right(4) == "<br>")
 		rpt = rpt.left(rpt.count() - 4);	// Drop the trailing <br>.
-	rpt += "</p>";
+	rpt += legacyFormat ? "</div>" : "</p>";
 
 	// Homes
-	if(m_CityType == CITY_City_Obsolete)
+	if(legacyFormat)
 	{
-		rpt += QObject::tr("<b>HOMES %1</b><p style=\"margin-left:10px;\">Apartments %2<br>Condominiums %3<br>Farms %4<br>Houses %5<br>Orchards %6</p>")
-			.arg(Homes(IID_Apartment) + Homes(IID_Hotel) + Homes(IID_Farm) + Homes(IID_House) + Homes(IID_Orchard))
-			.arg(Homes(IID_Apartment)).arg(Homes(IID_Hotel)).arg(Homes(IID_Farm)).arg(Homes(IID_House)).arg(Homes(IID_Orchard));
+		rpt += QObject::tr("<b>LIVING CONDITIONS</b><div style=\"margin-left: 10px;\">Jobs %1<div style=\"margin-left: 10px;\">Non-Construction %2<br>Construction %3")
+			.arg(m_Jobs + m_JobsRepair).arg(m_JobsNonConst).arg(m_Jobs - m_JobsNonConst);
+		if(m_JobsRepair) rpt += QObject::tr("<br>Repair %1").arg(m_JobsRepair);
+		rpt += QObject::tr("</div></div><div style=\"margin-left: 10px;\">Homes %1<div style=\"margin-left: 10px;\">Apartments %2<br>Condominiums %3<br>Farms %4<br>Houses %5<br>Orchards %6</div></div><div style=\"margin-left: 10px;\">Food %7<br></div>")
+			.arg(homesTotal).arg(Homes(IID_Apartment)).arg(Homes(IID_Hotel)).arg(Homes(IID_Farm))
+			.arg(Homes(IID_House)).arg(Homes(IID_Orchard)).arg(m_FoodUnits);
 	}
 	else rpt += QObject::tr("<b>HOMES %6</b>"
 			"<p style=\"margin-left: 10px;\">"
@@ -2906,10 +3443,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 		.arg(m_HomesLg);
 
 	// Jobs
-	if(m_CityType == CITY_City_Obsolete)
-		rpt += QObject::tr("<b>JOBS %1</b><p style=\"margin-left:10px;\">Non-Construction %2<br>Construction %3<br>Repair %4</p>")
-			.arg(m_Jobs + m_JobsRepair).arg(m_JobsNonConst).arg(m_Jobs - m_JobsNonConst).arg(m_JobsRepair);
-	else rpt += QObject::tr("<b>JOBS %1</b>"
+	if(!legacyFormat) rpt += QObject::tr("<b>JOBS %1</b>"
 			"<p style=\"margin-left: 10px;\">"
 			"Construction %2<br>"
 			"Manufacturing %3<br>"
@@ -2925,6 +3459,16 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 	// Power status
 	if(m_iCapacitor)
 	{
+		if(legacyFormat)
+		{
+			AuLegacyCity::AccountingState accounting; QString error;
+			AuLegacyCity::DecodeAccounting(m_LegacyAccounting, accounting, error);
+			rpt += QObject::tr("<b>POWER RESERVE</b><div style=\"margin-left: 10px;\">Total Power Consumed %1<br>%2% Reserve<br>Reserve Power %3<br>Reserve Capacity %4<br></div>")
+				.arg(accounting.powerRequested).arg(quint64(m_Power) * 100 / m_iCapacitor)
+				.arg(m_Power).arg(m_iCapacitor);
+		}
+		else
+		{
 		rpt += QObject::tr("<b>POWER RESERVE %L1</b><p style=\"margin-left: 10px;\">").arg(m_Power);
 		rpt += QObject::tr("Reserve Capacity %L1<br>").arg(m_iCapacitor);
 		if(!m_LegacyAccounting.isEmpty())
@@ -2936,6 +3480,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 		int percent = Percent(m_Power, m_iCapacitor);
 		rpt += QObject::tr("%1% Reserve").arg(percent);
 		rpt += "</p>";
+		}
 	}
 
 	// Show info about taxes accumulated and spent locally.
@@ -2953,12 +3498,14 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 		rpt += m_Bank.HtmlReport();
 		rpt += "</p>";
 	}
+	const int legacyProductionIndex = rpt.length();
 
 	// Spacecraft - All ships in town and nu ships in orbit.
 	if(!m_Ships.isEmpty())
 	{
-		rpt += QObject::tr("<b>SPACECRAFT</b><p style=\"margin-left: 10px;\">");
-		if(m_Industries.HasSensors() || m_Industries.Levels(IID_Observatory))
+		rpt += legacyFormat ? QObject::tr("<b>SPACECRAFT</b><div style=\"margin-left: 10px;\">")
+			: QObject::tr("<b>SPACECRAFT</b><p style=\"margin-left: 10px;\">");
+		if(!legacyFormat && (m_Industries.HasSensors() || m_Industries.Levels(IID_Observatory)))
 			rpt += QObject::tr("All spacecraft in orbit and in this city, regardless of empire.<br>");
 		else
 			rpt += QObject::tr("Empire-flagged spacecraft in orbit and all spacecraft in this city regardless of empire.<br>");
@@ -2997,7 +3544,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 				.arg(note);
 		}
 		rpt += "</tbody></table><br>";
-		rpt += "</p>";
+		rpt += legacyFormat ? "</div>" : "</p>";
 	}
 
 	// Make a map of the facilities table contents so it will be alphabetized.
@@ -3012,6 +3559,45 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 		g_Au.UnlockData();
 		facil.insert(ind, AuCityIndustryIID(*ii, ii.key()));
 	}
+	if(legacyFormat)
+	{
+		if(!facil.isEmpty())
+		{
+			rpt += QObject::tr("<b>FACILITIES</b><div style=\"margin-left: 10px;\"><table border=\"0\" cellpadding=\"2\" cellspacing=\"0\" style=\"background-color: rgb(7, 62, 94);\"><tbody>");
+			rpt += QObject::tr("<tr><td><b>Name</b></td><td><b>TL</b></td><td><b>Levels</b></td><td></td><td><b>Name</b></td><td><b>TL</b></td><td><b>Levels</b></td></tr>");
+			int column = 0;
+			for(QMap<QString, AuCityIndustryIID>::const_iterator it = facil.cbegin(); it != facil.cend(); ++it)
+			{
+				if(column == 0) rpt += "<tr>";
+				else rpt += "<td valign=\"top\"></td>";
+				const INDUSTRYID industry = it.value().IndustryId();
+				const QPair<quint8, quint8> technology = m_LegacyIndustryTechnology.value(industry);
+				const int previous = prevReport.m_LegacyIndustryTechnology.value(industry).second;
+				const QString levels = technology.first == technology.second ? QString::number(technology.second + 1)
+					: QString("%1-%2").arg(technology.first + 1).arg(technology.second + 1);
+				const bool changed = int(technology.second) != previous;
+				const QString color = technology.second > previous ? "64, 255, 64" : "255, 64, 64";
+				const QString icon = QString("<img height=\"32\" align=\"left\" src=\"qrc%1\">").arg(DbIndustry::BitmapName(industry));
+				QMap<QString, AuCityIndustryIID>::const_iterator next = it;
+				++next;
+				QString name = icon + ' ' + it.key(), tech = levels;
+				if(changed)
+				{
+					if(column == 0 && next == facil.cend())
+						name = QString("<span style=\"color: rgb(%1);\"><b>%2  %3</b></span>").arg(color).arg(icon).arg(it.key());
+					else name = QString("<span style=\"color: rgb(%1);\">%2 <b>%3</b></span>").arg(color).arg(icon).arg(it.key());
+					tech = QString("<span style=\"color: rgb(%1);\"><b>%2</b></span>").arg(color).arg(levels);
+				}
+				rpt += QString("<td valign=\"top\">%1</td><td valign=\"top\">%2</td><td valign=\"top\">%3</td>")
+					.arg(name).arg(tech).arg(it.value().Levels());
+				if(column == 1 || next == facil.cend()) rpt += "</tr>";
+				column = 1 - column;
+			}
+			rpt += "</tbody></table><br></div>";
+		}
+	}
+	else
+	{
 	rpt += QObject::tr("<b>FACILITIES</b><p style=\"margin-left: 10px;\">");
 	if(!facil.isEmpty())
 	{
@@ -3076,11 +3662,13 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 		rpt += "</tbody></table><br>";
 	}
 	rpt += "</p>";
+	}
 
 	// Vehicles
 	if(!m_Vehicles.empty())
 	{
-		rpt += QObject::tr("<b>VEHICLES</b><p style=\"margin-left: 10px;\">");
+		rpt += legacyFormat ? QObject::tr("<b>VEHICLES</b><div style=\"margin-left: 10px;\">")
+			: QObject::tr("<b>VEHICLES</b><p style=\"margin-left: 10px;\">");
 		rpt += QObject::tr("Vehicles available to construction and manufacturing processes.<br>");
 
 		// Make a table of the vehicles available.
@@ -3093,14 +3681,16 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 			rpt += QObject::tr("<tr><td valign=\"top\"><img height=\"32\" align=\"middle\" src=\"qrc%1\"> %2</td></tr>")
 				.arg(g_Au.CommodityBitmapName(*vi)).arg(g_Au.CommodityName(*vi));
 		rpt += "</tbody></table><br>";
-		rpt += "</p>";
+		rpt += legacyFormat ? "</div>" : "</p>";
 	}
 
 	// Inventory
-	if(!m_Inventory->empty() || !m_Tools->empty())
+	if(legacyFormat ? m_iStorage != 0 : !m_Inventory->empty() || !m_Tools->empty())
 	{
-		rpt += QObject::tr("<b>INVENTORY</b><p style=\"margin-left: 10px;\">");
-		if(m_PopOrig)
+		rpt += legacyFormat ? QObject::tr("<b>INVENTORY</b><div style=\"margin-left: 10px;\">")
+			: QObject::tr("<b>INVENTORY</b><p style=\"margin-left: 10px;\">");
+		if(legacyFormat) rpt += QObject::tr("Storage Capacity Per Commodity %1<br>").arg(m_iStorage);
+		else if(m_PopOrig)
 		{
 			if(!m_HasBreathableAtmo)
 			{
@@ -3122,6 +3712,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 		QMultiMap<QString, QMap<CommoditySubKey, QString> > invTool;	// Key is commodity name.
 		QMultiMap<QString, QMap<CommoditySubKey, QString> > invToolInUse;	// Key is commodity name.
 		QMultiMap<QString, QMap<CommoditySubKey, QString> > invWeapon;	// Key is commodity name.
+		QMultiMap<QString, QMap<CommoditySubKey, QString> > invTechnology;
 		QMap<QString, QString> bitmap;		// Key is commodity name.
 
 		/*
@@ -3154,10 +3745,16 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 				pi = &invWeapon;
 			else if((*it).second->IsArmorHelmetClothingOrHat())
 				pi = &invArmor;
-			else if((*it).second->CanBeEaten())
+			else if(legacyFormat ? (*it).second->CanBeEaten(Citizen().EcoRole()) : (*it).second->CanBeEaten())
 				pi = &invFood;
 			else if((*it).second->IsMedical())
 				pi = &invMed;
+			else if(legacyFormat && AuLegacyCityCatalogue::BuiltIn())
+			{
+				AuLegacyCity::CommodityId historical;
+				pi = AuLegacyCityCatalogue::BuiltIn()->HistoricalCommodityId(quint16((*it).second->CommodityId()), historical)
+					&& AuLegacyCity::IsProductionTechnology(historical.value) ? &invTechnology : &inven;
+			}
 			else
 				pi = &inven;
 
@@ -3420,16 +4017,34 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 			}
 			rpt += "</tbody></table><br>";
 		}
-		rpt += "</p>";
+		if(!invTechnology.empty())
+		{
+			rpt += QObject::tr("<table border=\"0\" cellpadding=\"2\" cellspacing=\"0\" style=\"background-color: rgb(49, 36, 94);\"><tbody><tr><td><b>Technology</b></td><td></td></tr>");
+			for(QMultiMap<QString, QMap<CommoditySubKey, QString> >::const_iterator it = invTechnology.cbegin(); it != invTechnology.cend(); ++it)
+			{
+				QString stock;
+				for(QMap<CommoditySubKey, QString>::const_iterator row = it.value().cbegin(); row != it.value().cend(); ++row)
+				{
+					if(!stock.isEmpty()) stock += "<br>";
+					stock += row.value();
+				}
+				rpt += QString("<tr><td valign=\"top\"><img height=\"16\" align=\"middle\" src=\"qrc%3\"> %1</td><td valign=\"top\">%2</td></tr>")
+					.arg(it.key()).arg(stock).arg(bitmap.value(it.key()));
+			}
+			rpt += "</tbody></table><br>";
+		}
+		rpt += legacyFormat ? "</div>" : "</p>";
 	}
 
 	// Research and Development
 	// Make a map of the patent development processes in progress so it will be alphabetized.
+	const int legacyResearchIndex = rpt.length();
 	if(!m_PatentRnD.isEmpty())
 	{
-		rpt += QObject::tr("<b>RESEARCH AND DEVELOPMENT</b><p style=\"margin-left: 10px;\">");
-		rpt += QObject::tr("<table border=\"0\" cellpadding=\"2\" cellspacing=\"0\" style=\"background-color: rgb(41, 41, 82);\">"
-				"<tbody>");
+		rpt += legacyFormat ? QObject::tr("<b>RESEARCH AND DEVELOPMENT</b><div style=\"margin-left: 10px;\">")
+			: QObject::tr("<b>RESEARCH AND DEVELOPMENT</b><p style=\"margin-left: 10px;\">");
+		rpt += legacyFormat ? QStringLiteral("<table border=\"0\" cellpadding=\"2\" cellspacing=\"0\" style=\"background-color: rgb(82, 49, 41);\"><tbody>")
+			: QObject::tr("<table border=\"0\" cellpadding=\"2\" cellspacing=\"0\" style=\"background-color: rgb(41, 41, 82);\"><tbody>");
 		rpt += QObject::tr("<tr>"
 				"<td><b>Technology</b></td>"
 				"<td><b>Processes</b></td>"
@@ -3443,7 +4058,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 				.arg(ri.key()).arg(ri.value());
 		}
 		rpt += "</tbody></table><br>";
-		rpt += "</p>";
+		rpt += legacyFormat ? "</div>" : "</p>";
 	}
 
 	// Spacecraft Manufacturing Potential
@@ -3465,7 +4080,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 				m_IID1 = iid1;
 			}
 		};
-		AuShipComponent shipComponents[] =
+		QVector<AuShipComponent> shipComponents =
 		{
 			AuShipComponent(CID_Adamantine, CID_Hammer, IID_Smelter),
 			AuShipComponent(CID_AtmosphereCondenserBayModule, CID_FittingWrench, IID_AirportRepairShop),
@@ -3519,14 +4134,36 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 			AuShipComponent(CID_WormholePNFTLDriveModule, CID_FittingWrench, IID_AirportRepairShop),
 			AuShipComponent(CID_WormholePNNFTLDriveModule, CID_FittingWrench, IID_AirportRepairShop),
 		};
-		int shipComponentCount = sizeof(shipComponents)/sizeof(AuShipComponent);
+		if(legacyFormat)
+		{
+			// The original 21 rows, in their report order. These are historical
+			// commodity/industry IDs and must cross the catalogue mapping.
+			const int originalComponents[][4] = {
+				{5,123,83,0}, {271,128,0,0}, {2,125,74,0}, {227,229,79,0}, {27,127,75,0},
+				{268,125,75,0}, {226,135,75,0}, {102,136,77,0}, {228,230,75,0}, {64,135,84,0},
+				{111,128,50,0}, {146,4,86,0}, {264,229,79,0}, {50,129,79,82}, {51,4,86,0},
+				{266,267,81,0}, {63,124,82,0}, {269,270,75,0}, {79,126,47,0}, {145,4,86,0}, {265,229,79,0}
+			};
+			shipComponents.clear();
+			const AuLegacyCityCatalogue* catalogue = AuLegacyCityCatalogue::BuiltIn();
+			if(catalogue)
+				for(const auto& row : originalComponents)
+					shipComponents.append(AuShipComponent(COMMODITYID(catalogue->RuntimeCommodityId(AuLegacyCity::CommodityId(row[0]))),
+						COMMODITYID(catalogue->RuntimeCommodityId(AuLegacyCity::CommodityId(row[1]))),
+						INDUSTRYID(catalogue->RuntimeIndustryId(AuLegacyCity::IndustryId(row[2]))),
+						INDUSTRYID(catalogue->RuntimeIndustryId(AuLegacyCity::IndustryId(row[3])))));
+		}
+		const int shipComponentCount = shipComponents.size();
 
-		rpt += QObject::tr("<b>SPACECRAFT MANUFACTURING POTENTIAL</b><p style=\"margin-left: 10px;\">");
+		rpt += legacyFormat ? QObject::tr("<b>SPACECRAFT MANUFACTURING POTENTIAL</b><div style=\"margin-left: 10px;\">")
+			: QObject::tr("<b>SPACECRAFT MANUFACTURING POTENTIAL</b><p style=\"margin-left: 10px;\">");
+		if(legacyFormat) rpt += QObject::tr("Spacecraft Factory TL%1<br>").arg(m_LegacyIndustryTechnology.value(IID_SpacecraftFactory).second + 1);
 		if(!m_Inventory->empty())
 		{
 			rpt += QObject::tr("<table border=\"0\" cellpadding=\"2\" cellspacing=\"0\" style=\"background-color: "
 					"rgb(36, 48, 94);\"><tbody>");
-			rpt += QObject::tr("<tr>"
+			rpt += legacyFormat ? QObject::tr("<tr><td><b>Component</b></td><td><b>TL</b></td><td><b>Industry</b></td><td><b>TL</b></td><td><b>Tool</b></td></tr>")
+				: QObject::tr("<tr>"
 					"<td><b>Component</b></td>"
 					"<td><b>Q</b></td>"
 					"<td><b>Industry</b></td>"
@@ -3544,7 +4181,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 					rpt += QString("<td valign=\"top\"><img height=\"16\" align=\"middle\" src=\"qrc%1\"> %2</td><td valign=\"top\">%3</td>")
 						.arg(g_Au.CommodityBitmapName(shipComponents[scomp].m_Component))
 						.arg(g_Au.CommodityName(shipComponents[scomp].m_Component))
-						.arg((*compI).second->Quality());
+						.arg(legacyFormat ? (*compI).second->TechLevel() + 1 : (*compI).second->Quality());
 				else
 					rpt += QString("<td valign=\"top\"><img height=\"16\" align=\"middle\" src=\"qrc%1\"> <b>No %2</b></td><td valign=\"top\"></td>")
 						.arg(g_Au.CommodityBitmapName(shipComponents[scomp].m_Component))
@@ -3559,6 +4196,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 					rpt += QString("<td valign=\"top\"><img height=\"16\" align=\"middle\" src=\"qrc%3\"> %1</td>")
 						.arg(s0)
 						.arg(":data/c_Spacecraft.png");
+					if(legacyFormat) rpt += "<td valign=\"top\"></td>";
 				}
 				else if(shipComponents[scomp].m_IID1 == IID_None)
 				{
@@ -3575,6 +4213,8 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 
 					rpt += QString("<td valign=\"top\">%1</td>")
 						.arg(s0);
+					if(legacyFormat) rpt += QString("<td valign=\"top\">%1</td>")
+						.arg(BuildingLevels(shipComponents[scomp].m_IID0) ? QString::number(m_LegacyIndustryTechnology.value(shipComponents[scomp].m_IID0).second + 1) : QString());
 				}
 				else
 				{
@@ -3601,6 +4241,9 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 					rpt += QString("<td valign=\"top\">%1<br>%2</td>")
 						.arg(s0)
 						.arg(s1);
+					if(legacyFormat) rpt += QString("<td valign=\"top\">%1<br>%2</td>")
+						.arg(BuildingLevels(shipComponents[scomp].m_IID0) ? QString::number(m_LegacyIndustryTechnology.value(shipComponents[scomp].m_IID0).second + 1) : QString())
+						.arg(BuildingLevels(shipComponents[scomp].m_IID1) ? QString::number(m_LegacyIndustryTechnology.value(shipComponents[scomp].m_IID1).second + 1) : QString());
 				}
 
 				// Tool
@@ -3616,13 +4259,21 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 				rpt += QString("</tr>");
 			}
 			g_Au.UnlockData();
-			rpt += "</tbody></table><br>";
+			rpt += legacyFormat ? "</tbody></table>" : "</tbody></table><br>";
 		}
-		rpt += "</p>";
+		rpt += legacyFormat ? "<br></div>" : "</p>";
+	}
+	if(legacyFormat)
+	{
+		// In 2016 the production sections preceded spacecraft/facilities and
+		// inventory. Reuse their rendering while retaining the modern order.
+		const QString production = rpt.mid(legacyResearchIndex);
+		rpt.truncate(legacyResearchIndex);
+		rpt.insert(legacyProductionIndex, production);
 	}
 
 	// Patents
-	if(!m_Patents.empty())
+	if(!legacyFormat && !m_Patents.empty())
 	{
 		rpt += QObject::tr("<b>PATENTS</b><p style=\"margin-left: 10px;\">");
 		rpt += QObject::tr("Patents available to manufacturing processes.<br>");
@@ -3649,7 +4300,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 	// Insert distress information at the head of the report.
 	if(!m_DistressRpt.isEmpty())
 		rpt.insert(distressIdx, m_DistressRpt);
-	return rpt;
+	return legacyFormat ? LegacyReportSpacing(rpt) : rpt;
 }
 
 QString AuCityReport::ReportHQ(const AuCityReport& prevReport, bool mailFormat) const
@@ -3698,7 +4349,7 @@ QString AuCityReport::ReportHQ(const AuCityReport& prevReport, bool mailFormat) 
 
 	// Longitude and latitude coordinates.
 	rpt += QObject::tr("Headquarters at %1").arg(m_LL.ToString());
-	if(!m_FounderId.IsNull())
+	if(!m_FounderId.IsNull() && !g_Au.IsLegacyGeneration())
 		rpt += QObject::tr("<br>Founder %1 <i>%2</i>").arg(m_FounderName).arg(m_FounderId.StringId());
 	rpt += "</p>";
 
@@ -3901,18 +4552,18 @@ QString AuCityReport::ReportHQ(const AuCityReport& prevReport, bool mailFormat) 
 			break;
 		case FOUNDER_Empire:
 			iSatChange += 2;
-			rpt += QObject::tr("+2 Founder is a famous city planner in our empire.<br>");
+			if(!g_Au.IsLegacyGeneration()) rpt += QObject::tr("+2 Founder is a famous city planner in our empire.<br>");
 			break;
 		case FOUNDER_Friend:
-			rpt += QObject::tr("+1 Founder remains an esteemed friend of our empire.<br>");
+			if(!g_Au.IsLegacyGeneration()) rpt += QObject::tr("+1 Founder remains an esteemed friend of our empire.<br>");
 			iSatChange += 1;
 			break;
 		case FOUNDER_Neutral:
-			rpt += QObject::tr("-1 Forsaken. Our empire is neutral to the founder's empire.<br>");
+			if(!g_Au.IsLegacyGeneration()) rpt += QObject::tr("-1 Forsaken. Our empire is neutral to the founder's empire.<br>");
 			iSatChange -= 1;
 			break;
 		case FOUNDER_Enemy:
-			rpt += QObject::tr("-2 Occupied. Our empire is an enemy of the founder.<br>");
+			if(!g_Au.IsLegacyGeneration()) rpt += QObject::tr("-2 Occupied. Our empire is an enemy of the founder.<br>");
 			iSatChange -= 2;
 			break;
 		}
@@ -4914,6 +5565,11 @@ quint64 AuCityReport::MemoryUsage() const
 	mem += sizeof(m_Bank);
 	mem += sizeof(m_LegacyAccounting) + m_LegacyAccounting.capacity();
 	mem += sizeof(m_LegacyMoraleChange) + sizeof(m_LegacyPopulationAfter);
+	mem += sizeof(m_HasLegacyDetails) + sizeof(m_LegacyReportedPopulation)
+		+ m_LegacyReportedPopulation.moraleFactors.capacity() * sizeof(AuLegacyCity::MoraleFactor);
+	mem += sizeof(m_LegacyOccupied) + sizeof(m_LegacyAllegianceEmpire) + sizeof(m_LegacyLoyalPopulation);
+	mem += sizeof(m_LegacyIndustryTechnology)
+		+ m_LegacyIndustryTechnology.size() * (sizeof(INDUSTRYID) + sizeof(QPair<quint8, quint8>));
 	mem += StringMemoryUsage(m_CaptName);
 	mem += sizeof(m_CityType);
 	mem += sizeof(m_ConsumedLiquor);

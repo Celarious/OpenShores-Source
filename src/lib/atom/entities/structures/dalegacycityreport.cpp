@@ -35,7 +35,9 @@ AuCityReport DaLegacyCity::GatherCityReport(const State& state, const Population
 	report.m_HasDestroyedBuildings = facts.context.destroyedBuildings ? 1 : 0;
 	report.m_MaxPop = quint32(std::max(0, facts.context.environmentCapacity));
 	report.m_ZonePop = quint32(std::max(0, facts.context.environmentPopulation));
-	report.m_LastVisit = quint16(std::min(65535, std::max(0, facts.context.daysSinceSystemVisit)));
+	report.m_LastVisit = facts.context.reportExemptFromVisitPenalty ? 0
+		: quint16(std::min(65535, std::max(0, facts.context.daysSinceSystemVisit)));
+	report.m_LastAvatarAccountActive = quint16(std::min(65535, std::max(0, facts.daysSinceCityVisit)));
 	const QByteArray citizenKey = state.citizenSpecies.isEmpty() ? facts.citizenSpeciesFallback : state.citizenSpecies;
 	std::unique_ptr<AuDNABase> citizenDNA, nativeDNA;
 	const AuSpecies citizens = ReadSpeciesDNA(citizenKey, citizenDNA) ? AuSpecies(citizenKey) : AuSpecies();
@@ -124,6 +126,11 @@ bool DaLegacyCity::CompleteCityReport(AuCityReport& report, const State& state,
 	report.m_LegacyAccounting = ledger;
 	report.m_LegacyMoraleChange = qint8(std::max(-128, std::min(127, population.change.moraleChange)));
 	report.m_LegacyPopulationAfter = state.population;
+	report.m_HasLegacyDetails = true;
+	report.m_LegacyReportedPopulation = population.reportedChange;
+	report.m_LegacyOccupied = population.occupied;
+	report.m_LegacyAllegianceEmpire = population.allegianceEmpire;
+	report.m_LegacyLoyalPopulation = population.loyalPopulation;
 	*report.m_Inventory = initialInventory;
 	*report.m_Tools = production.tools;
 	report.m_Vehicles.clear();
@@ -143,6 +150,7 @@ bool DaLegacyCity::CompleteCityReport(AuCityReport& report, const State& state,
 	report.m_JobsRepair = qint32(std::min(quint32(std::numeric_limits<qint32>::max()), employment.repairJobs));
 	report.m_Unemployed = qint32(std::min(quint32(std::numeric_limits<qint32>::max()), employment.unemployed));
 	report.m_Industries.clear();
+	report.m_LegacyIndustryTechnology.clear();
 	for(const auto& development : state.developments)
 	{
 		if(development.demolished || !development.completedLevels) continue;
@@ -151,6 +159,14 @@ bool DaLegacyCity::CompleteCityReport(AuCityReport& report, const State& state,
 		// later active-level counter. The shared old-format reader likewise
 		// initializes LevelsInUse to the full level count.
 		report.m_Industries.Add(runtime, AuCityIndustry(development.completedLevels, development.completedLevels));
+		auto technology = report.m_LegacyIndustryTechnology.find(runtime);
+		if(technology == report.m_LegacyIndustryTechnology.end())
+			report.m_LegacyIndustryTechnology.insert(runtime, qMakePair(development.technology, development.technology));
+		else
+		{
+			technology.value().first = std::min(technology.value().first, development.technology);
+			technology.value().second = std::max(technology.value().second, development.technology);
+		}
 	}
 	report.m_PatentRnD.clear();
 	for(const auto& process : production.processes)
@@ -225,6 +241,6 @@ void DaLegacyCity::SendCityReport(const AuCityReport& report, const AuCityReport
 	AuPoint galaxyLocation;
 	system->GetLocationRelativeToParent(galaxyLocation, galaxy);
 	g_Au.SendBulkMail(player, confirmation, Id(), Name(), recipients, AuMailMsg::MSGTYPE(report.m_MessageType),
-		report.Title(), report.ReportHtml(previous ? *previous : report, true), system->Id(), system->Name(),
+		report.Title(), report.LegacyAlertMailHtml(), system->Id(), system->Name(),
 		world->Id(), world->Name(), galaxy->Galaxy(), galaxyLocation);
 }

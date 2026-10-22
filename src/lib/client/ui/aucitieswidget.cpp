@@ -32,6 +32,7 @@ AuCitiesWidget::AuCitiesWidget(QWidget* parent) : QTableWidget(0,8,parent)
 	headerLabels << tr("Founder");
 	headerLabels << tr("Notes");
 	setHorizontalHeaderLabels(headerLabels);
+	setColumnHidden(6, g_Au.IsLegacyGeneration());
 	setAlternatingRowColors(true);
 	//setGridStyle(Qt::NoPen);
 	//setCornerButtonEnabled(false);
@@ -71,6 +72,7 @@ void AuCitiesWidget::mouseReleaseEvent(QMouseEvent* event)
 
 void AuCitiesWidget::ListCities(quint32 empireId)
 {
+	setColumnHidden(6, g_Au.IsLegacyGeneration());
 	m_EmpireId = empireId;
 
 	DgEmpire empire;

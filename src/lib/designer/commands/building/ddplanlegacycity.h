@@ -31,6 +31,7 @@ private:
 	QPointer<AuLegacyCityConstruction> m_Interface;
 	AuLegacyCityProtocol::Request m_Request;
 	bool m_HasStart = false;
+	bool m_SiteBlocked = false;
 	int m_MaximumLevels = -1;
 	int m_ExistingLevels = 0;
 	quint16 m_SiteMaterial = 0;

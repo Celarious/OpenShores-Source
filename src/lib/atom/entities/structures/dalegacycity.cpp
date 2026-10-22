@@ -1472,6 +1472,35 @@ bool DaLegacyCity::SetState(const AuLegacyCity::State& state, QString& error)
 	return true;
 }
 
+bool DaLegacyCity::ConstructionSitesOverlap(const DaWorldLL& world,
+	const AuLegacyCity::Development& site, const AuMatrix4x4& placement,
+	const AuLegacyCity::Development& existing, const AuMatrix4x4& otherPlacement)
+{
+	const auto* recipe = ConstructionRecipe(site.industryId, site.constructionProcessId);
+	const auto* otherRecipe = ConstructionRecipe(existing.industryId, existing.constructionProcessId);
+	if(!recipe || !otherRecipe) return false;
+	const double radius = site.industryId == 129 ? site.biodomeRadiusMeters * FeetPerMeter() : recipe->buildRadius * FeetPerMeter();
+	const double otherRadius = existing.industryId == 129 ? existing.biodomeRadiusMeters * FeetPerMeter() : otherRecipe->buildRadius * FeetPerMeter();
+	if(site.industryId != 2 && site.industryId != 129 && existing.industryId == 2)
+		return BuildingTouchesRoad(world, site, placement, radius, existing, otherPlacement);
+	if(site.industryId == 2 && existing.industryId != 2 && existing.industryId != 129)
+		return RoadTouchesBuilding(world, site, placement, existing, otherPlacement, otherRadius);
+	const AuPoint point = otherPlacement.UnProject(placement.Translation());
+	const double ownX = site.industryId == 2 ? site.roadWidthMeters * FeetPerMeter() / 2 : radius;
+	const double ownY = site.industryId == 2 ? site.roadLengthMeters * FeetPerMeter() / 2 : radius;
+	const double otherX = existing.industryId == 2 ? existing.roadWidthMeters * FeetPerMeter() / 2 : otherRadius;
+	const double otherY = existing.industryId == 2 ? existing.roadLengthMeters * FeetPerMeter() / 2 : otherRadius;
+	const double angle = site.facingRadians - existing.facingRadians;
+	const double cosine = std::cos(angle), sine = std::sin(angle);
+	const double rx = ownX * std::abs(cosine) + ownY * std::abs(sine);
+	const double ry = ownX * std::abs(sine) + ownY * std::abs(cosine);
+	// The same four separating axes and edge tolerance as BeginConstruction.
+	return std::abs(point.x) < otherX + rx - .05
+		&& std::abs(point.y) < otherY + ry - .05
+		&& std::abs(point.x * cosine + point.y * sine) < ownX + otherX * std::abs(cosine) + otherY * std::abs(sine) - .05
+		&& std::abs(-point.x * sine + point.y * cosine) < ownY + otherX * std::abs(sine) + otherY * std::abs(cosine) - .05;
+}
+
 int DaLegacyCity::ConstructionLevelLimit(quint8 industry, quint16 material)
 {
 	const auto* recipe = ConstructionRecipe(industry);
@@ -1599,14 +1628,7 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 				const double cosine=std::cos(angle),sine=std::sin(angle);
 				const double rx = ownX*std::abs(cosine) + ownY*std::abs(sine);
 				const double ry = ownX*std::abs(sine) + ownY*std::abs(cosine);
-				// Test all four axes of the two oriented footprints.
-				bool overlapping = std::abs(p.x) < otherX+rx-.05 && std::abs(p.y) < otherY+ry-.05
-					&& std::abs(p.x*cosine+p.y*sine) < ownX+otherX*std::abs(cosine)+otherY*std::abs(sine)-.05
-					&& std::abs(-p.x*sine+p.y*cosine) < ownY+otherX*std::abs(sine)+otherY*std::abs(cosine)-.05;
-				if(industry != 2 && industry != 129 && existing.industryId == 2)
-					overlapping = BuildingTouchesRoad(*world, dev, placement, radius, existing, otherPlacement);
-				else if(industry == 2 && existing.industryId != 2 && existing.industryId != 129)
-					overlapping = RoadTouchesBuilding(*world, dev, placement, existing, otherPlacement, otherX);
+				const bool overlapping = ConstructionSitesOverlap(*world, dev, placement, existing, otherPlacement);
 				const bool inMargin = std::abs(p.x) <= otherX+rx+32.8084 && std::abs(p.y) <= otherY+ry+32.8084;
 				bool domeCompatible=false;
 				if(industry==129 || existing.industryId==129)
@@ -2093,10 +2115,11 @@ bool DaLegacyCity::OperateConstruction(DaPerson* person, quint32 id, bool fetch,
 		|| (found->completedLevels+1<found->targetLevels && found->laborRemaining<=possibleLabor && original->laborRemaining>possibleLabor))
 	{ error=QStringLiteral("Construction advanced while the site was being checked. Its current status is ready for the next effort."); return false; }
 	if(accepted) *accepted=true;
-	// One effort per whole second. Requiring 1000ms since the previous
-	// arrival drops alternate one-second UI ticks when network/timer jitter
-	// delivers an effort slightly early. Duplicate efforts in a tick still fail.
-	if(person && labor && now / 1000 <= m_ConstructionLaborTimes.value(person->Id().GetID(),0) / 1000)
+	// Keep the one-second cadence independently of clock-second boundaries.
+	// Allow a quarter second of arrival jitter, but advance the nominal effort
+	// time by a full second so repeated early packets cannot speed up work.
+	const qint64 previousLabor = person && labor ? m_ConstructionLaborTimes.value(person->Id().GetID(), 0) : 0;
+	if(person && labor && now + 250 < previousLabor + 1000)
 	{ error.clear(); return false; }
 	auto& dev = *found; bool changed = false, physicalChanged = false;
 	AuLegacyCity::ProductionProcess components;
@@ -2218,7 +2241,7 @@ bool DaLegacyCity::OperateConstruction(DaPerson* person, quint32 id, bool fetch,
 		m_City=state; ++m_CityRevision;
 		if(person && contributed)
 		{
-			m_ConstructionLaborTimes.insert(person->Id().GetID(),now);
+			m_ConstructionLaborTimes.insert(person->Id().GetID(), qMax(now, previousLabor + 1000));
 			if(m_ConstructionLaborTimes.size()>4096)
 				for(auto it=m_ConstructionLaborTimes.begin();it!=m_ConstructionLaborTimes.end();)
 					if(now-it.value()>60000) it=m_ConstructionLaborTimes.erase(it); else ++it;

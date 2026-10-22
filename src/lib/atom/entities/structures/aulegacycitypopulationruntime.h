@@ -39,6 +39,9 @@ struct PopulationRuntimeFacts
 struct PopulationRuntimeReport
 {
 	PopulationCycleResult change;
+	PopulationCycleResult reportedChange;
+	bool occupied = false;
+	quint32 allegianceEmpire = 0, loyalPopulation = 0;
 	quint32 airConsumed = 0, foodUnits = 0;
 	quint16 foodPerMeal = 0;
 	quint8 foodTypes = 0;

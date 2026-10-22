@@ -165,93 +165,126 @@ int Homes(const AuLegacyCityCatalogue& catalogue, const std::array<quint32, 256>
 	return homes;
 }
 
-PopulationCycleResult PopulationCycle(const PopulationContext& c)
+namespace
+{
+PopulationCycleResult PopulationCycleImpl(const PopulationContext& c, bool reportRules)
 {
 	PopulationCycleResult r;
 	r.population = c.population;
 	r.unemployed = c.unemployed;
 	r.satisfaction = c.satisfaction;
 	int change = 0;
+	using Factor = MoraleFactorType;
+	const auto record = [&r, reportRules](Factor type, int modifier, int detail)
+	{
+		if(!reportRules) return;
+		MoraleFactor factor;
+		factor.type = type;
+		factor.modifier = modifier;
+		factor.detail = detail;
+		r.moraleFactors.push_back(factor);
+	};
+	const auto add = [&change, &record](Factor type, int modifier, int detail)
+	{
+		change += modifier;
+		if(modifier) record(type, modifier, detail);
+	};
 	bool airShortage = false, foodShortage = false;
 	if(c.population > 0)
 	{
 		if(c.needsEnclosure)
 		{
-			change -= c.hasPower ? 1 : 2;
+			add(c.hasPower ? Factor::HarshEnvironment : Factor::HarshEnvironmentWithoutPower,
+				c.hasPower ? -1 : -2, 0);
 			if(c.hasAir)
 			{
 				if(c.airConsumed < quint32(c.population))
 				{
-					change -= c.airConsumed < (quint32(c.population) >> 1) ? 2 : 1;
+					add(Factor::Gasping, c.airConsumed < (quint32(c.population) >> 1) ? -2 : -1, 0);
 					airShortage = true;
 				}
 			}
 			else
 			{
-				change -= 5;
+				add(Factor::Suffocation, -5, 0);
 				r.suffocated = std::min(c.population, std::max(4, c.population / 10));
 				airShortage = true;
 			}
 		}
 		if(c.foodVariety == 0)
 		{
-			change -= 5;
+			add(Factor::Starvation, -5, 0);
 			r.starved = std::min(c.population, std::max(4, c.population / 10));
 			foodShortage = true;
 		}
-		else if(!c.ateFullMeal) { change -= 2; foodShortage = true; }
-		else if(c.ecoRole == 0 && c.foodVariety >= 7) change += 2;
-		else if(c.ecoRole <= 3) change += std::min(2, int(c.foodVariety >> 2));
-		if(c.occupied) change -= int(c.loyalty * 10.0f * 0.5f);
-		else if(c.loyalty > 0.9f) change += 2;
-		else if(c.loyalty > 0.5f) change += 1;
-		if(c.differentNativeRace) --change;
+		else if(!c.ateFullMeal) { add(Factor::Hunger, -2, 0); foodShortage = true; }
+		else if(c.ecoRole == 0 && c.foodVariety >= 7) add(Factor::FoodVariety, 2, c.foodVariety);
+		else if(c.ecoRole <= 3) add(Factor::FoodVariety, std::min(2, int(c.foodVariety >> 2)), c.foodVariety);
+		if(c.occupied) add(Factor::Disloyalty, -int(c.loyalty * 10.0f * 0.5f), 0);
+		else if(reportRules && c.daysSinceCityVisit >= 15)
+			record(c.loyalty == 0 ? Factor::Rebellious : Factor::IncreasinglyDisloyal, 0, c.daysSinceCityVisit);
+		else if(c.loyalty > 0.9f) add(Factor::Loyalty, 2, 0);
+		else if(c.loyalty > 0.5f) add(Factor::Loyalty, 1, 0);
+		if(c.differentNativeRace) add(Factor::AlienInvader, -1, 0);
 		if(c.environmentCapacity < c.environmentPopulation)
 		{
 			const int step = c.environmentCapacity * 5 / 100;
 			// A capacity below twenty is outside the original world's valid range.
-			if(step > 0) change -= (step - 1 + c.environmentPopulation - c.environmentCapacity) / step;
+			if(step > 0) add(Factor::ResourceZoneOverpopulation,
+				-(step - 1 + c.environmentPopulation - c.environmentCapacity) / step, c.environmentPopulation);
 		}
-		if(c.population > c.homes && !c.destroyedBuildings) change -= std::min(10, (c.population - c.homes) / 4);
-		change -= c.decayedLevels;
-		if(!c.exemptFromVisitPenalty && c.daysSinceSystemVisit > 6 && c.daysSinceSystemVisit < 1001)
-			change -= (c.daysSinceSystemVisit - 7) / 7;
-		if(c.destroyedBuildings) --change;
+		if(c.population > c.homes && !c.destroyedBuildings)
+			add(Factor::Homelessness, -std::min(10, (c.population - c.homes) / 4), 0);
+		add(Factor::Decay, -c.decayedLevels, 0);
+		if(!(reportRules ? c.reportExemptFromVisitPenalty : c.exemptFromVisitPenalty)
+			&& c.daysSinceSystemVisit > 6 && (reportRules || c.daysSinceSystemVisit < 1001))
+		{
+			const int penalty = (c.daysSinceSystemVisit - 7) / 7;
+			if(penalty) add(Factor::Abandonment, -penalty, c.daysSinceSystemVisit);
+			else record(Factor::Abandoned, 0, c.daysSinceSystemVisit);
+		}
+		if(c.destroyedBuildings) add(Factor::DestroyedBuildings, -1, 0);
 		else
 		{
 			const int otherHomes = c.homes - c.apartmentHomes;
 			if(c.homes && otherHomes < c.apartmentHomes)
-				change -= otherHomes * 3 < c.apartmentHomes ? 3 : (otherHomes * 2 < c.apartmentHomes ? 2 : 1);
+				add(Factor::CrampedLivingConditions,
+					otherHomes * 3 < c.apartmentHomes ? -3 : (otherHomes * 2 < c.apartmentHomes ? -2 : -1), 0);
 			const float unemployment = float(c.unemployed) / float(c.population);
 			const int penalty = int(double(unemployment) * 5.0);
-			if(penalty) change -= penalty;
-			else if(unemployment == 0 && c.population >= c.homes) --change;
+			if(penalty) add(Factor::Unemployment, -penalty,
+				reportRules ? int(std::round(unemployment * 100.0f)) : 0);
+			else if(unemployment == 0 && c.population >= c.homes) add(Factor::Overworked, -1, 0);
 			const int arena = int(c.levels[112]) - c.population / 175;
-			if(arena < 0) change += std::max(-2, arena);
+			if(arena < 0) add(Factor::Arena, std::max(-2, arena), 0);
 			const int requiredTroops = c.townSquareTroops + c.militaryFlagTroops * int(c.levels[10]);
 			if(c.townSquareTroops < requiredTroops && c.militaryFlagTroops)
 			{
 				const int military = (c.population / 30 - requiredTroops + c.townSquareTroops) / c.militaryFlagTroops;
-				if(military < 0) change += military;
+				if(military < 0) add(Factor::Garrison, military, 0);
 			}
+			// Report the actual CityCycle contribution. The original report
+			// additionally counted liquor that CityCycle did not apply.
 			const int cantina = std::max(-2, int(c.levels[105]) - c.population / 50);
-			if(cantina < 0 || (!foodShortage && !airShortage)) change += std::min(1, cantina);
+			if(cantina < 0 || (!foodShortage && !airShortage)) add(Factor::Cantina, std::min(1, cantina), 0);
 			const int casino = int(c.levels[102]) - c.population / 200;
-			if(casino < 0) change += std::max(-2, casino);
+			if(casino < 0) add(Factor::Casino, std::max(-2, casino), 0);
 			const int church = std::max(-2, int(c.levels[120]) - c.population / 45);
-			change += std::min(foodShortage || airShortage ? 1 : 2, church);
+			add(Factor::Church, std::min(foodShortage || airShortage ? 1 : 2, church), 0);
 			const int grocery = int(c.levels[103]) - c.population / 100;
-			if(grocery < 0) change += std::max(-2, grocery);
+			if(grocery < 0) add(Factor::Grocery, std::max(-2, grocery), 0);
 			r.hospitalShortage = std::max(0, std::min(2, c.population / 80 - int(c.levels[121])));
-			change -= r.hospitalShortage;
-			struct Service { quint8 industry; int citizensPerLevel; };
-			for(const Service service : {Service{114, 90}, Service{124, 60}, Service{104, 55}, Service{125, 70}, Service{113, 150}})
+			add(Factor::Hospital, -r.hospitalShortage, 0);
+			struct Service { quint8 industry; int citizensPerLevel; Factor factor; };
+			for(const Service service : {Service{114, 90, Factor::Park}, Service{124, 60, Factor::PoliceStation},
+				Service{104, 55, Factor::RetailStore}, Service{125, 70, Factor::University}, Service{113, 150, Factor::Zoo}})
 			{
 				const int deficit = int(c.levels[service.industry]) - c.population / service.citizensPerLevel;
-				if(deficit < 0) change += std::max(-2, deficit);
+				if(deficit < 0) add(service.factor, std::max(-2, deficit), 0);
 			}
 		}
 	}
+	else record(Factor::NoCitizens, 0, 0);
 	r.moraleChange = change;
 	r.satisfaction = c.population == 0 ? 1 : std::max(-20, std::min(20, c.satisfaction + change));
 	auto decrease = [&r](int amount)
@@ -287,12 +320,14 @@ PopulationCycleResult PopulationCycle(const PopulationContext& c)
 	{
 		int births = std::min(2, c.homes - r.population);
 		if(r.hospitalShortage > 0 && births == 2) births = 2 - r.hospitalShortage;
-		else if(births && c.population / 80 == 0) births = 1;
+		// ReportHtml leaves required hospitals at zero when buildings are
+		// destroyed, which limits its reported births to one in that case.
+		else if(births && ((reportRules && c.destroyedBuildings) || c.population / 80 == 0)) births = 1;
 		r.births = births;
 		increase(births);
 	}
 	int migration = r.satisfaction;
-	if((migration < 0 && c.occupied) || (migration > 0 && c.underAttack)
+	if((migration < 0 && c.occupied) || (!reportRules && migration > 0 && c.underAttack)
 		|| (c.destroyedBuildings && migration < 0 && r.population != 0)) migration = 0;
 	if(!c.indigenousWorld)
 	{
@@ -336,6 +371,17 @@ PopulationCycleResult PopulationCycle(const PopulationContext& c)
 		increase(r.immigrants);
 	}
 	return r;
+}
+}
+
+PopulationCycleResult PopulationCycle(const PopulationContext& context)
+{
+	return PopulationCycleImpl(context, false);
+}
+
+PopulationCycleResult PopulationReport(const PopulationContext& context)
+{
+	return PopulationCycleImpl(context, true);
 }
 
 bool ApplyCitySurrender(State& state, Accounts& accounts, quint32 oldEmpire, quint32 newEmpire)

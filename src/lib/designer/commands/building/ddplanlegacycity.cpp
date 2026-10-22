@@ -223,6 +223,7 @@ void DdPlanLegacyCity::UpdateSelection(const AuLegacyCityProtocol::Request& requ
 	m_Angle = request.targetX;
 	m_Request.targetX = m_Request.targetY = m_Request.targetZ = 0;
 	if(!sameProcess) m_HasStart = false;
+	m_SiteBlocked = false;
 	m_PreviewValid = false;
 }
 
@@ -232,7 +233,7 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 	{
 		AuPoint point;
 		if(const auto* world = m_pWnd->FindTerrainLocationAtPixel(person, pixel, point)) UpdateSite(*world, point);
-		else { m_MaximumLevels = 0; m_SiteMaterial = 0; }
+		else { m_MaximumLevels = 0; m_SiteMaterial = 0; m_SiteBlocked = false; }
 	}
 	auto cursor = m_Request;
 	if(m_SiteMaterial) cursor.material = m_SiteMaterial;
@@ -256,7 +257,7 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 		const int count = m_MaximumLevels < 0 ? m_Request.levels : qMin(int(m_Request.levels), m_MaximumLevels);
 		const QString levels = QString::number(count);
 		painter.setPen(Qt::black); painter.drawText(QRect(1, 1, 32, 32), Qt::AlignLeft | Qt::AlignTop, levels);
-		painter.setPen(count ? QColor(25, 229, 25) : QColor(229, 25, 25));
+		painter.setPen(count && !m_SiteBlocked ? QColor(25, 229, 25) : QColor(229, 25, 25));
 		painter.drawText(QRect(0, 0, 31, 31), Qt::AlignLeft | Qt::AlignTop, levels);
 	}
 	if(building && m_Request.citizenEnabled)
@@ -338,10 +339,15 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 	site.facingRadians = m_Request.headingDegrees * DEG2RAD - world.BuildingConstructionNorthAngle(point, nullptr);
 	const int previousExistingLevels = m_ExistingLevels;
 	m_ExistingLevels = 0;
+	m_SiteBlocked = false;
+	quint32 extensionCity = 0, extensionDevelopment = 0;
 	ClearTarget hit;
-	if(FindClearTarget(world, point, hit) && hit.development.industryId == site.industryId)
+	if(FindClearTarget(world, point, hit) && !hit.development.demolished
+		&& hit.development.industryId == site.industryId && site.industryId != 1)
 	{
 		site = hit.development; m_ExistingLevels = site.completedLevels;
+		extensionCity = hit.city; extensionDevelopment = site.id;
+		m_SiteBlocked = !site.components.isEmpty();
 	}
 	const bool siteChanged = m_PreviousSiteWorld != world.Id().GetID()
 		|| m_PreviousSiteLocation.Latitude() != site.location.Latitude()
@@ -351,6 +357,44 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 	world.BuildingConstructionTransform(center, site.facingRadians, nullptr, AuPoint(), placement);
 	unsigned int rocks = 0, shrubs = 0, trees = 0; float water = 0;
 	const double radius = recipe->buildRadius * FeetPerMeter();
+	DaAtomList cities; world.ListNormalSubatoms(cities);
+	for(const auto* atom : cities)
+		if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+		{
+			if(city->IsDead()) continue;
+			const auto state = city->Snapshot();
+			for(const auto& existing : state.developments)
+			{
+				if(existing.demolished || (city->Id().GetID() == extensionCity && existing.id == extensionDevelopment)) continue;
+				if(existing.industryId == 2 && (existing.constructionProcessId == 5 || existing.constructionProcessId == 74
+					|| existing.constructionProcessId == 80 || existing.constructionProcessId == 81)) continue;
+				AuMatrix4x4 otherPlacement;
+				world.BuildingConstructionTransform(world.LocOfLL(existing.location, existing.altitudeMSL),
+					existing.facingRadians, nullptr, AuPoint(), otherPlacement);
+				if(existing.industryId == 129)
+				{
+					// Being wholly inside a dome is allowed; intersecting its wall
+					// is not. Keep the original containment margin and airport rule.
+					const double domeRadius = existing.biodomeRadiusMeters * FeetPerMeter();
+					const auto toDome = otherPlacement.Inverse() * placement;
+					double outerRadius = 0;
+					for(int x : {-1, 1}) for(int y : {-1, 1})
+					{
+						const AuPoint corner = toDome.Project(AuPoint(x * radius, y * radius, 0));
+						outerRadius = qMax(outerRadius, std::hypot(corner.x, corner.y));
+					}
+					const AuPoint domeCenter = toDome.UnProject(AuPoint());
+					const double innerRadius = std::hypot(qMax(0.0, std::abs(domeCenter.x) - radius), qMax(0.0, std::abs(domeCenter.y) - radius));
+					const bool inside = outerRadius <= domeRadius - AuLegacyBd::Biodome::ContainmentMargin;
+					const bool outside = innerRadius >= domeRadius + AuLegacyBd::Biodome::ContainmentMargin;
+					if((!inside && !outside) || (inside && site.industryId == 111)) m_SiteBlocked = true;
+				}
+				else if(DaLegacyCity::ConstructionSitesOverlap(world, site, placement, existing, otherPlacement))
+					m_SiteBlocked = true;
+				if(m_SiteBlocked) break;
+			}
+			if(m_SiteBlocked) break;
+		}
 	// Original SetCursor 0x140321130 counts at most four resources and
 	// subtracts existing levels. Keep desired levels separate from this cap.
 	if(recipe->stackLimit >= 32 || site.industryId == 89)
@@ -365,6 +409,9 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 	m_SiteDesignId = site.designId;
 	m_SiteCenter = center; m_SiteFacing = site.facingRadians;
 	m_SiteMessage = maximum ? QString() : QObject::tr("No more levels can be built at this site.");
+	if(m_SiteBlocked) m_SiteMessage = extensionDevelopment && !site.components.isEmpty()
+		? QObject::tr("Finish the current construction before adding more levels.")
+		: QObject::tr("The construction site overlaps an existing development.");
 	if(m_Request.citizenEnabled && (site.industryId == 50 || site.industryId == 51 || site.industryId == 89))
 	{
 		// Recovered cursor rules differ from F10: a well can always select
@@ -464,7 +511,7 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 		if(request.action == AuLegacyCityProtocol::Build && request.industryId != 2 && request.industryId != 129)
 		{
 			UpdateSite(*world, point);
-			if(!m_MaximumLevels) { m_pWnd->UnlockSceneAtom(); return; }
+			if(!m_MaximumLevels || m_SiteBlocked) { m_pWnd->UnlockSceneAtom(); return; }
 			request = m_Request;
 			request.levels = quint8(qMin(int(request.levels), m_MaximumLevels));
 		}
@@ -685,7 +732,11 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 	effects.GLSL().LineShader().Select(); effects.GLSL().LineShader().SetProjectionModelView(projection * model);
 	if(m_Request.action == AuLegacyCityProtocol::ClearLand)
 		effects.GLSL().LineShader().SetColor(.9f, clearAllowed ? .35f : .1f, .1f, .9f);
-	else effects.GLSL().LineShader().SetColor(m_MaximumLevels == 0 ? .9f : .1f, m_MaximumLevels == 0 ? .1f : .9f, .1f, .9f);
+	else
+	{
+		const bool blocked = m_MaximumLevels == 0 || m_SiteBlocked;
+		effects.GLSL().LineShader().SetColor(blocked ? .9f : .1f, blocked ? .1f : .9f, .1f, .9f);
+	}
 	effects.glEnable(GL_BLEND); effects.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	if(!ground.isEmpty())
 	{

@@ -163,6 +163,9 @@ PopulationRuntimeFacts GatherPopulationFacts(DaLegacyCity& city, DaWorldLL& worl
 	if(state.citizenSpecies.isEmpty())
 		facts.citizenSpeciesFallback = gd.EmpireCapitolSpecies(state.controllingEmpire).Key();
 	g_Au.UnlockData();
+	// CityCycle leaves the report's system-visit days at zero when any of
+	// these exemptions applies, so ReportHtml has no abandonment to report.
+	c.reportExemptFromVisitPenalty = c.exemptFromVisitPenalty;
 	if(!empireCapital.IsNull())
 	{
 		if(empireCapital == city.Id())
@@ -196,6 +199,7 @@ bool ApplyCityPopulation(State& state, AuItemHash& inventory, AccountingState& a
 	if(!ReadSpeciesDNA(citizenKey, citizenDNA))
 	{ error = QStringLiteral("Legacy city population requires its original citizen DNA; this species is missing or unsupported."); return false; }
 	PopulationContext c = facts.context;
+	c.daysSinceCityVisit = facts.daysSinceCityVisit;
 	c.levels.fill(0);
 	for(const Development& development : state.developments)
 		if(!development.demolished) c.levels[development.industryId] += development.completedLevels;
@@ -228,6 +232,9 @@ bool ApplyCityPopulation(State& state, AuItemHash& inventory, AccountingState& a
 		{ error = QStringLiteral("Legacy city neglect revolt requires its original destination empire."); return false; }
 		PopulationRuntimeReport result;
 		result.loyaltyAtStart = c.loyalty;
+		result.occupied = c.occupied;
+		result.allegianceEmpire = normalizeAllegiance ? state.controllingEmpire : state.allegianceEmpire;
+		result.loyalPopulation = loyalPopulation;
 		result.reportedLastTribute = accounting.lastTribute;
 		result.revoltRequested = result.cycleInterrupted = true;
 		result.revoltOldEmpire = state.controllingEmpire;
@@ -307,6 +314,11 @@ bool ApplyCityPopulation(State& state, AuItemHash& inventory, AccountingState& a
 	PopulationRuntimeReport result;
 	result.reportedLastTribute = accounting.lastTribute;
 	result.loyaltyAtStart = c.loyalty;
+	result.occupied = c.occupied;
+	// CityCycle copies native allegiance/count after its one-person loyalty
+	// adjustment and before meals, deaths and migration can change the count.
+	result.allegianceEmpire = normalizeAllegiance ? state.controllingEmpire : state.allegianceEmpire;
+	result.loyalPopulation = loyalPopulation;
 	result.revoltRequested = revoltRequested;
 	result.foodPerMeal = foodPerMeal;
 	result.foodTypes = c.foodVariety;
@@ -322,6 +334,7 @@ bool ApplyCityPopulation(State& state, AuItemHash& inventory, AccountingState& a
 	c.ateFullMeal = result.ateEnough;
 	result.airConsumed = c.airConsumed;
 	result.change = PopulationCycle(c);
+	result.reportedChange = PopulationReport(c);
 	// DecreasePopulation adjusts allegiance only when every inhabitant was
 	// loyal before that individual decrease. Replay its original movement
 	// order; IncreasePopulation does not increase the loyal count.

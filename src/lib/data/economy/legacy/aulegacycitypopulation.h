@@ -6,6 +6,7 @@
 #include <QString>
 #include <array>
 #include <cstddef>
+#include <vector>
 
 class AuLegacyCityCatalogue;
 
@@ -82,8 +83,26 @@ struct PopulationContext
 	int environmentCapacity = 0, environmentPopulation = 0;
 	int decayedLevels = 0;
 	int daysSinceSystemVisit = 0;
+	int daysSinceCityVisit = 0;
 	bool exemptFromVisitPenalty = false;
+	bool reportExemptFromVisitPenalty = false;
 	int townSquareTroops = 0, militaryFlagTroops = 0;
+};
+
+enum class MoraleFactorType : quint8
+{
+	HarshEnvironmentWithoutPower, HarshEnvironment, Suffocation, Gasping, Starvation, Hunger,
+	FoodVariety, Loyalty, Rebellious, IncreasinglyDisloyal, Disloyalty, AlienInvader,
+	ResourceZoneOverpopulation, Homelessness, Decay, Abandoned, Abandonment, DestroyedBuildings,
+	CrampedLivingConditions, Unemployment, Overworked, Arena, Garrison, Cantina,
+	Casino, Church, Grocery, Hospital, Park, PoliceStation, RetailStore, University, Zoo,
+	NoCitizens, Count
+};
+
+struct MoraleFactor
+{
+	MoraleFactorType type = MoraleFactorType::NoCitizens;
+	int modifier = 0, detail = 0;
 };
 
 struct PopulationCycleResult
@@ -92,11 +111,15 @@ struct PopulationCycleResult
 	int moraleChange = 0;
 	int suffocated = 0, starved = 0, births = 0, immigrants = 0, emigrants = 0;
 	int hospitalShortage = 0;
+	std::vector<MoraleFactor> moraleFactors;
 };
 
 AUDATA_DLL int Homes(const AuLegacyCityCatalogue& catalogue, const std::array<quint32, 256>& levels,
 	int* apartmentHomes = nullptr);
 AUDATA_DLL PopulationCycleResult PopulationCycle(const PopulationContext& context);
+// The original report calculated its own result. Its loyalty, abandonment and
+// population rules differ from CityCycle; cantinas report the actual modifier.
+AUDATA_DLL PopulationCycleResult PopulationReport(const PopulationContext& context);
 
 struct WealthLevyContext
 {

@@ -13,6 +13,7 @@
 #include "auglobell.h"
 #include "auid.h"
 #include "auknownpatents.h"
+#include "aulegacycitypopulation.h"
 #include "autime.h"
 #include "dbindustry.h"
 #include <QByteArray>
@@ -594,6 +595,15 @@ public:
 	QByteArray							m_LegacyAccounting;		// Optional separate 2016 citizen/treasury ledgers, report version 16.
 	qint8								m_LegacyMoraleChange = 0;	// Actual old-city cycle result; modern morale rules differ.
 	qint32								m_LegacyPopulationAfter = 0;
+	// Version 18 snapshots the original report calculations independently of
+	// the city cycle. Cantina reporting uses the actual cycle modifier rather
+	// than the original report's erroneous extra liquor bonus.
+	bool m_HasLegacyDetails = false;
+	AuLegacyCity::PopulationCycleResult m_LegacyReportedPopulation;
+	bool m_LegacyOccupied = false;
+	quint32 m_LegacyAllegianceEmpire = 0;
+	quint32 m_LegacyLoyalPopulation = 0;
+	QHash<INDUSTRYID, QPair<quint8, quint8>> m_LegacyIndustryTechnology;
 	QString								m_CaptName;
 	QMap<AuSpecies, AuCityCitizen>		m_Citizens;
 	quint8								m_CityType;				// CITYTYPE of this report.
@@ -783,6 +793,9 @@ public:	// Methods
 	// Formats the data into an html formatted report.
 	// 'prevReport' can be passed to show industry quality changes; null is ok.
 	QString ReportHtml(const AuCityReport& prevReport, bool mailFormat) const;
+	// Original automatic old-city alerts contain only the header, occupation,
+	// distress, decay and event log. Explicit report requests use ReportHtml.
+	QString LegacyAlertMailHtml() const;
 
 	int RequiredArenas() const;
 
@@ -819,7 +832,7 @@ protected:
 	qint8 MoraleCapitol() const;
 	qint8 MoraleHQ() const;
 
-	QString ReportCapitol(const AuCityReport& prevReport, bool mailFormat) const;
+	QString ReportCapitol(const AuCityReport& prevReport, bool mailFormat, bool alertOnly = false) const;
 	QString ReportHQ(const AuCityReport& prevReport, bool mailFormat) const;
 };
 

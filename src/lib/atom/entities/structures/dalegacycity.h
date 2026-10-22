@@ -102,6 +102,10 @@ public:
 		const AuLegacyCity::CitizenConstructionFacts& facts, bool& physicalChanged,
 		AuLegacyConstructionMaterials::Batch& materials, bool performLabor = true) const;
 	static int ConstructionLevelLimit(quint8 industryId, quint16 materialId);
+	// Shared by authoritative placement and the client's construction preview.
+	static bool ConstructionSitesOverlap(const DaWorldLL& world,
+		const AuLegacyCity::Development& site, const AuMatrix4x4& placement,
+		const AuLegacyCity::Development& existing, const AuMatrix4x4& otherPlacement);
 	void operator>>(QDataStream& out) const override;
 	void operator<<(QDataStream& in) override;
 	bool Refresh(DaAtom* counterpart, AuAtomRenderInfo* ari) override;
