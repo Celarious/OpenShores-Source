@@ -264,7 +264,7 @@ AuLegacyCityManufacture::AuLegacyCityManufacture(QWidget* parent) : QWidget(pare
 {
 	// AuLaborManufacture, executable 0x1401d1300, owns the scrolling panels.
 	auto* content = new QWidget(this); m_PanelLayout = new QVBoxLayout(content);
-	m_PanelLayout->setMargin(2); m_PanelLayout->setSpacing(2);
+	m_PanelLayout->setContentsMargins(2, 8, 2, 2); m_PanelLayout->setSpacing(2);
 	auto* scroll = new QScrollArea(this); scroll->setWidget(content); scroll->setWidgetResizable(true);
 	m_Message = new QLabel(this); m_Message->setWordWrap(true); m_Message->hide();
 	auto* layout = new QVBoxLayout(this); layout->setMargin(0); layout->setSpacing(0);
