@@ -10,6 +10,7 @@
 #include "augear.h"
 #include "auglobal.h"
 #include "auloginserverapp.h"
+#include "aupasshash.h"
 #include "auplayerrec.h"
 #include "aucontactrec.h"
 #include "dhdna.h"
@@ -436,10 +437,9 @@ void DtLoginDb::PerformQueuedOperations()
 				QSqlQuery ql(QString(), db);
 				sq = QObject::tr("UPDATE g_Player SET passcrypt=? WHERE id=%1;").arg(player.Id());
 				ql.prepare(sq);
-				ql.addBindValue((*it).m_NewPassCrypt);
+				ql.addBindValue(AuPassHash::Protect((*it).m_NewPassCrypt));
 				if(!ql.exec())
-					qWarning() << "ERROR! PerformQueuedOperations - Player" << player.Id() << "password SHA-1" << (*it).m_PassCrypt
-						<< "UPDATE FAILED.";
+					qWarning() << "ERROR! PerformQueuedOperations - Player" << player.Id() << "password UPDATE FAILED.";
 
 				// The player record must be flushed from the login cache due to this change.
 				DeleteLoginCacheItem(player.Id());
@@ -478,10 +478,9 @@ void DtLoginDb::PerformQueuedOperations()
 				QSqlQuery ql(QString(), db);
 				sq = QObject::tr("UPDATE g_Player SET passcrypt=? WHERE id=%1;").arg(player.Id());
 				ql.prepare(sq);
-				ql.addBindValue(player.PassCrypt());
+				ql.addBindValue(AuPassHash::Protect(player.PassCrypt()));
 				if(!ql.exec())
-					qWarning() << "ERROR! PerformQueuedOperations - Player" << player.Id() << "password" << password
-						<< "SHA-1" << passBytes << "UPDATE FAILED.";
+					qWarning() << "ERROR! PerformQueuedOperations - Player" << player.Id() << "password reset UPDATE FAILED.";
 
 				// The player record must be flushed from the login cache due to this change.
 				DeleteLoginCacheItem(player.Id());

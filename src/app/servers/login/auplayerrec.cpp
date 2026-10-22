@@ -7,6 +7,7 @@
 #include "auplayerrec.h"
 //
 #include "auglobal.h"
+#include "aupasshash.h"
 #include <QDateTime>
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -270,20 +271,23 @@ bool AuPlayerRec::Select(const QString& loginName, const QByteArray& passCrypt)
 	//qDebug() << "AuPlayerRec::Select" << loginName << "passCrypt" << passCrypt;
 
 	QSqlQuery qry(QString(), db);
-	QString sq("SELECT id, status, email, confirm, isloggedin, activated, days, "
+	QString sq("SELECT passcrypt, id, status, email, confirm, isloggedin, activated, days, "
 			"idu1, "
 			"idu2, "
 			"idu3, "
 			"idu4, "
 			"idu5, "
 			"idu6 "
-			"FROM g_Player WHERE name=? AND passCrypt=?;");
+			"FROM g_Player WHERE name=?;");
 	qry.prepare(sq);
 	qry.addBindValue(loginName);
-	qry.addBindValue(passCrypt);
 	if(qry.exec() && qry.first())
 	{
 		int qv=0;
+		QByteArray stored = qry.value(qv++).toByteArray();
+		if(!AuPassHash::Verify(stored, passCrypt))
+			return false;
+
 		m_id = qry.value(qv++).toInt();
 		m_AccountType = (ACCOUNT)qry.value(qv++).toInt();
 		m_LoginName = loginName;
@@ -299,6 +303,16 @@ bool AuPlayerRec::Select(const QString& loginName, const QByteArray& passCrypt)
 
 		for(int iu=0; iu<6; iu++)
 			m_Avatar[iu] = AuId(qry.value(qv++).toUInt());
+
+		if(AuPassHash::NeedsUpgrade(stored))
+		{
+			QSqlQuery qu(QString(), db);
+			qu.prepare("UPDATE g_Player SET passcrypt=? WHERE id=?;");
+			qu.addBindValue(AuPassHash::Protect(passCrypt));
+			qu.addBindValue(m_id);
+			if(!qu.exec())
+				qWarning("ERROR! AuPlayerRec::Select - Player %d stored password upgrade FAILED.", m_id);
+		}
 		return true;
 	}
 	return false;
@@ -322,7 +336,7 @@ int AuPlayerRec::Create(QSqlDatabase& db)
 		QString sq("INSERT INTO g_Player (name,passcrypt,email,timeCreate,status, activated,days) VALUES (?,?,?,?,?, ?,?);");
 		qa.prepare(sq);
 		qa.addBindValue(m_LoginName);
-		qa.addBindValue(m_passCrypt);
+		qa.addBindValue(AuPassHash::Protect(m_passCrypt));
 		qa.addBindValue(m_email);
 		qa.addBindValue(QDateTime::currentDateTimeUtc());
 		qa.addBindValue(m_AccountType);
@@ -335,7 +349,7 @@ int AuPlayerRec::Create(QSqlDatabase& db)
 		QString sq("INSERT INTO g_Player (name,passcrypt,email,timeCreate,status) VALUES (?,?,?,?,?);");
 		qa.prepare(sq);
 		qa.addBindValue(m_LoginName);
-		qa.addBindValue(m_passCrypt);
+		qa.addBindValue(AuPassHash::Protect(m_passCrypt));
 		qa.addBindValue(m_email);
 		qa.addBindValue(QDateTime::currentDateTimeUtc());
 		qa.addBindValue(m_AccountType);
@@ -367,7 +381,7 @@ int AuPlayerRec::CreateSteam(QSqlDatabase& db)
 		QString sq("INSERT INTO g_Player (name,passcrypt,email,timeCreate,status, activated,days) VALUES (?,?,?,?,?, ?,?);");
 		qa.prepare(sq);
 		qa.addBindValue(m_LoginName);
-		qa.addBindValue(m_passCrypt);
+		qa.addBindValue(AuPassHash::Protect(m_passCrypt));
 		qa.addBindValue(m_email);
 		qa.addBindValue(QDateTime::currentDateTimeUtc());
 		qa.addBindValue(m_AccountType);
@@ -380,7 +394,7 @@ int AuPlayerRec::CreateSteam(QSqlDatabase& db)
 		QString sq("INSERT INTO g_Player (name,passcrypt,email,timeCreate,status) VALUES (?,?,?,?,?);");
 		qa.prepare(sq);
 		qa.addBindValue(m_LoginName);
-		qa.addBindValue(m_passCrypt);
+		qa.addBindValue(AuPassHash::Protect(m_passCrypt));
 		qa.addBindValue(m_email);
 		qa.addBindValue(QDateTime::currentDateTimeUtc());
 		qa.addBindValue(m_AccountType);
