@@ -150,7 +150,7 @@ AuLegacyCityConstruction::AuLegacyCityConstruction(QWidget* parent) : QWidget(pa
 	using namespace AuLegacyCityConstructionLayout;
 	InitLegacyConstructionUiResource();
 	auto* layout = new QGridLayout(this); layout->setMargin(OuterMargin); layout->setSpacing(Spacing);
-	m_Categories = new QButtonGroup(this); m_Categories->setExclusive(false);
+	m_Categories = new QButtonGroup(this); m_Categories->setExclusive(true);
 	m_Materials = new QButtonGroup(this); m_Materials->setExclusive(false);
 	m_Pages = new QStackedWidget(this);
 	for(int page = 0; page < 9; ++page)
@@ -170,6 +170,7 @@ AuLegacyCityConstruction::AuLegacyCityConstruction(QWidget* parent) : QWidget(pa
 	for(const auto& category : Categories)
 	{
 		auto* button = new AuIconButton(QIcon(ConstructionIcon(category.icon)), this);
+		button->setCheckable(true);
 		button->setFixedSize(CategoryButtonSize, CategoryButtonSize); button->setToolTip(tr(category.name));
 		button->setAccessibleName(tr(category.name)); m_Categories->addButton(button, category.page);
 		layout->addWidget(button, category.row, CategoryColumn);
@@ -319,8 +320,9 @@ void AuLegacyCityConstruction::LoadCatalogue()
 
 void AuLegacyCityConstruction::SelectCategory(int page)
 {
-	m_Pages->setCurrentIndex(page);
-	for(auto* button : m_Categories->buttons()) button->setDown(m_Categories->id(button) == page);
+	// Keep selection separate from the transient press/release state.
+	if(auto* button = m_Categories->button(page)) button->setChecked(true);
+	if(m_Pages->currentIndex() != page) m_Pages->setCurrentIndex(page);
 }
 
 void AuLegacyCityConstruction::SelectProcess(quint8 processId)
