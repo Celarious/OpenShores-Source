@@ -256,6 +256,34 @@ bool DaItem::RoughExtents(AuBox &fExt) const
 	return true;
 }
 
+unsigned int DaItem::SunShadowFamilies() const
+{
+	return 1u << SSF_Creatures;
+}
+
+unsigned int DaItem::SunShadowVariants(int family) const
+{
+	Q_UNUSED(family);
+	return (1u << SSV_Model) | (1u << SSV_Sc);
+}
+
+void DaItem::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+		AuSunShadowPass& sp)
+{
+	Q_UNUSED(sceneAtom);
+	const AuPoint& pv = rmod.ViewLoc(Id());
+	const double reach = 15;
+	if(!(sp.m_Variant == SSV_Model ? sp.Asked(pv.x, pv.y, pv.z, reach) : sp.InRange(pv.x, pv.y, pv.z, reach)))
+		return;
+	if(!sp.Reaches(pv.x, pv.y, pv.z, reach))
+		return;
+	m_ItemLock.lockForRead();
+	bool drew = m_Item && m_Item->RenderSunShadowDepth(rmod.Matrix(Id()), *ari.re, sp.m_Variant);
+	m_ItemLock.unlock();
+	if(drew)
+		sp.Drew();
+}
+
 void DaItem::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, AuModelMatrixHash& rmod,
 		const DaPerson* sceneAtom, AuRenderLastMap& renderLast, RENDERPASS pass, DaAtomList& shadSc, DaAtomList& shadScFog,
 		DaAtomList& shadScGlobe, DaAtomList& shadScGlobeFog, DaAtomList& shadScRingworld, DaAtomList& shadScRingworldFog)

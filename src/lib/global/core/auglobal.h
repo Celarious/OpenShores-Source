@@ -579,6 +579,22 @@ private:
 	bool								m_FrustumCulling;
 	bool m_CrosshairSmoothing;
 	bool								m_UseClassicLoadingAnimation;
+	bool								m_PerPixelLighting;
+	bool								m_Shadows;
+	bool								m_ShadowsDebug;
+	bool								m_ShadowMaps;
+	int									m_ShadowMapSize;
+	int									m_ShadowMapRadius;
+	int									m_ShadowMapSoftness;
+	double								m_ShadowMapBias;
+	double								m_PerPixelSkinGloss;
+	double								m_PerPixelClothGloss;
+	double								m_PerPixelHairGloss;
+	bool								m_RenderCounters;
+	bool								m_ShadowSecondSun;
+	int									m_ShadowLights;
+	unsigned int						m_ShadowCasters;
+	int									m_ShadowCreatureDistance;
 	int									m_FramedPictureSize;	// Maximum size of a framed picture.
 	int									m_ResourceIconSize;		// modifier for the top down view sprite sizes. Percentage of size.
 	int									m_BodyStatSize;			// modifier for the body/vehicle status bar sizes. % of max size.
@@ -1884,6 +1900,48 @@ public:
 		return m_UseClassicLoadingAnimation;
 	}
 
+	static inline const char* PerPixelLightingKey()	{ return "/Settings/PerPixelLighting"; }
+	static inline const char* PerPixelSkinGlossKey()	{ return "/Settings/PerPixelSkinGloss"; }
+	static inline const char* PerPixelClothGlossKey()	{ return "/Settings/PerPixelClothGloss"; }
+	static inline const char* PerPixelHairGlossKey()	{ return "/Settings/PerPixelHairGloss"; }
+	static inline const char* ShadowsKey()			{ return "/Settings/Shadows"; }
+	static inline const char* ShadowsDebugKey()		{ return "/Settings/ShadowsDebug"; }
+	static inline const char* ShadowMapsKey()		{ return "/Settings/ShadowMaps"; }
+	static inline const char* ShadowMapSizeKey()		{ return "/Settings/ShadowMapSize"; }
+	static inline const char* ShadowMapRadiusKey()	{ return "/Settings/ShadowMapRadius"; }
+	static inline const char* ShadowMapSoftnessKey()	{ return "/Settings/ShadowMapSoftness"; }
+	static inline const char* ShadowMapBiasKey()		{ return "/Settings/ShadowMapBias"; }
+	static inline const char* RenderCountersKey()	{ return "/Settings/RenderCounters"; }
+	static inline const char* ShadowSecondSunKey()	{ return "/Settings/ShadowSecondSun"; }
+	static inline const char* ShadowLightsKey()		{ return "/Settings/ShadowLights"; }
+	static inline const char* ShadowCastersKey()		{ return "/Settings/ShadowCasters"; }
+	static inline const char* ShadowCreatureDistanceKey()	{ return "/Settings/ShadowCreatureDistance"; }
+
+	inline bool Shadows() const
+	{
+		return m_Shadows;
+	}
+
+	inline bool ShadowsDebug() const		{ return m_ShadowsDebug; }
+	inline bool ShadowMaps() const			{ return m_ShadowMaps; }
+	inline int ShadowMapSize() const		{ return m_ShadowMapSize; }
+	inline int ShadowMapRadius() const		{ return m_ShadowMapRadius; }
+	inline int ShadowMapSoftness() const	{ return m_ShadowMapSoftness; }
+	inline double ShadowMapBias() const		{ return m_ShadowMapBias; }
+	inline double PerPixelSkinGloss() const	{ return m_PerPixelSkinGloss; }
+	inline double PerPixelClothGloss() const	{ return m_PerPixelClothGloss; }
+	inline double PerPixelHairGloss() const	{ return m_PerPixelHairGloss; }
+	inline bool RenderCounters() const		{ return m_RenderCounters; }
+	inline bool ShadowSecondSun() const		{ return m_ShadowSecondSun; }
+	inline int ShadowLights() const			{ return m_ShadowLights; }
+	inline unsigned int ShadowCasters() const	{ return m_ShadowCasters; }
+	inline int ShadowCreatureDistance() const	{ return m_ShadowCreatureDistance; }
+
+	inline bool PerPixelLighting() const
+	{
+		return m_PerPixelLighting;
+	}
+
 	inline double FieldOfViewXCos() const
 	{
 		return m_FieldOfViewXCos;
@@ -2810,6 +2868,23 @@ public:
 	void SetCrosshairSmoothing(bool crosshairSmoothing);
 
 	void SetUseClassicLoadingAnimation(bool useClassicLoadingAnimation);
+
+	void SetPerPixelLighting(bool perPixelLighting);
+	void SetShadows(bool shadows);
+	void SetShadowsDebug(bool on);
+	void SetShadowMaps(bool on);
+	void SetShadowMapSize(int texels);
+	void SetShadowMapRadius(int meters);
+	void SetShadowMapSoftness(int texels);
+	void SetShadowMapBias(double bias);
+	void SetPerPixelSkinGloss(double gloss);
+	void SetPerPixelClothGloss(double gloss);
+	void SetPerPixelHairGloss(double gloss);
+	void SetRenderCounters(bool on);
+	void SetShadowSecondSun(bool on);
+	void SetShadowLights(int count);
+	void SetShadowCasters(unsigned int families);
+	void SetShadowCreatureDistance(int meters);
 
 	void SetFramedPictureSize(int framedPictureSize);
 

@@ -1710,6 +1710,13 @@ double AuItem::Render(const AuMatrix4x4& projection, const AuMatrix4x4& model, A
 	return 0;
 }
 
+bool AuItem::RenderSunShadowDepth(const AuMatrix4x4& model, AuGLEffects& re, int variant) const
+{
+	if(!m_Model || !m_Model->HasGLModel() || m_Model->SunShadowVariant() != variant)
+		return false;
+	return m_Model->RenderSunShadowDepth(model, re);
+}
+
 double AuItem::RenderOnGlobe(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, AuGLModelCache& mc,
 		const AuId& id, float ambientR, float ambientG, float ambientB, const AuPoint& ambientUp, const AuPoint& gravityUp,
 		float fogDensity, float fogR, float fogG, float fogB,

@@ -81,6 +81,8 @@ void AuItemView::SetupLights(const AuMatrix4x4& model)
 
 void AuItemView::paintGL()
 {
+	if(m_RenderInfo && m_RenderInfo->re)
+		m_RenderInfo->re->GLSL().RebuildIfStale();
 	//qDebug() << "AuItemView::paintGL";
 	m_RenderInfo->re->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	AuMatrix4x4 projection;

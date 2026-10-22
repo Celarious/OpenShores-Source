@@ -7,6 +7,8 @@
 #ifndef AuSetRender_H
 #define AuSetRender_H
 
+#include <QList>
+#include <QList>
 #include <QWidget>
 
 class QCheckBox;
@@ -62,6 +64,34 @@ private:
 	QSlider*							m_SkyBoxSizeSlider;
 	QLabel*								m_TreeViewRange;
 	QLabel*								m_WorldMapQuality;
+	QCheckBox*							m_PerPixelCheck;
+	QCheckBox*							m_ShadowsCheck;
+	QCheckBox*							m_ShadowMapsCheck;
+	QList<QWidget*>						m_GlossWidgets;
+	QList<QWidget*>						m_ShadowWidgets;
+	QList<QWidget*>						m_ShadowMapWidgets;
+	QLabel*								m_ShadowDistanceLabel;
+	QList<QCheckBox*>					m_ShadowCasterChecks;
+	QLabel*								m_ShadowBiasLabel;
+	QLabel*								m_ShadowCreatureDistanceLabel;
+	QLabel*								m_ShadowLightsLabel;
+	QLabel*								m_SkinGlossLabel;
+	QLabel*								m_ClothGlossLabel;
+	QLabel*								m_HairGlossLabel;
+
+	QCheckBox*							m_PerPixelCheck;
+	QCheckBox*							m_ShadowsCheck;
+	QCheckBox*							m_ShadowMapsCheck;
+	QList<QWidget*>						m_GlossWidgets;
+	QList<QWidget*>						m_ShadowWidgets;
+	QList<QWidget*>						m_ShadowMapWidgets;
+	QLabel*								m_ShadowDistanceLabel;
+	QList<QCheckBox*>					m_ShadowCasterChecks;
+	QLabel*								m_ShadowBiasLabel;
+	QLabel*								m_ShadowCreatureDistanceLabel;
+	QLabel*								m_SkinGlossLabel;
+	QLabel*								m_ClothGlossLabel;
+	QLabel*								m_HairGlossLabel;
 
 public:
 	AuSetRender(bool glContextOk, QWidget *parent=0);
@@ -108,6 +138,23 @@ protected slots:
 	void TreeTrunkMinDiaChanged(const QString& value);
 	void TreeTrunkFacesChanged(int value);
 	void TreeTrunkMaxSegsChanged(int value);
+	void SetPerPixelLighting(int value);
+	void SetShadows(int value);
+	void SetShadowMaps(int value);
+	void SetShadowMapSize(int index);
+	void SetShadowMapSoftness(int index);
+	void SetShadowDistance(int value);
+	void SetShadowBias(int value);
+	void SetShadowsDebug(int value);
+	void SetRenderCounters(int value);
+	void SetShadowCasters();
+	void SetShadowSecondSun(int value);
+	void SetShadowLights(int value);
+	void SetShadowCreatureDistance(int value);
+	void SetSkinGloss(int value);
+	void SetClothGloss(int value);
+	void SetHairGloss(int value);
+	void UpdateShadowControls();
 };
 
 #endif // AuSetRender_H

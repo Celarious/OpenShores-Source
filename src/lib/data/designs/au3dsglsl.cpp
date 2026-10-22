@@ -5225,6 +5225,26 @@ quint64 Au3dsGLSLModelInstance::MemoryUsage() const
 	return mem;
 }
 
+int Au3dsGLSLModelInstance::SunShadowVariant() const
+{
+	return SSV_Model;
+}
+
+bool Au3dsGLSLModelInstance::RenderSunShadowDepth(const AuMatrix4x4& mv, AuGLEffects& re) const
+{
+	bool drew = false;
+	re.GLSL().ModelDepthShader().SetModelView(mv);
+	for(QList<Au3dsGLSLVAO>::const_iterator vi = m_Models.constBegin(); vi != m_Models.constEnd(); vi++)
+		if((*vi).VAO() && (*vi).m_GlowColor.alphaF() >= 1.f)
+		{
+			(*vi).SelectGL();
+			(*vi).DrawGL();
+			(*vi).DeselectGL();
+			drew = true;
+		}
+	return drew;
+}
+
 bool Au3dsGLSLModelInstance::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mv, AuGLEffects& re,
 		float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp, bool lightOn,
 		float alpha, int pass) const

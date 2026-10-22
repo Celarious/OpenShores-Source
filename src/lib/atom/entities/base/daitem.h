@@ -453,6 +453,11 @@ public:
 
 	void RenderAudioSources(const DaPerson* sceneAtom, const AuMatrix4x4& model, AuSound* al, float fade);
 
+	virtual unsigned int SunShadowFamilies() const;
+	virtual unsigned int SunShadowVariants(int family) const;
+	virtual void RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+			AuSunShadowPass& sp);
+
 	virtual void RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, AuModelMatrixHash& rmod,
 			const DaPerson* sceneAtom, AuRenderLastMap& renderLast, RENDERPASS pass,
 			DaAtomList& shadSc,

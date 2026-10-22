@@ -11,6 +11,8 @@
 #include "audesignerview.h"
 #include "aujoystick.h"
 #include "auframe.h"
+#include "augleffects.h"
+#include "auglsl.h"
 #include <daperson.h>
 #include <davehicle.h>
 #include <QCheckBox>
@@ -562,6 +564,248 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	}
 	*/
 
+	QCheckBox* perPixelLighting = new QCheckBox(tr("Per-Pixel Lighting"));
+	perPixelLighting->setChecked(g_Au.PerPixelLighting());
+	perPixelLighting->setToolTip(tr("<html><p><b>Per-Pixel Lighting</b><br>"
+				"Computes the light from suns and lamps for every pixel of a surface, instead of only at its corners. "
+				"Large flat walls, decks and hulls then show the pool of light around a lamp and a proper highlight, "
+				"where otherwise the light is blended from one corner to the next.</p>"
+				"<p>Applies to spacecraft and buildings, the ground, items, people and animals, plants, rocks and flags.</p>"
+				"<p>When unchecked, light is computed the classic way.</p>"
+				"<p>This is much more work for the graphics card, and more so the higher <i>Light Sources</i> is set. "
+				"It needs a stronger graphics card. If the frame rate drops, lower <i>Light Sources</i> or leave this unchecked.</p>"
+				"<p>Changes take effect immediately, after a short pause while the graphics card is given new instructions.</p>"
+				"</html>"));
+	connect(perPixelLighting, SIGNAL(stateChanged(int)), SLOT(SetPerPixelLighting(int)));
+
+	QCheckBox* shadows = new QCheckBox(tr("Shadows"));
+	shadows->setChecked(g_Au.Shadows());
+	shadows->setToolTip(tr("<html><p><b>Shadows</b><br>"
+				"Planets and moons cast shadows. A spacecraft or a station goes dark as it passes behind a planet, "
+				"and people, buildings and plants on a moon go dark while its planet covers the sun.</p>"
+				"<p>With <i>Object Shadows</i> checked, spacecraft, buildings, hills, people and animals also cast "
+				"shadows on the ground and on one another.</p>"
+				"<p><b>Shadows need <i>Per-Pixel Lighting</i>.</b> This box can only be changed while that one is checked, "
+				"and it does nothing while that one is unchecked.</p>"
+				"<p>Changes take effect immediately, after a short pause while the graphics card is given new instructions.</p>"
+				"</html>"));
+	shadows->setEnabled(perPixelLighting->isChecked());
+	connect(perPixelLighting, SIGNAL(toggled(bool)), shadows, SLOT(setEnabled(bool)));
+	connect(shadows, SIGNAL(stateChanged(int)), SLOT(SetShadows(int)));
+	m_PerPixelCheck = perPixelLighting;
+	m_ShadowsCheck = shadows;
+
+	m_ShadowMapsCheck = new QCheckBox(tr("Object Shadows"));
+	m_ShadowMapsCheck->setChecked(g_Au.ShadowMaps());
+	m_ShadowMapsCheck->setToolTip(tr("<html><p><b>Object Shadows</b><br>"
+				"Things cast shadows in sunlight on the ground, on one another and on people. "
+				"This is the costly part of <i>Shadows</i>: the casters are drawn a second time, as seen from the sun.</p>"
+				"<p>Uncheck it to keep only the shadows of planets and moons, which cost almost nothing.</p>"
+				"<p>Changes take effect immediately, after a short pause while the graphics card is given new instructions.</p>"
+				"</html>"));
+	connect(m_ShadowMapsCheck, SIGNAL(stateChanged(int)), SLOT(SetShadowMaps(int)));
+
+	QComboBox* shadowSizeCombo = new QComboBox(this);
+	for(int size : {512, 1024, 2048, 4096, 8192})
+		shadowSizeCombo->addItem(tr("Shadow Map %1").arg(size), size);
+	{
+		int sizeIndex = shadowSizeCombo->findData(g_Au.ShadowMapSize());
+		shadowSizeCombo->setCurrentIndex(sizeIndex < 0 ? 2 : sizeIndex);
+	}
+	shadowSizeCombo->setToolTip(tr("<html><p><b>Shadow Map Size</b><br>"
+				"The size of the picture the shadows are looked up in. Larger gives sharper shadows with finer detail "
+				"and uses more graphics memory. There are three such pictures, one for near, one for the middle distance "
+				"and one for far: together 12 MB at 1024, 48 MB at 2048, 192 MB at 4096, 768 MB at 8192.</p>"
+				"<p>Raise it if shadow edges look blocky or blurred. Lower it if the frame rate drops.</p>"
+				"<p>The pictures are stretched over the <i>Shadow Distance</i>, so a shorter distance also sharpens shadows.</p>"
+				"<p>Changes take effect immediately.</p>"
+				"</html>"));
+	connect(shadowSizeCombo, SIGNAL(currentIndexChanged(int)), SLOT(SetShadowMapSize(int)));
+
+	QComboBox* shadowSoftCombo = new QComboBox(this);
+	shadowSoftCombo->addItem(tr("Hard Edges"), 0);
+	shadowSoftCombo->addItem(tr("Soft Edges"), 1);
+	shadowSoftCombo->addItem(tr("Softer Edges"), 2);
+	shadowSoftCombo->setCurrentIndex(qBound(0, g_Au.ShadowMapSoftness(), 2));
+	shadowSoftCombo->setToolTip(tr("<html><p><b>Shadow Softness</b><br>"
+				"How much the edge of an object's shadow is smoothed. Softer edges hide the steps of the shadow map "
+				"and are more work for the graphics card: 1, 9 or 25 look ups for every sunlit pixel.</p>"
+				"<p>Changes take effect immediately, after a short pause while the graphics card is given new instructions.</p>"
+				"</html>"));
+	connect(shadowSoftCombo, SIGNAL(currentIndexChanged(int)), SLOT(SetShadowMapSoftness(int)));
+
+	QCheckBox* shadowsDebug = new QCheckBox(tr("Show Shadows in Color"));
+	shadowsDebug->setChecked(g_Au.ShadowsDebug());
+	shadowsDebug->setToolTip(tr("<html><p><b>Show Shadows in Color</b><br>"
+				"A debugging aid. What is in shadow is tinted instead of darkened: magenta in the shadow of a planet or moon, "
+				"cyan in the shadow of an object. Use it to see where a shadow is and what shape it has.</p>"
+				"<p>Changes take effect immediately, after a short pause while the graphics card is given new instructions.</p>"
+				"</html>"));
+	connect(shadowsDebug, SIGNAL(stateChanged(int)), SLOT(SetShadowsDebug(int)));
+
+	QCheckBox* renderCounters = new QCheckBox(tr("Log Draw Counts"));
+	renderCounters->setChecked(g_Au.RenderCounters());
+	renderCounters->setToolTip(tr("<html><p><b>Log Draw Counts</b><br>"
+				"A debugging aid. Once a second, writes a line to the file <i>soh.txt</i> in the temporary files folder "
+				"(%1): frames per second, draw calls and triangles for each frame, and what the shadow map took.</p>"
+				"<p>Changes take effect immediately.</p>"
+				"</html>").arg(g_Au.CacheApp()));
+	connect(renderCounters, SIGNAL(stateChanged(int)), SLOT(SetRenderCounters(int)));
+
+	QHBoxLayout* shadowCasterLay = new QHBoxLayout;
+	{
+		const int families[] = { SSF_Structures, SSF_Terrain, SSF_Creatures };
+		const QString names[] = { tr("Ships and Buildings"), tr("Terrain"), tr("Characters") };
+		const QString what[] = { tr("spacecraft, vehicles and buildings"), tr("hills and the ground itself"),
+				tr("people and animals, yourself included, what they hold and things that lie about") };
+		QLabel* shadowCasterTitle = new QLabel(tr("Shadows from:"));
+		shadowCasterLay->addWidget(shadowCasterTitle);
+		m_ShadowMapWidgets << shadowCasterTitle;
+		for(int f=0; f<3; f++)
+		{
+			QCheckBox* check = new QCheckBox(names[f]);
+			check->setProperty("family", families[f]);
+			check->setChecked((g_Au.ShadowCasters() >> families[f]) & 1);
+			check->setToolTip(tr("<html><p><b>Shadows from %1</b><br>"
+						"When checked, %2 cast shadows. Uncheck it if the frame rate drops with <i>Object Shadows</i> on: "
+						"what is unchecked is not drawn into the shadow maps and costs nothing.</p>"
+						"<p>Changes take effect immediately.</p>"
+						"</html>").arg(names[f]).arg(what[f]));
+			connect(check, SIGNAL(stateChanged(int)), SLOT(SetShadowCasters()));
+			shadowCasterLay->addWidget(check);
+			m_ShadowCasterChecks << check;
+			m_ShadowMapWidgets << check;
+		}
+
+		QCheckBox* secondSun = new QCheckBox(tr("Second Sun"));
+		secondSun->setChecked(g_Au.ShadowSecondSun());
+		secondSun->setToolTip(tr("<html><p><b>Shadows from a Second Sun</b><br>"
+					"In a system with more than one sun, things cast shadows from the brightest one. When checked, they "
+					"cast a second shadow from the next brightest too, if it sheds a fair part of the light. It doubles "
+					"what <i>Object Shadows</i> cost while two suns are up, and does nothing where there is one sun.</p>"
+					"<p>Changes take effect immediately.</p>"
+					"</html>"));
+		connect(secondSun, SIGNAL(stateChanged(int)), SLOT(SetShadowSecondSun(int)));
+		shadowCasterLay->addWidget(secondSun);
+		m_ShadowMapWidgets << secondSun;
+		shadowCasterLay->addStretch();
+	}
+
+	QHBoxLayout* shadowComboLay = new QHBoxLayout;
+	shadowComboLay->addWidget(shadowSizeCombo);
+	shadowComboLay->addWidget(shadowSoftCombo);
+	QHBoxLayout* shadowDebugLay = new QHBoxLayout;
+	shadowDebugLay->addWidget(shadowsDebug);
+	shadowDebugLay->addWidget(renderCounters);
+
+	QLabel* shadowDistanceTitle = new QLabel(tr("Shadow Distance"));
+	m_ShadowDistanceLabel = new QLabel(QString("%1m").arg(g_Au.ShadowMapRadius()));
+	QSlider* shadowDistanceSlider = new QSlider(Qt::Horizontal, this);
+	shadowDistanceSlider->setRange(5, 200);
+	shadowDistanceSlider->setSingleStep(1);
+	shadowDistanceSlider->setPageStep(5);
+	shadowDistanceSlider->setValue(qBound(5, g_Au.ShadowMapRadius()/10, 200));
+	shadowDistanceSlider->setToolTip(tr("<html><b>Shadow Distance</b><br>"
+				"How far from you objects cast shadows. Beyond it the shadows fade out. "
+				"<br>"
+				"%1 The shadow maps are stretched over this distance: the near one over a sixteenth of it, the middle "
+				"one over a quarter, the far one over all of it. A longer distance makes every shadow coarser. "
+				"If shadows look blocky, shorten the distance or raise the <i>Shadow Map Size</i>. "
+				"<br>"
+				"%1 If shadows of buildings end too close to you, lengthen it. "
+				"</html>").arg(QString(QChar(0x00B7))));
+	connect(shadowDistanceSlider, SIGNAL(valueChanged(int)), SLOT(SetShadowDistance(int)));
+
+	QLabel* shadowCreatureTitle = new QLabel(tr("Character Shadow Distance"));
+	m_ShadowCreatureDistanceLabel = new QLabel(QString("%1m").arg(g_Au.ShadowCreatureDistance()));
+	QSlider* shadowCreatureSlider = new QSlider(Qt::Horizontal, this);
+	shadowCreatureSlider->setRange(10, 500);
+	shadowCreatureSlider->setSingleStep(1);
+	shadowCreatureSlider->setPageStep(10);
+	shadowCreatureSlider->setValue(g_Au.ShadowCreatureDistance());
+	shadowCreatureSlider->setToolTip(tr("<html><b>Character Shadow Distance</b><br>"
+				"How far from you people and animals cast shadows. Each one that does is drawn again for the shadow maps, "
+				"so in a crowd a shorter distance helps the frame rate. Never more than the <i>Shadow Distance</i>."
+				"</html>"));
+	connect(shadowCreatureSlider, SIGNAL(valueChanged(int)), SLOT(SetShadowCreatureDistance(int)));
+	m_ShadowMapWidgets << shadowCreatureTitle << shadowCreatureSlider << m_ShadowCreatureDistanceLabel;
+	QLabel* shadowLightsTitle = new QLabel(tr("Lamp Shadows"));
+	m_ShadowLightsLabel = new QLabel(g_Au.ShadowLights() ? QString::number(g_Au.ShadowLights()) : tr("Off"));
+	QSlider* shadowLightsSlider = new QSlider(Qt::Horizontal, this);
+	shadowLightsSlider->setRange(0, 4);
+	shadowLightsSlider->setSingleStep(1);
+	shadowLightsSlider->setPageStep(1);
+	shadowLightsSlider->setValue(g_Au.ShadowLights());
+	shadowLightsSlider->setToolTip(tr("<html><p><b>Lamp Shadows</b><br>"
+				"How many lamps cast shadows of things: suit lights, torches, lanterns and the like. All the way down "
+				"none does, which is how it starts. The lamps nearest you are taken, your own first.</p>"
+				"<p>A suit light costs about as much as one more of the sun's shadow maps. A lamp that shines all "
+				"round, like a torch, costs six times that. The same things cast as in sunlight (<i>Shadows from</i>, "
+				"above).</p>"
+				"<p>Changes take effect immediately; going from <i>Off</i> to a number or back takes a moment.</p>"
+				"</html>"));
+	connect(shadowLightsSlider, SIGNAL(valueChanged(int)), SLOT(SetShadowLights(int)));
+	m_ShadowMapWidgets << shadowLightsTitle << shadowLightsSlider << m_ShadowLightsLabel;
+
+	QLabel* shadowBiasTitle = new QLabel(tr("Shadow Bias"));
+	m_ShadowBiasLabel = new QLabel(QString::number(g_Au.ShadowMapBias(), 'f', 2));
+	QSlider* shadowBiasSlider = new QSlider(Qt::Horizontal, this);
+	shadowBiasSlider->setRange(0, 200);
+	shadowBiasSlider->setSingleStep(1);
+	shadowBiasSlider->setPageStep(10);
+	shadowBiasSlider->setValue(qBound(0, (int)(g_Au.ShadowMapBias()*20 + .5), 200));
+	shadowBiasSlider->setToolTip(tr("<html><b>Shadow Bias</b><br>"
+				"How far a surface is held away from its own shadow. 1.00 is the normal amount. "
+				"<br>"
+				"%1 <b>Raise it</b> if sunlit walls or ground show fine dark stripes or speckle. "
+				"<br>"
+				"%1 <b>Lower it</b> if shadows start a little way off from the foot of what casts them, "
+				"or if light leaks along the bottom of walls. "
+				"</html>").arg(QString(QChar(0x00B7))));
+	connect(shadowBiasSlider, SIGNAL(valueChanged(int)), SLOT(SetShadowBias(int)));
+
+	QLabel* skinGlossTitle = new QLabel(tr("Skin Gloss"));
+	QLabel* clothGlossTitle = new QLabel(tr("Clothing Gloss"));
+	QLabel* hairGlossTitle = new QLabel(tr("Hair Gloss"));
+	m_SkinGlossLabel = new QLabel(QString("%1%").arg(qRound(g_Au.PerPixelSkinGloss()*100)));
+	m_ClothGlossLabel = new QLabel(QString("%1%").arg(qRound(g_Au.PerPixelClothGloss()*100)));
+	m_HairGlossLabel = new QLabel(QString("%1%").arg(qRound(g_Au.PerPixelHairGloss()*100)));
+	QSlider* glossSliders[3];
+	QLabel* glossLabels[3] = { m_SkinGlossLabel, m_ClothGlossLabel, m_HairGlossLabel };
+	double glossValues[3] = { g_Au.PerPixelSkinGloss(), g_Au.PerPixelClothGloss(), g_Au.PerPixelHairGloss() };
+	const char* glossSlots[3] = { SLOT(SetSkinGloss(int)), SLOT(SetClothGloss(int)), SLOT(SetHairGloss(int)) };
+	QString glossWhat[3] = { tr("skin"), tr("clothing"), tr("hair") };
+	for(int g=0; g<3; g++)
+	{
+		QSlider* slider = new QSlider(Qt::Horizontal, this);
+		slider->setRange(0, 100);
+		slider->setSingleStep(1);
+		slider->setPageStep(10);
+		slider->setValue(qRound(glossValues[g]*100));
+		slider->setTracking(false);
+		slider->setToolTip(tr("<html><b>Gloss with Per-Pixel Lighting</b><br>"
+					"How strongly %1 shows the highlight of a sun or a lamp. "
+					"Lower it if %1 looks wet or like plastic; raise it if it looks dull. "
+					"<br>"
+					"Takes effect when the slider is let go, after a short pause while the graphics card is given new "
+					"instructions."
+					"</html>").arg(glossWhat[g]));
+		QLabel* label = glossLabels[g];
+		connect(slider, &QSlider::sliderMoved, this, [label](int value) { label->setText(QString("%1%").arg(value)); });
+		connect(slider, SIGNAL(valueChanged(int)), glossSlots[g]);
+		glossSliders[g] = slider;
+	}
+
+	m_GlossWidgets << skinGlossTitle << clothGlossTitle << hairGlossTitle << m_SkinGlossLabel << m_ClothGlossLabel
+			<< m_HairGlossLabel << glossSliders[0] << glossSliders[1] << glossSliders[2];
+	m_ShadowWidgets << m_ShadowMapsCheck << shadowsDebug;
+	m_ShadowMapWidgets << shadowSizeCombo << shadowSoftCombo << shadowDistanceTitle << shadowDistanceSlider
+			<< m_ShadowDistanceLabel << shadowBiasTitle << shadowBiasSlider << m_ShadowBiasLabel;
+	connect(perPixelLighting, SIGNAL(toggled(bool)), SLOT(UpdateShadowControls()));
+	connect(shadows, SIGNAL(toggled(bool)), SLOT(UpdateShadowControls()));
+	connect(m_ShadowMapsCheck, SIGNAL(toggled(bool)), SLOT(UpdateShadowControls()));
+	UpdateShadowControls();
+
 	QGridLayout* sliderlay = new QGridLayout;
 	{
 		int row=0;
@@ -625,6 +869,34 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 		sliderlay->addWidget(buildingViewRangeSlider, row,1);
 		sliderlay->addWidget(m_BuildingViewRange, row,2);
 		row++;
+		sliderlay->addWidget(shadowDistanceTitle, row,0);
+		sliderlay->addWidget(shadowDistanceSlider, row,1);
+		sliderlay->addWidget(m_ShadowDistanceLabel, row,2);
+		row++;
+		sliderlay->addWidget(shadowCreatureTitle, row,0);
+		sliderlay->addWidget(shadowCreatureSlider, row,1);
+		sliderlay->addWidget(m_ShadowCreatureDistanceLabel, row,2);
+		row++;
+		sliderlay->addWidget(shadowLightsTitle, row,0);
+		sliderlay->addWidget(shadowLightsSlider, row,1);
+		sliderlay->addWidget(m_ShadowLightsLabel, row,2);
+		row++;
+		sliderlay->addWidget(shadowBiasTitle, row,0);
+		sliderlay->addWidget(shadowBiasSlider, row,1);
+		sliderlay->addWidget(m_ShadowBiasLabel, row,2);
+		row++;
+		sliderlay->addWidget(skinGlossTitle, row,0);
+		sliderlay->addWidget(glossSliders[0], row,1);
+		sliderlay->addWidget(m_SkinGlossLabel, row,2);
+		row++;
+		sliderlay->addWidget(clothGlossTitle, row,0);
+		sliderlay->addWidget(glossSliders[1], row,1);
+		sliderlay->addWidget(m_ClothGlossLabel, row,2);
+		row++;
+		sliderlay->addWidget(hairGlossTitle, row,0);
+		sliderlay->addWidget(glossSliders[2], row,1);
+		sliderlay->addWidget(m_HairGlossLabel, row,2);
+		row++;
 		sliderlay->addWidget(fovlabel, row,0);
 		sliderlay->addWidget(m_FoVSlider, row,1);
 		sliderlay->addWidget(m_FoVLabel, row,2);
@@ -660,6 +932,12 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	infolay->addWidget(m_SkyBoxMipmap);
 	infolay->addWidget(ckbumpmapseas);
 	infolay->addWidget(frustumCulling);
+	infolay->addWidget(perPixelLighting);
+	infolay->addWidget(shadows);
+	infolay->addWidget(m_ShadowMapsCheck);
+	infolay->addLayout(shadowCasterLay);
+	infolay->addLayout(shadowComboLay);
+	infolay->addLayout(shadowDebugLay);
 	infolay->addStretch();
 
 	QFrame* sliderFrame = new QFrame(this);
@@ -714,6 +992,134 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 
 AuSetRender::~AuSetRender()
 {
+}
+
+void AuSetRender::SetPerPixelLighting(int value)
+{
+	g_Au.SetPerPixelLighting(value ? true : false);
+	AuGLSLShader::SetPerPixelLighting(g_Au.PerPixelLighting());
+}
+
+void AuSetRender::SetShadows(int value)
+{
+	g_Au.SetShadows(value ? true : false);
+	AuGLSLShader::SetShadows(g_Au.Shadows());
+}
+
+void AuSetRender::UpdateShadowControls()
+{
+	bool perPixel = m_PerPixelCheck->isChecked();
+	bool shadows = perPixel && m_ShadowsCheck->isChecked();
+	bool maps = shadows && m_ShadowMapsCheck->isChecked();
+	for(QList<QWidget*>::const_iterator wi = m_GlossWidgets.cbegin(); wi != m_GlossWidgets.cend(); wi++)
+		(*wi)->setEnabled(perPixel);
+	for(QList<QWidget*>::const_iterator wi = m_ShadowWidgets.cbegin(); wi != m_ShadowWidgets.cend(); wi++)
+		(*wi)->setEnabled(shadows);
+	for(QList<QWidget*>::const_iterator wi = m_ShadowMapWidgets.cbegin(); wi != m_ShadowMapWidgets.cend(); wi++)
+		(*wi)->setEnabled(maps);
+}
+
+void AuSetRender::SetShadowMaps(int value)
+{
+	g_Au.SetShadowMaps(value ? true : false);
+	AuGLSLShader::SetShadowMaps(g_Au.ShadowMaps());
+}
+
+void AuSetRender::SetShadowMapSize(int index)
+{
+	QComboBox* combo = qobject_cast<QComboBox*>(sender());
+	if(!combo || index < 0)
+		return;
+	g_Au.SetShadowMapSize(combo->itemData(index).toInt());
+	AuGLSLShader::SetShadowMapSize(g_Au.ShadowMapSize());
+}
+
+void AuSetRender::SetShadowMapSoftness(int index)
+{
+	QComboBox* combo = qobject_cast<QComboBox*>(sender());
+	if(!combo || index < 0)
+		return;
+	g_Au.SetShadowMapSoftness(combo->itemData(index).toInt());
+	AuGLSLShader::SetShadowMapSoftness(g_Au.ShadowMapSoftness());
+}
+
+void AuSetRender::SetShadowDistance(int value)
+{
+	g_Au.SetShadowMapRadius(value*10);
+	m_ShadowDistanceLabel->setText(QString("%1m").arg(g_Au.ShadowMapRadius()));
+	AuGLSLShader::SetShadowMapRadiusMeters(g_Au.ShadowMapRadius());
+}
+
+void AuSetRender::SetShadowBias(int value)
+{
+	g_Au.SetShadowMapBias(value/20.);
+	m_ShadowBiasLabel->setText(QString::number(g_Au.ShadowMapBias(), 'f', 2));
+	AuGLSLShader::SetShadowMapBias(g_Au.ShadowMapBias());
+}
+
+void AuSetRender::SetShadowsDebug(int value)
+{
+	g_Au.SetShadowsDebug(value ? true : false);
+	AuGLSLShader::SetShadowsDebug(g_Au.ShadowsDebug());
+}
+
+void AuSetRender::SetShadowCreatureDistance(int value)
+{
+	g_Au.SetShadowCreatureDistance(value);
+	m_ShadowCreatureDistanceLabel->setText(QString("%1m").arg(g_Au.ShadowCreatureDistance()));
+	AuGLSLShader::SetShadowCasterLimitMeters(SSF_Creatures, g_Au.ShadowCreatureDistance());
+}
+
+void AuSetRender::SetShadowCasters()
+{
+	unsigned int families = g_Au.ShadowCasters();
+	for(QList<QCheckBox*>::const_iterator ci = m_ShadowCasterChecks.cbegin(); ci != m_ShadowCasterChecks.cend(); ci++)
+	{
+		unsigned int bit = 1u << (*ci)->property("family").toInt();
+		families = (*ci)->isChecked() ? (families | bit) : (families & ~bit);
+	}
+	g_Au.SetShadowCasters(families);
+	AuGLSLShader::SetShadowCasters(g_Au.ShadowCasters());
+}
+
+void AuSetRender::SetShadowLights(int value)
+{
+	g_Au.SetShadowLights(value);
+	m_ShadowLightsLabel->setText(g_Au.ShadowLights() ? QString::number(g_Au.ShadowLights()) : tr("Off"));
+	AuGLSLShader::SetShadowLights(g_Au.ShadowLights());
+}
+
+void AuSetRender::SetShadowSecondSun(int value)
+{
+	g_Au.SetShadowSecondSun(value ? true : false);
+	AuGLSLShader::SetShadowSecondSun(g_Au.ShadowSecondSun());
+}
+
+void AuSetRender::SetRenderCounters(int value)
+{
+	g_Au.SetRenderCounters(value ? true : false);
+	AuRenderCounters::s_On = g_Au.RenderCounters();
+}
+
+void AuSetRender::SetSkinGloss(int value)
+{
+	g_Au.SetPerPixelSkinGloss(value/100.);
+	m_SkinGlossLabel->setText(QString("%1%").arg(value));
+	AuGLSLShader::SetPerPixelSkinGloss((float)g_Au.PerPixelSkinGloss());
+}
+
+void AuSetRender::SetClothGloss(int value)
+{
+	g_Au.SetPerPixelClothGloss(value/100.);
+	m_ClothGlossLabel->setText(QString("%1%").arg(value));
+	AuGLSLShader::SetPerPixelClothGloss((float)g_Au.PerPixelClothGloss());
+}
+
+void AuSetRender::SetHairGloss(int value)
+{
+	g_Au.SetPerPixelHairGloss(value/100.);
+	m_HairGlossLabel->setText(QString("%1%").arg(value));
+	AuGLSLShader::SetPerPixelHairGloss((float)g_Au.PerPixelHairGloss());
 }
 
 void AuSetRender::SetDrawBody(int index)

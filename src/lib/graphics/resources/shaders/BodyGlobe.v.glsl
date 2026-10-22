@@ -6,6 +6,7 @@
 
 #version 150
 
+#ifndef PER_PIXEL_LIGHTING
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // Lighting Structures and Functions
 
@@ -64,7 +65,7 @@ void computeSunLight(SunLight sun,
 
 	// Account for radius of solar disk.
 	float diskang = atan(sun.radius, distSun);
-	float sunang = acos(NdotL);
+	float sunang = acos(clamp(NdotL, -1., 1.));
 	float rd1 = cos(sunang + diskang);
 	float rd2 = cos(sunang - diskang);
 	NdotL = max(rd1, NdotL);
@@ -73,7 +74,7 @@ void computeSunLight(SunLight sun,
 	// Check for sun over the horizon.
 	vec3 U = normalize(P - globeP);								// Up vector at vertex location, with respect to the globe.
 	float LdotU = dot(L, U);
-	float sunang2 = acos(LdotU);
+	float sunang2 = acos(clamp(LdotU, -1., 1.));
 	float rd3 = cos(sunang2 + diskang);
 	float rd4 = cos(sunang2 - diskang);
 	LdotU = max(rd3, LdotU);
@@ -190,13 +191,16 @@ vec3 computeLighting(LightSources light,
 	// Clamp color values
 	return clamp(color, vec3(0,0,0), vec3(1,1,1));
 }
+#endif
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #define MaxBones 61	// NOTE: Too many bone matrices and nothing dislays on the screen.
 
 uniform vec4							glowAlpha;				// Glow color added to lit color(rgb). Alpha of vertColor(a).
+#ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
+#endif
 uniform mat4							mv;						// Model view matrix.
 uniform mat4							p;						// Projection matrix.
 uniform mat4							bM[MaxBones];			// 4x4 bone matrices
@@ -207,7 +211,14 @@ in vec3									normal;					// Incoming vertex normal.
 in vec3									position;				// Incoming vertex location.
 in vec4									texCoordShineTopface;	// Incoming texture coordinate(xy), shininess(z), top face(w)
 
+#ifdef PER_PIXEL_LIGHTING
+out vec4								vertLitScale;
+out float								vertLitShininess;
+out vec3								vertLitP;
+out vec3								vertLitN;
+#else
 out vec4								vertColor;				// Outgoing vertex color.
+#endif
 out vec3								vertTexCoordTopface;	// Outgoing texture coordinate(xy) and top face(z)
 
 void main()
@@ -245,8 +256,15 @@ void main()
 
 	// Calculate lighting using eye space position and normal.
 	vec4 eyeN = normalize(mv * vec4(netNormal, 1) - mv * vec4(0,0,0,1));	// Surface normal in eye space.
+#ifdef PER_PIXEL_LIGHTING
+	vertLitScale = vec4(1, 1, 1, glowAlpha.a);
+	vertLitShininess = texCoordShineTopface.z;
+	vertLitP = gl_Position.xyz;
+	vertLitN = eyeN.xyz;
+#else
 	vertColor = vec4(computeLighting(light, texCoordShineTopface.z, gl_Position.xyz, eyeN.xyz), glowAlpha.a);
 	vertColor.rgb = min(vertColor.rgb + glowAlpha.rgb, vec3(1.5, 1.5, 1.5));
+#endif
 
 	gl_Position = p * gl_Position;
 

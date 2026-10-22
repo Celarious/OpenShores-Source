@@ -93,6 +93,7 @@ void AuContrailSample::AnimateScene()
 
 void AuContrailSample::paintGL()
 {
+	m_RE.GLSL().RebuildIfStale();
 	// Clear the color and depth buffers. (Clears the background.)
 	m_RE.glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 

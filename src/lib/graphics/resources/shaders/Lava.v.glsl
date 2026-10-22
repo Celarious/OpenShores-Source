@@ -62,7 +62,7 @@ void computeSunLight(SunLight sun,
 
 	// Account for radius of solar disk.
 	float diskang = atan(sun.radius, distSun);
-	float sunang = acos(NdotL);
+	float sunang = acos(clamp(NdotL, -1., 1.));
 	float rd1 = cos(sunang + diskang);
 	float rd2 = cos(sunang - diskang);
 	NdotL = max(rd1, NdotL);
@@ -194,6 +194,26 @@ out vec3								sunCol2;
 out vec3								sunDir2;
 out float								sunInt2;
 
+#ifdef SHADOW_MAPS
+uniform vec3							sunShadowMapDirLocal;
+uniform vec3							sunShadowMapDir2Local;
+out vec3								vertMapP;
+out vec3								vertMapN;
+out vec3								vertMapSuns;
+
+float sunShadowMapsOf(bool enabled, vec3 sunPosition, vec3 P)
+{
+	if(!enabled)
+		return 0.;
+	vec3 L = normalize(sunPosition - P);
+	if(dot(L, sunShadowMapDirLocal) >= .999)
+		return 1.;
+	if(dot(L, sunShadowMapDir2Local) >= .999)
+		return 2.;
+	return 0.;
+}
+#endif
+
 void main()
 {
 	// Calculate lighting using object space position and normal.
@@ -201,6 +221,13 @@ void main()
 	// parallel to the normals at those vertexes.
 	vec3 N = normalize(position);
 	sunColor = computeSunLighting(light, 50., position, N);
+#ifdef SHADOW_MAPS
+	vertMapP = position;
+	vertMapN = N;
+	vertMapSuns = vec3(sunShadowMapsOf(light.sun0.enabled, light.sun0.position, position),
+		sunShadowMapsOf(light.sun1.enabled, light.sun1.position, position),
+		sunShadowMapsOf(light.sun2.enabled, light.sun2.position, position));
+#endif
 	lightColor = computeLighting(light, 50., position, N);
 
 	gl_Position = p * mv * vec4(position,1);	// Calculate homogeneous vertex position using projection and model view matrices.

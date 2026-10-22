@@ -186,6 +186,8 @@ void AuBodyRenderWidget::resizeGL(int w, int h)
 
 void AuBodyRenderWidget::paintGL()
 {
+	if(m_pRE)
+		m_pRE->GLSL().RebuildIfStale();
 	//qDebug() << "AuBodyRenderWidget::paingGL" << m_texBackdrop << m_texSpacecraft << g_Au.CurrentUTC().time().msec();
 	if(isHidden())
 		return;		// No need to render when hidden

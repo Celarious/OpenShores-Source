@@ -18761,6 +18761,46 @@ void DaSc::ListDesignsRecursive(QSet<quint32>& bdDesigns, QSet<quint32>& scDesig
 	DaVessel::ListDesignsRecursive(bdDesigns, scDesigns);
 }
 
+void DaSc::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+		AuSunShadowPass& sp)
+{
+	Q_UNUSED(sceneAtom);
+
+	AuPoint hMax,hMin;
+	m_Design.Extents(hMax, hMin);
+	double reach = hMin.Distance(hMax);
+	const AuPoint& pv = rmod.ViewLoc(Id());
+	if(!sp.Asked(pv.x, pv.y, pv.z, reach))
+		return;
+	if(m_OpaqueVAOs.empty() && m_RoomOpaqueVAOs.empty())
+		return;
+	if(!sp.Reaches(pv.x, pv.y, pv.z, reach))
+		return;
+	const AuGLSLScBase& shader = ari.re->GLSL().ScDepthAlphaShader();
+	shader.SetSurfaceTextures(m_SurfaceTex);
+
+	const AuMatrix4x4& model = rmod.Matrix(Id());
+	shader.SetModelView(model);
+	if(!m_OpaqueVAOs.empty())
+		RenderDesignVAOs(m_OpaqueVAOs, shader);
+	if(m_InsideVisible)
+	{
+		if(!m_RoomOpaqueVAOs.empty())
+			RenderDesignVAOs(m_RoomOpaqueVAOs, shader);
+		if(!m_IntRoomOpaqueVAOs.empty())
+			RenderDesignVAOs(m_IntRoomOpaqueVAOs, shader);
+	}
+	if(!m_DoorOpaqueVAOs.empty())
+		RenderDoorVAOs(m_DoorOpaqueVAOs, shader, 0, 0, 0, 0);
+	if(!m_LandingGearOpaqueVAOs.empty())
+		RenderLandingGearVAOs(m_LandingGearOpaqueVAOs, shader);
+	if(!m_TurBaseOpaqueVAOs.empty())
+		RenderTurretBaseVAOs(m_TurBaseOpaqueVAOs, model, shader);
+	if(!m_TurGunOpaqueVAOs.empty())
+		RenderTurretGunVAOs(m_TurGunOpaqueVAOs, model, shader);
+	sp.Drew();
+}
+
 void DaSc::RenderSc(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom, RENDERPASS pass)
 {
 	// Suns

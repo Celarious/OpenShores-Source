@@ -5,6 +5,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "dasolarsystem.h"
+#include <QElapsedTimer>
 //
 #include "auatomrenderinfo.h"
 #include "audice.h"
@@ -1041,6 +1042,107 @@ DaStar* DaSolarSystem::FindPrimaryStarNotBlackHole() const
 	return primary;
 }
 
+struct AuShadowCandidate
+{
+	AuId								m_Id;
+	AuPoint								m_Center;
+	double								m_Radius;
+	double								m_Score;
+};
+
+static void CollectShadowCandidates(const DaAtom& atom, const AuMatrix4x4& model, AuShadowCandidate* candidates, int& count,
+		int maxCount)
+{
+	DaAtomList subs;
+	atom.ListNormalSubatoms(subs);
+	for(DaAtomList::const_iterator it = subs.cbegin(); it != subs.cend(); it++)
+	{
+		const DaWorld* world = dynamic_cast<const DaWorld*>(*it);
+		if(!world && !dynamic_cast<const DaStar*>(*it))
+			continue;
+		if((*it)->IsInstanceUniverse())
+			continue;
+		AuMatrix4x4 subModel = model * (*it)->Transform();
+		double radius = world ? world->GlobeRadius() : 0;
+		const DaWorldGasGiant* giant = dynamic_cast<const DaWorldGasGiant*>(world);
+		if(giant)
+		{
+			double seen = giant->SeaLevelRadius();
+			if(subModel.Translation().Length() > seen)
+				radius = seen;
+		}
+		if(radius > 0 && count < maxCount)
+		{
+			candidates[count].m_Id = (*it)->Id();
+			candidates[count].m_Center = subModel.Translation();
+			candidates[count].m_Radius = radius;
+			candidates[count].m_Score = 0;
+			count++;
+		}
+		CollectShadowCandidates(**it, subModel, candidates, count, maxCount);
+	}
+}
+
+static void SetShadowBodies(const DaSolarSystem& system, const AuMatrix4x4& model, const QList<AuGLSun>& suns, AuGLEffects& re)
+{
+	static AuId s_Picked[MAX_SHADOW_BODIES];
+	static int s_PickedCount = 0;
+
+	const int maxCandidates = 64;
+	AuShadowCandidate candidates[maxCandidates];
+	int count = 0;
+	CollectShadowCandidates(system, model, candidates, count, maxCandidates);
+
+	for(int c=0; c<count; c++)
+	{
+		AuShadowCandidate& body = candidates[c];
+		double dist = body.m_Center.Length();
+		if(dist <= body.m_Radius)
+		{
+			body.m_Score = 1000;
+			continue;
+		}
+		double angBody = asin(body.m_Radius/dist);
+		body.m_Score = angBody;
+		for(QList<AuGLSun>::const_iterator si = suns.cbegin(); si != suns.cend(); si++)
+		{
+			AuPoint sunLoc((*si).m_LocX, (*si).m_LocY, (*si).m_LocZ);
+			double sunDist = sunLoc.Length();
+			if(sunDist <= dist)
+				continue;
+			double cosBetween = (body.m_Center.x*sunLoc.x + body.m_Center.y*sunLoc.y + body.m_Center.z*sunLoc.z)/(dist*sunDist);
+			double angBetween = acos(qBound(-1., cosBetween, 1.));
+			double angSun = (*si).m_DiskRadius/sunDist;
+			if(angBetween < angBody + 3*angSun)
+				body.m_Score = angBody*8 + 1;
+		}
+		for(int p=0; p<s_PickedCount; p++)
+			if(s_Picked[p] == body.m_Id)
+				body.m_Score *= 1.25;
+	}
+
+	float bodies[4*MAX_SHADOW_BODIES];
+	int picked = 0;
+	while(picked < MAX_SHADOW_BODIES)
+	{
+		int best = -1;
+		for(int c=0; c<count; c++)
+			if(candidates[c].m_Score > 0 && (best < 0 || candidates[c].m_Score > candidates[best].m_Score))
+				best = c;
+		if(best < 0)
+			break;
+		bodies[4*picked] = (float)candidates[best].m_Center.x;
+		bodies[4*picked+1] = (float)candidates[best].m_Center.y;
+		bodies[4*picked+2] = (float)candidates[best].m_Center.z;
+		bodies[4*picked+3] = (float)candidates[best].m_Radius;
+		s_Picked[picked] = candidates[best].m_Id;
+		candidates[best].m_Score = 0;
+		picked++;
+	}
+	s_PickedCount = picked;
+	re.GLSL().SetShadowBodies(picked, bodies);
+}
+
 // Setup light sources for lighting calculations to render a given object.
 void DaSolarSystem::SetupLights(DaPerson* sceneAtom, const AuMatrix4x4& model, AuGLEffects& re)
 {
@@ -1049,6 +1151,9 @@ void DaSolarSystem::SetupLights(DaPerson* sceneAtom, const AuMatrix4x4& model, A
 	QList<AuGLLight> lights;
 	GetRenderLightsRecursive(*sceneAtom, model, suns, lights);
 	SetRenderLights(re, suns, lights, StarLight());	// Starlight is the basis for most ambient lighting.
+
+	if(AuGLSLShader::Shadows() && AuGLSLShader::PerPixelLighting())
+		SetShadowBodies(*this, model, suns, re);
 }
 
 float DaSolarSystem::StarLight() const
@@ -1097,11 +1202,417 @@ float DaSolarSystem::StarLight() const
 	return s;
 }
 
+static int s_SunShadowDraws = 0;
+static int s_SunShadowAsked[SSF_Count] = { 0, 0, 0, 0 };
+static int s_SunShadowDrawn[SSF_Count] = { 0, 0, 0, 0 };
+
+static bool SelectSunShadowFamily(AuGLSL& glsl, int family, int variant, const AuMatrix4x4& lightProjection, AuGLEffects& re)
+{
+	switch(variant)
+	{
+	case SSV_Main:
+		switch(family)
+		{
+		case SSF_Structures:
+			glsl.ScDepthAlphaShader().Select(lightProjection, re);
+			return true;
+		case SSF_Terrain:
+			glsl.ScDepthShader().Select(lightProjection, re);
+			return true;
+		case SSF_Creatures:
+			glsl.AnimalDepthShader().Select(lightProjection);
+			return true;
+		}
+		return false;
+	case SSV_Body:
+		glsl.BodyDepthShader().Select(lightProjection);
+		return true;
+	case SSV_Model:
+		glsl.ModelDepthShader().Select(lightProjection);
+		return true;
+	case SSV_Sc:
+		glsl.ScDepthShader().Select(lightProjection, re);
+		return true;
+	case SSV_Low:
+		glsl.GlobeDepthShader().Select(lightProjection);
+		return true;
+	}
+	return false;
+}
+
+static void DeselectSunShadowFamily(AuGLSL& glsl, int family, int variant)
+{
+	switch(variant)
+	{
+	case SSV_Main:
+		switch(family)
+		{
+		case SSF_Structures:
+			glsl.ScDepthAlphaShader().Deselect();
+			break;
+		case SSF_Terrain:
+			glsl.ScDepthShader().Deselect();
+			break;
+		case SSF_Creatures:
+			glsl.AnimalDepthShader().Deselect();
+			break;
+		}
+		break;
+	case SSV_Body:
+		glsl.BodyDepthShader().Deselect();
+		break;
+	case SSV_Model:
+		glsl.ModelDepthShader().Deselect();
+		break;
+	case SSV_Sc:
+		glsl.ScDepthShader().Deselect();
+		break;
+	case SSV_Low:
+		glsl.GlobeDepthShader().Deselect();
+		break;
+	}
+}
+
+static void ShadowCasterVariants(const DaAtomList& casters, unsigned int variants[SSF_Count])
+{
+	for(int family=0; family<SSF_Count; family++)
+		variants[family] = 0;
+	for(DaAtomList::const_iterator ci = casters.cbegin(); ci != casters.cend(); ci++)
+	{
+		unsigned int families = (*ci)->SunShadowFamilies();
+		for(int family=0; family<SSF_Count; family++)
+			if(families & (1u << family))
+				variants[family] |= (*ci)->SunShadowVariants(family);
+	}
+}
+
+static void DrawShadowCasters(AuGLSL& glsl, const AuMatrix4x4& lightProjection, DaAtomList& casters,
+		const unsigned int variants[SSF_Count], AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+		AuSunShadowPass& sp)
+{
+	for(int family=0; family<SSF_Count; family++)
+	{
+		if(!(AuGLSLShader::ShadowCasters() & (1u << family)))
+			continue;
+		sp.m_Family = family;
+		for(int variant=0; variant<SSV_Count; variant++)
+		{
+			if(!(variants[family] & (1u << variant)) || !SelectSunShadowFamily(glsl, family, variant, lightProjection, *ari.re))
+				continue;
+			sp.m_Variant = variant;
+			for(DaAtomList::const_iterator ci = casters.cbegin(); ci != casters.cend(); ci++)
+				if(((*ci)->SunShadowFamilies() & (1u << family)) && ((*ci)->SunShadowVariants(family) & (1u << variant)))
+					(*ci)->RenderSunShadowDepth(ari, rmod, sceneAtom, sp);
+			DeselectSunShadowFamily(glsl, family, variant);
+		}
+	}
+}
+
+static void RenderLightShadowMaps(const DaPerson* sceneAtom, AuModelMatrixHash& rmod, DaAtomList& casters,
+		AuAtomRenderInfo& ari)
+{
+	AuGLSL& glsl = ari.re->GLSL();
+	int want = qMin(AuGLSLShader::ShadowLights(), LIGHT_SHADOW_SLOTS);
+	if(want < 1 || casters.empty())
+	{
+		glsl.ClearLightShadowMaps();
+		return;
+	}
+
+	AuLightShadowMaps maps;
+	maps.m_Count = 0;
+	maps.m_Size = qMin(AuGLSLShader::ShadowMapSize(), 1024);
+	double scores[LIGHT_SHADOW_SLOTS];
+	int lights = (int)ari.re->MaxLights();
+	for(int l=0; l<lights; l++)
+	{
+		const AuGLLight& light = ari.re->Light(l);
+		if(!light.m_bEnabled || light.m_Role == AuGLLight::Effect || !(light.m_kL > 0 || light.m_kQ > 0))
+			continue;
+		double range = AuLightShadowRange(light.m_kL, light.m_kQ);
+		if(!(range > 2*LIGHT_SHADOW_NEAR))
+			continue;
+		double dist = light.m_Position.Length();
+		if(dist > range + AuGLSLShader::ShadowMapRadiusFeet())
+			continue;
+		double score = range/(dist + 10);
+		if(light.m_Role == AuGLLight::ScenePerson)
+			score *= 4;
+
+		int at = maps.m_Count < want ? maps.m_Count : want - 1;
+		if(maps.m_Count >= want && score <= scores[at])
+			continue;
+		while(at > 0 && score > scores[at - 1])
+		{
+			scores[at] = scores[at - 1];
+			maps.m_Slot[at] = maps.m_Slot[at - 1];
+			at--;
+		}
+		scores[at] = score;
+		AuLightShadowSlot& slot = maps.m_Slot[at];
+		slot.m_Light = l;
+		slot.m_Near = LIGHT_SHADOW_NEAR;
+		slot.m_Far = range;
+		slot.m_Pos[0] = light.m_Position.x;
+		slot.m_Pos[1] = light.m_Position.y;
+		slot.m_Pos[2] = light.m_Position.z;
+		for(int i=0; i<9; i++)
+			slot.m_Rot[i] = (i % 4) ? 0 : 1;
+		slot.m_ForwardOnly = false;
+		AuPoint dir = light.m_Direction;
+		if(light.m_cosOuter > -1 && !dir.IsZero())
+		{
+			dir.Unit();
+			AuPoint side;
+			dir.ArbitraryAxis(side);
+			side.Unit();
+			AuPoint third = dir.Cross(side);
+			third.Unit();
+			slot.m_Rot[0] = side.x;		slot.m_Rot[1] = side.y;		slot.m_Rot[2] = side.z;
+			slot.m_Rot[3] = third.x;	slot.m_Rot[4] = third.y;	slot.m_Rot[5] = third.z;
+			slot.m_Rot[6] = dir.x;		slot.m_Rot[7] = dir.y;		slot.m_Rot[8] = dir.z;
+			slot.m_ForwardOnly = light.m_cosOuter >= .7072f;
+		}
+		if(maps.m_Count < want)
+			maps.m_Count++;
+	}
+	if(maps.m_Count < 1)
+	{
+		glsl.ClearLightShadowMaps();
+		return;
+	}
+
+	if(!glsl.BeginLightShadowMaps(maps.m_Size, want))
+	{
+		glsl.ClearLightShadowMaps();
+		return;
+	}
+	unsigned int variants[SSF_Count];
+	ShadowCasterVariants(casters, variants);
+	for(int s=0; s<maps.m_Count; s++)
+	{
+		const AuLightShadowSlot& slot = maps.m_Slot[s];
+
+		AuSunShadowFit fit;
+		for(int i=0; i<16; i++)
+			fit.m_EyeToClip[i] = fit.m_EyeToTex[i] = 0;
+		for(int i=0; i<3; i++)
+		{
+			fit.m_Center[i] = slot.m_Pos[i];
+			fit.m_AxisX[i] = i == 0 ? 1 : 0;
+			fit.m_AxisY[i] = i == 1 ? 1 : 0;
+			fit.m_Dir[i] = i == 2 ? 1 : 0;
+		}
+		fit.m_Radius = slot.m_Far;
+		fit.m_CasterReach = slot.m_Far;
+		fit.m_TexelWorld = 0;
+		fit.m_TexelUV = 0;
+		fit.m_DepthBias = 0;
+		AuSunShadowPass sp(fit);
+		sp.m_Cascade = 1000;
+		for(int family=0; family<SSF_Count; family++)
+			sp.m_Limit[family] = AuGLSLShader::ShadowCasterLimitFeet(family);
+
+		for(int face=0; face<LIGHT_SHADOW_FACES; face++)
+		{
+			if(slot.m_ForwardOnly && face != 4)
+				continue;
+			AuLightShadowFaceMatrix(slot, face, fit.m_EyeToClip);
+			glsl.LightShadowMapLayer(LIGHT_SHADOW_FACES*s + face);
+			AuMatrix4x4 lightProjection(fit.m_EyeToClip);
+			DrawShadowCasters(glsl, lightProjection, casters, variants, ari, rmod, sceneAtom, sp);
+		}
+	}
+	glsl.EndLightShadowMaps(maps);
+}
+
+static void RenderSunShadowMap(const DaPerson* sceneAtom, const AuMatrix4x4& tmodel, AuModelMatrixHash& rmod,
+		DaAtomList& casters, AuAtomRenderInfo& ari)
+{
+	s_SunShadowDraws = 0;
+	for(int f=0; f<SSF_Count; f++)
+		s_SunShadowAsked[f] = s_SunShadowDrawn[f] = 0;
+	if(casters.empty())
+		return;
+
+	if(!ari.IsViewTopDown() && !sceneAtom->IsInAtmosphere())
+	{
+		const DaSc* craft = dynamic_cast<const DaSc*>(sceneAtom->Parent());
+		if(craft && !craft->HasSunlitRooms())
+		{
+			float ambientR, ambientG, ambientB, fogDensity, fogR, fogG, fogB;
+			bool sunsBlocked = false;
+			sceneAtom->SceneRenderParameters(sceneAtom, ambientR, ambientG, ambientB, fogDensity, fogR, fogG, fogB, false,
+					sunsBlocked);
+			if(sunsBlocked)
+				return;
+		}
+	}
+
+	bool haveUp = false;
+	AuPoint up;
+	if(sceneAtom->IsInAtmosphere())
+	{
+		const DaWorld* world = sceneAtom->FindParentPlanetInEnv();
+		if(world && !dynamic_cast<const DaWorldRingSection*>(world) && rmod.contains(world->Id()))
+		{
+			AuPoint center = rmod.Matrix(world->Id()).Translation();
+			up = AuPoint(-center.x, -center.y, -center.z);
+			if(!up.IsZero())
+			{
+				up.Unit();
+				haveUp = true;
+			}
+		}
+	}
+
+	int order[MAX_SUNS];
+	double lightOf[MAX_SUNS];
+	int ranked = 0;
+	for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
+	{
+		const AuGLSun& sun = ari.re->Sun(sunIndex);
+		if(!sun.m_Enabled || !(sun.m_Attenuation > 0))
+			continue;
+		double dist2 = (double)sun.m_LocX*sun.m_LocX + (double)sun.m_LocY*sun.m_LocY + (double)sun.m_LocZ*sun.m_LocZ;
+		if(!(dist2 > 0))
+			continue;
+		if(haveUp)
+		{
+			AuPoint toSun(sun.m_LocX, sun.m_LocY, sun.m_LocZ);
+			toSun.Unit();
+			if(up.x*toSun.x + up.y*toSun.y + up.z*toSun.z < -.2)
+				continue;
+		}
+		double light = qMax(sun.m_ColorR, qMax(sun.m_ColorG, sun.m_ColorB))/(sun.m_Attenuation*dist2);
+		int at = ranked;
+		while(at > 0 && light > lightOf[at-1])
+		{
+			order[at] = order[at-1];
+			lightOf[at] = lightOf[at-1];
+			at--;
+		}
+		order[at] = sunIndex;
+		lightOf[at] = light;
+		ranked++;
+	}
+	if(ranked == 0)
+		return;
+
+	int suns = 1;
+	if(AuGLSLShader::ShadowSecondSun() && ranked > 1 && lightOf[1] >= lightOf[0]*.05)
+	{
+		const AuGLSun& sun0 = ari.re->Sun(order[0]);
+		const AuGLSun& sun1 = ari.re->Sun(order[1]);
+		AuPoint dir0(sun0.m_LocX, sun0.m_LocY, sun0.m_LocZ);
+		AuPoint dir1(sun1.m_LocX, sun1.m_LocY, sun1.m_LocZ);
+		dir0.Unit();
+		dir1.Unit();
+		if(dir0.x*dir1.x + dir0.y*dir1.y + dir0.z*dir1.z < .995)
+			suns = 2;
+	}
+
+	const DaAtom* par = sceneAtom->Parent();
+	const AuMatrix4x4& ref = (par && rmod.contains(par->Id())) ? rmod.Matrix(par->Id()) : tmodel;
+	AuPoint o = ref.Translation();
+	AuPoint a = ref.ProjectVector(0,0,1);
+	AuPoint b = ref.ProjectVector(1,0,0);
+	a.Unit();
+	b.Unit();
+	double refOrigin[3] = { o.x, o.y, o.z };
+	double refAxisA[3] = { a.x, a.y, a.z };
+	double refAxisB[3] = { b.x, b.y, b.z };
+
+	AuSunShadowCascades cascades[SUN_SHADOW_SUNS];
+	for(int s=0; s<SUN_SHADOW_SUNS; s++)
+		cascades[s].m_Count = 0;
+	for(int s=0; s<suns; s++)
+	{
+		const AuGLSun& sun = ari.re->Sun(order[s]);
+		double sunLoc[3] = { sun.m_LocX, sun.m_LocY, sun.m_LocZ };
+		if(!AuSunShadowCascadesCompute(sunLoc, refOrigin, refAxisA, refAxisB, AuGLSLShader::ShadowMapRadiusFeet(),
+				AuGLSLShader::ShadowMapSize(), AuGLSLShader::ShadowMapBias(), cascades[s]))
+		{
+			cascades[s].m_Count = 0;
+			if(s == 0)
+				return;
+			suns = 1;
+		}
+	}
+
+	AuGLSL& glsl = ari.re->GLSL();
+	if(!glsl.BeginSunShadowMap(AuGLSLShader::ShadowMapSize(), AuGLSLShader::ShadowSecondSun() ? SUN_SHADOW_SUNS : 1))
+		return;
+	quint64 drawsBefore = AuRenderCounters::s_DrawCalls;
+	AuSunShadowPass sp(cascades[0].m_Fit[0]);
+	for(int family=0; family<SSF_Count; family++)
+		sp.m_Limit[family] = AuGLSLShader::ShadowCasterLimitFeet(family);
+	unsigned int variants[SSF_Count];
+	ShadowCasterVariants(casters, variants);
+	for(int layer=0; layer<SUN_SHADOW_CASCADES*suns; layer++)
+	{
+		const AuSunShadowCascades& of = cascades[layer/SUN_SHADOW_CASCADES];
+		int k = layer % SUN_SHADOW_CASCADES;
+		if(k >= of.m_Count)
+			continue;
+		sp.m_Fit = &of.m_Fit[k];
+		sp.m_Cascade = layer;
+		glsl.SunShadowMapLayer(layer);
+		AuMatrix4x4 lightProjection(of.m_Fit[k].m_EyeToClip);
+		DrawShadowCasters(glsl, lightProjection, casters, variants, ari, rmod, sceneAtom, sp);
+	}
+	glsl.EndSunShadowMap(cascades[0], cascades[1]);
+
+	s_SunShadowDraws = (int)(AuRenderCounters::s_DrawCalls - drawsBefore);
+	for(int f=0; f<SSF_Count; f++)
+	{
+		s_SunShadowAsked[f] = sp.m_Asked[f];
+		s_SunShadowDrawn[f] = sp.m_Drawn[f];
+	}
+}
+
+static void ReportRenderCounters()
+{
+	static QElapsedTimer timer;
+	static quint64 lastDrawCalls = 0;
+	static quint64 lastVertices = 0;
+	static int frames = 0;
+	if(!timer.isValid())
+	{
+		timer.start();
+		lastDrawCalls = AuRenderCounters::s_DrawCalls;
+		lastVertices = AuRenderCounters::s_Vertices;
+		return;
+	}
+	frames++;
+	if(timer.elapsed() < 1000)
+		return;
+	quint64 draws = (AuRenderCounters::s_DrawCalls - lastDrawCalls)/frames;
+	quint64 triangles = (AuRenderCounters::s_Vertices - lastVertices)/3/frames;
+	AuGlobal::Log(g_Au.CacheApp() + "/soh.txt", QString("render counters: %1 frames/s, %2 draw calls and %3 triangles a frame; sun shadow maps: %4 draw calls; "
+			"drawn (casters in the scene): structures %5 (%6), terrain %7 (%8), creatures %12 (%13), plants %14 (%15); "
+			"%11 maps of size %9, distance %10 m")
+			.arg(frames*1000./timer.elapsed(), 0, 'f', 1).arg(draws).arg(triangles).arg(s_SunShadowDraws)
+			.arg(s_SunShadowDrawn[SSF_Structures]).arg(s_SunShadowAsked[SSF_Structures])
+			.arg(s_SunShadowDrawn[SSF_Terrain]).arg(s_SunShadowAsked[SSF_Terrain])
+			.arg(AuGLSLShader::ShadowMaps() ? AuGLSLShader::ShadowMapSize() : 0)
+			.arg(AuGLSLShader::ShadowMapRadiusFeet()/FeetPerMeter(), 0, 'f', 0).arg(SUN_SHADOW_CASCADES)
+			.arg(s_SunShadowDrawn[SSF_Creatures]).arg(s_SunShadowAsked[SSF_Creatures])
+			.arg(s_SunShadowDrawn[SSF_Plants]).arg(s_SunShadowAsked[SSF_Plants]));
+	timer.restart();
+	lastDrawCalls = AuRenderCounters::s_DrawCalls;
+	lastVertices = AuRenderCounters::s_Vertices;
+	frames = 0;
+}
+
 // Renders an entire scene from the perspective of this object.
 // View transformation has already been set up.
 void DaSolarSystem::RenderEnvironment(const AuMatrix4x4& projection, const AuMatrix4x4& farProjection, const AuMatrix4x4& model,
 		AuAtomRenderInfo& ari, DaPerson* sceneAtom)
 {
+	if(AuRenderCounters::s_On)
+		ReportRenderCounters();
+
 	// Set up lighting for the scene.
 	// Must include inverse camera projection so world location of lights is proper
 	// with respect to the camera. This is where vertices will end up projected in
@@ -1121,7 +1632,17 @@ void DaSolarSystem::RenderEnvironment(const AuMatrix4x4& projection, const AuMat
 	}
 
 	AuModelMatrixHash rmod;
+	DaAtomList sunShadowCasters;
+	bool sunShadowMap = AuGLSLShader::ShadowMaps();
+	if(sunShadowMap)
+		rmod.SetSunShadowCasters(&sunShadowCasters);
 	CollectModelMatrices(tmodel, rmod);
+	rmod.SetSunShadowCasters(0);
+
+	if(sunShadowMap)
+		RenderSunShadowMap(sceneAtom, tmodel, rmod, sunShadowCasters, ari);
+	if(sunShadowMap)
+		RenderLightShadowMaps(sceneAtom, rmod, sunShadowCasters, ari);
 
 	DaAtomList shadSc;
 	DaAtomList shadScFog;

@@ -6,6 +6,7 @@
 
 #version 150
 
+#ifndef PER_PIXEL_LIGHTING
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // Lighting Structures and Functions
 
@@ -42,7 +43,7 @@ void computeSunLight(SunLight sun,
 
 	// Account for radius of solar disk.
 	float diskang = atan(sun.radius, distSun);
-	float sunang = acos(NdotL);
+	float sunang = acos(clamp(NdotL, -1., 1.));
 	float rd1 = cos(sunang + diskang);
 	float rd2 = cos(sunang - diskang);
 	NdotL = max(rd1, NdotL);
@@ -89,17 +90,26 @@ vec3 computeSolarLighting(LightSources light,
 	// Clamp color values
 	return clamp(color, vec3(0,0,0), vec3(1,1,1));
 }
+#endif
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 uniform float							atmosphereRadius;		// Radius of the atmosphere.
 uniform mat4							pmv;					// Projection model view matrix.
+#ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
+#endif
 
 in vec3									position;				// Incoming vertex location.
 in vec2									texCoord;				// Incoming texture coordinate.
 
+#ifdef PER_PIXEL_LIGHTING
+out vec4								vertLitScale;
+out vec3								vertLitP;
+out vec3								vertLitN;
+#else
 out vec4								vertColor;				// Outgoing vertex color.
+#endif
 out vec2								vertTexCoord;			// Outgoing texture coordinate.
 
 void main()
@@ -108,7 +118,13 @@ void main()
 	// The object used with this shader is a globe of unit radius centered at 0,0. That means the incoming vertex locations are
 	// also the normals at those vertexes. The atmosphereRadius enables us to calculate the actual size of this globe.
 	vec3 posRad = position * atmosphereRadius;
+#ifdef PER_PIXEL_LIGHTING
+	vertLitScale = vec4(1, 1, 1, 1);
+	vertLitP = posRad;
+	vertLitN = position;
+#else
 	vertColor = vec4(computeSolarLighting(light, posRad, position), 1);
+#endif
 
 	vertTexCoord = texCoord;			// Pass unmodified texture coordinate to the fragment shader.
 

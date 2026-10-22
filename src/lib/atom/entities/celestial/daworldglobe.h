@@ -93,6 +93,8 @@ private:
 	Au3dsGLSLModelInstance*				m_HengeFirePit;
 	Au3dsGLSLModelInstance*				m_HengeRock;
 	AuGLVAO								m_NearGlobe;			// Vertex array object of the globe model as seen from orbit.
+	float								m_SunShadowClipCos = 2;
+	AuPoint								m_SunShadowClipUp;
 	AuGLVAO								m_SeaGlobe;				// Vertex array object of the sea surface.
 	std::shared_ptr<AuSeaPreparation> m_SeaPreparation;
 	bool PrepareSeaGlobe(AuGLEffects& re, AuGLModelMaker& mm, bool bothLayers);
@@ -370,6 +372,11 @@ public:
 			DaAtomList& shadScGlobeFog,
 			DaAtomList& shadScRingworld,
 			DaAtomList& shadScRingworldFog);
+
+	virtual unsigned int SunShadowFamilies() const;
+	virtual unsigned int SunShadowVariants(int family) const;
+	virtual void RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+			AuSunShadowPass& sp);
 
 	virtual void RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, AuModelMatrixHash& rmod,
 			const DaPerson* sceneAtom,

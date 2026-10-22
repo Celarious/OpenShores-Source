@@ -3918,6 +3918,13 @@ private:
 
 	void RecalcSystemsHealthMax();
 
+	virtual unsigned int SunShadowFamilies() const
+	{
+		return 1 << SSF_Structures;
+	}
+	virtual void RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+			AuSunShadowPass& sp);
+
 	void RenderScShader(AuGLSLScBase* shader, AuAtomRenderInfo& ari, const AuMatrix4x4& model, const DaPerson* sceneAtom);
 	void RenderScShaderBlend(AuGLSLScBase* shader, AuAtomRenderInfo& ari, const AuMatrix4x4& model,
 			const DaPerson* sceneAtom);

@@ -2050,6 +2050,8 @@ void DaWorldGlobe::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatrix4
 				// Ambient light
 				re.GLSL().LavaNoBumpShader().SetAmbientLight(ambientLight);
 
+				re.GLSL().LavaNoBumpShader().SetShadowBodiesLocal(model);
+
 				// Suns
 				for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 				{
@@ -2089,6 +2091,7 @@ void DaWorldGlobe::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatrix4
 			// Render the lava globe vertex array object.
 			re.GLSL().LavaShader().Select(projection);
 			re.GLSL().LavaShader().SetModelView(model);
+			re.GLSL().LavaShader().SetShadowBodiesLocal(model);
 			re.GLSL().LavaShader().SetTexture(s_texSea[OrbitZone()]);
 			re.GLSL().LavaShader().SetBumpMap(s_texSeaN[OrbitZone()]);
 			re.GLSL().LavaShader().SetTexOffset(m_WaterOffX/5, m_WaterOffY/5);
@@ -2154,6 +2157,7 @@ void DaWorldGlobe::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatrix4
 				// Render the sea globe vertex array object.
 				re.GLSL().WaterShader().Select(projection);
 				re.GLSL().WaterShader().SetModelView(model);
+				re.GLSL().WaterShader().SetShadowBodiesLocal(model);
 				re.GLSL().WaterShader().SetTexture(s_texSea[OrbitZone()]);
 				re.GLSL().WaterShader().SetBumpMap(s_texSeaN[OrbitZone()]);
 				re.GLSL().WaterShader().SetTexOffset(m_WaterOffX/5, m_WaterOffY/5);
@@ -2247,6 +2251,8 @@ void DaWorldGlobe::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatrix4
 					// Ambient light
 					re.GLSL().WaterNoBumpNoHoleShader().SetAmbientLight(ambientLight);
 
+					re.GLSL().WaterNoBumpNoHoleShader().SetShadowBodiesLocal(model);
+
 					// Suns
 					for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 					{
@@ -2286,6 +2292,7 @@ void DaWorldGlobe::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatrix4
 				// Render the sea globe vertex array object.
 				re.GLSL().WaterNoHoleShader().Select(projection);
 				re.GLSL().WaterNoHoleShader().SetModelView(model);
+				re.GLSL().WaterNoHoleShader().SetShadowBodiesLocal(model);
 				re.GLSL().WaterNoHoleShader().SetTexture(s_texSea[OrbitZone()]);
 				re.GLSL().WaterNoHoleShader().SetBumpMap(s_texSeaN[OrbitZone()]);
 				re.GLSL().WaterNoHoleShader().SetTexOffset(m_WaterOffX/5, m_WaterOffY/5);
@@ -2372,6 +2379,8 @@ void DaWorldGlobe::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatrix4
 			// Ambient light
 			re.GLSL().LavaNoBumpShader().SetAmbientLight(ambientLight);
 
+			re.GLSL().LavaNoBumpShader().SetShadowBodiesLocal(model);
+
 			// Suns
 			for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 			{
@@ -2448,6 +2457,8 @@ void DaWorldGlobe::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatrix4
 				AuPoint clipUp = eyeLoc;
 				clipUp.Unit();
 				re.GLSL().WaterNoBumpShader().SetClip(clipCos, clipUp.x, clipUp.y, clipUp.z);
+
+				re.GLSL().WaterNoBumpShader().SetShadowBodiesLocal(model);
 
 				// Suns
 				for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -2529,6 +2540,8 @@ void DaWorldGlobe::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatrix4
 				// Set eye position in object space for specular lighting calculations.
 				AuPoint eyeLoc = model.UnProject(re.EyeLocation());
 				re.GLSL().WaterNoBumpNoHoleShader().SetEyeLocation(eyeLoc.x, eyeLoc.y, eyeLoc.z);
+
+				re.GLSL().WaterNoBumpNoHoleShader().SetShadowBodiesLocal(model);
 
 				// Suns
 				for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -3148,6 +3161,8 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 					// Ambient light
 					re.GLSL().FarGlobeLitLavaCloudsShader().SetAmbientLight(atmIllumination);
 
+					re.GLSL().FarGlobeLitLavaCloudsShader().SetShadowBodiesLocal(model);
+
 					// Suns
 					for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 					{
@@ -3180,6 +3195,8 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 
 					// Ambient light
 					re.GLSL().FarGlobeLitCloudsShader().SetAmbientLight(atmIllumination);
+
+					re.GLSL().FarGlobeLitCloudsShader().SetShadowBodiesLocal(model);
 
 					// Suns
 					for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -3214,6 +3231,8 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 					// Ambient light
 					re.GLSL().FarGlobeLitLavaShader().SetAmbientLight(atmIllumination);
 
+					re.GLSL().FarGlobeLitLavaShader().SetShadowBodiesLocal(model);
+
 					// Suns
 					for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 					{
@@ -3242,6 +3261,8 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 
 					// Ambient light
 					re.GLSL().FarGlobeLitShader().SetAmbientLight(atmIllumination);
+
+					re.GLSL().FarGlobeLitShader().SetShadowBodiesLocal(model);
 
 					// Suns
 					for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -7432,6 +7453,63 @@ quint8 DaWorldGlobe::VegetationAt(const AuGlobeLL& ll, float terAltMSL, int inEn
 	return (quint8)(vegAt);
 }
 
+unsigned int DaWorldGlobe::SunShadowFamilies() const
+{
+	return 1u << SSF_Terrain;
+}
+
+unsigned int DaWorldGlobe::SunShadowVariants(int family) const
+{
+	return family == SSF_Terrain ? (1u << SSV_Main) | (1u << SSV_Low) : 1u;
+}
+
+void DaWorldGlobe::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+		AuSunShadowPass& sp)
+{
+	Q_UNUSED(sceneAtom);
+	if(sp.m_Variant == SSV_Low)
+	{
+		if(sp.m_Family != SSF_Terrain || !m_AtGlobe.m_Low.VAO() || m_SunShadowClipCos > 1.5f)
+			return;
+		AuGLSLGlobeDepth& shader = ari.re->GLSL().GlobeDepthShader();
+		shader.SetModelView(rmod.Matrix(Id()));
+		shader.SetClip(m_SunShadowClipCos, m_SunShadowClipUp.x, m_SunShadowClipUp.y, m_SunShadowClipUp.z);
+		m_AtGlobe.m_Low.SelectGL();
+		m_AtGlobe.m_Low.DrawGL();
+		m_AtGlobe.m_Low.DeselectGL();
+		sp.Drew();
+		return;
+	}
+	if(sp.m_Family != SSF_Terrain || m_AtGlobe.m_TriVAOs.empty())
+		return;
+
+	const AuMatrix4x4& model = rmod.Matrix(Id());
+	bool modelSet = false;
+	for(unordered_map<int, AuGLTriVAO, AuTriHash>::iterator vi = m_AtGlobe.m_TriVAOs.begin(); vi != m_AtGlobe.m_TriVAOs.end(); vi++)
+	{
+		int vidx = (*vi).first;
+		if(!(*vi).second.VAO() || vidx < 0 || vidx >= m_AtGlobe.m_TerrainTris.size())
+			continue;
+
+		const AuGlobeTerrainTriCen& tri = m_AtGlobe.m_TerrainTris.at(vidx);
+		AuPoint cen = (tri.m_Loc0 + tri.m_Loc1 + tri.m_Loc2) / 3;
+		double reach = qMax(cen.Distance(tri.m_Loc0), qMax(cen.Distance(tri.m_Loc1), cen.Distance(tri.m_Loc2)))*1.25 + 1000;
+		AuPoint pv = model.Project(cen);
+		if(!sp.Asked(pv.x, pv.y, pv.z, reach) || !sp.Reaches(pv.x, pv.y, pv.z, reach))
+			continue;
+
+		if(!modelSet)
+		{
+			ari.re->GLSL().ScDepthShader().SetModelView(model);
+			modelSet = true;
+		}
+		(*vi).second.SelectGL();
+		(*vi).second.DrawGL();
+		(*vi).second.DeselectGL();
+		sp.Drew();
+	}
+}
+
 void DaWorldGlobe::RenderNearGlobe(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuAtomRenderInfo& ari,
 		float ambientLight)
 {
@@ -7470,6 +7548,8 @@ void DaWorldGlobe::RenderNearGlobe(const AuMatrix4x4& projection, const AuMatrix
 		// Ambient light
 		ari.re->GLSL().NearGlobeLavaShader().SetAmbientLight(ambientLight);
 
+		ari.re->GLSL().NearGlobeLavaShader().SetShadowBodiesLocal(model);
+
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 		{
@@ -7498,6 +7578,8 @@ void DaWorldGlobe::RenderNearGlobe(const AuMatrix4x4& projection, const AuMatrix
 
 		// Ambient light
 		ari.re->GLSL().NearGlobeShader().SetAmbientLight(ambientLight);
+
+		ari.re->GLSL().NearGlobeShader().SetShadowBodiesLocal(model);
 
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -7565,6 +7647,8 @@ void DaWorldGlobe::RenderNearGlobeFog(const AuMatrix4x4& projection, const AuMat
 		// Ambient light
 		ari.re->GLSL().NearGlobeLavaFogShader().SetAmbientLight(ambientLight);
 
+		ari.re->GLSL().NearGlobeLavaFogShader().SetShadowBodiesLocal(model);
+
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 		{
@@ -7594,6 +7678,8 @@ void DaWorldGlobe::RenderNearGlobeFog(const AuMatrix4x4& projection, const AuMat
 
 		// Ambient light
 		ari.re->GLSL().NearGlobeFogShader().SetAmbientLight(ambientLight);
+
+		ari.re->GLSL().NearGlobeFogShader().SetShadowBodiesLocal(model);
 
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -7714,6 +7800,8 @@ void DaWorldGlobe::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatrix4x
 				c.greenF() * (float)AuGLLight::AmbientLitCity(),
 				c.blueF() * (float)AuGLLight::AmbientLitCity());
 
+		ari.re->GLSL().TerrainLitFloraShader().SetShadowBodiesLocal(model);
+
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 		{
@@ -7821,6 +7909,8 @@ void DaWorldGlobe::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatrix4x
 		terrainShader.SetCityAmbientLight(c.redF() * (float)AuGLLight::AmbientLitCity(),
 				c.greenF() * (float)AuGLLight::AmbientLitCity(),
 				c.blueF() * (float)AuGLLight::AmbientLitCity());
+
+		ari.re->GLSL().TerrainLitShader().SetShadowBodiesLocal(model);
 
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -7930,6 +8020,8 @@ void DaWorldGlobe::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatrix4x
 		clipUp = viewerPos;
 		clipUp.Unit();
 	}
+	m_SunShadowClipCos = clipCos;
+	m_SunShadowClipUp = clipUp;
 
 	//qDebug() << "DaWorldGlobe::RenderAtGlobe" << Id() << Name() << "attempted" << countAttempted << "shown" << countShown
 		//<< "clipCos" << clipCos;
@@ -7952,6 +8044,8 @@ void DaWorldGlobe::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatrix4x
 
 		// Ambient light
 		ari.re->GLSL().GlobeLitFloraShader().SetAmbientLight(ambientLight);
+
+		ari.re->GLSL().GlobeLitFloraShader().SetShadowBodiesLocal(model);
 
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -7990,6 +8084,8 @@ void DaWorldGlobe::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatrix4x
 
 		// Ambient light
 		ari.re->GLSL().GlobeLitShader().SetAmbientLight(ambientLight);
+
+		ari.re->GLSL().GlobeLitShader().SetShadowBodiesLocal(model);
 
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)

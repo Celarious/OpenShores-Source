@@ -63,7 +63,7 @@ void computeSunLight(SunLight sun,
 	// Check for sun over the horizon.
 	vec3 U = normalize(P - globeP);								// Up vector at vertex location, with respect to the globe.
 	float LdotU = dot(L, U);
-	float sunang2 = acos(LdotU);
+	float sunang2 = acos(clamp(LdotU, -1., 1.));
 	float rd3 = cos(sunang2 + diskang);
 	float rd4 = cos(sunang2 - diskang);
 	LdotU = max(rd3, LdotU);

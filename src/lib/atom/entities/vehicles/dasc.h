@@ -904,6 +904,18 @@ public:	// Methods
 			DaAtomList& shadScRingworld,
 			DaAtomList& shadScRingworldFog);
 
+	inline bool HasSunlitRooms() const
+	{
+		return !m_SunlitRooms.isEmpty();
+	}
+
+	virtual unsigned int SunShadowFamilies() const
+	{
+		return 1 << SSF_Structures;
+	}
+	virtual void RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+			AuSunShadowPass& sp);
+
 	virtual void RenderSc(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom, RENDERPASS pass);
 	virtual void RenderScFog(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom, RENDERPASS pass);
 	virtual void RenderScGlobe(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom, RENDERPASS pass);

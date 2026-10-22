@@ -1276,6 +1276,8 @@ public:
 
 	void RenderSightRay(AuGLEffects& re);
 
+	bool RenderSunShadowDepth(const AuMatrix4x4& model, AuGLEffects& re);
+
 	// Render body centered on the body waist/pivot point.
 	void RenderSkin(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, const AuPoint& ambientLightUp,
 			bool headless);

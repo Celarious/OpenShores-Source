@@ -6,6 +6,7 @@
 
 #version 150
 
+#ifndef PER_PIXEL_LIGHTING
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // Lighting Structures and Functions
 
@@ -66,7 +67,7 @@ void computeSunLight(SunLight sun,
 
 	// Account for radius of solar disk.
 	float diskang = atan(sun.radius, distSun);
-	float sunang = acos(NdotL);
+	float sunang = acos(clamp(NdotL, -1., 1.));
 	float rd1 = cos(sunang + diskang);
 	float rd2 = cos(sunang - diskang);
 	NdotL = max(rd1, NdotL);
@@ -172,12 +173,15 @@ vec3 computeLighting(LightSources light,
 	// Clamp color values
 	return clamp(color, vec3(0,0,0), vec3(1,1,1));
 }
+#endif
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 uniform float							fogDensity;				// Fog density for exponential fog calculation.
 uniform vec4							glowAlpha;				// Glow color due to plant radioactivity (xyz), alpha (z)
+#ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
+#endif
 uniform mat4							mv;						// Model view matrix of globe.
 uniform mat4							p;						// Projection matrix.
 uniform mat4							plantM;					// Plant placement matrix on globe.
@@ -187,7 +191,13 @@ in vec3									normal;					// Incoming vertex normal.
 in vec3									position;				// Incoming vertex location.
 in vec3									texCoordMovement;		// Incoming texture coordinate(xy), move amount due to wind(z),
 
+#ifdef PER_PIXEL_LIGHTING
+out vec4								vertLitScale;
+out vec3								vertLitP;
+out vec3								vertLitN;
+#else
 out vec4								vertColor;				// Outgoing vertex color.
+#endif
 out vec3								vertTexCoordFog;		// Outgoing texture coordinate(xy) and fog density (z)
 
 void main()
@@ -201,8 +211,14 @@ void main()
 
 	// Calculate lighting using eye space position and normal.
 	vec4 eyeN = normalize(mvplant * vec4(normal, 1) - mvplant * vec4(0,0,0,1));	// Surface normal in eye space.
+#ifdef PER_PIXEL_LIGHTING
+	vertLitScale = vec4(1, 1, 1, glowAlpha.a);
+	vertLitP = gl_Position.xyz;
+	vertLitN = eyeN.xyz;
+#else
 	vertColor = vec4(computeLighting(light, gl_Position.xyz, eyeN.xyz), glowAlpha.a);
 	vertColor.rgb = min(vertColor.rgb+glowAlpha.rgb, vec3(1.5, 1.5, 1.5));
+#endif
 
 	gl_Position = p * gl_Position;
 

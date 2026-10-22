@@ -6,6 +6,7 @@
 
 #version 150
 
+#ifndef PER_PIXEL_LIGHTING
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // Lighting Structures and Functions
 
@@ -62,7 +63,7 @@ void computeSunLight(SunLight sun,
 
 	// Account for radius of solar disk.
 	float diskang = atan(sun.radius, distSun);
-	float sunang = acos(NdotL);
+	float sunang = acos(clamp(NdotL, -1., 1.));
 	float rd1 = cos(sunang + diskang);
 	float rd2 = cos(sunang - diskang);
 	NdotL = max(rd1, NdotL);
@@ -71,7 +72,7 @@ void computeSunLight(SunLight sun,
 	// Check for sun over the horizon.
 	vec3 U = normalize(P - globeP);								// Up vector at vertex location, with respect to the globe.
 	float LdotU = dot(L, U);
-	float sunang2 = acos(LdotU);
+	float sunang2 = acos(clamp(LdotU, -1., 1.));
 	float rd3 = cos(sunang2 + diskang);
 	float rd4 = cos(sunang2 - diskang);
 	LdotU = max(rd3, LdotU);
@@ -166,11 +167,14 @@ vec3 computeLighting(LightSources light,
 	// Clamp color values
 	return clamp(color, vec3(0,0,0), vec3(1,1,1));
 }
+#endif
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 uniform float							fogDensity;				// Fog density for exponential fog calculation.
+#ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
+#endif
 uniform mat4							mv;						// Model view matrix.
 uniform mat4							p;						// Projection matrix.
 uniform vec2							wind;					// Wind force(x) [0..1] and period(y) [0..1]
@@ -179,7 +183,13 @@ in vec3									normal;					// Incoming vertex normal(xyz)
 in vec3									position;				// Incoming vertex location(xyz)
 in vec4									texCoordWave;			// Incoming surface texture coordinate(xy), wave effect(zw)
 
+#ifdef PER_PIXEL_LIGHTING
+out vec4								vertLitScale;
+out vec3								vertLitP;
+out vec3								vertLitN;
+#else
 out vec4								vertColor;				// Outgoing vertex color.
+#endif
 out float								vertFog;				// Outgoing fog density
 out vec2								vertTexCoord;			// Outgoing texture coordinate(xy)
 
@@ -204,7 +214,13 @@ void main()
 
 	// Calculate lighting using eye space position and normal.
 	vec4 eyeN = normalize(mv * vec4(waveN, 1) - mv * vec4(0,0,0,1));	// Surface normal in eye space.
+#ifdef PER_PIXEL_LIGHTING
+	vertLitScale = vec4(1, 1, 1, 1);
+	vertLitP = gl_Position.xyz;
+	vertLitN = eyeN.xyz;
+#else
 	vertColor = vec4(computeLighting(light, gl_Position.xyz, eyeN.xyz), 1);
+#endif
 
 	gl_Position = p * gl_Position;
 

@@ -6,6 +6,7 @@
 
 #version 150
 
+#ifndef PER_PIXEL_LIGHTING
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // Lighting Structures and Functions
 
@@ -62,7 +63,7 @@ void computeSunLight(SunLight sun,
 
 	// Account for radius of solar disk.
 	float diskang = atan(sun.radius, distSun);
-	float sunang = acos(NdotL);
+	float sunang = acos(clamp(NdotL, -1., 1.));
 	float rd1 = cos(sunang + diskang);
 	float rd2 = cos(sunang - diskang);
 	NdotL = max(rd1, NdotL);
@@ -178,19 +179,29 @@ vec3 computeLighting(LightSources light,
 	// Clamp color values
 	return clamp(color, vec3(0,0,0), vec3(1,1,1));
 }
+#endif
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 uniform vec4							color;					// Color of the model.
 uniform vec3							glow;					// Glow color added to lit color.
+#ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
+#endif
 uniform mat4							mv;						// Model view matrix.
 uniform mat4							p;						// Projection matrix.
 
 in vec4									normalShine;			// Incoming vertex normal (xyz) and shininess (w).
 in vec3									position;				// Incoming vertex location.
 
+#ifdef PER_PIXEL_LIGHTING
+out vec4								vertLitScale;
+out float								vertLitShininess;
+out vec3								vertLitP;
+out vec3								vertLitN;
+#else
 out vec4								vertColor;				// Outgoing vertex color.
+#endif
 
 void main()
 {
@@ -199,8 +210,15 @@ void main()
 
 	// Calculate lighting using eye space position and normal.
 	vec4 eyeN = normalize(mv * vec4(normalShine.xyz, 1) - mv * vec4(0,0,0,1));	// Surface normal in eye space.
+#ifdef PER_PIXEL_LIGHTING
+	vertLitScale = vec4(1, 1, 1, 1) * color;
+	vertLitShininess = normalShine.w;
+	vertLitP = gl_Position.xyz;
+	vertLitN = eyeN.xyz;
+#else
 	vertColor = vec4(computeLighting(light, normalShine.w, gl_Position.xyz, eyeN.xyz), 1) * color;
 	vertColor.rgb = min(vertColor.rgb + glow, vec3(1.5, 1.5, 1.5));
+#endif
 
 	gl_Position = p * gl_Position;
 }

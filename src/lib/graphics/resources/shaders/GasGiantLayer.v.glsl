@@ -6,6 +6,7 @@
 
 #version 150
 
+#ifndef PER_PIXEL_LIGHTING
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // Lighting Structures and Functions
 
@@ -63,7 +64,7 @@ void computeSunLight(SunLight sun,
 
 	// Account for radius of solar disk.
 	float diskang = atan(sun.radius, distSun);
-	float sunang = acos(NdotL);
+	float sunang = acos(clamp(NdotL, -1., 1.));
 	float rd1 = cos(sunang + diskang);
 	float rd2 = cos(sunang - diskang);
 	NdotL = max(rd1, NdotL);
@@ -72,7 +73,7 @@ void computeSunLight(SunLight sun,
 	// Check for sun over the horizon.
 	vec3 U = normalize(P);	// Up vector at vertex location, with respect to the globe.
 	float LdotU = dot(L, U);
-	float sunang2 = acos(LdotU);
+	float sunang2 = acos(clamp(LdotU, -1., 1.));
 	float rd3 = cos(sunang2 + diskang);
 	float rd4 = cos(sunang2 - diskang);
 	LdotU = max(rd3, LdotU);
@@ -173,27 +174,42 @@ vec3 computeSolarLighting(LightSources light,
 	// Clamp color values
 	return clamp(color, vec3(0,0,0), vec3(1,1,1));
 }
+#endif
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 uniform vec4							atmColor;				// Atmosphere color modulates texture color.
 uniform float							atmRadius;				// Atmosphere radius.
 uniform mat4							pmv;					// Projection model view matrix.
+#ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
+#endif
 
 in vec3									position;				// Incoming vertex location.
 in vec3									normal;					// Incoming vertex normal.
 in vec3									texCoordAlpha;			// Incoming texture coordinate (xy) and vertex alpha (z)
 
+#ifdef PER_PIXEL_LIGHTING
+out vec4								vertLitScale;
+out vec3								vertLitP;
+out vec3								vertLitN;
+#else
 out vec4								vertColor;				// Outgoing vertex color.
+#endif
 out vec2								vertTexCoord;			// Outgoing texture coordinate.
 
 void main()
 {
 	// Calculate lighting using object space position and normal.
 	vec3 posRad = position * atmRadius;
+#ifdef PER_PIXEL_LIGHTING
+	vertLitScale = vec4(1, 1, 1, 1) * atmColor * vec4(1, 1, 1, texCoordAlpha.z);
+	vertLitP = posRad;
+	vertLitN = normal;
+#else
 	vertColor = vec4(computeSolarLighting(light, 150, posRad, normal), 1) * atmColor;
 	vertColor.a *= texCoordAlpha.z;
+#endif
 
 	// Calculate homogeneous vertex position using projection and model view matrices.
 	// Position is a unit vector from the center of the atmosphere sphere; it must be multiplied by the radius for true positioning.

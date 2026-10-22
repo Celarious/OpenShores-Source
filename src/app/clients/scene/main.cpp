@@ -19,6 +19,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QSettings>
+#include "auglobal.h"
+#include "auglsl.h"
 #include <signal.h>
 
 void SignalHandler(int value)
@@ -75,6 +78,31 @@ int main(int argc, char** argv)
 		QSurfaceFormat glformat;
 		glformat.setProfile(QSurfaceFormat::CoreProfile);
 		glformat.setVersion(GLMajorVersion, GLMinorVersion);
+
+		{
+			QSettings::Format settingsFormat = QSettings::NativeFormat;
+			for(int i=1; i<argc; i++)
+				if(QString::fromLocal8Bit(argv[i]) == "-ini")
+					settingsFormat = QSettings::IniFormat;
+			QSettings displaySettings(settingsFormat, QSettings::UserScope, "OpenShores", "OpenShores");
+			AuGLSLShader::SetPerPixelLighting(displaySettings.value(AuGlobal::PerPixelLightingKey(), false).toBool());
+			AuGLSLShader::SetPerPixelSkinGloss(displaySettings.value(AuGlobal::PerPixelSkinGlossKey(), .4).toFloat());
+			AuGLSLShader::SetPerPixelClothGloss(displaySettings.value(AuGlobal::PerPixelClothGlossKey(), .1).toFloat());
+			AuGLSLShader::SetPerPixelHairGloss(displaySettings.value(AuGlobal::PerPixelHairGlossKey(), .5).toFloat());
+			AuGLSLShader::SetShadows(displaySettings.value(AuGlobal::ShadowsKey(), false).toBool());
+			AuGLSLShader::SetShadowsDebug(displaySettings.value(AuGlobal::ShadowsDebugKey(), false).toBool());
+			AuGLSLShader::SetShadowMaps(displaySettings.value(AuGlobal::ShadowMapsKey(), true).toBool());
+			AuGLSLShader::SetShadowMapSoftness(displaySettings.value(AuGlobal::ShadowMapSoftnessKey(), 1).toInt());
+			AuGLSLShader::SetShadowMapSize(displaySettings.value(AuGlobal::ShadowMapSizeKey(), 2048).toInt());
+			AuGLSLShader::SetShadowMapRadiusMeters(displaySettings.value(AuGlobal::ShadowMapRadiusKey(), 500.).toDouble());
+			AuGLSLShader::SetShadowMapBias(displaySettings.value(AuGlobal::ShadowMapBiasKey(), 1.).toDouble());
+			AuRenderCounters::s_On = displaySettings.value(AuGlobal::RenderCountersKey(), false).toBool();
+			AuGLSLShader::SetShadowCasters(displaySettings.value(AuGlobal::ShadowCastersKey(), 15).toUInt());
+			AuGLSLShader::SetShadowSecondSun(displaySettings.value(AuGlobal::ShadowSecondSunKey(), false).toBool());
+			AuGLSLShader::SetShadowLights(displaySettings.value(AuGlobal::ShadowLightsKey(), 0).toInt());
+			AuGLSLShader::SetShadowCasterLimitMeters(SSF_Creatures,
+					displaySettings.value(AuGlobal::ShadowCreatureDistanceKey(), 100).toInt());
+		}
 		QSurfaceFormat::setDefaultFormat(glformat);
 
 		// Both launch paths use the game application and its shared services.

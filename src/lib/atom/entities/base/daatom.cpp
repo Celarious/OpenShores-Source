@@ -75,6 +75,7 @@ AuModelMatrixHash::AuModelMatrixHash()
 	// How about far enough to orbit the largest gas giant without clipping away its atmosphere.
 	// 32000 is the near clip distance set in the far projection in AuView.
 	m_FarDistance = ::Radius100km(400) + AtmosphereTopGasGiantMSL() + 32000;
+	m_SunShadowCasters = 0;
 	//qDebug() << "AuModelMatrixHash::AuModelMatrixHash oldFar" << sqrt(DaVessel::SightRange2()) << "farDist" << m_FarDistance;
 }
 
@@ -2044,6 +2045,9 @@ void DaAtom::CollectModelMatrices(const AuMatrix4x4& model, AuModelMatrixHash& r
 {
 	// Calculate my model view matrix.
 	rmod.insert(Id(), model);
+
+	if(rmod.SunShadowCasters() && SunShadowFamilies())
+		rmod.SunShadowCasters()->append(this);
 
 	// Collect model view matrices of my subatoms recursively.
 	DaAtomList subs;
@@ -7931,6 +7935,9 @@ void DaAtom::SetRenderLights(AuGLEffects& re, const QList<AuGLSun>& suns, const 
 	const QList<AuGLLight>& lights = re.FrustumCulling() ? visibleLights : sourceLights;
 	// Configure ambient lighting.
 	re.SetAmbientLight(ambientLight, ambientLight, ambientLight, 1.f);
+
+	re.GLSL().SetShadowBodies(0, 0);
+	re.GLSL().ClearSunShadowMap();
 
 	// We never have more than three suns so we can configure all of them.
 	Q_ASSERT(suns.size() <= 3);

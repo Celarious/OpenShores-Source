@@ -528,6 +528,8 @@ public:	// Methods
 	// Render using Animal shader.
 	// 'blended' is true when rendering the blended parts, in a separate pass after rendering the solid parts.
 	// 'visorState' is the AuItem::State of the helmet. It is 0 when the visor on my helmet is open, 1 when visor is closed.
+	bool RenderSunShadowDepth(const AuMatrix4x4& model, AuGLEffects& re);
+
 	void RenderAnimal(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, bool blended,
 			quint8 visorState, const AuPoint& ambientUp);
 	void RenderAnimalGlobeFog(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, bool blended,

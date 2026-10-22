@@ -277,6 +277,23 @@ void AuGlobal::Init(MODE mode, const QString& appName, const QString& company, D
 	if(m_ResourceIconSize < 1 || m_ResourceIconSize > 200)
 		m_ResourceIconSize = 100;
 
+	m_PerPixelLighting = m_Settings.readBoolEntry(PerPixelLightingKey(), false);
+	m_Shadows = m_Settings.readBoolEntry(ShadowsKey(), false);
+	m_ShadowsDebug = m_Settings.readBoolEntry(ShadowsDebugKey(), false);
+	m_ShadowMaps = m_Settings.readBoolEntry(ShadowMapsKey(), true);
+	m_ShadowMapSize = qBound(512, m_Settings.readNumEntry(ShadowMapSizeKey(), 2048), 8192);
+	m_ShadowMapRadius = qBound(20, (int)m_Settings.readNumEntry(ShadowMapRadiusKey(), 500.), 5000);
+	m_ShadowMapSoftness = qBound(0, m_Settings.readNumEntry(ShadowMapSoftnessKey(), 1), 2);
+	m_ShadowMapBias = qBound(0., m_Settings.readNumEntry(ShadowMapBiasKey(), 1.), 10.);
+	m_PerPixelSkinGloss = qBound(0., m_Settings.readNumEntry(PerPixelSkinGlossKey(), .4), 1.);
+	m_PerPixelClothGloss = qBound(0., m_Settings.readNumEntry(PerPixelClothGlossKey(), .1), 1.);
+	m_PerPixelHairGloss = qBound(0., m_Settings.readNumEntry(PerPixelHairGlossKey(), .5), 1.);
+	m_RenderCounters = m_Settings.readBoolEntry(RenderCountersKey(), false);
+	m_ShadowSecondSun = m_Settings.readBoolEntry(ShadowSecondSunKey(), false);
+	m_ShadowLights = qBound(0, m_Settings.readNumEntry(ShadowLightsKey(), 0), 4);
+	m_ShadowCasters = (unsigned int)m_Settings.readNumEntry(ShadowCastersKey(), 15) & 15u;
+	m_ShadowCreatureDistance = qBound(10, m_Settings.readNumEntry(ShadowCreatureDistanceKey(), 100), 500);
+
 	for(int joy=0; joy<6; joy++)
 		m_EnableJoystick[joy] = m_Settings.readBoolEntry(QString("/Settings/EnableJoystick%1").arg(joy), true);
 
@@ -2136,6 +2153,102 @@ bool AuGlobal::UseNativeFileDialog() const
 bool AuGlobal::UseNativeFontDialog() const
 {
 	return m_UseNativeFontDialog;
+}
+
+void AuGlobal::SetPerPixelLighting(bool perPixelLighting)
+{
+	m_PerPixelLighting = perPixelLighting;
+	m_Settings.writeEntry(PerPixelLightingKey(), m_PerPixelLighting);
+}
+
+void AuGlobal::SetShadows(bool shadows)
+{
+	m_Shadows = shadows;
+	m_Settings.writeEntry(ShadowsKey(), m_Shadows);
+}
+
+void AuGlobal::SetShadowsDebug(bool on)
+{
+	m_ShadowsDebug = on;
+	m_Settings.writeEntry(ShadowsDebugKey(), m_ShadowsDebug);
+}
+
+void AuGlobal::SetShadowMaps(bool on)
+{
+	m_ShadowMaps = on;
+	m_Settings.writeEntry(ShadowMapsKey(), m_ShadowMaps);
+}
+
+void AuGlobal::SetShadowMapSize(int texels)
+{
+	m_ShadowMapSize = qBound(512, texels, 8192);
+	m_Settings.writeEntry(ShadowMapSizeKey(), m_ShadowMapSize);
+}
+
+void AuGlobal::SetShadowMapRadius(int meters)
+{
+	m_ShadowMapRadius = qBound(20, meters, 5000);
+	m_Settings.writeEntry(ShadowMapRadiusKey(), m_ShadowMapRadius);
+}
+
+void AuGlobal::SetShadowMapSoftness(int texels)
+{
+	m_ShadowMapSoftness = qBound(0, texels, 2);
+	m_Settings.writeEntry(ShadowMapSoftnessKey(), m_ShadowMapSoftness);
+}
+
+void AuGlobal::SetShadowMapBias(double bias)
+{
+	m_ShadowMapBias = qBound(0., bias, 10.);
+	m_Settings.writeEntry(ShadowMapBiasKey(), m_ShadowMapBias);
+}
+
+void AuGlobal::SetPerPixelSkinGloss(double gloss)
+{
+	m_PerPixelSkinGloss = qBound(0., gloss, 1.);
+	m_Settings.writeEntry(PerPixelSkinGlossKey(), m_PerPixelSkinGloss);
+}
+
+void AuGlobal::SetPerPixelClothGloss(double gloss)
+{
+	m_PerPixelClothGloss = qBound(0., gloss, 1.);
+	m_Settings.writeEntry(PerPixelClothGlossKey(), m_PerPixelClothGloss);
+}
+
+void AuGlobal::SetPerPixelHairGloss(double gloss)
+{
+	m_PerPixelHairGloss = qBound(0., gloss, 1.);
+	m_Settings.writeEntry(PerPixelHairGlossKey(), m_PerPixelHairGloss);
+}
+
+void AuGlobal::SetRenderCounters(bool on)
+{
+	m_RenderCounters = on;
+	m_Settings.writeEntry(RenderCountersKey(), m_RenderCounters);
+}
+
+void AuGlobal::SetShadowSecondSun(bool on)
+{
+	m_ShadowSecondSun = on;
+	m_Settings.writeEntry(ShadowSecondSunKey(), m_ShadowSecondSun);
+}
+
+void AuGlobal::SetShadowLights(int count)
+{
+	m_ShadowLights = qBound(0, count, 4);
+	m_Settings.writeEntry(ShadowLightsKey(), m_ShadowLights);
+}
+
+void AuGlobal::SetShadowCasters(unsigned int families)
+{
+	m_ShadowCasters = families & 15u;
+	m_Settings.writeEntry(ShadowCastersKey(), (int)m_ShadowCasters);
+}
+
+void AuGlobal::SetShadowCreatureDistance(int meters)
+{
+	m_ShadowCreatureDistance = qBound(10, meters, 500);
+	m_Settings.writeEntry(ShadowCreatureDistanceKey(), m_ShadowCreatureDistance);
 }
 
 void AuGlobal::SetBumpMapSeas(bool bumpMapSeas)

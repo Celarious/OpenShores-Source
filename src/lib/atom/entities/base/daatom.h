@@ -56,6 +56,7 @@ class DaArena;
 class DaAsteroid;
 class DaAtom;
 class DaAtomList;
+struct AuSunShadowPass;
 class DaBd;
 class DaCapsule;
 class DaCreature;
@@ -519,6 +520,7 @@ public:	// Methods
 class AuModelMatrixHash : public QHash<AuId, AuModelMatrix>
 {
 	double								m_FarDistance;			// Distance beyond which objects are rendered in the far pass.
+	DaAtomList*							m_SunShadowCasters;
 
 public:	// Constructors
 	AuModelMatrixHash();
@@ -526,9 +528,20 @@ public:	// Constructors
 	inline AuModelMatrixHash(const AuModelMatrixHash& c) : QHash<AuId, AuModelMatrix>(c)
 	{
 		m_FarDistance = c.m_FarDistance;
+		m_SunShadowCasters = c.m_SunShadowCasters;
 	}
 
 public:	// Methods
+	inline void SetSunShadowCasters(DaAtomList* casters)
+	{
+		m_SunShadowCasters = casters;
+	}
+
+	inline DaAtomList* SunShadowCasters() const
+	{
+		return m_SunShadowCasters;
+	}
+
 	inline double FarDistance() const
 	{
 		return m_FarDistance;
@@ -4097,6 +4110,26 @@ public:
 			DaAtomList& shadScGlobeFog,
 			DaAtomList& shadScRingworld,
 			DaAtomList& shadScRingworldFog);
+
+	virtual unsigned int SunShadowFamilies() const
+	{
+		return 0;
+	}
+
+	virtual unsigned int SunShadowVariants(int family) const
+	{
+		Q_UNUSED(family);
+		return 1u;
+	}
+
+	virtual void RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+			AuSunShadowPass& sp)
+	{
+		Q_UNUSED(ari);
+		Q_UNUSED(rmod);
+		Q_UNUSED(sceneAtom);
+		Q_UNUSED(sp);
+	}
 
 	// Atoms who add themselves to 'shadSc' in RenderEnvironmentObject must override this.
 	virtual void RenderSc(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom, RENDERPASS pass)

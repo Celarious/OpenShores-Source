@@ -34364,6 +34364,80 @@ void DaBd::RenderScRingworldFog(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, 
 		}
 }
 
+void DaBd::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+		AuSunShadowPass& sp)
+{
+	Q_UNUSED(sceneAtom);
+
+	AuPoint smin, smax;
+	if(IndustryId() == IID_Fence)
+	{
+		FenceExtents(smin, smax);
+	}
+	else
+	{
+		m_DesignLock.lockForRead();
+		smax = m_Design.SiteMax();
+		smin = m_Design.SiteMin();
+		smax = smax.Max(m_Design.HullMax());
+		smin = smin.Min(m_Design.HullMin());
+		m_DesignLock.unlock();
+	}
+	const AuMatrix4x4& model = rmod.Matrix(Id());
+	AuPoint pv = model.Project((smin + smax) / 2);
+	double reach = smin.Distance(smax)/2;
+	if(!sp.Asked(pv.x, pv.y, pv.z, reach))
+		return;
+	if(!m_AV)
+		return;
+	if(!sp.Reaches(pv.x, pv.y, pv.z, reach))
+		return;
+	const AuGLSLScBase& shader = ari.re->GLSL().ScDepthAlphaShader();
+	shader.SetSurfaceTextures(m_AV->m_SurfaceTex);
+
+	shader.SetModelView(model);
+	if((IsUnderConstruction() && IndustryId() != IID_Fence) || IsDestroyed())
+	{
+		if(m_AV->m_BoardsVAO.VAO())
+		{
+			m_AV->m_BoardsVAO.DrawSc(shader, EffectTextures(), m_AV->m_HullEffectAppl);
+			sp.Drew();
+		}
+		return;
+	}
+
+	if(!m_AV->m_OpaqueVAOs.empty())
+		RenderDesignVAOs(m_AV->m_OpaqueVAOs, shader);
+	if(m_AV->m_InsideVisible)
+	{
+		if(!m_AV->m_RoomOpaqueVAOs.empty())
+			RenderDesignVAOs(m_AV->m_RoomOpaqueVAOs, shader);
+		if(!m_AV->m_IntRoomOpaqueVAOs.empty())
+			RenderDesignVAOs(m_AV->m_IntRoomOpaqueVAOs, shader);
+	}
+	if(!m_AV->m_DoorOpaqueVAOs.empty())
+		RenderDoorVAOs(m_AV->m_DoorOpaqueVAOs, shader, 0, 0, 0, 0);
+	if(!m_AV->m_TurBaseOpaqueVAOs.empty())
+		RenderTurretBaseVAOs(m_AV->m_TurBaseOpaqueVAOs, model, shader);
+	if(!m_AV->m_TurGunOpaqueVAOs.empty())
+		RenderTurretGunVAOs(m_AV->m_TurGunOpaqueVAOs, model, shader);
+	for(QHash<quint32, AuScVAO>::iterator vi = m_AV->m_FenceCustomOpaqueVAO.begin(); vi != m_AV->m_FenceCustomOpaqueVAO.end(); vi++)
+	{
+		QHash<quint32, AuTexturePalette>::iterator ti = m_AV->m_FenceCustomTex.find(vi.key());
+		if(ti != m_AV->m_FenceCustomTex.end())
+			shader.SetSurfaceTextures(*ti);
+		(*vi).DrawSc(shader, EffectTextures(), m_AV->m_HullEffectAppl);
+	}
+	if(m_AV->m_FenceStyleOpaqueVAO.VAO())
+	{
+		AuTexturePalette surfaceTex;
+		AuDesign::FenceTexturePalette(*ari.re, surfaceTex);
+		shader.SetSurfaceTextures(surfaceTex);
+		m_AV->m_FenceStyleOpaqueVAO.DrawSc(shader, EffectTextures(), m_AV->m_HullEffectAppl);
+	}
+	sp.Drew();
+}
+
 void DaBd::RenderScShader(AuGLSLScBase* shader, AuAtomRenderInfo& ari, const AuMatrix4x4& model, const DaPerson* sceneAtom)
 {
 	shader->SetModelView(model);

@@ -1615,6 +1615,7 @@ void DaWorldRingSection::RenderSeaGlobe(const AuMatrix4x4& projection, const AuM
 			// Render the sea globe vertex array object.
 			re.GLSL().WaterRingworldShader().Select(projection);
 			re.GLSL().WaterRingworldShader().SetModelView(model);
+			re.GLSL().WaterRingworldShader().SetShadowBodiesLocal(model);
 			re.GLSL().WaterRingworldShader().SetTexture(s_texSea);
 			re.GLSL().WaterRingworldShader().SetBumpMap(s_texSeaN);
 			re.GLSL().WaterRingworldShader().SetTexOffset(m_WaterOffX/5, m_WaterOffY/5);
@@ -1715,6 +1716,8 @@ void DaWorldRingSection::RenderSeaGlobe(const AuMatrix4x4& projection, const AuM
 				// Ambient light
 				re.GLSL().WaterRingworldNoBumpNoHoleShader().SetAmbientLight(ambientLight);
 
+				re.GLSL().WaterRingworldNoBumpNoHoleShader().SetShadowBodiesLocal(model);
+
 				// Suns
 				for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 				{
@@ -1758,6 +1761,7 @@ void DaWorldRingSection::RenderSeaGlobe(const AuMatrix4x4& projection, const AuM
 			// Render the sea globe vertex array object.
 			re.GLSL().WaterRingworldNoHoleShader().Select(projection);
 			re.GLSL().WaterRingworldNoHoleShader().SetModelView(model);
+			re.GLSL().WaterRingworldNoHoleShader().SetShadowBodiesLocal(model);
 			re.GLSL().WaterRingworldNoHoleShader().SetTexture(s_texSea);
 			re.GLSL().WaterRingworldNoHoleShader().SetBumpMap(s_texSeaN);
 			re.GLSL().WaterRingworldNoHoleShader().SetTexOffset(m_WaterOffX/5, m_WaterOffY/5);
@@ -1858,6 +1862,8 @@ void DaWorldRingSection::RenderSeaGlobe(const AuMatrix4x4& projection, const AuM
 			ElevateLocMSL(clipCenter, 0);
 			re.GLSL().WaterRingworldNoBumpShader().SetClip(clipDist, clipCenter.x, clipCenter.y, clipCenter.z);
 
+			re.GLSL().WaterRingworldNoBumpShader().SetShadowBodiesLocal(model);
+
 			// Suns
 			for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 			{
@@ -1943,6 +1949,8 @@ void DaWorldRingSection::RenderSeaGlobe(const AuMatrix4x4& projection, const AuM
 
 			// Ambient light
 			re.GLSL().WaterRingworldNoBumpNoHoleShader().SetAmbientLight(ambientLight);
+
+			re.GLSL().WaterRingworldNoBumpNoHoleShader().SetShadowBodiesLocal(model);
 
 			// Suns
 			for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -3758,6 +3766,8 @@ void DaWorldRingSection::RenderControlCenter(const AuMatrix4x4& projection, cons
 
 	// Ambient light
 	re.GLSL().RingworldStatueShader().SetAmbientLight(ambientLight);
+
+	re.GLSL().RingworldStatueShader().SetShadowBodiesLocal(model);
 
 	// Suns
 	for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -8343,6 +8353,45 @@ quint8 DaWorldRingSection::VegetationAt(const AuGlobeLL& ll, float terAltMSL, in
 	return (quint8)(vegAt);
 }
 
+unsigned int DaWorldRingSection::SunShadowFamilies() const
+{
+	return 1u << SSF_Terrain;
+}
+
+void DaWorldRingSection::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+		AuSunShadowPass& sp)
+{
+	Q_UNUSED(sceneAtom);
+	if(sp.m_Family != SSF_Terrain || m_AtGlobe.m_TriVAOs.empty())
+		return;
+
+	const AuMatrix4x4& model = rmod.Matrix(Id());
+	bool modelSet = false;
+	for(unordered_map<int, AuGLTriVAO, AuTriHash>::iterator vi = m_AtGlobe.m_TriVAOs.begin(); vi != m_AtGlobe.m_TriVAOs.end(); vi++)
+	{
+		int vidx = (*vi).first;
+		if(!(*vi).second.VAO() || vidx < 0 || vidx >= m_AtGlobe.m_TerrainTris.size())
+			continue;
+
+		const AuGlobeTerrainTriCen& tri = m_AtGlobe.m_TerrainTris.at(vidx);
+		AuPoint cen = (tri.m_Loc0 + tri.m_Loc1 + tri.m_Loc2) / 3;
+		double reach = qMax(cen.Distance(tri.m_Loc0), qMax(cen.Distance(tri.m_Loc1), cen.Distance(tri.m_Loc2)))*1.25 + 1000;
+		AuPoint pv = model.Project(cen);
+		if(!sp.Asked(pv.x, pv.y, pv.z, reach) || !sp.Reaches(pv.x, pv.y, pv.z, reach))
+			continue;
+
+		if(!modelSet)
+		{
+			ari.re->GLSL().ScDepthShader().SetModelView(model);
+			modelSet = true;
+		}
+		(*vi).second.SelectGL();
+		(*vi).second.DrawGL();
+		(*vi).second.DeselectGL();
+		sp.Drew();
+	}
+}
+
 void DaWorldRingSection::RenderNearGlobe(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuAtomRenderInfo& ari,
 		float ambientLight)
 {
@@ -8640,6 +8689,8 @@ void DaWorldRingSection::RenderAtGlobe(const AuMatrix4x4& projection, const AuMa
 	terrainShader.SetCityAmbientLight(c.redF() * (float)AuGLLight::AmbientLitCity(),
 			c.greenF() * (float)AuGLLight::AmbientLitCity(), c.blueF() * (float)AuGLLight::AmbientLitCity());
 
+	ari.re->GLSL().RingworldTerrainLitFloraShader().SetShadowBodiesLocal(model);
+
 	// Suns
 	for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 	{
@@ -8765,6 +8816,8 @@ void DaWorldRingSection::RenderAtGlobe(const AuMatrix4x4& projection, const AuMa
 
 	// Ambient light
 	ari.re->GLSL().RingworldLitFloraShader().SetAmbientLight(ambientLight);
+
+	ari.re->GLSL().RingworldLitFloraShader().SetShadowBodiesLocal(model);
 
 	// Suns
 	for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)

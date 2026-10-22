@@ -19,6 +19,7 @@
 #define MAX_POINT_LIGHTS 80				// Max point/spot light sources supported by this code. Shaders can be configured for less.
 										// On Romulus, 93 caused a shader compile error; 92 was ok. 80 allows for a margin.
 #define MAX_SUNS 3						// Max sun light sources supported by shaders.
+#define MAX_SHADOW_BODIES 8
 #define MAX_SHIELD_HIT_EFFECTS 20		// Same number as in shield shaders.
 #define MAX_BONES 61
 #define MAX_ANIMAL_BONES 50				// Default human uses 24.
@@ -29,6 +30,7 @@
 #define d_FogDensityFactor				(.8f)					// 1 for 1/exp(d) fog. About .5 for 1/exp(d^2) fog.
 
 class AuGLEffects;
+class AuGLSL;
 class AuGLSLScBase;
 class AuScTriRenderList;
 
@@ -164,6 +166,16 @@ class AUGL_DLL AuOpenGLFunctions : public QOpenGLFunctions_3_2_Core
 #endif	// AUGLnn
 
 #endif	// Q_OS_WIN
+
+#include "ausunshadow.h"
+
+class AUGL_DLL AuRenderCounters
+{
+public:
+	static bool							s_On;
+	static quint64						s_DrawCalls;
+	static quint64						s_Vertices;
+};
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // NOTE: OpenGL context must be current when calling all NnnGL() functions.
@@ -377,6 +389,8 @@ public:
 			m_GLf->glEnableVertexAttribArray(buffer);
 
 		m_GLf->glDrawArrays(GL_TRIANGLES, 0, m_Vertices);
+		AuRenderCounters::s_DrawCalls++;
+		AuRenderCounters::s_Vertices += m_Vertices;
 
 		for(GLuint buffer=0; buffer<m_BufferCount; buffer++)
 			m_GLf->glDisableVertexAttribArray(buffer);
@@ -388,6 +402,8 @@ public:
 			m_GLf->glEnableVertexAttribArray(buffer);
 
 		m_GLf->glDrawArrays(mode, 0, m_Vertices);
+		AuRenderCounters::s_DrawCalls++;
+		AuRenderCounters::s_Vertices += m_Vertices;
 
 		for(GLuint buffer=0; buffer<m_BufferCount; buffer++)
 			m_GLf->glDisableVertexAttribArray(buffer);
@@ -498,6 +514,24 @@ public:
 
 class AUGL_DLL AuGLSLShader
 {
+	static bool							s_PerPixelLighting;
+	static float						s_PerPixelSkinGloss;
+	static float						s_PerPixelClothGloss;
+	static float						s_PerPixelHairGloss;
+	static bool							s_Shadows;
+	static bool							s_ShadowsDebug;
+	static bool							s_ShadowMaps;
+	static bool							s_ShadowMapsSupported;
+	static int							s_ShadowMapSoftness;
+	static int							s_ShadowMapSize;
+	static double						s_ShadowMapRadius;
+	static double						s_ShadowMapBias;
+	static unsigned int					s_ShadowCasters;
+	static bool							s_ShadowSecondSun;
+	static int							s_ShadowLights;
+	static double						s_ShadowCasterLimit[SSF_Count];
+	static unsigned int					s_VariantSerial;
+
 protected:
 	GLuint								m_Shader;				// Shader identifier assigned by OpenGL glCreateShader.
 
@@ -506,6 +540,48 @@ public:
 	// OpenGL context must be current when this function is called.
 	// 'maxLights' can be 0 when compiling a fragment shader because it does not apply to them.
 	AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QString& shaderName, unsigned int maxLights=0);
+
+	static void SetPerPixelLighting(bool on);
+	static bool PerPixelLighting();
+
+	static void SetPerPixelSkinGloss(float gloss);
+	static float PerPixelSkinGloss();
+
+	static void SetPerPixelClothGloss(float gloss);
+	static void SetPerPixelHairGloss(float gloss);
+
+	static void SetShadows(bool on);
+	static bool Shadows();
+
+	static void SetShadowsDebug(bool on);
+
+	static void SetShadowMaps(bool on);
+	static bool ShadowMaps();
+
+	static void SetShadowMapsSupported(bool supported);
+
+	static void SetShadowMapSoftness(int texels);
+
+	static void SetShadowMapSize(int texels);
+	static int ShadowMapSize();
+	static void SetShadowMapRadiusMeters(double meters);
+	static double ShadowMapRadiusFeet();
+	static void SetShadowMapBias(double bias);
+	static double ShadowMapBias();
+
+	static void SetShadowCasters(unsigned int families);
+	static unsigned int ShadowCasters();
+
+	static void SetShadowSecondSun(bool on);
+	static bool ShadowSecondSun();
+
+	static void SetShadowLights(int count);
+	static int ShadowLights();
+
+	static void SetShadowCasterLimitMeters(int family, double meters);
+	static double ShadowCasterLimitFeet(int family);
+
+	static unsigned int VariantSerial();
 
 	// Returns the numeric identifier assigned by OpenGL glCreateShader when this shader was constructed.
 	inline GLuint Id() const
@@ -525,11 +601,18 @@ class AUGL_DLL AuGLSLProgramOpt
 {
 private:
 	unsigned int						m_MaxLights;
+	const AuGLSL*						m_Owner;
 
 public:
-	inline AuGLSLProgramOpt(unsigned int maxLights)
+	inline AuGLSLProgramOpt(unsigned int maxLights, const AuGLSL* owner=0)
 	{
 		m_MaxLights = maxLights;
+		m_Owner = owner;
+	}
+
+	inline const AuGLSL* Owner() const
+	{
+		return m_Owner;
 	}
 
 	inline unsigned int MaxLights() const
@@ -547,6 +630,42 @@ protected:
 	GLuint								m_Program;				// Program identifier assigned by OpenGL glCreateProgram.
 	AuOpenGLFunctions*					m_GLf;					// Captured when Build function called.
 
+private:
+	const AuGLSL*						m_Owner;
+	GLint								m_shadowBodyCount;
+	GLint								m_shadowBody;
+	bool								m_ShadowBodiesLooked;
+	unsigned int						m_ShadowBodySerial;
+
+	GLint								m_shadowBodyLocalCount;
+	GLint								m_shadowBodyLocal;
+	bool								m_ShadowBodiesLocalLooked;
+	int									m_ShadowBodiesLocalSent;
+
+	GLint								m_sunShadowMap;
+	GLint								m_sunShadowMapMatrix;
+	GLint								m_sunShadowMapCascade;
+	GLint								m_sunShadowMapDir;
+	GLint								m_sunShadowMapDir2;
+	GLint								m_sunShadowMapDir2Local;
+
+	GLint								m_lightShadowMap;
+	GLint								m_lightShadowOf;
+	GLint								m_lightShadowRot;
+	GLint								m_lightShadowRotLocal;
+	GLint								m_lightShadowInfo;
+	GLint								m_lightShadowParams;
+	bool								m_LightShadowLooked;
+	unsigned int						m_LightShadowSerial;
+	GLint								m_sunShadowMapInfo;
+	GLint								m_sunShadowMapMatrixLocal;
+	GLint								m_sunShadowMapCascadeLocal;
+	GLint								m_sunShadowMapDirLocal;
+	GLint								m_sunShadowMapInfoLocal;
+	bool								m_SunShadowMapLooked;
+	unsigned int						m_SunShadowMapSerial;
+	int									m_SunShadowMapLocalOn;
+
 public:
 	AuGLSLProgram();
 	virtual ~AuGLSLProgram();
@@ -554,9 +673,19 @@ public:
 	// Loads and compiles all shaders. Links the shader program. Resolves attribute locations.
 	virtual void Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 	{
-		Q_UNUSED(opt);
 		m_GLf = &GLf;
+		m_Owner = opt.Owner();
+		m_ShadowBodiesLooked = false;
+		m_ShadowBodiesLocalLooked = false;
+		m_ShadowBodiesLocalSent = -1;
+		m_SunShadowMapLooked = false;
+		m_SunShadowMapSerial = 0;
+		m_SunShadowMapLocalOn = -1;
 	}
+
+	void SetShadowBodiesLocal(const AuMatrix4x4& model);
+
+	void DeleteProgram();
 
 	// Deselects shaders from the GL context to restore default OpenGL behavior.
 	// OpenGL context must be current when this function is called.
@@ -588,6 +717,14 @@ public:
 	void DeleteGL();
 
 protected:
+	void SendShadowBodies();
+
+	void SendSunShadowMap();
+
+	void SendSunShadowMapLocal(const AuMatrix4x4& model);
+	void SendLightShadowMaps();
+	void SendLightShadowMapsLocal(const AuMatrix4x4& model);
+
 	void DumpProgramInfoLog() const;
 
 	// 'attrib' is the name of an attrib variable.
@@ -18666,6 +18803,399 @@ public:
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+
+class AUGL_DLL AuGLSLScDepth : public AuGLSLScBase
+{
+private:
+	GLint								m_mv;
+	GLint								m_p;
+
+public:
+	AuGLSLScDepth()
+	{
+		m_mv = -1;
+		m_p = -1;
+	}
+
+	virtual void Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt);
+
+	virtual QString Name() const
+	{
+		return QString("ScDepth");
+	}
+
+	virtual void Select(const AuMatrix4x4& projection, const AuGLEffects& re)
+	{
+		Q_UNUSED(re);
+		AuGLSLProgram::Select();
+		SetUniformMatrix(m_GLf, m_p, projection);
+	}
+
+	virtual void SetAmbientLight(float ambientR, float ambientG, float ambientB) const
+	{
+		Q_UNUSED(ambientR);
+		Q_UNUSED(ambientG);
+		Q_UNUSED(ambientB);
+	}
+
+	virtual void SetAmbientLightUp(const AuPoint& upVec) const
+	{
+		Q_UNUSED(upVec);
+	}
+
+	virtual void SetEffectTexture(GLuint texName, int appl) const
+	{
+		Q_UNUSED(texName);
+		Q_UNUSED(appl);
+	}
+
+	virtual void SetGlowDiscard(float glowR, float glowG, float glowB, float discardAlpha) const
+	{
+		Q_UNUSED(glowR);
+		Q_UNUSED(glowG);
+		Q_UNUSED(glowB);
+		Q_UNUSED(discardAlpha);
+	}
+
+	virtual void SetGlowDiscard(const QColor& glow, float discardAlpha) const
+	{
+		Q_UNUSED(glow);
+		Q_UNUSED(discardAlpha);
+	}
+
+	virtual void SetLight(int light, bool enabled, float kL, float kQ, float colorR, float colorG, float colorB, float locX,
+			float locY, float locZ, float spotCosOuterCone, float spotCosInnerCone, float spotDirX, float spotDirY,
+			float spotDirZ) const
+	{
+		Q_UNUSED(light);
+		Q_UNUSED(enabled);
+		Q_UNUSED(kL);
+		Q_UNUSED(kQ);
+		Q_UNUSED(colorR);
+		Q_UNUSED(colorG);
+		Q_UNUSED(colorB);
+		Q_UNUSED(locX);
+		Q_UNUSED(locY);
+		Q_UNUSED(locZ);
+		Q_UNUSED(spotCosOuterCone);
+		Q_UNUSED(spotCosInnerCone);
+		Q_UNUSED(spotDirX);
+		Q_UNUSED(spotDirY);
+		Q_UNUSED(spotDirZ);
+	}
+
+	virtual void SetLightEnabled(int light, bool enabled) const
+	{
+		Q_UNUSED(light);
+		Q_UNUSED(enabled);
+	}
+
+	virtual void SetModelView(const AuMatrix4x4& mv) const
+	{
+		SetUniformMatrix(m_GLf, m_mv, mv);
+	}
+
+	virtual void SetProjection(const AuMatrix4x4& p)
+	{
+		SetUniformMatrix(m_GLf, m_p, p);
+	}
+
+	virtual void SetSun(int sun, bool enabled, float attenuation, float colorR, float colorG, float colorB,
+			float locX, float locY, float locZ, float diskRadius) const
+	{
+		Q_UNUSED(sun);
+		Q_UNUSED(enabled);
+		Q_UNUSED(attenuation);
+		Q_UNUSED(colorR);
+		Q_UNUSED(colorG);
+		Q_UNUSED(colorB);
+		Q_UNUSED(locX);
+		Q_UNUSED(locY);
+		Q_UNUSED(locZ);
+		Q_UNUSED(diskRadius);
+	}
+
+	virtual void SetSun(int sun, bool enabled, float attenuation, float colorR, float colorG, float colorB, float locX, float locY,
+			float locZ, float diskRadius, float shadowAngle, float shadowCount, const AuPoint& shadowXVec,
+			const AuPoint& shadowYVec) const
+	{
+		Q_UNUSED(sun);
+		Q_UNUSED(enabled);
+		Q_UNUSED(attenuation);
+		Q_UNUSED(colorR);
+		Q_UNUSED(colorG);
+		Q_UNUSED(colorB);
+		Q_UNUSED(locX);
+		Q_UNUSED(locY);
+		Q_UNUSED(locZ);
+		Q_UNUSED(diskRadius);
+		Q_UNUSED(shadowAngle);
+		Q_UNUSED(shadowCount);
+		Q_UNUSED(shadowXVec);
+		Q_UNUSED(shadowYVec);
+	}
+
+	virtual void SetSunEnabled(int sun, bool enabled) const
+	{
+		Q_UNUSED(sun);
+		Q_UNUSED(enabled);
+	}
+
+	virtual void SetSunShadowAngle(int sun, float shadowAngle) const
+	{
+		Q_UNUSED(sun);
+		Q_UNUSED(shadowAngle);
+	}
+
+	virtual void SetSurfaceTexture(int texIndex, GLuint texName) const
+	{
+		Q_UNUSED(texIndex);
+		Q_UNUSED(texName);
+	}
+
+	virtual void SetSurfaceTextures(const AuTexturePalette& tex) const
+	{
+		Q_UNUSED(tex);
+	}
+
+	virtual void SetVertAlpha(float vertAlpha) const
+	{
+		Q_UNUSED(vertAlpha);
+	}
+};
+
+class AUGL_DLL AuGLSLScDepthAlpha : public AuGLSLScDepth
+{
+private:
+	GLint								m_mvA;
+	GLint								m_pA;
+	GLint								m_OldTexture[SCTEXI_Count];
+	GLint								m_texSurface[SCTEXI_Count];
+
+public:
+	AuGLSLScDepthAlpha()
+	{
+		m_mvA = -1;
+		m_pA = -1;
+		for(int t=0; t<SCTEXI_Count; t++)
+		{
+			m_OldTexture[t] = 0;
+			m_texSurface[t] = -1;
+		}
+	}
+
+	virtual void Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt);
+
+	virtual void Deselect()
+	{
+		AuGLSLProgram::Deselect();
+
+		for(int t=0; t<SCTEXI_Count; t++)
+		{
+			m_GLf->glActiveTexture(GL_TEXTURE1 + t);
+			m_GLf->glBindTexture(GL_TEXTURE_2D, m_OldTexture[t]);
+		}
+		m_GLf->glActiveTexture(GL_TEXTURE0);
+	}
+
+	virtual QString Name() const
+	{
+		return QString("ScDepthAlpha");
+	}
+
+	virtual void Select(const AuMatrix4x4& projection, const AuGLEffects& re)
+	{
+		Q_UNUSED(re);
+		AuGLSLProgram::Select();
+		SetUniformMatrix(m_GLf, m_pA, projection);
+
+		for(int t=0; t<SCTEXI_Count; t++)
+		{
+			m_GLf->glActiveTexture(GL_TEXTURE1 + t);
+			m_GLf->glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_OldTexture[t]);
+		}
+		m_GLf->glActiveTexture(GL_TEXTURE0);
+	}
+
+	virtual void SetModelView(const AuMatrix4x4& mv) const
+	{
+		SetUniformMatrix(m_GLf, m_mvA, mv);
+	}
+
+	virtual void SetProjection(const AuMatrix4x4& p)
+	{
+		SetUniformMatrix(m_GLf, m_pA, p);
+	}
+
+	virtual void SetSurfaceTexture(int texIndex, GLuint texName) const
+	{
+		m_GLf->glUniform1i(m_texSurface[texIndex], 1 + texIndex);
+		m_GLf->glActiveTexture(GL_TEXTURE1 + texIndex);
+		m_GLf->glBindTexture(GL_TEXTURE_2D, texName);
+	}
+
+	virtual void SetSurfaceTextures(const AuTexturePalette& tex) const
+	{
+		for(int t=0; t<SCTEXI_Count; t++)
+			SetSurfaceTexture(t, tex[t]);
+		m_GLf->glActiveTexture(GL_TEXTURE0);
+	}
+};
+
+class AUGL_DLL AuGLSLAnimalDepth : public AuGLSLProgram
+{
+private:
+	GLint								m_bM[MAX_ANIMAL_BONES];
+	GLint								m_mv;
+	GLint								m_p;
+
+public:
+	AuGLSLAnimalDepth()
+	{
+		for(int bm=0; bm<MAX_ANIMAL_BONES; bm++)
+			m_bM[bm] = -1;
+		m_mv = -1;
+		m_p = -1;
+	}
+
+	virtual void Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt);
+
+	virtual QString Name() const
+	{
+		return QString("AnimalDepth");
+	}
+
+	inline void Select(const AuMatrix4x4& projection)
+	{
+		AuGLSLProgram::Select();
+		SetUniformMatrix(m_GLf, m_p, projection);
+	}
+
+	inline void SetBone(int bone, const AuMatrix4x4& m) const
+	{
+		SetUniformMatrix(m_GLf, m_bM[bone], m);
+	}
+
+	inline void SetModelView(const AuMatrix4x4& mv) const
+	{
+		SetUniformMatrix(m_GLf, m_mv, mv);
+	}
+};
+
+class AUGL_DLL AuGLSLBodyDepth : public AuGLSLProgram
+{
+private:
+	GLint								m_bM[MAX_BONES];
+	GLint								m_mv;
+	GLint								m_p;
+
+public:
+	AuGLSLBodyDepth()
+	{
+		for(int bm=0; bm<MAX_BONES; bm++)
+			m_bM[bm] = -1;
+		m_mv = -1;
+		m_p = -1;
+	}
+
+	virtual void Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt);
+
+	virtual QString Name() const
+	{
+		return QString("BodyDepth");
+	}
+
+	inline void Select(const AuMatrix4x4& projection)
+	{
+		AuGLSLProgram::Select();
+		SetUniformMatrix(m_GLf, m_p, projection);
+	}
+
+	inline void SetBone(int bone, const AuMatrix4x4& m) const
+	{
+		SetUniformMatrix(m_GLf, m_bM[bone], m);
+	}
+
+	inline void SetModelView(const AuMatrix4x4& mv) const
+	{
+		SetUniformMatrix(m_GLf, m_mv, mv);
+	}
+};
+
+class AUGL_DLL AuGLSLModelDepth : public AuGLSLProgram
+{
+private:
+	GLint								m_mv;
+	GLint								m_p;
+
+public:
+	AuGLSLModelDepth()
+	{
+		m_mv = -1;
+		m_p = -1;
+	}
+
+	virtual void Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt);
+
+	virtual QString Name() const
+	{
+		return QString("ModelDepth");
+	}
+
+	inline void Select(const AuMatrix4x4& projection)
+	{
+		AuGLSLProgram::Select();
+		SetUniformMatrix(m_GLf, m_p, projection);
+	}
+
+	inline void SetModelView(const AuMatrix4x4& mv) const
+	{
+		SetUniformMatrix(m_GLf, m_mv, mv);
+	}
+};
+
+class AUGL_DLL AuGLSLGlobeDepth : public AuGLSLProgram
+{
+private:
+	GLint								m_clipCos;
+	GLint								m_clipUp;
+	GLint								m_mv;
+	GLint								m_p;
+
+public:
+	AuGLSLGlobeDepth()
+	{
+		m_clipCos = -1;
+		m_clipUp = -1;
+		m_mv = -1;
+		m_p = -1;
+	}
+
+	virtual void Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt);
+
+	virtual QString Name() const
+	{
+		return QString("GlobeDepth");
+	}
+
+	inline void Select(const AuMatrix4x4& projection)
+	{
+		AuGLSLProgram::Select();
+		SetUniformMatrix(m_GLf, m_p, projection);
+	}
+
+	inline void SetClip(float cosAngle, float upX, float upY, float upZ) const
+	{
+		m_GLf->glUniform1f(m_clipCos, cosAngle);
+		m_GLf->glUniform3f(m_clipUp, upX, upY, upZ);
+	}
+
+	inline void SetModelView(const AuMatrix4x4& mv) const
+	{
+		SetUniformMatrix(m_GLf, m_mv, mv);
+	}
+};
+
 // Renders Sc models without sun over the horizon or ringworld shadow panel effects, for scene not at a world.
 
 class AUGL_DLL AuGLSLSc : public AuGLSLScBase
@@ -22474,6 +23004,32 @@ class AUGL_DLL AuGLSL
 private:
 	AuOpenGLFunctions*					m_GLf;
 	unsigned int						m_MaxLights;
+	unsigned int						m_VariantSerial;
+	float								m_ShadowBodies[4*MAX_SHADOW_BODIES];
+	int									m_ShadowBodyCount;
+	unsigned int						m_ShadowBodySerial;
+
+	GLuint								m_SunShadowFramebuffer;
+	GLuint								m_SunShadowTexture;
+	int									m_SunShadowSize;
+	bool								m_SunShadowFailed;
+	AuSunShadowSaved					m_SunShadowSaved;
+	int									m_SunShadowLayers;
+	AuSunShadowCascades					m_SunShadowCascades;
+	AuSunShadowCascades					m_SunShadowCascades2;
+	GLuint								m_LightShadowFramebuffer;
+	GLuint								m_LightShadowTexture;
+	int									m_LightShadowSize;
+	int									m_LightShadowLayers;
+	bool								m_LightShadowFailed;
+	AuSunShadowSaved					m_LightShadowSaved;
+	AuLightShadowMaps					m_LightShadowMaps;
+	unsigned int						m_LightShadowSerial;
+	bool								m_SunShadowMapOn;
+	unsigned int						m_SunShadowMapSerial;
+
+	void CreatePrograms();
+	void DestroyPrograms(bool deleteGLPrograms);
 
 	// Storing only pointers here allows the size of shaders to change without changing the size of this object. That saves some
 	// considerable rebuilding while developing new shaders. Only the code that references the specific shader needs to be rebuilt,
@@ -22569,6 +23125,12 @@ private:
 	AuGLSLScGlobeFog*					m_ScGlobeFog;
 	AuGLSLScRingworld*					m_ScRingworld;
 	AuGLSLScRingworldFog*				m_ScRingworldFog;
+	AuGLSLScDepth*						m_ScDepth;
+	AuGLSLAnimalDepth*					m_AnimalDepth;
+	AuGLSLBodyDepth*					m_BodyDepth;
+	AuGLSLModelDepth*					m_ModelDepth;
+	AuGLSLGlobeDepth*					m_GlobeDepth;
+	AuGLSLScDepthAlpha*					m_ScDepthAlpha;
 	AuGLSLShadowSquare*					m_ShadowSquare;
 	AuGLSLShield*						m_Shield;
 	AuGLSLShieldHits*					m_ShieldHits;
@@ -22604,6 +23166,95 @@ private:
 public:
 	AuGLSL();
 	virtual ~AuGLSL();
+
+	bool RebuildIfStale();
+
+	void SetShadowBodies(int count, const float* centersAndRadii);
+
+	inline int ShadowBodyCount() const
+	{
+		return m_ShadowBodyCount;
+	}
+
+	inline const float* ShadowBodies() const
+	{
+		return m_ShadowBodies;
+	}
+
+	inline unsigned int ShadowBodySerial() const
+	{
+		return m_ShadowBodySerial;
+	}
+
+	bool BeginSunShadowMap(int size, int suns);
+	void SunShadowMapLayer(int layer);
+	void EndSunShadowMap(const AuSunShadowCascades& cascades, const AuSunShadowCascades& cascades2);
+	void ClearSunShadowMap();
+
+	inline bool SunShadowMapOn() const
+	{
+		return m_SunShadowMapOn;
+	}
+
+	inline const AuSunShadowCascades& SunShadowMapCascades() const
+	{
+		return m_SunShadowCascades;
+	}
+
+	inline const AuSunShadowCascades& SunShadowMapCascades2() const
+	{
+		return m_SunShadowCascades2;
+	}
+
+	bool BeginLightShadowMaps(int size, int lamps);
+	void LightShadowMapLayer(int layer);
+	void EndLightShadowMaps(const AuLightShadowMaps& maps);
+	void ClearLightShadowMaps();
+
+	inline const AuLightShadowMaps& LightShadowMaps() const
+	{
+		return m_LightShadowMaps;
+	}
+
+	inline unsigned int LightShadowSerial() const
+	{
+		return m_LightShadowSerial;
+	}
+
+	inline unsigned int SunShadowMapSerial() const
+	{
+		return m_SunShadowMapSerial;
+	}
+
+	inline AuGLSLScDepth& ScDepthShader()
+	{
+		return *m_ScDepth;
+	}
+
+	inline AuGLSLAnimalDepth& AnimalDepthShader()
+	{
+		return *m_AnimalDepth;
+	}
+
+	inline AuGLSLBodyDepth& BodyDepthShader()
+	{
+		return *m_BodyDepth;
+	}
+
+	inline AuGLSLModelDepth& ModelDepthShader()
+	{
+		return *m_ModelDepth;
+	}
+
+	inline AuGLSLGlobeDepth& GlobeDepthShader()
+	{
+		return *m_GlobeDepth;
+	}
+
+	inline AuGLSLScDepthAlpha& ScDepthAlphaShader()
+	{
+		return *m_ScDepthAlpha;
+	}
 
 	inline AuGLSLAnimal& AnimalShader()
 	{

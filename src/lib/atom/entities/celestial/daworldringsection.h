@@ -331,6 +331,10 @@ public:
 			DaAtomList& shadScRingworld,
 			DaAtomList& shadScRingworldFog);
 
+	virtual unsigned int SunShadowFamilies() const;
+	virtual void RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+			AuSunShadowPass& sp);
+
 	virtual void RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, AuModelMatrixHash& rmod,
 			const DaPerson* sceneAtom,
 			DaAtomList& shadSc,

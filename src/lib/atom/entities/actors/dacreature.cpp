@@ -7,6 +7,7 @@
 #include "dacreature.h"
 #include <algorithm>
 #include <cmath>
+#include <QElapsedTimer>
 //
 #include "auanimalia.h"
 #include "auatomrenderinfo.h"
@@ -2262,6 +2263,72 @@ float DaCreature::GroundHeightAboveCG() const
 }
 
 // Used for mini me display on screen.
+static const float s_GradualLightMs = 500.f;
+
+float DaCreature::GradualLight(float& ambientR, float& ambientG, float& ambientB, bool sunsBlocked) const
+{
+	float sunTarget = sunsBlocked ? 0.f : 1.f;
+	if(!AuGLSLShader::PerPixelLighting())
+		return sunTarget;
+
+	static QElapsedTimer clock;
+	if(!clock.isValid())
+		clock.start();
+	qint64 now = clock.elapsed();
+	qint64 elapsed = now - m_EasedAt;
+	if(m_EasedAt < 0 || elapsed < 0 || elapsed > 1000)
+	{
+		m_EasedAmbientR = ambientR;
+		m_EasedAmbientG = ambientG;
+		m_EasedAmbientB = ambientB;
+		m_EasedSunLevel = sunTarget;
+	}
+	else
+	{
+		float step = (float)elapsed / s_GradualLightMs;
+		m_EasedAmbientR += qBound(-step, ambientR - m_EasedAmbientR, step);
+		m_EasedAmbientG += qBound(-step, ambientG - m_EasedAmbientG, step);
+		m_EasedAmbientB += qBound(-step, ambientB - m_EasedAmbientB, step);
+		m_EasedSunLevel += qBound(-step, sunTarget - m_EasedSunLevel, step);
+	}
+	m_EasedAt = now;
+	ambientR = m_EasedAmbientR;
+	ambientG = m_EasedAmbientG;
+	ambientB = m_EasedAmbientB;
+	return m_EasedSunLevel;
+}
+
+static bool DimSuns(AuGLEffects& re, float level, QList<int>& sunsDisabled, AuGLSun* saved)
+{
+	if(level <= 0.f)
+	{
+		re.DisableSuns(sunsDisabled);
+		return false;
+	}
+	if(level >= 1.f)
+		return false;
+	for(int isun=0; isun<MAX_SUNS; isun++)
+	{
+		saved[isun] = re.Sun(isun);
+		AuGLSun dim(saved[isun]);
+		dim.m_ColorR *= level;
+		dim.m_ColorG *= level;
+		dim.m_ColorB *= level;
+		re.SetSun(isun, dim);
+	}
+	re.GLSL().InvalidateSuns();
+	re.GLSL().InvalidateLights();
+	return true;
+}
+
+static void RestoreSuns(AuGLEffects& re, const AuGLSun* saved)
+{
+	for(int isun=0; isun<MAX_SUNS; isun++)
+		re.SetSun(isun, saved[isun]);
+	re.GLSL().InvalidateSuns();
+	re.GLSL().InvalidateLights();
+}
+
 void DaCreature::RenderMiniMe(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuAtomRenderInfo& ari, double scale)
 {
 	//qDebug("DaCreature::RenderMiniMe");
@@ -2443,6 +2510,7 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 		bool sunsBlocked;
 		SceneRenderParameters(sceneAtom, ambientR, ambientG, ambientB, fogDensity, fogR, fogG, fogB, ari.IsViewTopDown(),
 				sunsBlocked);
+		float sunLevel = GradualLight(ambientR, ambientG, ambientB, sunsBlocked);
 		ari.re->SetAmbientLight(ambientR, ambientG, ambientB, 1);
 		ari.re->SetFog(fogR, fogG, fogB, fogDensity);
 
@@ -2522,6 +2590,8 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 				tBody.Scale(scale);
 			}
 
+			m_SunShadowBody = rmod.Matrix(Id()).Inverse() * tBody;
+
 			// Render the body of this creature using the appropriate shader.
 			bool headless = this == sceneAtom && (g_Au.DrawBodyModel() == 2 || IsCameraAtEyes(ari));	// Scene atom may want his body to be headless.
 			QList<AuAnimalBone> headBones;
@@ -2590,6 +2660,8 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 		}
 
 		// Restore suns that I disabled.
+		if(sunsDimmed)
+			RestoreSuns(*ari.re, sunsAsTheyWere);
 		ari.re->EnableSuns(sunsDisabled);
 
 		// Show sight surfaces for debugging.
@@ -2652,6 +2724,8 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 	if((geometryVisible && HasDNA4()) || IsAnyConditionVisible())
 		renderLast.Insert(rmod, this);
 
+	m_SunShadowItem = rmod.Matrix(Id()).Inverse() * tThisBody;
+
 	// OpenAL audio sources
 	RenderAudioSources(sceneAtom, tThisBody, ari.al, ari.fade);
 
@@ -2660,8 +2734,73 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 			shadScGlobeFog, shadScRingworld, shadScRingworldFog);
 }
 
-void DaCreature::RenderItemInHand(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuAtomRenderInfo& ari, int pass,
-			const DaAtom* sceneAtom, AuRenderLastMap* renderLast)
+unsigned int DaCreature::SunShadowFamilies() const
+{
+	return 1u << SSF_Creatures;
+}
+
+unsigned int DaCreature::SunShadowVariants(int family) const
+{
+	Q_UNUSED(family);
+	unsigned int variants = 1u << (m_Body ? SSV_Body : SSV_Main);
+	if(HasItemInHand())
+		variants |= (1u << SSV_Model) | (1u << SSV_Sc);
+	return variants;
+}
+
+void DaCreature::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+		AuSunShadowPass& sp)
+{
+	Q_UNUSED(sceneAtom);
+	const AuPoint& pv = rmod.ViewLoc(Id());
+	const double reach = 40;
+	bool bodyVariant = sp.m_Variant == (m_Body ? SSV_Body : SSV_Main);
+	if(!(bodyVariant ? sp.Asked(pv.x, pv.y, pv.z, reach) : sp.InRange(pv.x, pv.y, pv.z, reach)))
+		return;
+	if(AgentInvisible())
+		return;
+	if(!m_Body && (!m_Animalia || m_Animalia->NeedsInit()))
+		return;
+	if(!sp.Reaches(pv.x, pv.y, pv.z, reach))
+		return;
+
+	if(!bodyVariant)
+	{
+		if(!HasItemInHand() || IsEthereal())
+			return;
+		if(m_Body ? (m_Body->CurrentGeneralPose().HeadOnly() || m_Body->IsTurretIntegratedPose())
+				: (m_Animalia->CurrentGeneralPose().HeadOnly() || m_Animalia->IsTurretIntegratedPose()))
+			return;
+		AuMatrix4x4 tcon;
+		ItemInHandTransform(tcon);
+		AuMatrix4x4 tItem(rmod.Matrix(Id()));
+		tItem *= m_SunShadowItem;
+		tItem *= tcon;
+		m_ItemInHandLock.lockForRead();
+		bool drew = m_ItemInHand && m_ItemInHand->RenderSunShadowDepth(tItem, *ari.re, sp.m_Variant);
+		m_ItemInHandLock.unlock();
+		if(drew)
+			sp.Drew();
+		return;
+	}
+
+	AuMatrix4x4 tBody(rmod.Matrix(Id()));
+	if(m_SunShadowBody != AuMatrix4x4::IdentityMatrix())
+		tBody *= m_SunShadowBody;
+	else
+	{
+		AuPoint cgOffset(CGOffset());
+		if(!cgOffset.IsZero() || !IsFullGrown())
+		{
+			tBody.Translate(cgOffset);
+			tBody.Scale(GrowthScaleBody());
+		}
+	}
+	if(m_Body ? m_Body->RenderSunShadowDepth(tBody, *ari.re) : m_Animalia->RenderSunShadowDepth(tBody, *ari.re))
+		sp.Drew();
+}
+
+void DaCreature::ItemInHandTransform(AuMatrix4x4& tcon)
 {
 	if(IsLegacyTurretStation()) return;
 	bool isLefty;
@@ -2681,8 +2820,7 @@ void DaCreature::RenderItemInHand(const AuMatrix4x4& projection, const AuMatrix4
 	bool isDying = gp.IsDying();
 	bool isPatient = gp.IsPatientProne();
 
-	// Multiply by current transformation (Translation, rotation, and scale)
-	AuMatrix4x4 tcon;
+	tcon.LoadIdentity();
 	if(HasDNA3())
 	{
 		tcon.Translate(WeaponLoc());		// Move to body location.
@@ -2755,6 +2893,13 @@ void DaCreature::RenderItemInHand(const AuMatrix4x4& projection, const AuMatrix4
 			break;
 		}
 	}
+}
+
+void DaCreature::RenderItemInHand(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuAtomRenderInfo& ari, int pass,
+			const DaAtom* sceneAtom, AuRenderLastMap* renderLast)
+{
+	AuMatrix4x4 tcon;
+	ItemInHandTransform(tcon);
 
 	m_ItemInHandLock.lockForWrite();
 	if(!m_ItemInHand)
@@ -2796,12 +2941,13 @@ void DaCreature::RenderItemInHand(const AuMatrix4x4& projection, const AuMatrix4
 		bool sunsBlocked;
 		SceneRenderParameters(sceneAtom, ambientR, ambientG, ambientB, fogDensity, fogR, fogG, fogB, ari.IsViewTopDown(),
 				sunsBlocked);
+		float sunLevel = GradualLight(ambientR, ambientG, ambientB, sunsBlocked);
 		AuPoint ambientUp = tThis.ProjectVector(GravityNormal());
 
 		// Disable suns when they are blocked at my location. Prepare to restore them.
 		QList<int> sunsDisabled;
-		if(sunsBlocked)
-			ari.re->DisableSuns(sunsDisabled);
+		AuGLSun sunsAsTheyWere[MAX_SUNS];
+		bool sunsDimmed = DimSuns(*ari.re, sunLevel, sunsDisabled, sunsAsTheyWere);
 
 		if(IsInAtmosphere())
 		{
@@ -2848,6 +2994,8 @@ void DaCreature::RenderItemInHand(const AuMatrix4x4& projection, const AuMatrix4
 		}
 
 		// Restore suns that I disabled.
+		if(sunsDimmed)
+			RestoreSuns(*ari.re, sunsAsTheyWere);
 		ari.re->EnableSuns(sunsDisabled);
 	}
 
@@ -2887,11 +3035,14 @@ void DaCreature::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari
 			// Save the world transformation matrix so I can restore it on exit.
 			AuMatrix4x4 tBody(rmod.Matrix(Id()));
 			tBody.Translate(rideLoc - Location());
+			m_SunShadowItem.LoadIdentity();
+			m_SunShadowItem.Translate(rideLoc - Location());
 			RenderItemInHand(projection, tBody, ari, 2, sceneAtom, 0);
 		}
 		else
 		{
 			// Save the world transformation matrix so I can restore it on exit.
+			m_SunShadowItem.LoadIdentity();
 			RenderItemInHand(projection, rmod.Matrix(Id()), ari, 2, sceneAtom, 0);
 		}
 	}
@@ -2903,13 +3054,14 @@ void DaCreature::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari
 		bool sunsBlocked;
 		SceneRenderParameters(sceneAtom, ambientR, ambientG, ambientB, fogDensity, fogR, fogG, fogB, ari.IsViewTopDown(),
 				sunsBlocked);
+		float sunLevel = GradualLight(ambientR, ambientG, ambientB, sunsBlocked);
 		ari.re->SetAmbientLight(ambientR, ambientG, ambientB, 1);
 		ari.re->SetFog(fogR, fogG, fogB, fogDensity);
 
 		// Disable suns when they are blocked at my location. Prepare to restore them.
 		QList<int> sunsDisabled;
-		if(sunsBlocked)
-			ari.re->DisableSuns(sunsDisabled);
+		AuGLSun sunsAsTheyWere[MAX_SUNS];
+		bool sunsDimmed = DimSuns(*ari.re, sunLevel, sunsDisabled, sunsAsTheyWere);
 
 		// This creature is in front of the camera plane or within 10' of the camera.
 		AuMatrix4x4 tBody(rmod.Matrix(Id()));
@@ -2972,6 +3124,8 @@ void DaCreature::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari
 			m_Animalia->RestoreHead(headBones);
 
 		// Restore suns that I disabled.
+		if(sunsDimmed)
+			RestoreSuns(*ari.re, sunsAsTheyWere);
 		ari.re->EnableSuns(sunsDisabled);
 	}
 

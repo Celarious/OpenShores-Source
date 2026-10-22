@@ -2265,6 +2265,8 @@ bool AuDesignerView::IsSceneLoading() const
 
 void AuDesignerView::paintGL()
 {
+	if(m_RenderInfo && m_RenderInfo->re)
+		m_RenderInfo->re->GLSL().RebuildIfStale();
 	AuDesignerFrame* frame = qobject_cast<AuDesignerFrame*>(auApp->Frame());
 	bool showWait = m_bWaitingForScene || m_SceneAtomTransition || !auApp->IsSceneConnected()
 		|| (frame && !frame->DockWidgetsReady());

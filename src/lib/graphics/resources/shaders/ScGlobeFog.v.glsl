@@ -7,10 +7,14 @@
 #version 150
 
 #define AU_LEGACY_SPACECRAFT_LIGHTING
+#ifndef PER_PIXEL_LIGHTING
 #SunLightGlobe
+#endif
 
 uniform float							fogDensity;				// Fog density for exponential fog calculation.
+#ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
+#endif
 uniform mat4							mv;						// Model view matrix.
 uniform mat4							p;						// Projection matrix.
 uniform float							vertAlpha;				// Alpha of vertColor.
@@ -22,7 +26,16 @@ in vec4									texEffectAppl;			// Effect tex coord(xy), intensity(z), effect a
 in vec4									paint;					// Paint (rgb) and its blend amount (a), 0=no paint.
 in vec4									glowSelfIllum;			// Glow (rgb), self illumination (w).
 
+#ifdef PER_PIXEL_LIGHTING
+out vec4								vertLitScale;
+out float								vertLitShininess;
+out float								vertLitReflectiveness;
+out vec3								vertLitP;
+out vec3								vertLitN;
+out vec4								vertLitGlowSelfIllum;
+#else
 out vec4								vertColor;				// Outgoing vertex color.
+#endif
 out vec3								vertEffCoord;			// Outgoing effect texture coordinate(xy).
 out vec4								vertPaint;				// Outgoing paint (rgb) and its blend amount (a), 0=no paint.
 out vec3								vertTexCoordFog;		// Outgoing texture coordinate (xy)
@@ -35,6 +48,14 @@ void main()
 
 	// Calculate lighting using eye space position and normal.
 	vec4 eyeN = normalize(mv * vec4(normalReflect.xyz, 1) - mv * vec4(0,0,0,1));	// Surface normal in eye space.
+#ifdef PER_PIXEL_LIGHTING
+	vertLitScale = vec4(1, 1, 1, texCoordIndex.w * vertAlpha);
+	vertLitShininess = positionShine.w;
+	vertLitReflectiveness = normalReflect.w;
+	vertLitP = gl_Position.xyz;
+	vertLitN = eyeN.xyz;
+	vertLitGlowSelfIllum = glowSelfIllum;
+#else
 	vertColor = vec4(computeLighting(light, positionShine.w, normalReflect.w, gl_Position.xyz, eyeN.xyz),
 			texCoordIndex.w * vertAlpha);
 
@@ -43,6 +64,7 @@ void main()
 
 	// Glow
 	vertColor.rgb = min(vertColor.rgb + glowSelfIllum.rgb, vec3(1., 1., 1.));
+#endif
 
 	gl_Position = p * gl_Position;
 

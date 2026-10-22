@@ -1211,6 +1211,8 @@ void DaWorldGasGiant::RenderGlobe(const AuMatrix4x4& projection, const AuMatrix4
 	// Ambient light
 	re.GLSL().GasGiantShader().SetAmbientLight(ambientLight);
 
+	re.GLSL().GasGiantShader().SetShadowBodiesLocal(model);
+
 	// Suns
 	for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 	{
@@ -1269,6 +1271,8 @@ void DaWorldGasGiant::RenderAtmosphere(const AuMatrix4x4& projection, const AuMa
 	// Set eye position in object space for specular lighting calculations.
 	AuPoint eyeLoc = model.UnProject(0,0,0);
 	re.GLSL().GasGiantLayerShader().SetEyeLocation(eyeLoc.x, eyeLoc.y, eyeLoc.z);
+
+	re.GLSL().GasGiantLayerShader().SetShadowBodiesLocal(model);
 
 	// Suns
 	for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -8375,6 +8379,8 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 		terrainShader.SetCityAmbientLight(c.redF() * (float)AuGLLight::AmbientLitCity(),
 				c.greenF() * (float)AuGLLight::AmbientLitCity(), c.blueF() * (float)AuGLLight::AmbientLitCity());
 
+		ari.re->GLSL().TerrainLitFloraShader().SetShadowBodiesLocal(model);
+
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 		{
@@ -8481,6 +8487,8 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 		const QColor& c = AuGLLight::ColorSodiumVapor();
 		terrainShader.SetCityAmbientLight(c.redF() * (float)AuGLLight::AmbientLitCity(),
 				c.greenF() * (float)AuGLLight::AmbientLitCity(), c.blueF() * (float)AuGLLight::AmbientLitCity());
+
+		ari.re->GLSL().TerrainLitShader().SetShadowBodiesLocal(model);
 
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -8612,6 +8620,8 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 		// Ambient light
 		ari.re->GLSL().GlobeLitFloraShader().SetAmbientLight(ambientLight);
 
+		ari.re->GLSL().GlobeLitFloraShader().SetShadowBodiesLocal(model);
+
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 		{
@@ -8649,6 +8659,8 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 
 		// Ambient light
 		ari.re->GLSL().GlobeLitShader().SetAmbientLight(ambientLight);
+
+		ari.re->GLSL().GlobeLitShader().SetShadowBodiesLocal(model);
 
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -9389,6 +9401,7 @@ void DaWorldGasGiant::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatr
 			// Render the sea globe vertex array object.
 			re.GLSL().WaterShader().Select(projection);
 			re.GLSL().WaterShader().SetModelView(model);
+			re.GLSL().WaterShader().SetShadowBodiesLocal(model);
 			re.GLSL().WaterShader().SetTexture(s_texSea);
 			re.GLSL().WaterShader().SetBumpMap(s_texSeaN);
 			re.GLSL().WaterShader().SetTexOffset(m_WaterOffX/5, m_WaterOffY/5);
@@ -9483,6 +9496,8 @@ void DaWorldGasGiant::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatr
 				// Ambient light
 				re.GLSL().WaterNoBumpNoHoleShader().SetAmbientLight(ambientLight);
 
+				re.GLSL().WaterNoBumpNoHoleShader().SetShadowBodiesLocal(model);
+
 				// Suns
 				for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 				{
@@ -9522,6 +9537,7 @@ void DaWorldGasGiant::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatr
 			// Render the sea globe vertex array object.
 			re.GLSL().WaterNoHoleShader().Select(projection);
 			re.GLSL().WaterNoHoleShader().SetModelView(model);
+			re.GLSL().WaterNoHoleShader().SetShadowBodiesLocal(model);
 			re.GLSL().WaterNoHoleShader().SetTexture(s_texSea);
 			re.GLSL().WaterNoHoleShader().SetBumpMap(s_texSeaN);
 			re.GLSL().WaterNoHoleShader().SetTexOffset(m_WaterOffX/5, m_WaterOffY/5);
@@ -9629,6 +9645,8 @@ void DaWorldGasGiant::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatr
 			clipUp.Unit();
 			re.GLSL().WaterNoBumpShader().SetClip(clipCos, clipUp.x, clipUp.y, clipUp.z);
 
+			re.GLSL().WaterNoBumpShader().SetShadowBodiesLocal(model);
+
 			// Suns
 			for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 			{
@@ -9709,6 +9727,8 @@ void DaWorldGasGiant::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatr
 			// Set eye position in object space for specular lighting calculations.
 			AuPoint eyeLoc = model.UnProject(re.EyeLocation());
 			re.GLSL().WaterNoBumpNoHoleShader().SetEyeLocation(eyeLoc.x, eyeLoc.y, eyeLoc.z);
+
+			re.GLSL().WaterNoBumpNoHoleShader().SetShadowBodiesLocal(model);
 
 			// Suns
 			for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)

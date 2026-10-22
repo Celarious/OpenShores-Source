@@ -360,6 +360,49 @@ void AuAnimalia::AnimatePose(const AuId& id, const AuElapsedTimer& when)
 		}
 }
 
+bool AuAnimalia::RenderSunShadowDepth(const AuMatrix4x4& model, AuGLEffects& re)
+{
+	if(CurrentGeneralPose().HeadOnly() || !m_AnimalVAO.VAO())
+		return false;
+
+	AuGLSLAnimalDepth& shader = re.GLSL().AnimalDepthShader();
+	shader.SetModelView(model);
+
+	int boneIndex = 0;
+	for(const_iterator mpi = cbegin(); mpi != cend(); mpi++)
+	{
+		for(QList<AuAnimalBone>::const_iterator bi = (*mpi)->Bones().cbegin(); bi != (*mpi)->Bones().cend(); bi++)
+		{
+			if(boneIndex < MAX_ANIMAL_BONES)
+				shader.SetBone(boneIndex, (*bi).Matrix());
+			boneIndex++;
+		}
+	}
+
+	m_AnimalVAO.SelectGL();
+	m_AnimalVAO.DrawGL();
+	m_AnimalVAO.DeselectGL();
+	if(m_AnimalClothingVAO.VAO())
+	{
+		m_AnimalClothingVAO.SelectGL();
+		m_AnimalClothingVAO.DrawGL();
+		m_AnimalClothingVAO.DeselectGL();
+	}
+	if(m_AnimalHairBottomVAO.VAO())
+	{
+		m_AnimalHairBottomVAO.SelectGL();
+		m_AnimalHairBottomVAO.DrawGL();
+		m_AnimalHairBottomVAO.DeselectGL();
+	}
+	if(m_AnimalHairTopVAO.VAO())
+	{
+		m_AnimalHairTopVAO.SelectGL();
+		m_AnimalHairTopVAO.DrawGL();
+		m_AnimalHairTopVAO.DeselectGL();
+	}
+	return true;
+}
+
 void AuAnimalia::RenderAnimal(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, bool blended,
 		quint8 visorState, const AuPoint& ambientUp)
 {

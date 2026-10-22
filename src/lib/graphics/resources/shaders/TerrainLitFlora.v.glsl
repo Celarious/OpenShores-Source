@@ -6,6 +6,7 @@
 
 #version 150
 
+#ifndef PER_PIXEL_LIGHTING
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // Lighting Structures and Functions
 
@@ -60,7 +61,7 @@ void computeSunLight(SunLight sun,
 
 	// Account for radius of solar disk.
 	float diskang = atan(sun.radius, distSun);
-	float sunang = acos(NdotL);
+	float sunang = acos(clamp(NdotL, -1., 1.));
 	float rd1 = cos(sunang + diskang);
 	float rd2 = cos(sunang - diskang);
 	NdotL = max(rd1, NdotL);
@@ -69,7 +70,7 @@ void computeSunLight(SunLight sun,
 	// Check for sun over the horizon.
 	vec3 U = normalize(P);										// Up vector at vertex location, with respect to the globe.
 	float LdotU = dot(L, U);
-	float sunang2 = acos(LdotU);
+	float sunang2 = acos(clamp(LdotU, -1., 1.));
 	float rd3 = cos(sunang2 + diskang);
 	float rd4 = cos(sunang2 - diskang);
 	LdotU = max(rd3, LdotU);
@@ -175,11 +176,14 @@ vec3 computeLighting(LightSources light,
 	// Clamp color values
 	return clamp(color, vec3(0,0,0), vec3(1,1,1));
 }
+#endif
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 uniform float							fogDensity;				// Fog density for exponential fog calculation.
+#ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
+#endif
 uniform mat4							p;						// Projection matrix.
 uniform mat4							mv;						// Model view matrix.
 
@@ -188,9 +192,17 @@ in vec4									position;				// Incoming vertex location(xyz), snow coverage(w)
 in vec4									texCoordAltVeg;			// Incoming texture coordinate(xy), altitude(z), veg density(w)
 in vec2									paveCity;				// Pavement coverage(x), city presence(y)
 
+#ifdef PER_PIXEL_LIGHTING
+out vec4								vertLitScale;
+out vec3								vertLitP;
+out vec3								vertLitN;
+out float								vertLitCity;
+out float								vertLitVegDensity;
+#else
 out vec4								vertColor;				// Outgoing vertex color.
 out vec4								vertColorPaved;			// Outgoing vertex color without vegetation shading, for pavement.
 out vec4								vertColorHardPaved;		// Outgoing vertex color for hard pavement, fully lit by the city.
+#endif
 out vec3								vertFogSnowPave;		// Outgoing fog density(x), snow cover(y), pavement cover(z)
 out vec4								vertTexCoordAltVeg;		// Outgoing texture coordinate(xy), altitude(z), veg density(w)
 flat out float							vertPaveType;			// Pavement type must not be interpolated.
@@ -205,9 +217,17 @@ void main()
 	// Paved vertices near an edge carry their natural vegetation for the grass edge, but pavement is not shaded by it.
 	// Hard pavement gets full city light (DaWorldLL::CityAmbientLight), which is not in the vertex city presence so it
 	// stops at the pavement edge. The fragment shader picks between these colors by its pavement coverage and type.
+#ifdef PER_PIXEL_LIGHTING
+	vertLitScale = vec4(1, 1, 1, 1);
+	vertLitP = position.xyz;
+	vertLitN = normal.xyz;
+	vertLitCity = paveCity.y;
+	vertLitVegDensity = texCoordAltVeg.w;
+#else
 	vertColor = vec4(computeLighting(light, position.xyz, normal.xyz, paveCity.y, texCoordAltVeg.w), 1);
 	vertColorPaved = vec4(computeLighting(light, position.xyz, normal.xyz, paveCity.y, 0.0), 1);
 	vertColorHardPaved = vec4(computeLighting(light, position.xyz, normal.xyz, 1.0, 0.0), 1);
+#endif
 
 	// Calculate fog density but save the effect for the fragment program.
 	// Fog density value is 1 for full fog, 0 for no fog.

@@ -6,12 +6,27 @@
 
 #version 150
 
+#ifdef PER_PIXEL_LIGHTING
+#SunLightRingworld
+
+uniform LightSources					light;
+#endif
+
 uniform float							effectApply;			// How to apply the effect texture: 1=lit by env, 2=unlit(glows)
 uniform vec4							glowDiscard;			// Glow(rgb), Alpha below which we discard fragments(a).
 uniform sampler2D						texEffect;				// Texture for effects applied to the hull.
 uniform sampler2D						texSurface[15];			// Textures for surfaces.
 
+#ifdef PER_PIXEL_LIGHTING
+in vec4									vertLitScale;
+in float								vertLitShininess;
+in float								vertLitReflectiveness;
+in vec3									vertLitP;
+in vec3									vertLitN;
+in vec4									vertLitGlowSelfIllum;
+#else
 in vec4									vertColor;				// Incoming fragment color interpolated from the vertex color.
+#endif
 in vec3									vertEffCoord;			// Incoming effect texture coordinate
 in vec4									vertPaint;				// Color applied to the surface. Alpha is blend amount.
 in vec2									vertTexCoord;			// Incoming texture coordinate (xy)
@@ -74,6 +89,11 @@ void main()
 
 	// Modulate with lighting and effects.
 	float appl = vertTexIndex.y*effectApply;
+#ifdef PER_PIXEL_LIGHTING
+	vec4 vertColor = vec4(computeLighting(light, vertLitShininess, vertLitReflectiveness, vertLitP, normalize(vertLitN)), 1) * vertLitScale;
+	vertColor.rgb = mix(vertColor.rgb, vec3(1,1,1), vertLitGlowSelfIllum.w);
+	vertColor.rgb = min(vertColor.rgb + vertLitGlowSelfIllum.rgb, vec3(1., 1., 1.));
+#endif
 	if(appl == 1)
 	{
 		// Blend in the "lit" effect texture color before modulating with light.

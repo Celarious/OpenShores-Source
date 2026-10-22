@@ -3216,6 +3216,32 @@ void DaVehicle::DeleteDeviceObjects(AuAtomRenderInfo& ari)
 
 // Renders this object in a scene.
 // View transformation has already been set up.
+unsigned int DaVehicle::SunShadowFamilies() const
+{
+	return 1u << SSF_Structures;
+}
+
+unsigned int DaVehicle::SunShadowVariants(int family) const
+{
+	Q_UNUSED(family);
+	return 1u << SSV_Model;
+}
+
+void DaVehicle::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
+		AuSunShadowPass& sp)
+{
+	Q_UNUSED(sceneAtom);
+	const AuPoint& pv = rmod.ViewLoc(Id());
+	bool haveModel = m_Model && m_Model->HasGLModel();
+	double reach = haveModel ? m_Model->RoughRadius() : 30;
+	if(!sp.Asked(pv.x, pv.y, pv.z, reach))
+		return;
+	if(!haveModel || !sp.Reaches(pv.x, pv.y, pv.z, reach))
+		return;
+	if(m_Model->RenderSunShadowDepth(rmod.Matrix(Id()), *ari.re))
+		sp.Drew();
+}
+
 void DaVehicle::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, AuModelMatrixHash& rmod,
 		const DaPerson* sceneAtom, AuRenderLastMap& renderLast, RENDERPASS pass, DaAtomList& shadSc, DaAtomList& shadScFog,
 		DaAtomList& shadScGlobe, DaAtomList& shadScGlobeFog, DaAtomList& shadScRingworld, DaAtomList& shadScRingworldFog)

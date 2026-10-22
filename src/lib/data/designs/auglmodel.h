@@ -94,6 +94,18 @@ public:
 			float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp, bool lightOn,
 			float fogDensity, float fogR, float fogG, float fogB, float alpha=1.f, int pass=0) const = 0;
 
+	virtual int SunShadowVariant() const
+	{
+		return -1;
+	}
+
+	virtual bool RenderSunShadowDepth(const AuMatrix4x4& model, AuGLEffects& re) const
+	{
+		Q_UNUSED(model);
+		Q_UNUSED(re);
+		return false;
+	}
+
 	virtual void ResourceReport(QDataStream& out) const = 0;
 
 	virtual double RoughRadius() const = 0;
@@ -144,6 +156,10 @@ public:
 	virtual GROUND_ORIENT GroundOrientation() const;
 
 	virtual bool HasGLModel() const;
+
+	virtual int SunShadowVariant() const;
+
+	virtual bool RenderSunShadowDepth(const AuMatrix4x4& model, AuGLEffects& re) const;
 
 	virtual void LoadModel(bool lightOn, double scale);
 

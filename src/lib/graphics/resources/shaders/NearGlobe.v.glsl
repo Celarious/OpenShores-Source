@@ -6,6 +6,7 @@
 
 #version 150
 
+#ifndef PER_PIXEL_LIGHTING
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // Lighting Structures and Functions
 
@@ -46,7 +47,7 @@ void computeSunLight(SunLight sun,
 
 	// Account for radius of solar disk.
 	float diskang = atan(sun.radius, distSun);
-	float sunang = acos(NdotL);
+	float sunang = acos(clamp(NdotL, -1., 1.));
 	float rd1 = cos(sunang + diskang);
 	float rd2 = cos(sunang - diskang);
 	NdotL = max(rd1, NdotL);
@@ -55,7 +56,7 @@ void computeSunLight(SunLight sun,
 	// Check for sun over the horizon.
 	vec3 U = normalize(P);	// Up vector at vertex location, with respect to the globe.
 	float LdotU = dot(L, U);
-	float sunang2 = acos(LdotU);
+	float sunang2 = acos(clamp(LdotU, -1., 1.));
 	float rd3 = cos(sunang2 + diskang);
 	float rd4 = cos(sunang2 - diskang);
 	LdotU = max(rd3, LdotU);
@@ -115,23 +116,40 @@ vec3 computeSolarLighting(LightSources light,
 	// Clamp color values
 	return clamp(color, vec3(0,0,0), vec3(1,1,1));
 }
+#endif
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 uniform mat4							pmv;					// Projection model view matrix.
+#ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
+#endif
 
 in vec3									position;				// Incoming vertex location.
 in vec3									normal;					// Incoming vertex normal.
 in vec3									texCoordShine;			// Incoming texture coordinate (xy) and shininess (z)
 
+#ifdef PER_PIXEL_LIGHTING
+out vec4								vertLitScale;
+out float								vertLitShininess;
+out vec3								vertLitP;
+out vec3								vertLitN;
+#else
 out vec4								vertColor;				// Outgoing vertex color.
+#endif
 out vec2								vertTexCoord;			// Outgoing texture coordinate.
 
 void main()
 {
 	// Calculate lighting using object space position and normal.
+#ifdef PER_PIXEL_LIGHTING
+	vertLitScale = vec4(1, 1, 1, 1);
+	vertLitShininess = texCoordShine.z;
+	vertLitP = position;
+	vertLitN = normal;
+#else
 	vertColor = vec4(computeSolarLighting(light, texCoordShine.z, position, normal), 1);
+#endif
 
 	vertTexCoord = texCoordShine.xy;			// Pass unmodified texture coordinate to the fragment shader.
 	gl_Position = pmv * vec4(position,1);	// Calculate homogeneous vertex position using projection and model view matrices.

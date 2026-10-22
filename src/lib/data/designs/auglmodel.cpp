@@ -199,6 +199,22 @@ bool AuSoHGLModelInstance::RenderShader(AuGLSLScBase* shader, const AuMatrix4x4&
 	return m_TransparentVAO.VAO() ? true : false;	// Return true if I have any transparent parts to render.
 }
 
+int AuSoHGLModelInstance::SunShadowVariant() const
+{
+	return SSV_Sc;
+}
+
+bool AuSoHGLModelInstance::RenderSunShadowDepth(const AuMatrix4x4& model, AuGLEffects& re) const
+{
+	if(!m_OpaqueVAO.VAO())
+		return false;
+	re.GLSL().ScDepthShader().SetModelView(model);
+	m_OpaqueVAO.SelectGL();
+	m_OpaqueVAO.DrawGL();
+	m_OpaqueVAO.DeselectGL();
+	return true;
+}
+
 double AuSoHGLModelInstance::RoughRadius() const
 {
 	AuPoint min,max;

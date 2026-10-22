@@ -1464,6 +1464,8 @@ public:
 			const AuId& id, float ambientR, float ambientG, float ambientB, const AuPoint& ambientUp, const AuPoint& gravityUp,
 			const AuPoint& windVec=AuPoint(0,0), float scale=1.f, int pass=0, double effectScale=1.);
 
+	bool RenderSunShadowDepth(const AuMatrix4x4& model, AuGLEffects& re, int variant) const;
+
 	// 'model' matrix transforms this object into the scene atom's ear space.
 	void RenderSound(const AuMatrix4x4& model, AuSound& al, float gain, float pitch);
 

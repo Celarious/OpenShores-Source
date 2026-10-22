@@ -2783,6 +2783,8 @@ bool AuStarMapGL::PrepareNextStep()
 
 void AuStarMapGL::paintGL()
 {
+	if(m_RenderInfo && m_RenderInfo->re)
+		m_RenderInfo->re->GLSL().RebuildIfStale();
 	//qDebug() << "AuStarMapGL::paintGL";
 	m_RenderInfo->re->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	if(m_Preparing)

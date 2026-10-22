@@ -6,11 +6,15 @@
 
 #version 150
 
+#ifndef PER_PIXEL_LIGHTING
 #SunLightRingworld
+#endif
 
 uniform float							fogDensity;				// Fog density for exponential fog calculation.
 uniform vec4							glowAlpha;				// Glow color added to lit color(rgb). Alpha of vertColor(a).
+#ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
+#endif
 uniform mat4							mv;						// Model view matrix.
 uniform mat4							p;						// Projection matrix.
 uniform mat4							bM[MAX_ANIMAL_BONES];	// 4x4 bone matrices
@@ -29,7 +33,15 @@ out float								fog;
 out vec2								texCoord;				// Outgoing texture coordinate (xy)
 out vec3								texCoordDecalBlend;		// Decal tex coord (xy), decal blend (w)
 flat out int							texClothingIndex;		// Index of clothing texture applied to this fragment.
+#ifdef PER_PIXEL_LIGHTING
+out vec4								vertLitScale;
+out float								vertLitShininess;
+out float								vertLitReflectiveness;
+out vec3								vertLitP;
+out vec3								vertLitN;
+#else
 out vec4								vertColor;				// Outgoing vertex color.
+#endif
 
 void main()
 {
@@ -66,14 +78,24 @@ void main()
 
 	// Calculate lighting using eye space position and normal.
 	vec4 eyeN = normalize(mv * vec4(netNormal, 1) - mv * vec4(0,0,0,1));	// Surface normal in eye space.
+#ifdef PER_PIXEL_LIGHTING
+	vertLitScale = vec4(1, 1, 1, glowAlpha.a * dyeColorAlpha.a);
+	vertLitShininess = positionShine.w;
+	vertLitReflectiveness = normalReflect.w;
+	vertLitP = gl_Position.xyz;
+	vertLitN = eyeN.xyz;
+#else
 	vertColor = vec4(computeLighting(light, positionShine.w, normalReflect.w, gl_Position.xyz, eyeN.xyz),
 			glowAlpha.a * dyeColorAlpha.a);
+#endif
 
 	// Pass the unmodified dye color to the fragment shader.
 	dyeColor = dyeColorAlpha.rgb;
 
 	// Make it glow and clamp the final result.
+#ifndef PER_PIXEL_LIGHTING
 	vertColor.rgb = min(vertColor.rgb + glowAlpha.rgb, vec3(1.5, 1.5, 1.5));
+#endif
 
 	gl_Position = p * gl_Position;
 

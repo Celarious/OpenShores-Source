@@ -2499,6 +2499,10 @@ public:
 		return Au3dsGLSLModel::RoughRadius();
 	}
 
+	virtual int SunShadowVariant() const;
+
+	virtual bool RenderSunShadowDepth(const AuMatrix4x4& mv, AuGLEffects& re) const;
+
 	virtual double Scale() const
 	{
 		return m_GeometryScale;

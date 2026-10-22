@@ -6,10 +6,14 @@
 
 #version 150
 
+#ifndef PER_PIXEL_LIGHTING
 #SunLight								// Suns, point light sources.
+#endif
 
 uniform vec4							glowAlpha;				// Glow color added to lit color(rgb). Alpha of vertColor(a).
+#ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
+#endif
 uniform mat4							mv;						// Model view matrix.
 uniform mat4							p;						// Projection matrix.
 uniform mat4							bM[MAX_ANIMAL_BONES];	// 4x4 bone matrices
@@ -22,7 +26,15 @@ in vec4									boneWeight;
 in vec4									texCoordTopBottomIn;	// Incoming texture coordinate top (xy) and bottom (yz)
 in vec4									texCoordDetailBlendIn;	// Detail tex coord (xy), top to bottom blend (z), detail blend (w)
 
+#ifdef PER_PIXEL_LIGHTING
+out vec4								vertLitScale;
+out float								vertLitShininess;
+out float								vertLitReflectiveness;
+out vec3								vertLitP;
+out vec3								vertLitN;
+#else
 out vec4								vertColor;				// Outgoing vertex color.
+#endif
 out vec4								texCoordTopBottom;		// Outgoing texture coordinate top (xy) and bottom (yz)
 out vec4								texCoordDetailBlend;	// Detail tex coord (xy), top to bottom blend (z), detail blend (w)
 
@@ -61,8 +73,16 @@ void main()
 
 	// Calculate lighting using eye space position and normal.
 	vec4 eyeN = normalize(mv * vec4(netNormal, 1) - mv * vec4(0,0,0,1));	// Surface normal in eye space.
+#ifdef PER_PIXEL_LIGHTING
+	vertLitScale = vec4(1, 1, 1, glowAlpha.a);
+	vertLitShininess = positionShine.w;
+	vertLitReflectiveness = normalReflect.w;
+	vertLitP = gl_Position.xyz;
+	vertLitN = eyeN.xyz;
+#else
 	vertColor = vec4(computeLighting(light, positionShine.w, normalReflect.w, gl_Position.xyz, eyeN.xyz), glowAlpha.a);
 	vertColor.rgb = min(vertColor.rgb + glowAlpha.rgb, vec3(1.5, 1.5, 1.5));
+#endif
 
 	gl_Position = p * gl_Position;
 
