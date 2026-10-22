@@ -1591,12 +1591,8 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 	if(!terrainOk || levels > ResourceLevelLimit(*world, dev))
 	{ error = QStringLiteral("This terrain or its natural resources cannot support the selected construction and levels."); return false; }
 	const AuPoint center = placement.Translation();
-	const double extentX = industry == 2 ? roadWidth*FeetPerMeter()/2 : radius;
-	const double extentY = industry == 2 ? roadLength*FeetPerMeter()/2 : radius;
-	const double proposedHeight=industry==129 ? AuLegacyBd::Biodome::RoofHeight(radius,0)
-		: (MaximumDesignDeck(industry,material)+1)*AuLegacyBd::DeckHeight;
-	AuBox proposed(AuPoint(-extentX,-extentY,-8),AuPoint(extentX,extentY,proposedHeight));
-	proposed.Transform(placement);
+	// LockTestBuildLocation 0x5264d0 permits actors, vehicles and spacecraft
+	// within a new construction site; only development overlaps are tested here.
 	DaAtomList peers; world->ListNormalSubatoms(peers);
 	bool adjacent = industry == 1 || category == 15 || category == 16;
 	int baseFlagsInZone=0;
@@ -1675,15 +1671,6 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 					else if(category==14 || category==9 || category==10) adjacent=adjacent || !landscapingRoad;
 					else adjacent=adjacent || town || road;
 				}
-			}
-		}
-		else if(peer != &person && !peer->IsEthereal())
-		{
-			AuBox bounds;
-			if(peer->RoughExtents(bounds))
-			{
-				bounds.Transform(peer->Transform());
-				if(bounds.DoesIntersect(proposed)) { error = QStringLiteral("An actor, vehicle or spacecraft occupies this site."); return false; }
 			}
 		}
 	}
