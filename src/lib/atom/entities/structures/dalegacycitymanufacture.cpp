@@ -147,8 +147,8 @@ bool DaLegacyCity::OperateIndustryProcess(DaPerson& person, quint32 developmentI
 	if(salaryReward > 0) person.Reward(salaryReward, REW_Salary);
 	if(salary > 0) person.CreditAccount(salary);
 	if(changed) SetModified();
-	if(run && !started)
-	{ error = QStringLiteral("Supply the required materials and technology before starting this process."); return false; }
+	// Run fetches first, but missing components simply leave the process idle.
+	if(run && !started) return false;
 	// A valid Fetch is accepted even when no additional materials are found.
 	return fetch || changed || started;
 }

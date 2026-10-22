@@ -14,6 +14,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
+#include <QEvent>
 #include <QGridLayout>
 #include <QHeaderView>
 #include <QHideEvent>
@@ -33,6 +34,27 @@
 
 namespace
 {
+class ManufactureScrollArea : public QScrollArea
+{
+public:
+	explicit ManufactureScrollArea(QWidget* parent) : QScrollArea(parent) {}
+
+protected:
+	bool eventFilter(QObject* watched, QEvent* event) override
+	{
+		const bool handled = QScrollArea::eventFilter(watched, event);
+		if(watched == widget() && event->type() == QEvent::LayoutRequest)
+		{
+			// QScrollArea normally lets its viewport shrink below the content's
+			// minimum. Keep every process column visible, reserving room for the
+			// vertical scrollbar even before additional processes require it.
+			setMinimumWidth(qMax(widget()->minimumSizeHint().width(), widget()->minimumWidth())
+				+ 2 * frameWidth() + verticalScrollBar()->sizeHint().width());
+		}
+		return handled;
+	}
+};
+
 bool CanConfigureIndustry(quint32 cityId)
 {
 	auto* view = auApp->Frame() ? auApp->Frame()->View() : nullptr;
@@ -59,7 +81,6 @@ class AuLegacyManufacturePanel : public QWidget
 	quint32 m_CityId = 0, m_DevelopmentId = 0;
 	quint8 m_BuildingTechnology = 0;
 	QString m_ProductName;
-	bool m_RunPending = false;
 	std::function<void(AuLegacyCityProtocol::Request)> m_Send;
 
 	void ResizeModifierColumns()
@@ -72,13 +93,8 @@ class AuLegacyManufacturePanel : public QWidget
 
 	void Send(AuLegacyCityProtocol::Action action, bool selectRecipe = false, bool selectTechnology = false)
 	{
-		if(action == AuLegacyCityProtocol::RunIndustryProcess)
-		{
-			if(m_RunPending || m_Process.completeAt) return;
-			// Block duplicate starts immediately, without locking another row or
-			// inventing a completion time before the server accepts this effort.
-			m_RunPending = true; UpdateCountdown();
-		}
+		if((action == AuLegacyCityProtocol::RunIndustryProcess
+			|| action == AuLegacyCityProtocol::FetchIndustryMaterials) && m_Process.completeAt) return;
 		AuLegacyCityProtocol::Request request;
 		request.action = action; request.cityId = m_CityId; request.developmentId = m_DevelopmentId;
 		request.processSlot = m_Process.slot;
@@ -172,7 +188,6 @@ public:
 		quint8 industryId, quint8 buildingTechnology, const AuLegacyCity::ProductionProcess& process, bool canConfigure,
 		bool hasRecipeChoices, const QVector<quint16>& recipeChoices, bool preserveSelections = false)
 	{
-		if(m_CityId != cityId || m_DevelopmentId != developmentId || m_Process.slot != process.slot) m_RunPending = false;
 		m_Process = process; m_CityId = cityId; m_DevelopmentId = developmentId;
 		m_BuildingTechnology = buildingTechnology;
 		const auto* recipe = catalogue.ManufacturingProcess(AuLegacyCity::ManufacturingProcessId(process.processId));
@@ -267,14 +282,6 @@ public:
 		m_Technology->setEnabled(canConfigure && recipe && !AuLegacyCity::IsProductionTechnology(recipe->commodity.value));
 	}
 
-	void FinishRequest(const AuLegacyCityProtocol::Request& request)
-	{
-		if(request.action == AuLegacyCityProtocol::RunIndustryProcess && request.cityId == m_CityId
-			&& request.developmentId == m_DevelopmentId && request.processSlot == m_Process.slot) ClearPendingRun();
-	}
-
-	void ClearPendingRun() { m_RunPending = false; UpdateCountdown(); }
-
 	void UpdateCountdown()
 	{
 		const auto& process = m_Process;
@@ -299,8 +306,10 @@ public:
 		if(!m_ProductName.isEmpty()) status.prepend(m_ProductName + QLatin1Char('\n'));
 		m_StatusIcon->setPixmap(QPixmap(running ? ":data/mpRunning.png" : ready ? ":data/mpReady.png" : ":data/mpNotReady.png").scaledToHeight(16, Qt::SmoothTransformation));
 		m_Status->setText(status);
-		m_Fetch->setEnabled(!running && technologyAllowed && !ready);
-		m_Run->setEnabled(!m_RunPending && !running && technologyAllowed);
+		// Fetching is an attempt, not a running process. Keep both actions
+		// available until the server reports that the countdown has begun.
+		m_Fetch->setEnabled(!running && technologyAllowed);
+		m_Run->setEnabled(!running && technologyAllowed);
 	}
 };
 
@@ -309,7 +318,7 @@ AuLegacyCityManufacture::AuLegacyCityManufacture(QWidget* parent) : QWidget(pare
 	// AuLaborManufacture, executable 0x1401d1300, owns the scrolling panels.
 	auto* content = new QWidget(this); m_PanelLayout = new QVBoxLayout(content);
 	m_PanelLayout->setContentsMargins(2, 8, 2, 2); m_PanelLayout->setSpacing(2);
-	auto* scroll = new QScrollArea(this); scroll->setWidget(content); scroll->setWidgetResizable(true);
+	auto* scroll = new ManufactureScrollArea(this); scroll->setWidget(content); scroll->setWidgetResizable(true);
 	m_Message = new QLabel(this); m_Message->setWordWrap(true); m_Message->hide();
 	auto* layout = new QVBoxLayout(this); layout->setMargin(0); layout->setSpacing(0);
 	layout->addWidget(scroll); layout->addWidget(m_Message);
@@ -322,14 +331,12 @@ AuLegacyCityManufacture::AuLegacyCityManufacture(QWidget* parent) : QWidget(pare
 	});
 	connect(m_Timeout, &QTimer::timeout, this, [this]() {
 		m_PendingToken = 0; m_DeferredTimer->stop(); m_DeferredRequests.clear();
-		ClearPendingRuns();
 		m_Message->setText(tr("No server response from the industry.")); m_Message->show();
 	});
 	connect(m_DeferredTimer, &QTimer::timeout, this, [this]() {
 		if(m_PendingToken || m_DeferredRequests.isEmpty()) return;
 		const auto request = m_DeferredRequests.takeFirst();
 		if(request.cityId == m_CityId && request.developmentId == m_DevelopmentId) SendRequest(request);
-		else FinishRequest(request);
 	});
 	connect(auApp, &AuApp::LegacyCityReplyReceived, this, &AuLegacyCityManufacture::ReceiveReply);
 	connect(auApp, &AuApp::LegacyScTransportReset, this, &AuLegacyCityManufacture::ResetTransport);
@@ -347,7 +354,6 @@ void AuLegacyCityManufacture::SetTarget(quint32 cityId, quint32 developmentId)
 	m_CityId = cityId; m_DevelopmentId = developmentId;
 	// Replies for the previous site cannot repopulate this page.
 	m_PendingToken = 0; m_Timeout->stop(); m_DeferredTimer->stop(); m_DeferredRequests.clear();
-	ClearPendingRuns();
 	for(auto* panel : m_Panels) panel->hide();
 	SetAvailable(false); m_Message->clear(); m_Message->hide();
 	if(cityId && developmentId) Refresh();
@@ -356,17 +362,15 @@ void AuLegacyCityManufacture::SetTarget(quint32 cityId, quint32 developmentId)
 void AuLegacyCityManufacture::Submit(AuLegacyCityProtocol::Request request)
 {
 	if(!g_Au.IsLegacyGeneration() || auApp->IsSingleUserMode() || !auApp->IsSceneConnected())
-	{ FinishRequest(request); return; }
+		return;
 	if(m_PendingToken || m_DeferredTimer->isActive() || !m_DeferredRequests.isEmpty())
 	{
 		if(request.action == AuLegacyCityProtocol::EconomyList) return;
-		// Serialize changes without disabling every process panel. Routine
-		// refreshes and request round trips must not flash the F10 controls.
+		// Serialize changes without disabling every process panel.
 		if(m_DeferredRequests.size() < 32) m_DeferredRequests.append(request);
 		else
 		{
-			FinishRequest(request);
-			m_Message->setText(tr("Wait for the pending industry changes before making another change.")); m_Message->show();
+
 		}
 		return;
 	}
@@ -375,7 +379,6 @@ void AuLegacyCityManufacture::Submit(AuLegacyCityProtocol::Request request)
 
 void AuLegacyCityManufacture::SendRequest(AuLegacyCityProtocol::Request request)
 {
-	m_ActiveRequest = request;
 	m_PendingToken = auApp->RequestLegacyCityTool(request);
 	if(m_PendingToken)
 	{
@@ -384,7 +387,6 @@ void AuLegacyCityManufacture::SendRequest(AuLegacyCityProtocol::Request request)
 	else
 	{
 		m_DeferredRequests.clear();
-		ClearPendingRuns();
 		m_Message->setText(tr("The industry request could not be sent.")); m_Message->show();
 	}
 }
@@ -409,7 +411,6 @@ void AuLegacyCityManufacture::ReceiveReply(QByteArray payload)
 	AuLegacyCityProtocol::Reply reply;
 	if(!AuLegacyCityProtocol::DecodeReply(payload, reply) || !m_PendingToken || reply.token != m_PendingToken) return;
 	m_PendingToken = 0; m_Timeout->stop();
-	FinishRequest(m_ActiveRequest);
 	if(reply.action != AuLegacyCityProtocol::EconomyList || !reply.message.isEmpty())
 	{ m_Message->setText(reply.message); m_Message->setVisible(!reply.message.isEmpty()); }
 	if(!m_DeferredRequests.isEmpty())
@@ -454,18 +455,7 @@ void AuLegacyCityManufacture::ReceiveReply(QByteArray payload)
 void AuLegacyCityManufacture::ResetTransport()
 {
 	m_PendingToken = 0; m_Timeout->stop(); m_DeferredTimer->stop(); m_DeferredRequests.clear();
-	ClearPendingRuns();
 	for(auto* panel : m_Panels) panel->hide(); SetAvailable(false);
-}
-
-void AuLegacyCityManufacture::FinishRequest(const AuLegacyCityProtocol::Request& request)
-{
-	for(auto* panel : m_Panels) panel->FinishRequest(request);
-}
-
-void AuLegacyCityManufacture::ClearPendingRuns()
-{
-	for(auto* panel : m_Panels) panel->ClearPendingRun();
 }
 
 void AuLegacyCityManufacture::showEvent(QShowEvent* event)
