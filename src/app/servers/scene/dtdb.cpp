@@ -182,7 +182,7 @@ void DtDb::run()
 #if !defined(QT_NO_DEBUG)
 					secsInterval = 5 * 60;		// Shorter save interval for testing.
 #else
-					secsInterval = 24* 60 * 60;	// Once per day might be enough.
+					secsInterval = 10 * 60;
 #endif
 				}
 				//qDebug("DtDb::run secsInterval is %d secs", secsInterval);
