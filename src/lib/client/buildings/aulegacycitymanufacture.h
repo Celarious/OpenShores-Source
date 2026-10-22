@@ -31,6 +31,7 @@ protected:
 private:
 	quint32 m_CityId = 0, m_DevelopmentId = 0, m_PendingToken = 0;
 	bool m_HasIndustry = false, m_RefreshQueued = false;
+	AuLegacyCityProtocol::Request m_ActiveRequest;
 	QVector<AuLegacyCityProtocol::Request> m_DeferredRequests;
 	QTimer *m_Timer, *m_Timeout, *m_DeferredTimer;
 	QLabel* m_Message;
@@ -41,6 +42,8 @@ private:
 	void ReceiveReply(QByteArray payload);
 	void ResetTransport();
 	void SetAvailable(bool available);
+	void FinishRequest(const AuLegacyCityProtocol::Request& request);
+	void ClearPendingRuns();
 };
 
 #endif

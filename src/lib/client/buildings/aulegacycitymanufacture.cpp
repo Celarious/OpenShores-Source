@@ -21,8 +21,10 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QShowEvent>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -55,10 +57,28 @@ class AuLegacyManufacturePanel : public QWidget
 	QLabel *m_StatusIcon, *m_Status, *m_LastOutput;
 	AuLegacyCity::ProductionProcess m_Process;
 	quint32 m_CityId = 0, m_DevelopmentId = 0;
+	quint8 m_BuildingTechnology = 0;
+	QString m_ProductName;
+	bool m_RunPending = false;
 	std::function<void(AuLegacyCityProtocol::Request)> m_Send;
+
+	void ResizeModifierColumns()
+	{
+		m_Modifiers->resizeColumnsToContents();
+		m_Modifiers->setFixedWidth(m_Modifiers->horizontalHeader()->length() + 2 * m_Modifiers->frameWidth()
+			+ (m_Modifiers->verticalScrollBar()->maximum() > m_Modifiers->verticalScrollBar()->minimum()
+				? m_Modifiers->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, m_Modifiers) : 0));
+	}
 
 	void Send(AuLegacyCityProtocol::Action action, bool selectRecipe = false, bool selectTechnology = false)
 	{
+		if(action == AuLegacyCityProtocol::RunIndustryProcess)
+		{
+			if(m_RunPending || m_Process.completeAt) return;
+			// Block duplicate starts immediately, without locking another row or
+			// inventing a completion time before the server accepts this effort.
+			m_RunPending = true; UpdateCountdown();
+		}
 		AuLegacyCityProtocol::Request request;
 		request.action = action; request.cityId = m_CityId; request.developmentId = m_DevelopmentId;
 		request.processSlot = m_Process.slot;
@@ -123,12 +143,14 @@ public:
 		m_Materials->setToolTip(tr("<html>Commodities consumed by the manufacturing process. "
 			"All consumed commodities must be fetched before the process will run.</html>"));
 		m_Modifiers = new QTableWidget(0, 3, this);
-		m_Modifiers->setMinimumWidth(70); m_Modifiers->setMaximumWidth(110); m_Modifiers->setMinimumHeight(10);
+		m_Modifiers->setMinimumHeight(10);
 		m_Modifiers->setEditTriggers(QAbstractItemView::NoEditTriggers);
 		m_Modifiers->setSelectionBehavior(QAbstractItemView::SelectRows);
 		m_Modifiers->setSelectionMode(QAbstractItemView::SingleSelection);
 		m_Modifiers->setShowGrid(false); m_Modifiers->horizontalHeader()->hide(); m_Modifiers->verticalHeader()->hide();
 		m_Modifiers->verticalHeader()->setDefaultSectionSize(18);
+		connect(m_Modifiers->verticalScrollBar(), &QScrollBar::rangeChanged, this,
+			[this](int, int) { ResizeModifierColumns(); });
 		m_Modifiers->setToolTip(tr("<html>Commodities that affect the manufacturing process without being consumed by "
 			"the process. Though not directly consumed, these commodities may wear out when used by the process.<br>"
 			"<i>Required</i> commodities must be available in your ready inventory or the city's inventory "
@@ -148,32 +170,41 @@ public:
 
 	void Update(const AuLegacyCityCatalogue& catalogue, quint32 cityId, quint32 developmentId,
 		quint8 industryId, quint8 buildingTechnology, const AuLegacyCity::ProductionProcess& process, bool canConfigure,
-		bool hasRecipeChoices, const QVector<quint16>& recipeChoices)
+		bool hasRecipeChoices, const QVector<quint16>& recipeChoices, bool preserveSelections = false)
 	{
-		// The original panel leaves an open selector intact during refresh.
-		if(m_Recipe->view()->isVisible() || m_Technology->view()->isVisible()) return;
+		if(m_CityId != cityId || m_DevelopmentId != developmentId || m_Process.slot != process.slot) m_RunPending = false;
 		m_Process = process; m_CityId = cityId; m_DevelopmentId = developmentId;
+		m_BuildingTechnology = buildingTechnology;
 		const auto* recipe = catalogue.ManufacturingProcess(AuLegacyCity::ManufacturingProcessId(process.processId));
-		const QSignalBlocker blockedRecipe(m_Recipe), blockedTechnology(m_Technology), blockedEmploy(m_Employ);
-		m_Recipe->clear();
-		for(const auto id : catalogue.ProcessesForIndustry(AuLegacyCity::IndustryId(industryId)))
-		{
-			if(hasRecipeChoices && !recipeChoices.contains(id.value)) continue;
-			if(const auto* recipe = catalogue.ManufacturingProcess(id))
-			{
-				const auto* commodity = catalogue.Commodity(recipe->commodity);
-				m_Recipe->addItem(commodity ? QIcon(commodity->descriptor.BitmapName()) : QIcon(), recipe->name, id.value);
-			}
-		}
-		const int selectedRecipe = m_Recipe->findData(process.processId);
-		if(selectedRecipe >= 0) m_Recipe->setCurrentIndex(selectedRecipe);
-		m_Technology->clear();
+		m_ProductName.clear();
 		if(recipe)
-			for(int level = recipe->minimumTechnology; level <= std::max(recipe->minimumTechnology, buildingTechnology); ++level)
-				m_Technology->addItem(tr("Production TL%1").arg(level + 1), level);
-		const int selectedTechnology = m_Technology->findData(process.minimumTechnology);
-		if(selectedTechnology >= 0) m_Technology->setCurrentIndex(selectedTechnology);
-		m_Employ->setChecked(process.enabled);
+			if(const auto* product = catalogue.Commodity(recipe->commodity)) m_ProductName = product->descriptor.m_name;
+		// Keep open/queued selections intact, but never skip authoritative
+		// running state, countdown, component readiness or button updates.
+		preserveSelections = preserveSelections || m_Recipe->view()->isVisible() || m_Technology->view()->isVisible();
+		const QSignalBlocker blockedRecipe(m_Recipe), blockedTechnology(m_Technology), blockedEmploy(m_Employ);
+		if(!preserveSelections)
+		{
+			m_Recipe->clear();
+			for(const auto id : catalogue.ProcessesForIndustry(AuLegacyCity::IndustryId(industryId)))
+			{
+				if(hasRecipeChoices && !recipeChoices.contains(id.value)) continue;
+				if(const auto* recipe = catalogue.ManufacturingProcess(id))
+				{
+					const auto* commodity = catalogue.Commodity(recipe->commodity);
+					m_Recipe->addItem(commodity ? QIcon(commodity->descriptor.BitmapName()) : QIcon(), recipe->name, id.value);
+				}
+			}
+			const int selectedRecipe = m_Recipe->findData(process.processId);
+			if(selectedRecipe >= 0) m_Recipe->setCurrentIndex(selectedRecipe);
+			m_Technology->clear();
+			if(recipe)
+				for(int level = recipe->minimumTechnology; level <= std::max(recipe->minimumTechnology, buildingTechnology); ++level)
+					m_Technology->addItem(tr("Production TL%1").arg(level + 1), level);
+			const int selectedTechnology = m_Technology->findData(process.minimumTechnology);
+			if(selectedTechnology >= 0) m_Technology->setCurrentIndex(selectedTechnology);
+			m_Employ->setChecked(process.enabled);
+		}
 		m_Materials->clear(); m_Modifiers->setRowCount(0);
 		for(const auto& value : process.components)
 		{
@@ -221,30 +252,8 @@ public:
 				m_Modifiers->setItem(row, 2, item);
 			}
 		}
-		m_Modifiers->resizeColumnsToContents();
-		const qint64 now = QDateTime::currentMSecsSinceEpoch();
-		// SecondsRemaining subtracts whole epoch seconds in the 2016 process.
-		const qint64 remaining = process.completeAt > now ? process.completeAt / 1000 - now / 1000 : 0;
-		const bool running = process.completeAt != 0;
-		const bool technologyAllowed = process.minimumTechnology <= buildingTechnology;
-		const bool ready = technologyAllowed && AuLegacyCity::CanRunProduction(process);
-		const auto timedStatus = [](const QString& minutesText, const QString& hoursText, qint64 seconds) {
-			return seconds < 3600
-				? minutesText.arg(seconds / 60, 2, 10, QLatin1Char('0')).arg(seconds % 60, 2, 10, QLatin1Char('0'))
-				: hoursText.arg(seconds / 3600).arg(seconds / 60 % 60, 2, 10, QLatin1Char('0'))
-					.arg(seconds % 60, 2, 10, QLatin1Char('0'));
-		};
-		QString status;
-		if(running) status = timedStatus(tr("Running %1:%2"), tr("Running %1:%2:%3"), remaining);
-		else if(!technologyAllowed)
-			status = tr("Process TL%1 Exceeds Building TL%2.").arg(process.minimumTechnology + 1).arg(buildingTechnology + 1);
-		else if(ready) status = timedStatus(tr("Ready %1:%2"), tr("Ready %1:%2:%3"), (quint64(process.laborNeeded) + 3) / 4);
-		else status = timedStatus(tr("Not Ready %1:%2"), tr("Not Ready %1:%2:%3"), (quint64(process.laborNeeded) + 3) / 4);
-		if(recipe)
-			if(const auto* product = catalogue.Commodity(recipe->commodity))
-				if(!product->descriptor.m_name.isEmpty()) status.prepend(product->descriptor.m_name + QLatin1Char('\n'));
-		m_StatusIcon->setPixmap(QPixmap(running ? ":data/mpRunning.png" : ready ? ":data/mpReady.png" : ":data/mpNotReady.png").scaledToHeight(16, Qt::SmoothTransformation));
-		m_Status->setText(status);
+		ResizeModifierColumns();
+		UpdateCountdown();
 		if(process.lastQuantity >= 0 && (process.lastQuantity || process.lastQuality))
 			m_LastOutput->setText(tr("\nTL%3 Q%1x%2").arg(process.lastQuality).arg(process.lastQuantity).arg(process.lastTechnology + 1));
 		else if(process.lastQuantity == -1) m_LastOutput->setText(tr("\nNo Empty Spawn Location"));
@@ -256,7 +265,42 @@ public:
 		else m_LastOutput->clear();
 		m_Recipe->setEnabled(canConfigure); m_Employ->setEnabled(canConfigure);
 		m_Technology->setEnabled(canConfigure && recipe && !AuLegacyCity::IsProductionTechnology(recipe->commodity.value));
-		m_Fetch->setEnabled(!running && technologyAllowed && !ready); m_Run->setEnabled(!running && technologyAllowed);
+	}
+
+	void FinishRequest(const AuLegacyCityProtocol::Request& request)
+	{
+		if(request.action == AuLegacyCityProtocol::RunIndustryProcess && request.cityId == m_CityId
+			&& request.developmentId == m_DevelopmentId && request.processSlot == m_Process.slot) ClearPendingRun();
+	}
+
+	void ClearPendingRun() { m_RunPending = false; UpdateCountdown(); }
+
+	void UpdateCountdown()
+	{
+		const auto& process = m_Process;
+		const qint64 now = QDateTime::currentMSecsSinceEpoch() + g_Au.ServerTimeOffset();
+		// SecondsRemaining subtracts whole epoch seconds in the 2016 process.
+		const qint64 remaining = process.completeAt > now ? process.completeAt / 1000 - now / 1000 : 0;
+		const bool running = process.completeAt != 0;
+		const bool technologyAllowed = process.minimumTechnology <= m_BuildingTechnology;
+		const bool ready = technologyAllowed && AuLegacyCity::CanRunProduction(process);
+		const auto timedStatus = [](const QString& minutesText, const QString& hoursText, qint64 seconds) {
+			return seconds < 3600
+				? minutesText.arg(seconds / 60, 2, 10, QLatin1Char('0')).arg(seconds % 60, 2, 10, QLatin1Char('0'))
+				: hoursText.arg(seconds / 3600).arg(seconds / 60 % 60, 2, 10, QLatin1Char('0'))
+					.arg(seconds % 60, 2, 10, QLatin1Char('0'));
+		};
+		QString status;
+		if(running) status = timedStatus(tr("Running %1:%2"), tr("Running %1:%2:%3"), remaining);
+		else if(!technologyAllowed)
+			status = tr("Process TL%1 Exceeds Building TL%2.").arg(process.minimumTechnology + 1).arg(m_BuildingTechnology + 1);
+		else if(ready) status = timedStatus(tr("Ready %1:%2"), tr("Ready %1:%2:%3"), (quint64(process.laborNeeded) + 3) / 4);
+		else status = timedStatus(tr("Not Ready %1:%2"), tr("Not Ready %1:%2:%3"), (quint64(process.laborNeeded) + 3) / 4);
+		if(!m_ProductName.isEmpty()) status.prepend(m_ProductName + QLatin1Char('\n'));
+		m_StatusIcon->setPixmap(QPixmap(running ? ":data/mpRunning.png" : ready ? ":data/mpReady.png" : ":data/mpNotReady.png").scaledToHeight(16, Qt::SmoothTransformation));
+		m_Status->setText(status);
+		m_Fetch->setEnabled(!running && technologyAllowed && !ready);
+		m_Run->setEnabled(!m_RunPending && !running && technologyAllowed);
 	}
 };
 
@@ -272,15 +316,20 @@ AuLegacyCityManufacture::AuLegacyCityManufacture(QWidget* parent) : QWidget(pare
 	m_Timer = new QTimer(this); m_Timer->setInterval(1000);
 	m_Timeout = new QTimer(this); m_Timeout->setSingleShot(true); m_Timeout->setInterval(60000);
 	m_DeferredTimer = new QTimer(this); m_DeferredTimer->setSingleShot(true); m_DeferredTimer->setInterval(250);
-	connect(m_Timer, &QTimer::timeout, this, &AuLegacyCityManufacture::Refresh);
+	connect(m_Timer, &QTimer::timeout, this, [this]() {
+		for(auto* panel : m_Panels) if(panel->isVisible()) panel->UpdateCountdown();
+		Refresh();
+	});
 	connect(m_Timeout, &QTimer::timeout, this, [this]() {
 		m_PendingToken = 0; m_DeferredTimer->stop(); m_DeferredRequests.clear();
+		ClearPendingRuns();
 		m_Message->setText(tr("No server response from the industry.")); m_Message->show();
 	});
 	connect(m_DeferredTimer, &QTimer::timeout, this, [this]() {
 		if(m_PendingToken || m_DeferredRequests.isEmpty()) return;
 		const auto request = m_DeferredRequests.takeFirst();
 		if(request.cityId == m_CityId && request.developmentId == m_DevelopmentId) SendRequest(request);
+		else FinishRequest(request);
 	});
 	connect(auApp, &AuApp::LegacyCityReplyReceived, this, &AuLegacyCityManufacture::ReceiveReply);
 	connect(auApp, &AuApp::LegacyScTransportReset, this, &AuLegacyCityManufacture::ResetTransport);
@@ -298,6 +347,7 @@ void AuLegacyCityManufacture::SetTarget(quint32 cityId, quint32 developmentId)
 	m_CityId = cityId; m_DevelopmentId = developmentId;
 	// Replies for the previous site cannot repopulate this page.
 	m_PendingToken = 0; m_Timeout->stop(); m_DeferredTimer->stop(); m_DeferredRequests.clear();
+	ClearPendingRuns();
 	for(auto* panel : m_Panels) panel->hide();
 	SetAvailable(false); m_Message->clear(); m_Message->hide();
 	if(cityId && developmentId) Refresh();
@@ -305,14 +355,19 @@ void AuLegacyCityManufacture::SetTarget(quint32 cityId, quint32 developmentId)
 
 void AuLegacyCityManufacture::Submit(AuLegacyCityProtocol::Request request)
 {
-	if(!g_Au.IsLegacyGeneration() || auApp->IsSingleUserMode() || !auApp->IsSceneConnected()) return;
+	if(!g_Au.IsLegacyGeneration() || auApp->IsSingleUserMode() || !auApp->IsSceneConnected())
+	{ FinishRequest(request); return; }
 	if(m_PendingToken || m_DeferredTimer->isActive() || !m_DeferredRequests.isEmpty())
 	{
 		if(request.action == AuLegacyCityProtocol::EconomyList) return;
 		// Serialize changes without disabling every process panel. Routine
 		// refreshes and request round trips must not flash the F10 controls.
 		if(m_DeferredRequests.size() < 32) m_DeferredRequests.append(request);
-		else { m_Message->setText(tr("Wait for the pending industry changes before making another change.")); m_Message->show(); }
+		else
+		{
+			FinishRequest(request);
+			m_Message->setText(tr("Wait for the pending industry changes before making another change.")); m_Message->show();
+		}
 		return;
 	}
 	SendRequest(request);
@@ -320,6 +375,7 @@ void AuLegacyCityManufacture::Submit(AuLegacyCityProtocol::Request request)
 
 void AuLegacyCityManufacture::SendRequest(AuLegacyCityProtocol::Request request)
 {
+	m_ActiveRequest = request;
 	m_PendingToken = auApp->RequestLegacyCityTool(request);
 	if(m_PendingToken)
 	{
@@ -328,6 +384,7 @@ void AuLegacyCityManufacture::SendRequest(AuLegacyCityProtocol::Request request)
 	else
 	{
 		m_DeferredRequests.clear();
+		ClearPendingRuns();
 		m_Message->setText(tr("The industry request could not be sent.")); m_Message->show();
 	}
 }
@@ -352,15 +409,16 @@ void AuLegacyCityManufacture::ReceiveReply(QByteArray payload)
 	AuLegacyCityProtocol::Reply reply;
 	if(!AuLegacyCityProtocol::DecodeReply(payload, reply) || !m_PendingToken || reply.token != m_PendingToken) return;
 	m_PendingToken = 0; m_Timeout->stop();
+	FinishRequest(m_ActiveRequest);
 	if(reply.action != AuLegacyCityProtocol::EconomyList || !reply.message.isEmpty())
 	{ m_Message->setText(reply.message); m_Message->setVisible(!reply.message.isEmpty()); }
 	if(!m_DeferredRequests.isEmpty())
 	{
-		// Retain the user's selection until its queued mutation is answered.
-		// The delay also respects the shared server's 200ms request gate.
-		m_DeferredTimer->start(); return;
+		// Queue timing must never defer a state update. Preserve only selector
+		// edits that have not been sent; apply every process snapshot below.
+		m_DeferredTimer->start();
 	}
-	if(reply.action == AuLegacyCityProtocol::EconomyList && !reply.message.isEmpty() && !reply.hasEconomy) return;
+	if(!reply.message.isEmpty() && !reply.hasEconomy) return;
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
 	AuLegacyCity::ProductionState state; QString error;
 	if(!catalogue || !reply.hasEconomy || reply.selectedCity != m_CityId || reply.selectedDevelopment != m_DevelopmentId
@@ -381,8 +439,13 @@ void AuLegacyCityManufacture::ReceiveReply(QByteArray payload)
 	for(int index = 0; index < m_Panels.size(); ++index)
 	{
 		if(index >= count) { m_Panels[index]->hide(); continue; }
+		const bool preserveSelections = std::any_of(m_DeferredRequests.cbegin(), m_DeferredRequests.cend(),
+			[this, &state, index](const AuLegacyCityProtocol::Request& request) {
+				return request.action == AuLegacyCityProtocol::SetIndustryProcess && request.cityId == m_CityId
+					&& request.developmentId == m_DevelopmentId && request.processSlot == state.processes[index].slot;
+			});
 		m_Panels[index]->Update(*catalogue, m_CityId, m_DevelopmentId, reply.economyIndustry,
-			reply.economyTechnology, state.processes[index], canConfigure, reply.hasRecipeChoices, reply.recipeChoices);
+			reply.economyTechnology, state.processes[index], canConfigure, reply.hasRecipeChoices, reply.recipeChoices, preserveSelections);
 		m_Panels[index]->show();
 	}
 	SetAvailable(count != 0);
@@ -391,7 +454,18 @@ void AuLegacyCityManufacture::ReceiveReply(QByteArray payload)
 void AuLegacyCityManufacture::ResetTransport()
 {
 	m_PendingToken = 0; m_Timeout->stop(); m_DeferredTimer->stop(); m_DeferredRequests.clear();
+	ClearPendingRuns();
 	for(auto* panel : m_Panels) panel->hide(); SetAvailable(false);
+}
+
+void AuLegacyCityManufacture::FinishRequest(const AuLegacyCityProtocol::Request& request)
+{
+	for(auto* panel : m_Panels) panel->FinishRequest(request);
+}
+
+void AuLegacyCityManufacture::ClearPendingRuns()
+{
+	for(auto* panel : m_Panels) panel->ClearPendingRun();
 }
 
 void AuLegacyCityManufacture::showEvent(QShowEvent* event)

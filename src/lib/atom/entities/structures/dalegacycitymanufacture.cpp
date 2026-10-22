@@ -53,7 +53,7 @@ bool DaLegacyCity::OperateIndustryProcess(DaPerson& person, quint32 developmentI
 	if(!originalProcess->enabled && actorEmpire != before.controllingEmpire)
 	{ error = QStringLiteral("Only the city's empire may operate a process disabled for citizen work."); return false; }
 	if(run && originalProcess->completeAt)
-	{ error = QStringLiteral("This process is already running."); return false; }
+		return false; // A duplicate start is harmless; the reply carries the running snapshot.
 	const bool ringworld = OnRingworld();
 	AuGlobeLL cityLL;
 	if(!world->LLOfLoc(cityLL, Location())) return false;
