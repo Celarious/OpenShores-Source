@@ -90,7 +90,7 @@ bool FindClearTarget(const DaWorldLL& world, const AuPoint& point, ClearTarget& 
 }
 
 void ClearOutline(const DaWorldLL& world, const ClearTarget& hit,
-	QList<AuPointAlpha>& vertices, QList<AuPointAlpha>& ground)
+	QList<AuPointAlpha>& vertices, QList<AuPointAlpha>& ground, bool perimeterOnly = false)
 {
 	const auto& dev = hit.development;
 	const auto onGround = [&world](AuPoint point) {
@@ -122,16 +122,16 @@ void ClearOutline(const DaWorldLL& world, const ClearTarget& hit,
 			else
 			{
 				AddLine(vertices, previousLeft, leftEdge); AddLine(vertices, previousRight, rightEdge);
-				if(!landscape && !dev.roadSlab) AddLine(vertices, previousCenter, center);
+				if(!perimeterOnly && !landscape && !dev.roadSlab) AddLine(vertices, previousCenter, center);
 			}
-			if(!landscape && !dev.roadSlab) AddLine(vertices, leftEdge, rightEdge);
+			if(!perimeterOnly && !landscape && !dev.roadSlab) AddLine(vertices, leftEdge, rightEdge);
 			previousLeft = leftEdge; previousRight = rightEdge; previousCenter = center;
 			if(along >= length) break;
 		}
-		if(dev.roadSlab)
+		if(dev.roadSlab || perimeterOnly)
 		{
 			AddLine(vertices, firstLeft, firstRight); AddLine(vertices, previousLeft, previousRight);
-			if(!landscape) { AddLine(vertices, firstLeft, previousRight); AddLine(vertices, firstRight, previousLeft); }
+			if(!perimeterOnly && !landscape) { AddLine(vertices, firstLeft, previousRight); AddLine(vertices, firstRight, previousLeft); }
 		}
 		return;
 	}
@@ -147,7 +147,7 @@ void ClearOutline(const DaWorldLL& world, const ClearTarget& hit,
 		const AuPoint bottom = onGround(point);
 		if(!i) first = bottom; else AddLine(dev.industryId == 129 ? ground : vertices, previous, bottom);
 		previous = bottom;
-		if(dev.industryId == 129)
+		if(dev.industryId == 129 && !perimeterOnly)
 		{
 			AuPoint top = point; world.ElevateLocMSL(top, dev.altitudeMSL + AuLegacyBd::Biodome::BeamHeight);
 			AddLine(vertices, bottom, top);
@@ -156,7 +156,7 @@ void ClearOutline(const DaWorldLL& world, const ClearTarget& hit,
 		}
 	}
 	if(count) AddLine(dev.industryId == 129 ? ground : vertices, previous, first);
-	if(dev.industryId == 129 && count) AddLine(vertices, previousTop, firstTop);
+	if(dev.industryId == 129 && count && !perimeterOnly) AddLine(vertices, previousTop, firstTop);
 }
 
 AuLegacyBd::Geometry::Mesh Preview(const AuLegacyCityProtocol::Request& request)
@@ -224,6 +224,7 @@ void DdPlanLegacyCity::UpdateSelection(const AuLegacyCityProtocol::Request& requ
 	m_Request.targetX = m_Request.targetY = m_Request.targetZ = 0;
 	if(!sameProcess) m_HasStart = false;
 	m_SiteBlocked = false;
+	m_ConflictWorld = 0; m_ConflictingPerimeters.clear();
 	m_PreviewValid = false;
 }
 
@@ -233,7 +234,11 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 	{
 		AuPoint point;
 		if(const auto* world = m_pWnd->FindTerrainLocationAtPixel(person, pixel, point)) UpdateSite(*world, point);
-		else { m_MaximumLevels = 0; m_SiteMaterial = 0; m_SiteBlocked = false; }
+		else
+		{
+			m_MaximumLevels = 0; m_SiteMaterial = 0; m_SiteBlocked = false;
+			m_ConflictWorld = 0; m_ConflictingPerimeters.clear();
+		}
 	}
 	auto cursor = m_Request;
 	if(m_SiteMaterial) cursor.material = m_SiteMaterial;
@@ -327,6 +332,8 @@ void DdPlanLegacyCity::ChangeProduct(int direction)
 
 void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 {
+	m_ConflictWorld = world.Id().GetID(); m_ConflictingPerimeters.clear();
+	QList<AuPointAlpha> conflictGround;
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
 	const auto* recipe = catalogue ? catalogue->ConstructionProcess(AuLegacyCity::ConstructionProcessId(m_Request.processId)) : nullptr;
 	if(!recipe) return;
@@ -348,6 +355,7 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 		site = hit.development; m_ExistingLevels = site.completedLevels;
 		extensionCity = hit.city; extensionDevelopment = site.id;
 		m_SiteBlocked = !site.components.isEmpty();
+		if(m_SiteBlocked) ClearOutline(world, hit, m_ConflictingPerimeters, conflictGround, true);
 	}
 	const bool siteChanged = m_PreviousSiteWorld != world.Id().GetID()
 		|| m_PreviousSiteLocation.Latitude() != site.location.Latitude()
@@ -371,6 +379,7 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 				AuMatrix4x4 otherPlacement;
 				world.BuildingConstructionTransform(world.LocOfLL(existing.location, existing.altitudeMSL),
 					existing.facingRadians, nullptr, AuPoint(), otherPlacement);
+				bool interferes = false;
 				if(existing.industryId == 129)
 				{
 					// Being wholly inside a dome is allowed; intersecting its wall
@@ -387,14 +396,19 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 					const double innerRadius = std::hypot(qMax(0.0, std::abs(domeCenter.x) - radius), qMax(0.0, std::abs(domeCenter.y) - radius));
 					const bool inside = outerRadius <= domeRadius - AuLegacyBd::Biodome::ContainmentMargin;
 					const bool outside = innerRadius >= domeRadius + AuLegacyBd::Biodome::ContainmentMargin;
-					if((!inside && !outside) || (inside && site.industryId == 111)) m_SiteBlocked = true;
+					interferes = (!inside && !outside) || (inside && site.industryId == 111);
 				}
-				else if(DaLegacyCity::ConstructionSitesOverlap(world, site, placement, existing, otherPlacement))
+				else interferes = DaLegacyCity::ConstructionSitesOverlap(world, site, placement, existing, otherPlacement);
+				if(interferes)
+				{
 					m_SiteBlocked = true;
-				if(m_SiteBlocked) break;
+					ClearTarget conflict;
+					conflict.development = existing; conflict.placement = otherPlacement;
+					ClearOutline(world, conflict, m_ConflictingPerimeters, conflictGround, true);
+				}
 			}
-			if(m_SiteBlocked) break;
 		}
+	m_ConflictingPerimeters.append(conflictGround);
 	// Original SetCursor 0x140321130 counts at most four resources and
 	// subtracts existing levels. Keep desired levels separate from this cap.
 	if(recipe->stackLimit >= 32 || site.industryId == 89)
@@ -758,6 +772,17 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 	else
 	{
 		AuGLVAO vao; vao.CreateForSprites(effects, vertices, GL_STREAM_DRAW);
+		if(vao.VAO()) { vao.SelectGL(); vao.DrawGL(GL_LINES); vao.DeselectGL(); vao.DeleteGL(); }
+	}
+	if(m_Request.action == AuLegacyCityProtocol::Build && m_ConflictWorld == world->Id().GetID()
+		&& !m_ConflictingPerimeters.isEmpty())
+	{
+		// Site outlines are already in world coordinates, unlike the proposed
+		// building mesh. Draw their perimeters in amber over the scenery.
+		effects.GLSL().LineShader().SetProjectionModelView(projection * worldModel);
+		effects.GLSL().LineShader().SetColor(1.f, .7f, .05f, 1.f);
+		effects.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		AuGLVAO vao; vao.CreateForSprites(effects, m_ConflictingPerimeters, GL_STREAM_DRAW);
 		if(vao.VAO()) { vao.SelectGL(); vao.DrawGL(GL_LINES); vao.DeselectGL(); vao.DeleteGL(); }
 	}
 	effects.glDisable(GL_BLEND); effects.GLSL().LineShader().Deselect();

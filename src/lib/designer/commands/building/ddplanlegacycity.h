@@ -32,6 +32,8 @@ private:
 	AuLegacyCityProtocol::Request m_Request;
 	bool m_HasStart = false;
 	bool m_SiteBlocked = false;
+	quint32 m_ConflictWorld = 0;
+	QList<AuPointAlpha> m_ConflictingPerimeters;
 	int m_MaximumLevels = -1;
 	int m_ExistingLevels = 0;
 	quint16 m_SiteMaterial = 0;
