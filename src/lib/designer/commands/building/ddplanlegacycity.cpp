@@ -720,9 +720,7 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 				const double radius = recipe->buildRadius * FeetPerMeter();
 				const AuPoint a(-radius, -radius, 1), b(radius, -radius, 1), c(radius, radius, 1), d(-radius, radius, 1);
 				AddLine(m_Preview, a, b); AddLine(m_Preview, b, c); AddLine(m_Preview, c, d); AddLine(m_Preview, d, a);
-				// DdPlanGlobeBuilding 0x14031db40/0x14031ed20: the radial
-				// front marker follows local +Y. Most reach the site edge;
-				// agricultural sites and parks use their smaller level radius.
+				// Retain the recovered front-marker radii for arrowhead sizing.
 				double frontRadius = radius;
 				switch(preview.industryId)
 				{
@@ -732,13 +730,12 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 				case 114: frontRadius = double(9.84252f); break;
 				default: break;
 				}
-				AddLine(m_Preview, AuPoint(), AuPoint(0, frontRadius, 0));
-				// Arrowhead at the front marker's tip, in the same local frame
-				// as the site so rotation and placement colors remain shared.
-				const double arrowLength = qMin(frontRadius * .25, 3 * FeetPerMeter());
-				const AuPoint tip(0, frontRadius, 0);
-				AddLine(m_Preview, tip, AuPoint(-arrowLength * .5, frontRadius - arrowLength, 0));
-				AddLine(m_Preview, tip, AuPoint(arrowLength * .5, frontRadius - arrowLength, 0));
+				// The tip meets the full site's +Y perimeter, including farms and parks.
+				const AuPoint tip(0, radius, 1);
+				AddLine(m_Preview, AuPoint(0, 0, 1), tip);
+				const double arrowLength = qMin(qMin(frontRadius, 10 * FeetPerMeter()) * .25, 3 * FeetPerMeter());
+				AddLine(m_Preview, tip, AuPoint(-arrowLength * .5, radius - arrowLength, 1));
+				AddLine(m_Preview, tip, AuPoint(arrowLength * .5, radius - arrowLength, 1));
 			}
 		m_PreviewValid = true;
 	}

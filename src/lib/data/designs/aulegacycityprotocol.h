@@ -15,6 +15,8 @@ constexpr int MaximumRequestBytes = 1024;
 constexpr int MaximumReplyBytes = 512 * 1024;
 constexpr int MaximumEntries = 256;
 constexpr int MaximumRecipeChoices = 526;
+constexpr float MinimumRoadLengthMeters = 1, MaximumRoadLengthMeters = 500;
+constexpr float MinimumBiodomeRadiusMeters = 47.74f, MaximumBiodomeRadiusMeters = 803.74f;
 // Keep the retired action's number reserved so stale clients cannot reinterpret
 // a door request as removal or another mutation.
 // The version-1 door boolean/count byte positions also remain reserved in the codec.

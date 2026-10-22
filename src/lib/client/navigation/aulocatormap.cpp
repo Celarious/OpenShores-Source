@@ -15,6 +15,7 @@
 #include "auview.h"
 #include "daatomlist.h"
 #include "dabd.h"
+#include "dalegacycity.h"
 #include "daperson.h"
 #include "dasolarsystem.h"
 #include "davehicle.h"
@@ -1677,6 +1678,12 @@ void AuLocatorMap::showEvent(QShowEvent* e)
 			for(DaAtomList::const_iterator it = subs.cbegin(); it != subs.cend(); it++)
 			{
 				const DaAtom* atom = *it;
+				if(g_Au.IsLegacyGeneration())
+					if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+					{
+						if(!city->IsDead()) AddPlace(":data/City.png", city->Name(), city->GlobeLL());
+						continue;
+					}
 				QString name;
 				AuGlobeLLF ll;
 				const DaBd* bd = dynamic_cast<const DaBd*>(atom);

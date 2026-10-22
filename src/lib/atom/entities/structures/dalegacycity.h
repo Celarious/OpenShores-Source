@@ -143,6 +143,7 @@ public:
 	// opening identities remain in the development's original graph.
 	bool Route(quint32 developmentId, const AuPoint& fromWorld, const AuPoint& toWorld,
 		QVector<AuLegacyBd::Paths::RoutePoint>& points, bool useGroundLevelDoors = true) const;
+	void PaintOnSurfaceMap(const DaWorldLL& world, QPainter& painter, unsigned int width, unsigned int height) const override;
 	void DeleteDeviceObjects(AuAtomRenderInfo& ari) override;
 	void GetRenderLightsRecursive(const DaPerson& person, const AuMatrix4x4& model,
 		QList<AuGLSun>& suns, QList<AuGLLight>& lights) const override;

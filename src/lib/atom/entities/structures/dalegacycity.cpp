@@ -44,6 +44,7 @@
 #include <QFile>
 #include <QMutexLocker>
 #include <QElapsedTimer>
+#include <QPainter>
 #include <QRunnable>
 #include <QThreadPool>
 #include <QSqlError>
@@ -2763,6 +2764,70 @@ bool DaLegacyCity::Route(quint32 development, const AuPoint& from, const AuPoint
 			return true;
 		}
 	return false;
+}
+
+void DaLegacyCity::PaintOnSurfaceMap(const DaWorldLL& world, QPainter& painter, unsigned int width, unsigned int height) const
+{
+	if(!g_Au.IsLegacyGeneration() || IsDead() || !width || !height) return;
+	const auto state = Snapshot();
+	const auto mapPoint = [width, height](const AuGlobeLLF& location) {
+		return QPoint(int((location.Longitude() + PIf) * width / (2 * PIf)),
+			int((PIf / 2 - location.Latitude()) * height / PIf));
+	};
+	// DaCity::PaintOnSurfaceMap (2016 0x2a3a90): roads first, then all
+	// building dots, followed by the airport, town square and military dots.
+	for(const auto& development : state.developments)
+	{
+		if(development.demolished || development.industryId != 2) continue;
+		const quint8 process = development.constructionProcessId;
+		if(process == 5 || process == 74 || process == 80 || process == 81) continue;
+		painter.setPen(QPen(development.roadSlab ? QColor(0, 0, 0, 255) : QColor(32, 32, 32, 100),
+			development.roadSlab ? 5.f : 0.f));
+		AuMatrix4x4 placement;
+		world.BuildingConstructionTransform(world.LocOfLL(development.location, development.altitudeMSL),
+			development.facingRadians, nullptr, AuPoint(), placement);
+		const double halfLength = development.roadLengthMeters * FeetPerMeter() / 2;
+		AuGlobeLLF start, end;
+		if(!world.LLOfLoc(start, placement.Project(AuPoint(0, -halfLength, 0)))
+			|| !world.LLOfLoc(end, placement.Project(AuPoint(0, halfLength, 0)))) continue;
+		const QPoint a = mapPoint(start), b = mapPoint(end);
+		if(std::abs(end.Longitude() - start.Longitude()) < PIf)
+			painter.drawLine(a, b);
+		else if(a.x() < b.x())
+		{
+			const int length = a.x() + int(width) - b.x();
+			const float fraction = length > 0 ? float(a.x()) / length : 0;
+			const int seamY = int(a.y() + fraction * (b.y() - a.y()));
+			painter.drawLine(a, QPoint(0, seamY));
+			painter.drawLine(b, QPoint(int(width), seamY));
+		}
+		else
+		{
+			const int length = b.x() + int(width) - a.x();
+			const float fraction = length > 0 ? float(b.x()) / length : 0;
+			const int seamY = int(b.y() + fraction * (b.y() - a.y()));
+			painter.drawLine(b, QPoint(0, seamY));
+			painter.drawLine(a, QPoint(int(width), seamY));
+		}
+	}
+	painter.setPen(QPen(QColor(255, 255, 32, 100), 0.f));
+	for(const auto& development : state.developments)
+		if(!development.demolished && development.industryId != 2)
+			painter.drawPoint(mapPoint(development.location));
+	for(const auto& development : state.developments)
+	{
+		if(development.demolished) continue;
+		QColor color;
+		switch(development.industryId)
+		{
+		case 111: color = QColor(32, 255, 32, 255); break; // Airport terminal.
+		case 1: color = QColor(192, 32, 255, 255); break; // Town square.
+		case 10: case 11: case 12: case 128: color = QColor(255, 128, 32, 255); break;
+		default: continue;
+		}
+		painter.setPen(QPen(color, 0.f));
+		painter.drawPoint(mapPoint(development.location));
+	}
 }
 
 void DaLegacyCity::DeleteDeviceObjects(AuAtomRenderInfo& ari)

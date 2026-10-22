@@ -44,6 +44,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cmath>
 #include <functional>
 
 // Keep the resource initializer in the global namespace for static linking.
@@ -566,7 +567,27 @@ AuLegacyCityProtocol::Request AuLegacyCityConstruction::BuildRequest() const
 
 void AuLegacyCityConstruction::Submit(AuLegacyCityProtocol::Request request)
 {
+	using namespace AuLegacyCityProtocol;
 	if(m_PendingToken || !g_Au.IsLegacyGeneration()) return;
+	if(auApp->IsSingleUserMode() || !auApp->IsSceneConnected())
+	{
+		ReportMessage(tr("Connect to a Legacy2016 server to construct cities."));
+		UpdateControls(); return;
+	}
+	if(request.action == Build && request.industryId == 2
+		&& (!std::isfinite(request.roadLengthMeters) || request.roadLengthMeters < MinimumRoadLengthMeters
+			|| request.roadLengthMeters > MaximumRoadLengthMeters))
+	{
+		ReportMessage(tr("Road length must be between %1 and %2 meters.")
+			.arg(MinimumRoadLengthMeters).arg(MaximumRoadLengthMeters)); return;
+	}
+	if(request.action == Build && request.industryId == 129
+		&& (!std::isfinite(request.biodomeRadiusMeters) || request.biodomeRadiusMeters < MinimumBiodomeRadiusMeters
+			|| request.biodomeRadiusMeters > MaximumBiodomeRadiusMeters))
+	{
+		ReportMessage(tr("Biodome radius must be between %1 and %2 meters.")
+			.arg(MinimumBiodomeRadiusMeters).arg(MaximumBiodomeRadiusMeters)); return;
+	}
 	if(request.action == AuLegacyCityProtocol::Build && request.industryId == 1 && request.cityName.isEmpty())
 	{
 		AuDialog dialog(this); dialog.setAuDlgTitle(tr("New City Name"));
@@ -582,7 +603,7 @@ void AuLegacyCityConstruction::Submit(AuLegacyCityProtocol::Request request)
 	}
 	m_PendingToken = auApp->RequestLegacyCityTool(request);
 	if(m_PendingToken) m_Timeout->start();
-	else ReportMessage(tr("Connect to a Legacy2016 server to construct cities."));
+	else ReportMessage(tr("The construction request could not be sent. Check the selected site and dimensions."));
 	UpdateControls();
 }
 

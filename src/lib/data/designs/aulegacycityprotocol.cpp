@@ -20,10 +20,10 @@ bool Valid(const Request& r)
 		|| (IsBank(r.action) && r.action != BankState && r.action != SetEmpireCapital
 			&& r.action != BankClaimReward && r.money <= 0)) return false;
 	if(IsGameplay(r.action) && (!r.levels || r.levels > 32 || r.cityName.size() > 128
-		|| !std::isfinite(r.roadLengthMeters) || r.roadLengthMeters < 1 || r.roadLengthMeters > 500
+		|| !std::isfinite(r.roadLengthMeters) || r.roadLengthMeters < MinimumRoadLengthMeters || r.roadLengthMeters > MaximumRoadLengthMeters
 		|| !std::isfinite(r.roadWidthMeters) || r.roadWidthMeters < 1 || r.roadWidthMeters > 80)) return false;
 	if(IsGameplay(r.action) && (!std::isfinite(r.biodomeRadiusMeters)
-		|| r.biodomeRadiusMeters < 47.74f || r.biodomeRadiusMeters > 803.74f)) return false;
+		|| r.biodomeRadiusMeters < MinimumBiodomeRadiusMeters || r.biodomeRadiusMeters > MaximumBiodomeRadiusMeters)) return false;
 	if(r.explicitLocation && (!IsGameplay(r.action) || !r.worldId
 		|| !std::isfinite(r.latitudeRadians) || std::abs(r.latitudeRadians) > 1.5707964f
 		|| !std::isfinite(r.longitudeRadians) || std::abs(r.longitudeRadians) > 3.1415927f)) return false;
