@@ -719,6 +719,12 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 				default: break;
 				}
 				AddLine(m_Preview, AuPoint(), AuPoint(0, frontRadius, 0));
+				// Arrowhead at the front marker's tip, in the same local frame
+				// as the site so rotation and placement colors remain shared.
+				const double arrowLength = qMin(frontRadius * .25, 3 * FeetPerMeter());
+				const AuPoint tip(0, frontRadius, 0);
+				AddLine(m_Preview, tip, AuPoint(-arrowLength * .5, frontRadius - arrowLength, 0));
+				AddLine(m_Preview, tip, AuPoint(arrowLength * .5, frontRadius - arrowLength, 0));
 			}
 		m_PreviewValid = true;
 	}

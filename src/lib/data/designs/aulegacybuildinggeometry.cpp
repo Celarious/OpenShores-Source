@@ -913,7 +913,7 @@ Mesh BuildProcedural(const AuLegacyCity::Development& dev)
 	}
 	if(dev.industryId == 2)
 	{
-		const float halfWidth=float(dev.roadWidthMeters*FeetPerMeter()/2);
+		const float halfWidth=float(dev.roadWidthMeters*FeetPerMeter()/2)+8.f;
 		const float length=float(dev.roadLengthMeters*FeetPerMeter());
 		if(dev.constructed && (dev.constructionProcessId == 3 || dev.constructionProcessId == 4 || dev.constructionProcessId == 7))
 		{
