@@ -15,6 +15,7 @@
 #include "dabd.h"
 #include "daperson.h"
 #include "daworldll.h"
+#include "ddbuildgrid.h"
 #include <QCursor>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -167,6 +168,9 @@ void DdPlanBdFence::RenderCursor(const AuMatrix4x4& projection, const AuMatrix4x
 		AuMatrix4x4 tTerr;
 		pTerrain->GetTransformRelativeToParent(tTerr, pEnv);
 		AuMatrix4x4 t = tModel * tScene * tTerr;
+
+		if(BuildGrid::Enabled() && !onPlatform)
+			BuildGrid::Render(re, projection * t, pTerrain, fBuildLoc);
 
 		double Xwidth2 = 1;		// 1/2 the width of the X
 		if(!m_StartEstablished || m_StartLoc.FuzzyEquals(fBuildLoc))
@@ -637,6 +641,9 @@ int DdPlanBdFence::TestFenceLocation(DaPerson* sceneAtom, const QPoint& pxCursor
 	pTerrain = dynamic_cast<const DaWorldLL*>(m_pWnd->FindTerrainLocationAtPixel(sceneAtom, pxCursor, fBuildLoc, onPlatform));
 	if(!pTerrain)
 		return 1;
+
+	if(BuildGrid::Enabled() && !*onPlatform)
+		BuildGrid::Snap(pTerrain, fBuildLoc);
 
 	// Choose material for build test. It just determines if the road can be built on an inferno.
 	COMMODITYID mat = FenceMaterial();

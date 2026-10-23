@@ -15,6 +15,7 @@
 #include "dabd.h"
 #include "daperson.h"
 #include "daworldll.h"
+#include "ddbuildgrid.h"
 #include <QCursor>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -161,6 +162,9 @@ void DdPlanGeoRoad::RenderCursor(const AuMatrix4x4& projection, const AuMatrix4x
 		AuMatrix4x4 tTerr;
 		pTerrain->GetTransformRelativeToParent(tTerr, pEnv);
 		AuMatrix4x4 t = tModel * tScene * tTerr;
+
+		if(BuildGrid::Enabled())
+			BuildGrid::Render(re, projection * t, pTerrain, fBuildLoc);
 
 		if(!m_StartEstablished || m_StartLoc.FuzzyEquals(fBuildLoc))
 		{
@@ -1063,6 +1067,9 @@ int DdPlanGeoRoad::TestRoadLocation(DaPerson* sceneAtom, const QPoint& pxCursor,
 	pTerrain = dynamic_cast<const DaWorldLL*>(m_pWnd->FindTerrainLocationAtPixel(sceneAtom, pxCursor, fBuildLoc));
 	if(!pTerrain)
 		return 1;
+
+	if(BuildGrid::Enabled())
+		BuildGrid::Snap(pTerrain, fBuildLoc);
 
 	double roadWidth;
 	if(g_AuClient.RoadType() == 1)

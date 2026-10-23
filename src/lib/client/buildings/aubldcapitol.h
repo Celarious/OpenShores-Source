@@ -23,6 +23,7 @@ class AuBldShed;
 class AuBldSpacecraftFactory;
 class AuBldStorageTank;
 class AuBldWarehouse;
+class QCheckBox;
 class QLabel;
 class QPushButton;
 class QStackedLayout;
@@ -89,6 +90,7 @@ private:
 	AuBldWarehouse*						m_BldWarehouse;
 	QTableWidget*						m_Buildings;
 	QPushButton*						m_CityName;
+	QCheckBox*							m_HideStreetLights;
 	QLabel*								m_Info;
 	QLabel*								m_WorldName;
 	QToolButton*						m_DeclareEmpireCapital;
@@ -122,6 +124,7 @@ protected slots:
 	void DeclareGalaxyCapital();
 	void DeclareSectorCapital();
 	void Demolish();
+	void HideStreetLightsToggled(bool on);
 	void ListBuildings();
 	void ManufacturingTabChanged(int idx);
 	void RenameCity();

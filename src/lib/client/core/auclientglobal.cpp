@@ -310,6 +310,11 @@ AuClientGlobal::AuClientGlobal(const QString& appName, const QString& settingsAp
 	else if(m_RoundingAngle > 90)
 		m_RoundingAngle = 90;
 
+	m_BuildGrid = Settings().readNumEntry("Settings/BuildGrid", 0.) != 0;
+	m_BuildGridSize = Settings().readNumEntry("Settings/BuildGridSize", 10.);
+	if(!(m_BuildGridSize >= .5 && m_BuildGridSize <= 200))
+		m_BuildGridSize = 10;
+
 	m_RoadType = Settings().readNumEntry("Settings/RoadType", 0);
 	if(m_RoadType < 0)
 		m_RoadType = 0;

@@ -26,6 +26,7 @@
 #include "daperson.h"
 #include "daworldll.h"
 #include "dgdata.h"
+#include <QCheckBox>
 #include <QGridLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -268,6 +269,13 @@ AuBldCapitol::AuBldCapitol(QWidget* parent) : QWidget(parent)
 			.arg(g_Au.MiddleDotSymbol()));
 	connect(m_DeclareSectorCapital, SIGNAL(clicked(bool)), SLOT(DeclareSectorCapital()));
 
+	m_HideStreetLights = new QCheckBox(tr("Hide street lights"), this);
+	m_HideStreetLights->setToolTip(tr("<html><b>Hide Street Lights</b><br>"
+				"Leaves street lights out of the list of buildings."
+				"</html>"));
+	m_HideStreetLights->setChecked(g_Au.Settings().readBoolEntry("Widget/BldCapitol/HideStreetLights", false));
+	connect(m_HideStreetLights, SIGNAL(toggled(bool)), SLOT(HideStreetLightsToggled(bool)));
+
 	QToolButton* refresh = new QToolButton(this);
 	refresh->setIcon(QIcon(":data/Sweep.png"));
 	refresh->setToolTip(tr("<html><b>Refresh</b><br>"
@@ -282,6 +290,7 @@ AuBldCapitol::AuBldCapitol(QWidget* parent) : QWidget(parent)
 	tblay->addStretch(10);
 	tblay->addWidget(m_DemolishButton);
 	tblay->addStretch(1);
+	tblay->addWidget(m_HideStreetLights);
 	tblay->addWidget(refresh);
 	tblay->addWidget(m_DeclareEmpireCapital);
 	tblay->addWidget(m_DeclareGalaxyCapital);
@@ -371,9 +380,16 @@ void AuBldCapitol::ListBuildings()
 			DaAtomList bdCity;
 			planet->FindBdCity(bdCity, bd->Id());
 			m_Buildings->setRowCount((int)bdCity.size());
+			const bool hideStreetLights = m_HideStreetLights->isChecked();
+			int streetLightsHidden = 0;
 			for(DaAtomList::const_iterator ci = bdCity.cbegin(); ci != bdCity.cend(); ci++)
 			{
 				const DaBd* bdc = (const DaBd*)*ci;
+				if(hideStreetLights && bdc->IndustryId() == IID_StreetLight)
+				{
+					streetLightsHidden++;
+					continue;
+				}
 				QString name(bdc->AssignedName());
 				QString indName(bdc->IndustryName());
 				if(bdc->Is(m_SelectedId))
@@ -419,6 +435,7 @@ void AuBldCapitol::ListBuildings()
 				m_Buildings->setRowHeight(trow, 18);
 				trow++;
 			}
+			m_Buildings->setRowCount(trow);
 
 			m_Buildings->setSortingEnabled(true);	// enabled after the table is filled otherwise it messes with the fill
 
@@ -430,7 +447,10 @@ void AuBldCapitol::ListBuildings()
 
 			m_Buildings->blockSignals(false);
 
-			m_Info->setText(tr("%L1 buildings").arg(bdCity.size()));
+			if(streetLightsHidden)
+				m_Info->setText(tr("%L1 buildings, %L2 street lights not shown").arg(bdCity.size()).arg(streetLightsHidden));
+			else
+				m_Info->setText(tr("%L1 buildings").arg(bdCity.size()));
 			hasInfo = true;
 		}
 	}
@@ -443,6 +463,12 @@ void AuBldCapitol::ListBuildings()
 		m_SelectedId = AuId(0);
 		m_SelectedName = "";
 	}
+}
+
+void AuBldCapitol::HideStreetLightsToggled(bool on)
+{
+	g_Au.Settings().writeEntry("Widget/BldCapitol/HideStreetLights", on);
+	ListBuildings();
 }
 
 void AuBldCapitol::BuildingTabChanged(int idx)

@@ -40,6 +40,8 @@ private:
 	AuPoint								m_SiteRadius;
 	AuBdReport							m_SRpt;					// Changed to selected construction material.
 	bool								m_WorkerOk;				// false to disable worker in new manufacturing process
+	mutable bool						m_GridActive;
+	mutable float						m_GridRot;
 
 	DbManufacturingProcessArray 		m_aProcesses;
 	int									m_iProcessIndex;		// index of current process in m_aProcesses
@@ -105,6 +107,8 @@ protected:
 
 	inline float ZRotation() const
 	{
+		if(m_GridActive)
+			return m_GridRot + floorf(m_RotZ / (PIf/2) + .5f) * (PIf/2);
 		if(m_RotAligned)
 			return m_RotZ;				// Rotation calculated by alignment with existing development.
 		else

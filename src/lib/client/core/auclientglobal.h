@@ -353,6 +353,8 @@ private:
 	int									m_MouseLookSensitivity;	// 1..500
 	quint8								m_PopupNotify;			// Popup a dialog when a new chat message contains avatar's name.
 	double								m_RoundingAngle;
+	bool								m_BuildGrid;
+	double								m_BuildGridSize;
 	int									m_RoadType;				// 0=road, 1=slab.
 	float								m_RoadWidth;
 	bool								m_ShowNet;				// true to show network activity indicator in scene
@@ -948,6 +950,21 @@ public:
 		return m_RoundingAngle;
 	}
 
+	inline bool BuildGrid() const
+	{
+		return m_BuildGrid;
+	}
+
+	inline double BuildGridSizeInFeet() const
+	{
+		return m_BuildGridSize * FeetPerMeter();
+	}
+
+	inline double BuildGridSizeInMeters() const
+	{
+		return m_BuildGridSize;
+	}
+
 	inline int RoadType() const
 	{
 		return m_RoadType;
@@ -1115,6 +1132,18 @@ public:
 		else if(m_RoundingAngle > 90)
 			m_RoundingAngle = 90;
 		Settings().writeEntry("Settings/RoundingAngle", m_RoundingAngle);
+	}
+
+	inline void SetBuildGrid(bool on)
+	{
+		m_BuildGrid = on;
+		Settings().writeEntry("Settings/BuildGrid", on ? 1. : 0.);
+	}
+
+	inline void SetBuildGridSize(double metres)
+	{
+		m_BuildGridSize = qBound(.5, metres, 200.);
+		Settings().writeEntry("Settings/BuildGridSize", m_BuildGridSize);
 	}
 
 	inline void SetRoadType(int type)

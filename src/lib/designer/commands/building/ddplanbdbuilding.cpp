@@ -20,6 +20,7 @@
 #include "dasolarsystem.h"
 #include "daworldll.h"
 #include "dgdata.h"
+#include "ddbuildgrid.h"
 #include <QCursor>
 #include <QMouseEvent>
 #include <QKeyEvent>
@@ -38,6 +39,8 @@ DdPlanBdBuilding::DdPlanBdBuilding(INDUSTRYID industryID, const AuBdReport& repo
 	m_PlatformAltMSL = 100 * FeetPerMeter();
 	m_RotAligned = false;
 	m_RotZ = 0.f;
+	m_GridActive = false;
+	m_GridRot = 0.f;
 	m_WorkerOk = enableWorker;
 
 	SetMaterial(constructionMaterial);
@@ -177,6 +180,8 @@ bool DdPlanBdBuilding::OnKeyDown(QKeyEvent* e)
 			// Rotate
 			if(e->modifiers() & Qt::ShiftModifier)
 				m_RotZ += DEG2RADf;
+			else if(BuildGrid::Enabled())
+				m_RotZ += PIf/2;
 			else if(g_AuClient.RoundingAngle() > 0)
 				m_RotZ += g_AuClient.RoundingAngle() * DEG2RADf;
 			else
@@ -212,6 +217,8 @@ bool DdPlanBdBuilding::OnKeyDown(QKeyEvent* e)
 			// Rotate
 			if(e->modifiers() & Qt::ShiftModifier)
 				m_RotZ -= DEG2RADf;
+			else if(BuildGrid::Enabled())
+				m_RotZ -= PIf/2;
 			else if(g_AuClient.RoundingAngle() > 0)
 				m_RotZ -= g_AuClient.RoundingAngle() * DEG2RADf;
 			else
@@ -392,6 +399,9 @@ void DdPlanBdBuilding::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 		AuPoint siteCen(m_SRpt.SiteCenter());
 		pTerrain->BuildingConstructionTransform(fBuildLoc, ZRotation(), onPlatform, siteCen, mBld);
 		AuPoint vUp = -pTerrain->GravityDir(mBld.Project(siteCen));	// Up vector with respect to terrain.
+
+		if(BuildGrid::Enabled() && !onPlatform)
+			BuildGrid::Render(*ari.re, projection * model, pTerrain, fBuildLoc);
 
 		// Use simple shader so lines will be super bright, even at night.
 		ari.re->GLSL().LineShader().Select();
@@ -1137,6 +1147,12 @@ int DdPlanBdBuilding::TestBuildLocation(DaPerson* sceneAtom, const QPoint& pxCur
 		AuPoint platLoc = (*onPlatform)->Transform().UnProject(fBuildLoc);	// into the space of the platform
 		platLoc.z += .1;	// 
 		fBuildLoc = (*onPlatform)->Transform().Project(platLoc);
+	}
+	m_GridActive = false;
+	if(BuildGrid::Enabled() && !*onPlatform && BuildGrid::Snap(pTerrain, fBuildLoc))
+	{
+		m_GridActive = true;
+		m_GridRot = (float)BuildGrid::NorthRotation(pTerrain, fBuildLoc);
 	}
 	switch(m_SRpt.Structure())
 	{

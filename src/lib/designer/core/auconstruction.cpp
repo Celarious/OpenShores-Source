@@ -1040,6 +1040,7 @@ AuConstructionWidget::AuConstructionWidget(QWidget* parent) : QWidget(parent)
 		else
 			m_RoadType->setCurrentText(tr("Level Grade"));
 		connect(m_RoadType, SIGNAL(currentIndexChanged(const QString&)), SLOT(RoadTypeChanged(const QString&)));
+		connect(m_RoadType, SIGNAL(activated(int)), SLOT(ViewTakesKeys()), Qt::QueuedConnection);
 
 		QString minSlab = QString("%1").arg(ceilf(MinSpacecraftSlabWidthMeters()));
 		QString minVehSlab = QString("%1").arg(MinVehicleSlabWidthMeters());
@@ -1213,6 +1214,7 @@ AuConstructionWidget::AuConstructionWidget(QWidget* parent) : QWidget(parent)
 				"</p>"
 				"</html>"));
 	connect(m_Blueprints, SIGNAL(currentIndexChanged(int)), SLOT(BlueprintChanged(int)));
+	connect(m_Blueprints, SIGNAL(activated(int)), SLOT(ViewTakesKeys()), Qt::QueuedConnection);
 
 	m_BlueprintInfo = new QLabel(this);
 	m_BlueprintInfo->setToolTip(tr("<html>"
@@ -1274,6 +1276,7 @@ AuConstructionWidget::AuConstructionWidget(QWidget* parent) : QWidget(parent)
 	m_cbProducts->setToolTip(tr("Choose the product to make.<br>"
 				"When a product is selected, this tooltip will show the commodities required to manufacture it."));
 	connect(m_cbProducts, SIGNAL(currentIndexChanged(int)), SLOT(ManufacturingProcessSelected(int)));
+	connect(m_cbProducts, SIGNAL(activated(int)), SLOT(ViewTakesKeys()), Qt::QueuedConnection);
 
 	QLabel* lbMaterial = new QLabel(this);
 	lbMaterial->setText("Construction Materials");
@@ -1381,8 +1384,43 @@ AuConstructionWidget::AuConstructionWidget(QWidget* parent) : QWidget(parent)
 	bplay->setMargin(0);
 	bplay->setSpacing(2);
 
+	m_ckGrid = new QCheckBox(tr("Grid"), this);
+	m_ckGrid->setChecked(g_AuClient.BuildGrid());
+	m_ckGrid->setToolTip(tr("<html><b>Construction Grid</b><br>"
+			"Shows a grid on the ground while placing buildings, street lights, roads, fences and walls.<br>"
+			"%1 Buildings and street lights snap their centre to its points and turn along its lines a quarter turn at a time.<br>"
+			"%1 Both ends of roads, fences and walls snap to its points.<br>"
+			"%1 The grid belongs to the world: everyone building there snaps to the same lines.<br>"
+			"%1 There is no grid on platforms or near the poles."
+			"</html>").arg(g_Au.MiddleDotSymbol()));
+	connect(m_ckGrid, SIGNAL(stateChanged(int)), SLOT(GridToggled(int)));
+	connect(m_ckGrid, SIGNAL(clicked()), SLOT(ViewTakesKeys()), Qt::QueuedConnection);
+	m_GridSize = new QComboBox(this);
+	m_GridSize->setToolTip(tr("<html><b>Grid Size</b><br>"
+			"The distance between grid lines, in meters."
+			"</html>"));
+	m_GridSize->setEditable(true);
+	m_GridSize->addItem("1");
+	m_GridSize->addItem("2");
+	m_GridSize->addItem("4");
+	m_GridSize->addItem("5");
+	m_GridSize->addItem("8");
+	m_GridSize->addItem("10");
+	m_GridSize->addItem("16");
+	m_GridSize->addItem("20");
+	m_GridSize->addItem("32");
+	m_GridSize->addItem("50");
+	m_GridSize->setEditText(QString("%1").arg(g_AuClient.BuildGridSizeInMeters()));
+	m_GridSize->setEnabled(g_AuClient.BuildGrid());
+	connect(m_GridSize, SIGNAL(editTextChanged(const QString&)), SLOT(GridSizeChanged(const QString&)));
+	connect(m_GridSize, SIGNAL(activated(int)), SLOT(ViewTakesKeys()), Qt::QueuedConnection);
+
 	QHBoxLayout* rlay = new QHBoxLayout();
 	rlay->addWidget(m_RoundAngle);
+	rlay->addSpacing(8);
+	rlay->addWidget(m_ckGrid);
+	rlay->addWidget(m_GridSize);
+	rlay->addWidget(new QLabel(tr("m"), this));
 	rlay->addStretch();
 
 	// Layout the widgets.
@@ -2331,6 +2369,14 @@ void AuConstructionWidget::ListDesigns(const AuGear& inv, INDUSTRYID industryId,
 	g_Au.UnlockData();
 }
 
+void AuConstructionWidget::ViewTakesKeys()
+{
+	AuFrame* pFrame = auApp->Frame();
+	AuView* pView = pFrame ? pFrame->View() : 0;
+	if(QWidget* w = dynamic_cast<QWidget*>(pView))
+		w->setFocus(Qt::OtherFocusReason);
+}
+
 void AuConstructionWidget::BlueprintChanged(int index)
 {
 	if(index < 0)
@@ -2809,4 +2855,18 @@ void AuConstructionWidget::RoundingAngleChanged(const QString& text)
 {
 	QVariant var(text);
 	g_AuClient.SetRoundingAngle(var.toDouble());
+}
+
+void AuConstructionWidget::GridToggled(int state)
+{
+	g_AuClient.SetBuildGrid(state == Qt::Checked);
+	m_GridSize->setEnabled(state == Qt::Checked);
+}
+
+void AuConstructionWidget::GridSizeChanged(const QString& text)
+{
+	bool ok = false;
+	const double metres = text.toDouble(&ok);
+	if(ok && metres > 0)
+		g_AuClient.SetBuildGridSize(metres);
 }
