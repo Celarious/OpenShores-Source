@@ -673,9 +673,23 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 		}
 		else
 		{
-			const AuPoint a(-width, -width, 1), b(width, -width, 1), c(width, width, 1), d(-width, width, 1);
-			AddLine(vertices, a, b); AddLine(vertices, b, c); AddLine(vertices, c, d); AddLine(vertices, d, a);
-			if(preview.roadSlab) { AddLine(vertices, a, c); AddLine(vertices, b, d); }
+			// DdPlanGlobeRoad::RenderCursor (0x140324250): a 32-point circle
+			// at half the selected road width, with one diameter for slabs.
+			model = worldModel;
+			const AuPoint up = -world->GravityDir(point);
+			AuPoint axisX; up.ArbitraryAxis(axisX);
+			const AuPoint axisY = up.Cross(axisX);
+			AuPoint first, previous, opposite;
+			for(int i = 0; i < 32; ++i)
+			{
+				const float angle = float(i) * PIf * 2 / 32;
+				const AuPoint edge = point + axisX * (width * std::cos(angle)) + axisY * (width * std::sin(angle));
+				if(!i) first = edge; else AddLine(vertices, previous, edge);
+				if(i == 16) opposite = edge;
+				previous = edge;
+			}
+			AddLine(vertices, previous, first);
+			if(preview.roadSlab) AddLine(vertices, first, opposite);
 		}
 	}
 	else if(m_Request.industryId == 129)
