@@ -1095,6 +1095,7 @@ void AuGLSL::CreatePrograms()
 	m_FarStar = new AuGLSLFarStar;
 	m_Flag = new AuGLSLFlag;
 	m_Flora = new AuGLSLFlora;
+	m_FloraShade = new AuGLSLFlora(true);
 	m_FloraRingworld = new AuGLSLFloraRingworld;
 	m_GalaxyCloud = new AuGLSLGalaxyCloud;
 	m_GalaxyStar = new AuGLSLGalaxyStar;
@@ -1149,6 +1150,7 @@ void AuGLSL::CreatePrograms()
 	m_BodyDepth = new AuGLSLBodyDepth;
 	m_ModelDepth = new AuGLSLModelDepth;
 	m_GlobeDepth = new AuGLSLGlobeDepth;
+	m_FloraDepth = new AuGLSLFloraDepth;
 	m_ScDepthAlpha = new AuGLSLScDepthAlpha;
 	m_ShadowSquare = new AuGLSLShadowSquare;
 	m_Shield = new AuGLSLShield;
@@ -1230,6 +1232,7 @@ void AuGLSL::DestroyPrograms(bool deleteGLPrograms)
 		m_FarStar->DeleteProgram();
 		m_Flag->DeleteProgram();
 		m_Flora->DeleteProgram();
+		m_FloraShade->DeleteProgram();
 		m_FloraRingworld->DeleteProgram();
 		m_GalaxyCloud->DeleteProgram();
 		m_GalaxyStar->DeleteProgram();
@@ -1283,6 +1286,7 @@ void AuGLSL::DestroyPrograms(bool deleteGLPrograms)
 		m_BodyDepth->DeleteProgram();
 		m_ModelDepth->DeleteProgram();
 		m_GlobeDepth->DeleteProgram();
+		m_FloraDepth->DeleteProgram();
 		m_ScDepthAlpha->DeleteProgram();
 		m_ShadowSquare->DeleteProgram();
 		m_Shield->DeleteProgram();
@@ -1353,6 +1357,7 @@ void AuGLSL::DestroyPrograms(bool deleteGLPrograms)
 	delete m_FarStar;
 	delete m_Flag;
 	delete m_Flora;
+	delete m_FloraShade;
 	delete m_FloraRingworld;
 	delete m_GalaxyCloud;
 	delete m_GalaxyStar;
@@ -1407,6 +1412,7 @@ void AuGLSL::DestroyPrograms(bool deleteGLPrograms)
 	delete m_BodyDepth;
 	delete m_ModelDepth;
 	delete m_GlobeDepth;
+	delete m_FloraDepth;
 	delete m_ScDepthAlpha;
 	delete m_ShadowSquare;
 	delete m_Shield;
@@ -1667,6 +1673,7 @@ void AuGLSL::Initialize(AuOpenGLFunctions& GLf, unsigned int maxLights)
 	m_FarStar->Build(GLf, opt);
 	m_Flag->Build(GLf, opt);
 	m_Flora->Build(GLf, opt);
+	m_FloraShade->Build(GLf, opt);
 	m_FloraRingworld->Build(GLf, opt);
 	m_GalaxyCloud->Build(GLf, opt);
 	m_GalaxyStar->Build(GLf, opt);
@@ -1720,6 +1727,7 @@ void AuGLSL::Initialize(AuOpenGLFunctions& GLf, unsigned int maxLights)
 	m_BodyDepth->Build(GLf, opt);
 	m_ModelDepth->Build(GLf, opt);
 	m_GlobeDepth->Build(GLf, opt);
+	m_FloraDepth->Build(GLf, opt);
 	m_ScDepthAlpha->Build(GLf, opt);
 	m_ShadowSquare->Build(GLf, opt);
 	m_Shield->Build(GLf, opt);
@@ -1815,6 +1823,7 @@ void AuGLSL::InvalidateLights()
 	//m_FarStar->InvalidateLights();
 	m_Flag->InvalidateLights();
 	m_Flora->InvalidateLights();
+	m_FloraShade->InvalidateLights();
 	m_FloraRingworld->InvalidateLights();
 	//m_GalaxyCloud->InvalidateLights();
 	//m_GalaxyStar->InvalidateLights();
@@ -1934,6 +1943,7 @@ void AuGLSL::InvalidateSuns()
 	//m_FarStar->InvalidateSuns();
 	m_Flag->InvalidateSuns();
 	m_Flora->InvalidateSuns();
+	m_FloraShade->InvalidateSuns();
 	m_FloraRingworld->InvalidateSuns();
 	//m_GalaxyCloud->InvalidateSuns();
 	//m_GalaxyStar->InvalidateSuns();
@@ -2218,7 +2228,8 @@ bool AuGLSLShader::PerPixelLighting()
 	return s_PerPixelLighting;
 }
 
-AuGLSLShader::AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QString& shaderName, unsigned int maxLights)
+AuGLSLShader::AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QString& shaderName, unsigned int maxLights,
+		const QByteArray& extraDefines)
 {
 	if(s_DebugGLSL)
 		qDebug() << " AuGLSLShader::AuGLSLShader" << shaderName;
@@ -2299,6 +2310,14 @@ AuGLSLShader::AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QStr
 			}
 			src.insert(lineEnd + 1, defines);
 		}
+	}
+
+	if(!extraDefines.isEmpty())
+	{
+		int versionAt = src.indexOf("#version");
+		int lineEnd = versionAt < 0 ? -1 : src.indexOf('\n', versionAt);
+		if(lineEnd >= 0)
+			src.insert(lineEnd + 1, extraDefines);
 	}
 
 	// Resolve our special includes.
@@ -6699,7 +6718,8 @@ void AuGLSLFlora::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "Flora.v", opt.MaxLights());
 	m_GLf->glAttachShader(m_Program, vs.Id());
 
-	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, "Flora.f", opt.MaxLights());
+	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, "Flora.f", opt.MaxLights(),
+			m_ShadePass ? QByteArray("#define FLORA_SHADE_PASS 1\n") : QByteArray());
 	m_GLf->glAttachShader(m_Program, fs.Id());
 
 	// Bind user defined 'in' variables to vertex attribute indices.
@@ -6748,6 +6768,15 @@ void AuGLSLFlora::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 	m_plantM = GetUniformLoc("plantM");
 	m_tex = GetUniformLoc("tex");
 	m_vForce = GetUniformLoc("vForce");
+	m_instanced = GetUniformLoc("instanced");
+	m_instanceBase = GetUniformLoc("instanceBase");
+	m_instances = GetUniformLoc("instances");
+	m_vForces = GetUniformLoc("vForces");
+	m_GLf->glUniform1i(m_instances, InstanceUnit);
+	m_GLf->glUniform1i(m_instanced, 0);
+	m_depthPass = m_ShadePass ? -1 : GetUniformLoc("depthPass");
+	if(m_depthPass >= 0)
+		m_GLf->glUniform1i(m_depthPass, 0);
 
 	m_ambient = GetUniformLoc("light.ambient");
 	m_ambientUp = GetUniformLoc("light.ambientUp");
@@ -13623,60 +13652,18 @@ void AuGLSLBodyFogRingworld::Select(const AuMatrix4x4& projection, const AuGLEff
 	m_GLf->glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_OldTexture0);
 	m_GLf->glActiveTexture(GL_TEXTURE1);
 	m_GLf->glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_OldTexture1);
-}
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
-void AuGLSLScDepthAlpha::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
-{
-	AuGLSLScBase::Build(GLf, opt);
 
-	if(s_DebugGLSL)
-		qDebug() << "AuGLSLScDepthAlpha::Build";
-	Q_ASSERT(!m_Program);
-	m_Program = m_GLf->glCreateProgram();
 
-	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "ScDepthAlpha.v", opt.MaxLights());
-	m_GLf->glAttachShader(m_Program, vs.Id());
 
-	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, QString("ScDepthAlpha.f"), opt.MaxLights());
-	m_GLf->glAttachShader(m_Program, fs.Id());
 
-	m_GLf->glBindAttribLocation(m_Program, 0, "positionShine");
-	m_GLf->glBindAttribLocation(m_Program, 2, "texCoordIndex");
 
-	m_GLf->glLinkProgram(m_Program);
-	GLint linked;
-	m_GLf->glGetProgramiv(m_Program, GL_LINK_STATUS, &linked);
-#if !defined(QT_NO_DEBUG)
-	DumpProgramInfoLog();
-#endif
-	if(!linked)
-	{
-		AuGLSLErr mb(QObject::tr("Shader Linking Error"),
-				QObject::tr("<html>Failed to link <b>%2</b> shader.<br>"
-					"This is a critical error. "
-					"The program must abort.<br><br>%1</html>")
-				.arg(GetProgramInfoLog())
-				.arg("ScDepthAlpha"));
-		mb.exec();
-	}
 
-	m_GLf->glDetachShader(m_Program, vs.Id());
-	m_GLf->glDeleteShader(vs.Id());
 
-	m_GLf->glDetachShader(m_Program, fs.Id());
-	m_GLf->glDeleteShader(fs.Id());
 
-	m_GLf->glUseProgram(m_Program);
 
-	m_mvA = GetUniformLoc("mv");
-	m_pA = GetUniformLoc("p");
-	for(int t=0; t<SCTEXI_Count; t++)
-	{
-		m_texSurface[t] = GetUniformLoc(QString("texSurface[%1]").arg(t));
-		m_GLf->glUniform1i(m_texSurface[t], 1 + t);
-	}
 }
 
 void AuGLSLAnimalDepth::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
@@ -13871,6 +13858,114 @@ void AuGLSLGlobeDepth::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt
 	m_clipUp = GetUniformLoc("clipUp");
 	m_mv = GetUniformLoc("mv");
 	m_p = GetUniformLoc("p");
+}
+
+void AuGLSLScDepthAlpha::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
+{
+	AuGLSLScBase::Build(GLf, opt);
+
+	if(s_DebugGLSL)
+		qDebug() << "AuGLSLScDepthAlpha::Build";
+	Q_ASSERT(!m_Program);
+	m_Program = m_GLf->glCreateProgram();
+
+	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "ScDepthAlpha.v", opt.MaxLights());
+	m_GLf->glAttachShader(m_Program, vs.Id());
+
+	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, QString("ScDepthAlpha.f"), opt.MaxLights());
+	m_GLf->glAttachShader(m_Program, fs.Id());
+
+	m_GLf->glBindAttribLocation(m_Program, 0, "positionShine");
+	m_GLf->glBindAttribLocation(m_Program, 2, "texCoordIndex");
+
+	m_GLf->glLinkProgram(m_Program);
+	GLint linked;
+	m_GLf->glGetProgramiv(m_Program, GL_LINK_STATUS, &linked);
+#if !defined(QT_NO_DEBUG)
+	DumpProgramInfoLog();
+#endif
+	if(!linked)
+	{
+		AuGLSLErr mb(QObject::tr("Shader Linking Error"),
+				QObject::tr("<html>Failed to link <b>%2</b> shader.<br>"
+					"This is a critical error. "
+					"The program must abort.<br><br>%1</html>")
+				.arg(GetProgramInfoLog())
+				.arg("ScDepthAlpha"));
+		mb.exec();
+	}
+
+	m_GLf->glDetachShader(m_Program, vs.Id());
+	m_GLf->glDeleteShader(vs.Id());
+
+	m_GLf->glDetachShader(m_Program, fs.Id());
+	m_GLf->glDeleteShader(fs.Id());
+
+	m_GLf->glUseProgram(m_Program);
+
+	m_mvA = GetUniformLoc("mv");
+	m_pA = GetUniformLoc("p");
+	for(int t=0; t<SCTEXI_Count; t++)
+	{
+		m_texSurface[t] = GetUniformLoc(QString("texSurface[%1]").arg(t));
+		m_GLf->glUniform1i(m_texSurface[t], 1 + t);
+	}
+}
+
+void AuGLSLFloraDepth::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
+{
+	AuGLSLProgram::Build(GLf, opt);
+
+	if(s_DebugGLSL)
+		qDebug() << "AuGLSLFloraDepth::Build";
+	Q_ASSERT(!m_Program);
+	m_Program = m_GLf->glCreateProgram();
+
+	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "FloraDepth.v", opt.MaxLights());
+	m_GLf->glAttachShader(m_Program, vs.Id());
+
+	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, QString("FloraDepth.f"), opt.MaxLights());
+	m_GLf->glAttachShader(m_Program, fs.Id());
+
+	m_GLf->glBindAttribLocation(m_Program, 0, "position");
+	m_GLf->glBindAttribLocation(m_Program, 2, "texCoordMovement");
+
+	m_GLf->glLinkProgram(m_Program);
+	GLint linked;
+	m_GLf->glGetProgramiv(m_Program, GL_LINK_STATUS, &linked);
+#if !defined(QT_NO_DEBUG)
+	DumpProgramInfoLog();
+#endif
+	if(!linked)
+	{
+		AuGLSLErr mb(QObject::tr("Shader Linking Error"),
+				QObject::tr("<html>Failed to link <b>%2</b> shader.<br>"
+					"This is a critical error. "
+					"The program must abort.<br><br>%1</html>")
+				.arg(GetProgramInfoLog())
+				.arg("FloraDepth"));
+		mb.exec();
+	}
+
+	m_GLf->glDetachShader(m_Program, vs.Id());
+	m_GLf->glDeleteShader(vs.Id());
+
+	m_GLf->glDetachShader(m_Program, fs.Id());
+	m_GLf->glDeleteShader(fs.Id());
+
+	m_GLf->glUseProgram(m_Program);
+
+	m_mv = GetUniformLoc("mv");
+	m_p = GetUniformLoc("p");
+	m_plantM = GetUniformLoc("plantM");
+	m_tex = GetUniformLoc("tex");
+	m_vForce = GetUniformLoc("vForce");
+	m_instanced = GetUniformLoc("instanced");
+	m_instanceBase = GetUniformLoc("instanceBase");
+	m_instances = GetUniformLoc("instances");
+	m_vForces = GetUniformLoc("vForces");
+	m_GLf->glUniform1i(m_instances, InstanceUnit);
+	m_GLf->glUniform1i(m_instanced, 0);
 }
 
 void AuGLSLScDepth::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)

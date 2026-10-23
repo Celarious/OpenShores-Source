@@ -8,7 +8,6 @@
 #define AuSetRender_H
 
 #include <QList>
-#include <QList>
 #include <QWidget>
 
 class QCheckBox;
@@ -75,7 +74,23 @@ private:
 	QList<QCheckBox*>					m_ShadowCasterChecks;
 	QLabel*								m_ShadowBiasLabel;
 	QLabel*								m_ShadowCreatureDistanceLabel;
+	QLabel*								m_ShadowPlantDistanceLabel;
+	QLabel*								m_ShadowGrassDistanceLabel;
 	QLabel*								m_ShadowLightsLabel;
+	QLabel*								m_SkinGlossLabel;
+	QLabel*								m_ClothGlossLabel;
+	QLabel*								m_HairGlossLabel;
+
+	QCheckBox*							m_PerPixelCheck;
+	QCheckBox*							m_ShadowsCheck;
+	QCheckBox*							m_ShadowMapsCheck;
+	QList<QWidget*>						m_GlossWidgets;
+	QList<QWidget*>						m_ShadowWidgets;
+	QList<QWidget*>						m_ShadowMapWidgets;
+	QLabel*								m_ShadowDistanceLabel;
+	QList<QCheckBox*>					m_ShadowCasterChecks;
+	QLabel*								m_ShadowBiasLabel;
+	QLabel*								m_ShadowCreatureDistanceLabel;
 	QLabel*								m_SkinGlossLabel;
 	QLabel*								m_ClothGlossLabel;
 	QLabel*								m_HairGlossLabel;
@@ -138,6 +153,9 @@ protected slots:
 	void SetShadowSecondSun(int value);
 	void SetShadowLights(int value);
 	void SetShadowCreatureDistance(int value);
+	void SetShadowPlantDistance(int value);
+	void SetShadowGrassDistance(int value);
+	void SetNewFlora(int value);
 	void SetSkinGloss(int value);
 	void SetClothGloss(int value);
 	void SetHairGloss(int value);
