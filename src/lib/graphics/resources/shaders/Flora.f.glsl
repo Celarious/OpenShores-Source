@@ -6,6 +6,9 @@
 
 #version 150
 
+flat in float							vertFar;
+uniform int								depthPass;
+
 #ifdef PER_PIXEL_LIGHTING
 
 struct PointLight
@@ -92,10 +95,11 @@ float sunShadowMapSample(int k, vec3 P, vec3 N, float slope, out float edge)
 	float depth = c.z - sunShadowMapCascade[k].y;
 
 	float lit = 0.;
-	for(int j=-SHADOW_MAP_PCF; j<=SHADOW_MAP_PCF; j++)
-		for(int i=-SHADOW_MAP_PCF; i<=SHADOW_MAP_PCF; i++)
+	int pcf = vertFar > .5 ? 0 : SHADOW_MAP_PCF;
+	for(int j=-pcf; j<=pcf; j++)
+		for(int i=-pcf; i<=pcf; i++)
 			lit += texture(sunShadowMap, vec4(c.xy + vec2(float(i), float(j))*sunShadowMapInfo.y, float(k), depth));
-	return lit/float((2*SHADOW_MAP_PCF + 1)*(2*SHADOW_MAP_PCF + 1));
+	return lit/float((2*pcf + 1)*(2*pcf + 1));
 }
 
 float sunShadowMapLit(vec3 P, vec3 N, vec3 sunPosition)
@@ -195,10 +199,11 @@ float lightShadowLit(int l, vec3 P, vec3 N, vec3 lightPosition)
 	float depth = ((info.w + info.z) - 2.*info.w*info.z/nearer)/(info.w - info.z)*.5 + .5;
 
 	float lit = 0.;
-	for(int j=-SHADOW_MAP_PCF; j<=SHADOW_MAP_PCF; j++)
-		for(int i=-SHADOW_MAP_PCF; i<=SHADOW_MAP_PCF; i++)
+	int pcf = vertFar > .5 ? 0 : SHADOW_MAP_PCF;
+	for(int j=-pcf; j<=pcf; j++)
+		for(int i=-pcf; i<=pcf; i++)
 			lit += texture(lightShadowMap, vec4(c + vec2(float(i), float(j))*lightShadowParams.z, info.x + face, depth));
-	return lit/float((2*SHADOW_MAP_PCF + 1)*(2*SHADOW_MAP_PCF + 1));
+	return lit/float((2*pcf + 1)*(2*pcf + 1));
 }
 #endif
 #endif
@@ -334,27 +339,52 @@ uniform sampler2D						tex;					// Texture.
 in vec4									vertLitScale;
 in vec3									vertLitP;
 in vec3									vertLitN;
+in vec3									vertGlow;
 #else
 in vec4									vertColor;				// Incoming fragment color interpolated from the vertex color.
 #endif
 in vec3									vertTexCoordFog;			// Incoming texture coordinate (xy) and fog density (z)
 
 out vec4								fragColor;				// Outgoing fragment color.
+flat in float							vertFade;
+
+float ditherThreshold()
+{
+	const float bayer[16] = float[16](0., 8., 2., 10., 12., 4., 14., 6., 3., 11., 1., 9., 15., 7., 13., 5.);
+	ivec2 p = ivec2(gl_FragCoord.xy) & 3;
+	return (bayer[p.y * 4 + p.x] + .5) / 16.;
+}
 
 void main()
 {
+#ifndef FLORA_SHADE_PASS
+	if(vertFade != 0.)
+	{
+		float d = ditherThreshold();
+		if(vertFade > 0. ? d < vertFade : d >= -vertFade)
+			discard;
+	}
+#endif
 #ifdef PER_PIXEL_LIGHTING
 	fragColor = texture(tex, vertTexCoordFog.xy);
+#ifndef FLORA_SHADE_PASS
 	if(fragColor.a * vertLitScale.a < .15)
 		discard;
+	if(depthPass != 0)
+		return;
+#endif
 
 	vec4 vertColor = vec4(computeLighting(light, vertLitP, normalize(vertLitN)), 1) * vertLitScale;
-	vertColor.rgb = min(vertColor.rgb+glowAlpha.rgb, vec3(1.5, 1.5, 1.5));
+	vertColor.rgb = min(vertColor.rgb+vertGlow, vec3(1.5, 1.5, 1.5));
 	fragColor *= vertColor;
 #else
 	fragColor = texture(tex, vertTexCoordFog.xy) * vertColor;
+#ifndef FLORA_SHADE_PASS
 	if(fragColor.a < .15)
 		discard;
+	if(depthPass != 0)
+		return;
+#endif
 #endif
 
 	// Calculate fog effect on fragment color but do not modify the alpha using fog.

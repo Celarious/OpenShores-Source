@@ -595,6 +595,9 @@ private:
 	int									m_ShadowLights;
 	unsigned int						m_ShadowCasters;
 	int									m_ShadowCreatureDistance;
+	int									m_ShadowPlantDistance;
+	int									m_ShadowGrassDistance;
+	bool								m_NewFlora;
 	int									m_FramedPictureSize;	// Maximum size of a framed picture.
 	int									m_ResourceIconSize;		// modifier for the top down view sprite sizes. Percentage of size.
 	int									m_BodyStatSize;			// modifier for the body/vehicle status bar sizes. % of max size.
@@ -1916,6 +1919,9 @@ public:
 	static inline const char* ShadowLightsKey()		{ return "/Settings/ShadowLights"; }
 	static inline const char* ShadowCastersKey()		{ return "/Settings/ShadowCasters"; }
 	static inline const char* ShadowCreatureDistanceKey()	{ return "/Settings/ShadowCreatureDistance"; }
+	static inline const char* ShadowPlantDistanceKey()	{ return "/Settings/ShadowPlantDistance"; }
+	static inline const char* ShadowGrassDistanceKey()	{ return "/Settings/ShadowGrassDistance"; }
+	static inline const char* NewFloraKey()		{ return "/Settings/NewFlora"; }
 
 	inline bool Shadows() const
 	{
@@ -1936,6 +1942,13 @@ public:
 	inline int ShadowLights() const			{ return m_ShadowLights; }
 	inline unsigned int ShadowCasters() const	{ return m_ShadowCasters; }
 	inline int ShadowCreatureDistance() const	{ return m_ShadowCreatureDistance; }
+	inline int ShadowPlantDistance() const	{ return m_ShadowPlantDistance; }
+	inline int ShadowGrassDistance() const	{ return m_ShadowGrassDistance; }
+
+	inline bool NewFlora() const
+	{
+		return m_NewFlora;
+	}
 
 	inline bool PerPixelLighting() const
 	{
@@ -2885,6 +2898,9 @@ public:
 	void SetShadowLights(int count);
 	void SetShadowCasters(unsigned int families);
 	void SetShadowCreatureDistance(int meters);
+	void SetShadowPlantDistance(int meters);
+	void SetShadowGrassDistance(int meters);
+	void SetNewFlora(bool newFlora);
 
 	void SetFramedPictureSize(int framedPictureSize);
 

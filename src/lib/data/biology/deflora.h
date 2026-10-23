@@ -209,6 +209,16 @@ public:
 	void CreateVAO(AuOpenGLFunctions& GLf, AuGLVAO& vao, unsigned int textureIndex, TYPE type, const AuDice& dice,
 			int lod, float maxRadius) const;
 
+	static void CreateVAOFromTriangles(AuOpenGLFunctions& GLf, AuGLVAO& vao, const QList<AuFloraVAOTri>& tris);
+	static void CreateIndexedVAOFromTriangles(AuOpenGLFunctions& GLf, AuGLVAO& vao, const QList<AuFloraVAOTri>& tris);
+
+	float ModelHeight(unsigned int textureIndex, TYPE type, const AuDice& dice, int lod, float maxRadius) const;
+
+	inline float TextureSize() const
+	{
+		return m_TextureSize;
+	}
+
 	const AuFloraDNA& DNA() const
 	{
 		return m_DNA;
@@ -496,6 +506,9 @@ class AUDATA_DLL DePlanetFlora
 private:
 	DeTerrainFlora						m_Flora[AuFloraDNA::Zones];
 	unsigned int						m_glFloraTex;							// Texture palette
+	bool								m_NewPalette;
+	quint32								m_GenSeed;
+	float								m_Coverage[AuFloraDNA::Zones][ZONE_TREES + ZONE_SHRUBS + 1];
 
 public:
 	DePlanetFlora();
@@ -549,6 +562,14 @@ public:
 	void CreateTreeVAO(AuOpenGLFunctions& GLf, AuGLVAO& vao, AuFloraDNA::ZONE latRegion, COMMODITYID idCommodity,
 			const AuDice& dice, int lod, float maxRadius=0.f) const;
 
+	inline bool NewPalette() const
+	{
+		return m_NewPalette;
+	}
+
+	void NewPlantTriangles(QList<AuFloraVAOTri>& tris, bool tree, AuFloraDNA::ZONE latRegion, COMMODITYID idCommodity,
+			const AuDice& dice, int lod, float maxRadius=0.f) const;
+
 	inline const unsigned char* Data() const
 	{
 		return (const unsigned char*)m_Flora;
@@ -580,6 +601,7 @@ public:
 
 	// This one does it all, including loading/storing result from/to cache.
 	void PaintFlora(QImage& im, quint32 genSeed, int resourceZone, const AuTime& floraChange);
+	void PaintNewFlora(QImage& im, quint32 genSeed, int resourceZone, const AuTime& floraChange);
 
 	void PaintPottedFlora(QImage& im, quint32 genSeed, int resourceZone, AuFloraDNA::ZONE zone, int plantType,
 			COMMODITYID idCommodity);

@@ -564,6 +564,12 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	}
 	*/
 
+	QCheckBox* newFlora = new QCheckBox(tr("New Trees (Experimental)"));
+	newFlora->setChecked(g_Au.Settings().readBoolEntry(AuGlobal::NewFloraKey(), false));
+	newFlora->setToolTip(tr("<html><p><b>New Trees (Experimental)</b><br>"
+				"</html>"));
+	connect(newFlora, SIGNAL(stateChanged(int)), SLOT(SetNewFlora(int)));
+
 	QCheckBox* perPixelLighting = new QCheckBox(tr("Per-Pixel Lighting"));
 	perPixelLighting->setChecked(g_Au.PerPixelLighting());
 	perPixelLighting->setToolTip(tr("<html><p><b>Per-Pixel Lighting</b><br>"
@@ -583,8 +589,8 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	shadows->setToolTip(tr("<html><p><b>Shadows</b><br>"
 				"Planets and moons cast shadows. A spacecraft or a station goes dark as it passes behind a planet, "
 				"and people, buildings and plants on a moon go dark while its planet covers the sun.</p>"
-				"<p>With <i>Object Shadows</i> checked, spacecraft, buildings, hills, people and animals also cast "
-				"shadows on the ground and on one another.</p>"
+				"<p>With <i>Object Shadows</i> checked, spacecraft, buildings, hills, people, animals, trees, shrubs and "
+				"rocks also cast shadows on the ground and on one another.</p>"
 				"<p><b>Shadows need <i>Per-Pixel Lighting</i>.</b> This box can only be changed while that one is checked, "
 				"and it does nothing while that one is unchecked.</p>"
 				"<p>Changes take effect immediately, after a short pause while the graphics card is given new instructions.</p>"
@@ -654,14 +660,15 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 
 	QHBoxLayout* shadowCasterLay = new QHBoxLayout;
 	{
-		const int families[] = { SSF_Structures, SSF_Terrain, SSF_Creatures };
-		const QString names[] = { tr("Ships and Buildings"), tr("Terrain"), tr("Characters") };
+		const int families[] = { SSF_Structures, SSF_Terrain, SSF_Creatures, SSF_Plants };
+		const QString names[] = { tr("Ships and Buildings"), tr("Terrain"), tr("Characters"), tr("Plants") };
 		const QString what[] = { tr("spacecraft, vehicles and buildings"), tr("hills and the ground itself"),
-				tr("people and animals, yourself included, what they hold and things that lie about") };
+				tr("people and animals, yourself included, what they hold and things that lie about"),
+				tr("trees, shrubs and rocks, and grass if its own distance below is set,") };
 		QLabel* shadowCasterTitle = new QLabel(tr("Shadows from:"));
 		shadowCasterLay->addWidget(shadowCasterTitle);
 		m_ShadowMapWidgets << shadowCasterTitle;
-		for(int f=0; f<3; f++)
+		for(int f=0; f<4; f++)
 		{
 			QCheckBox* check = new QCheckBox(names[f]);
 			check->setProperty("family", families[f]);
@@ -729,6 +736,31 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 				"</html>"));
 	connect(shadowCreatureSlider, SIGNAL(valueChanged(int)), SLOT(SetShadowCreatureDistance(int)));
 	m_ShadowMapWidgets << shadowCreatureTitle << shadowCreatureSlider << m_ShadowCreatureDistanceLabel;
+
+	QLabel* shadowPlantTitle = new QLabel(tr("Plant Shadow Distance"));
+	m_ShadowPlantDistanceLabel = new QLabel(QString("%1m").arg(g_Au.ShadowPlantDistance()));
+	QSlider* shadowPlantSlider = new QSlider(Qt::Horizontal, this);
+	shadowPlantSlider->setRange(10, 1000);
+	shadowPlantSlider->setSingleStep(1);
+	shadowPlantSlider->setPageStep(10);
+	shadowPlantSlider->setValue(g_Au.ShadowPlantDistance());
+	shadowPlantSlider->setToolTip(tr("<html><b>Plant Shadow Distance</b><br>"
+				"</html>"));
+	connect(shadowPlantSlider, SIGNAL(valueChanged(int)), SLOT(SetShadowPlantDistance(int)));
+	m_ShadowMapWidgets << shadowPlantTitle << shadowPlantSlider << m_ShadowPlantDistanceLabel;
+
+	QLabel* shadowGrassTitle = new QLabel(tr("Grass Shadow Distance"));
+	m_ShadowGrassDistanceLabel = new QLabel(g_Au.ShadowGrassDistance() ? QString("%1m").arg(g_Au.ShadowGrassDistance()) : tr("Off"));
+	QSlider* shadowGrassSlider = new QSlider(Qt::Horizontal, this);
+	shadowGrassSlider->setRange(0, 100);
+	shadowGrassSlider->setSingleStep(1);
+	shadowGrassSlider->setPageStep(5);
+	shadowGrassSlider->setValue(g_Au.ShadowGrassDistance());
+	shadowGrassSlider->setToolTip(tr("<html><b>Grass Shadow Distance</b><br>"
+				"</html>"));
+	connect(shadowGrassSlider, SIGNAL(valueChanged(int)), SLOT(SetShadowGrassDistance(int)));
+	m_ShadowMapWidgets << shadowGrassTitle << shadowGrassSlider << m_ShadowGrassDistanceLabel;
+
 	QLabel* shadowLightsTitle = new QLabel(tr("Lamp Shadows"));
 	m_ShadowLightsLabel = new QLabel(g_Au.ShadowLights() ? QString::number(g_Au.ShadowLights()) : tr("Off"));
 	QSlider* shadowLightsSlider = new QSlider(Qt::Horizontal, this);
@@ -877,6 +909,14 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 		sliderlay->addWidget(shadowCreatureSlider, row,1);
 		sliderlay->addWidget(m_ShadowCreatureDistanceLabel, row,2);
 		row++;
+		sliderlay->addWidget(shadowPlantTitle, row,0);
+		sliderlay->addWidget(shadowPlantSlider, row,1);
+		sliderlay->addWidget(m_ShadowPlantDistanceLabel, row,2);
+		row++;
+		sliderlay->addWidget(shadowGrassTitle, row,0);
+		sliderlay->addWidget(shadowGrassSlider, row,1);
+		sliderlay->addWidget(m_ShadowGrassDistanceLabel, row,2);
+		row++;
 		sliderlay->addWidget(shadowLightsTitle, row,0);
 		sliderlay->addWidget(shadowLightsSlider, row,1);
 		sliderlay->addWidget(m_ShadowLightsLabel, row,2);
@@ -932,6 +972,7 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	infolay->addWidget(m_SkyBoxMipmap);
 	infolay->addWidget(ckbumpmapseas);
 	infolay->addWidget(frustumCulling);
+	infolay->addWidget(newFlora);
 	infolay->addWidget(perPixelLighting);
 	infolay->addWidget(shadows);
 	infolay->addWidget(m_ShadowMapsCheck);
@@ -1068,6 +1109,24 @@ void AuSetRender::SetShadowCreatureDistance(int value)
 	g_Au.SetShadowCreatureDistance(value);
 	m_ShadowCreatureDistanceLabel->setText(QString("%1m").arg(g_Au.ShadowCreatureDistance()));
 	AuGLSLShader::SetShadowCasterLimitMeters(SSF_Creatures, g_Au.ShadowCreatureDistance());
+}
+
+void AuSetRender::SetShadowPlantDistance(int value)
+{
+	g_Au.SetShadowPlantDistance(value);
+	m_ShadowPlantDistanceLabel->setText(QString("%1m").arg(g_Au.ShadowPlantDistance()));
+	AuGLSLShader::SetShadowCasterLimitMeters(SSF_Plants, g_Au.ShadowPlantDistance());
+}
+
+void AuSetRender::SetShadowGrassDistance(int value)
+{
+	g_Au.SetShadowGrassDistance(value);
+	m_ShadowGrassDistanceLabel->setText(g_Au.ShadowGrassDistance() ? QString("%1m").arg(g_Au.ShadowGrassDistance()) : tr("Off"));
+}
+
+void AuSetRender::SetNewFlora(int value)
+{
+	g_Au.SetNewFlora(value ? true : false);
 }
 
 void AuSetRender::SetShadowCasters()

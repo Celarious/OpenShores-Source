@@ -180,6 +180,10 @@ uniform mat4							mv;						// Model view matrix of globe.
 uniform mat4							p;						// Projection matrix.
 uniform mat4							plantM;					// Plant placement matrix on globe.
 uniform vec3							vForce;					// wind force vector, possibly combined with others such as blast
+uniform int								instanced;
+uniform int								instanceBase;
+uniform samplerBuffer					instances;
+uniform vec3							vForces[10];
 
 in vec3									normal;					// Incoming vertex normal.
 in vec3									position;				// Incoming vertex location.
@@ -189,19 +193,44 @@ in vec3									texCoordMovement;		// Incoming texture coordinate(xy), move amou
 out vec4								vertLitScale;
 out vec3								vertLitP;
 out vec3								vertLitN;
+out vec3								vertGlow;
 #else
 out vec4								vertColor;				// Outgoing vertex color.
 #endif
+flat out float							vertFade;
+flat out float							vertFar;
+invariant gl_Position;
 out vec3								vertTexCoordFog;		// Outgoing texture coordinate(xy) and fog density (z)
 
 void main()
 {
 	// Calculate vertex position in eye space.
-	mat4 mvplant = mv * plantM;
+	mat4 placement = plantM;
+	vec3 glow = glowAlpha.rgb;
+	vec3 force = vForce;
+	float fade = 0.;
+	float far = 0.;
+	if(instanced != 0)
+	{
+		int at = (instanceBase + gl_InstanceID) * 6;
+		placement = mat4(texelFetch(instances, at), texelFetch(instances, at + 1), texelFetch(instances, at + 2),
+				texelFetch(instances, at + 3));
+		vec4 glowWind = texelFetch(instances, at + 4);
+		glow = glowWind.rgb;
+		force = vForces[int(glowWind.a + .5)];
+		vec4 lod = texelFetch(instances, at + 5);
+		fade = lod.x;
+		far = lod.y;
+	}
+
+	mat4 mvplant = mv * placement;
 	gl_Position = mvplant * vec4(position, 1);
 
 	// Apply effect of eye space force vector.
-	gl_Position.xyz += vForce * texCoordMovement.z;
+
+	gl_Position.xyz += force * texCoordMovement.z;
+	vertFade = fade;
+	vertFar = far;
 
 	// Calculate lighting using eye space position and normal.
 	vec4 eyeN = normalize(mvplant * vec4(normal, 1) - mvplant * vec4(0,0,0,1));	// Surface normal in eye space.
@@ -209,9 +238,10 @@ void main()
 	vertLitScale = vec4(1, 1, 1, glowAlpha.a);
 	vertLitP = gl_Position.xyz;
 	vertLitN = eyeN.xyz;
+	vertGlow = glow;
 #else
 	vertColor = vec4(computeLighting(light, gl_Position.xyz, eyeN.xyz), glowAlpha.a);
-	vertColor.rgb = min(vertColor.rgb+glowAlpha.rgb, vec3(1.5, 1.5, 1.5));
+	vertColor.rgb = min(vertColor.rgb+glow, vec3(1.5, 1.5, 1.5));
 #endif
 
 	gl_Position = p * gl_Position;

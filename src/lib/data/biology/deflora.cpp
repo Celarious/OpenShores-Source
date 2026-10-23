@@ -1,3 +1,5 @@
+#include <cstddef>
+#include <unordered_map>
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // $Id: deflora.cpp,v 1.140 2022/04/08 14:49:07 build Exp $
 // Copyright (c) 2022 Hazeron Freehold LLC
@@ -5,6 +7,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "deflora.h"
+#include "floratypes.h"
 //
 #include "audice.h"
 #include "aufilever.h"
@@ -1350,6 +1353,83 @@ void DeFlora::CreateVAO(AuOpenGLFunctions& GLf, AuGLVAO& vao, unsigned int textu
 	if(tris.isEmpty())
 		return;
 
+	CreateVAOFromTriangles(GLf, vao, tris);
+}
+
+void DeFlora::CreateIndexedVAOFromTriangles(AuOpenGLFunctions& GLf, AuGLVAO& vao, const QList<AuFloraVAOTri>& tris)
+{
+	if(tris.isEmpty())
+		return;
+
+	struct Key
+	{
+		GLfloat v[9];
+		bool operator==(const Key& o) const { return !memcmp(v, o.v, sizeof v); }
+	};
+	struct KeyHash { size_t operator()(const Key& k) const { return qHashBits(k.v, sizeof k.v); } };
+	std::unordered_map<Key, GLuint, KeyHash> seen;
+	seen.reserve(tris.count() * 2);
+	QVector<GLfloat> pos, nrm, tex;
+	QVector<GLuint> indices;
+	pos.reserve(tris.count() * 6);
+	nrm.reserve(tris.count() * 6);
+	tex.reserve(tris.count() * 6);
+	indices.reserve(tris.count() * 3);
+	for(const AuFloraVAOTri& t : tris)
+	{
+		const AuFloraVAOVert* vs[3] = { &t.m_V0, &t.m_V1, &t.m_V2 };
+		for(const AuFloraVAOVert* v : vs)
+		{
+			const Key k = {{ v->m_X, v->m_Y, v->m_Z, v->m_NX, v->m_NY, v->m_NZ, v->m_TexX, v->m_TexY, v->m_MoveFactor }};
+			auto it = seen.find(k);
+			if(it == seen.end())
+			{
+				const GLuint n = pos.count() / 3;
+				it = seen.emplace(k, n).first;
+				pos << k.v[0] << k.v[1] << k.v[2];
+				nrm << k.v[3] << k.v[4] << k.v[5];
+				tex << k.v[6] << k.v[7] << k.v[8];
+			}
+			indices << it->second;
+		}
+	}
+
+	struct Packed
+	{
+		GLfloat							p[3];
+		GLshort							n[4];
+		GLfloat							t[3];
+	};
+	const GLuint vertices = pos.count() / 3;
+	QVector<Packed> packed(vertices);
+	for(GLuint i=0; i<vertices; i++)
+	{
+		Packed& v = packed[i];
+		for(int c=0; c<3; c++)
+		{
+			v.p[c] = pos[i*3 + c];
+			v.n[c] = (GLshort)qBound(-32767, (int)lroundf(nrm[i*3 + c] * 32767.f), 32767);
+			v.t[c] = tex[i*3 + c];
+		}
+		v.n[3] = 0;
+	}
+	vao.CreateGL(GLf, vertices, 3);
+	vao.SelectGL();
+	GLf.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(0));
+	GLf.glBufferData(GL_ARRAY_BUFFER, packed.count() * sizeof(Packed), packed.constData(), GL_STATIC_DRAW);
+	GLf.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Packed), (const void*)offsetof(Packed, p));
+	GLf.glVertexAttribPointer(1, 3, GL_SHORT, GL_TRUE, sizeof(Packed), (const void*)offsetof(Packed, n));
+	GLf.glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Packed), (const void*)offsetof(Packed, t));
+	GLf.glBindBuffer(GL_ARRAY_BUFFER, 0);
+	vao.DeselectGL();
+	vao.SetIndices(indices);
+}
+
+void DeFlora::CreateVAOFromTriangles(AuOpenGLFunctions& GLf, AuGLVAO& vao, const QList<AuFloraVAOTri>& tris)
+{
+	if(tris.isEmpty())
+		return;
+
 	// Create the OpenGL VAO from the surface triangles.
 	unsigned int vertices = tris.count()*3;
 
@@ -1435,6 +1515,16 @@ void DeFlora::CreateVAO(AuOpenGLFunctions& GLf, AuGLVAO& vao, unsigned int textu
 	delete [] vaoPos;
 	delete [] vaoN;
 	delete [] vaoTex;
+}
+
+float DeFlora::ModelHeight(unsigned int textureIndex, TYPE type, const AuDice& dice, int lod, float maxRadius) const
+{
+	QList<AuFloraVAOTri> tris;
+	CreateVAOTriangles(tris, textureIndex, type, dice, lod, maxRadius);
+	float top = 0;
+	for(const AuFloraVAOTri& tri : tris)
+		top = qMax(top, qMax(tri.m_V0.m_Z, qMax(tri.m_V1.m_Z, tri.m_V2.m_Z)));
+	return top;
 }
 
 void DeFlora::CreateVAOTriangles(QList<AuFloraVAOTri>& tris, unsigned int textureIndex, TYPE type, const AuDice& Cdice, int lod,
@@ -2534,6 +2624,11 @@ bool DeTerrainFlora::ContainsDNA(int type, const AuFloraDNA& dna) const
 DePlanetFlora::DePlanetFlora()
 {
 	m_glFloraTex = 0;
+	m_NewPalette = false;
+	m_GenSeed = 0;
+	for(int z=0; z<AuFloraDNA::Zones; z++)
+		for(int s=0; s<ZONE_TREES + ZONE_SHRUBS + 1; s++)
+			m_Coverage[z][s] = .35f;
 }
 
 DePlanetFlora::~DePlanetFlora()
@@ -2779,11 +2874,14 @@ void DePlanetFlora::CreateDeviceObjects(AuGLEffects& re, const AuId& planetId, q
 {
 	if(!m_glFloraTex)
 	{
-		QString stid = QString("F%1Z%2C%3")
+		const bool newFlora = g_Au.NewFlora();
+		QString stid = QString(newFlora ? "FX%1Z%2C%3" : "F%1Z%2C%3")
 				.arg(genSeed)
 				.arg(resourceZone)
 				.arg(floraChange.MSecsSinceEpoch());
-		m_glFloraTex = re.UseTexture(planetId.GetID(), stid);
+		m_GenSeed = genSeed;
+		m_NewPalette = newFlora;
+		m_glFloraTex = newFlora ? 0 : re.UseTexture(planetId.GetID(), stid);
 		if(m_glFloraTex)
 		{
 			CalculateTextureSizes(genSeed, resourceZone);
@@ -2791,7 +2889,10 @@ void DePlanetFlora::CreateDeviceObjects(AuGLEffects& re, const AuId& planetId, q
 		else
 		{
 			QImage imtex;
-			if(preparedImage) imtex = *preparedImage;
+			if(newFlora)
+				PaintNewFlora(imtex, genSeed, resourceZone, floraChange);
+			else
+				if(preparedImage) imtex = *preparedImage;
 			else PaintFlora(imtex, genSeed, resourceZone, floraChange);
 			if(!imtex.isNull())
 			{
@@ -2960,6 +3061,75 @@ void DePlanetFlora::PaintFlora(QImage& imtex, quint32 genSeed, int resourceZone,
 	imtex.save(file);
 #endif
 	*/
+}
+
+void DePlanetFlora::PaintNewFlora(QImage& imtex, quint32 genSeed, int resourceZone, const AuTime& floraChange)
+{
+	bool imloaded = false;
+	QDir cacheDir(g_Au.CacheGame());
+	QString cacheFileName;
+	if(floraChange.IsNull())
+		cacheFileName = cacheDir.absoluteFilePath(QString("FX%1Z%2").arg(genSeed).arg(resourceZone));
+	else
+		cacheFileName = cacheDir.absoluteFilePath(QString("FX%1Z%2C%3").arg(genSeed).arg(resourceZone)
+				.arg(floraChange.MSecsSinceEpoch()));
+	const int tile = g_Au.PlantTextureSize();
+	QFile cacheFile(cacheFileName);
+	if(cacheFile.open(QIODevice::ReadOnly))
+	{
+		QDataStream dsfile(&cacheFile);
+		dsfile.setVersion(QDataStream::Qt_4_1);
+		quint8 fileType;
+		quint8 fileVersion;
+		QDateTime storeTime;
+		dsfile >> fileType;
+		dsfile >> fileVersion;
+		dsfile >> storeTime;
+		if(fileType == FLORA_TEXTURE_CACHE && fileVersion == FLORA_NEW_TEXTURE_VER)
+		{
+			QByteArray bcomp;
+			dsfile >> bcomp;
+			if(!bcomp.isEmpty())
+			{
+				QByteArray ba = AuUncompress(bcomp, __FILE__, __LINE__, cacheFileName);
+				QDataStream ds(&ba, QIODevice::ReadOnly);
+				ds.setVersion(QDataStream::Qt_4_1);
+				ds >> imtex;
+				for(int z=0; z<AuFloraDNA::Zones; z++)
+					for(int s=0; s<ZONE_TREES + ZONE_SHRUBS + 1; s++)
+						ds >> m_Coverage[z][s];
+				imloaded = !imtex.isNull() && ds.status() == QDataStream::Ok;
+			}
+		}
+		cacheFile.close();
+	}
+	if(imloaded && imtex.width() == FT_PaletteWidth * tile && imtex.height() == FT_PaletteHeight * tile)
+	{
+		CalculateTextureSizes(genSeed, resourceZone);
+		return;
+	}
+
+	const FloraGen::World world = FloraGen::World::Derive(genSeed);
+	FloraGen::PaintPalette(imtex, *this, genSeed, resourceZone, tile, world, m_Coverage);
+	CalculateTextureSizes(genSeed, resourceZone);
+
+	if(g_Au.CreateCacheGame() && cacheFile.open(QFile::WriteOnly))
+	{
+		QDataStream dsfile(&cacheFile);
+		dsfile.setVersion(QDataStream::Qt_4_1);
+		dsfile << (quint8)FLORA_TEXTURE_CACHE;
+		dsfile << (quint8)FLORA_NEW_TEXTURE_VER;
+		dsfile << floraChange.UTC();
+		QByteArray ba;
+		QDataStream ds(&ba, QIODevice::WriteOnly);
+		ds.setVersion(QDataStream::Qt_4_1);
+		ds << imtex;
+		for(int z=0; z<AuFloraDNA::Zones; z++)
+			for(int s=0; s<ZONE_TREES + ZONE_SHRUBS + 1; s++)
+				ds << m_Coverage[z][s];
+		dsfile << qCompress(ba);
+		cacheFile.close();
+	}
 }
 
 void DePlanetFlora::PaintPottedFlora(QImage& imtex, quint32 genSeed, int resourceZone, AuFloraDNA::ZONE zone, int plantType,
@@ -3138,6 +3308,49 @@ void DePlanetFlora::CreateGroundCoverVAO(AuOpenGLFunctions& GLf, AuGLVAO& vao, A
 	m_Flora[latRegion].CreateGroundCoverVAO(GLf, vao, texBase, dice, lod, maxRadius);
 }
 
+static void NewFloraTriangles(QList<AuFloraVAOTri>& tris, const DeFlora& f, quint32 genSeed, float coverage, int zone,
+		bool tree, int index, unsigned int textureIndex, const AuDice& dice, int lod, float maxRadius)
+{
+	const FloraGen::World world = FloraGen::World::Derive(genSeed);
+	FloraGen::Traits traits = FloraGen::Traits::Derive(f.DNA(), world, zone, tree, index);
+	traits.m_Coverage = coverage;
+	const float height = f.ModelHeight(textureIndex, tree ? DeFlora::Tree : DeFlora::Shrub, dice, 2, maxRadius);
+	AuDice d(dice);
+	FloraGen::BuildPlant(tris, f.DNA(), traits, f.TextureSize(), g_Au.PlantTextureSize(), tree, d.Random(), lod, height,
+			maxRadius);
+}
+
+static void NewFloraVAO(AuOpenGLFunctions& GLf, AuGLVAO& vao, const DeFlora& f, quint32 genSeed, float coverage, int zone,
+		bool tree, int index, unsigned int textureIndex, const AuDice& dice, int lod, float maxRadius)
+{
+	QList<AuFloraVAOTri> tris;
+	NewFloraTriangles(tris, f, genSeed, coverage, zone, tree, index, textureIndex, dice, lod, maxRadius);
+	DeFlora::CreateIndexedVAOFromTriangles(GLf, vao, tris);
+}
+
+void DePlanetFlora::NewPlantTriangles(QList<AuFloraVAOTri>& tris, bool tree, AuFloraDNA::ZONE latRegion,
+		COMMODITYID idCommodity, const AuDice& dice, int lod, float maxRadius) const
+{
+	unsigned int texBase = 0;
+	const int plantsPerZone = ZONE_TREES + ZONE_SHRUBS + 1;
+	if(latRegion == AuFloraDNA::Tropical)
+		texBase = plantsPerZone * 2;
+	else if(latRegion != AuFloraDNA::Polar)
+		texBase = plantsPerZone;
+	if(tree)
+	{
+		const unsigned int index = DeTerrainFlora::TreeIndex(idCommodity);
+		NewFloraTriangles(tris, m_Flora[latRegion].TreeAt(index), m_GenSeed, m_Coverage[latRegion][ZONE_SHRUBS + index], latRegion,
+				true, index, texBase + ZONE_SHRUBS + index, dice, lod, maxRadius);
+	}
+	else
+	{
+		const unsigned int index = DeTerrainFlora::ShrubIndex(idCommodity);
+		NewFloraTriangles(tris, m_Flora[latRegion].ShrubAt(index), m_GenSeed, m_Coverage[latRegion][index], latRegion, false,
+				index, texBase + index, dice, lod, maxRadius);
+	}
+}
+
 void DePlanetFlora::CreateShrubVAO(AuOpenGLFunctions& GLf, AuGLVAO& vao, AuFloraDNA::ZONE latRegion,
 		COMMODITYID idCommodity, const AuDice& dice, int lod, float maxRadius) const
 {
@@ -3158,6 +3371,14 @@ void DePlanetFlora::CreateShrubVAO(AuOpenGLFunctions& GLf, AuGLVAO& vao, AuFlora
 			texBase += plantsPerZone;
 			//qDebug("temperate shrub %d commodity %d", modelbase, idCommodity);
 		}
+	}
+
+	if(m_NewPalette)
+	{
+		const unsigned int index = DeTerrainFlora::ShrubIndex(idCommodity);
+		NewFloraVAO(GLf, vao, m_Flora[latRegion].ShrubAt(index), m_GenSeed, m_Coverage[latRegion][index], latRegion, false, index,
+				texBase + index, dice, lod, maxRadius);
+		return;
 	}
 
 	m_Flora[latRegion].CreateShrubVAO(GLf, vao, texBase, idCommodity, dice, lod, maxRadius);
@@ -3183,6 +3404,14 @@ void DePlanetFlora::CreateTreeVAO(AuOpenGLFunctions& GLf, AuGLVAO& vao, AuFloraD
 			texBase += plantsPerZone;
 			//qDebug("temperate shrub %d commodity %d", modelbase, idCommodity);
 		}
+	}
+
+	if(m_NewPalette)
+	{
+		const unsigned int index = DeTerrainFlora::TreeIndex(idCommodity);
+		NewFloraVAO(GLf, vao, m_Flora[latRegion].TreeAt(index), m_GenSeed, m_Coverage[latRegion][ZONE_SHRUBS + index], latRegion, true, index,
+				texBase + ZONE_SHRUBS + index, dice, lod, maxRadius);
+		return;
 	}
 
 	m_Flora[latRegion].CreateTreeVAO(GLf, vao, texBase, idCommodity, dice, lod, maxRadius);

@@ -114,6 +114,8 @@ private:
 	// Transient data used to manage display of flora.
 	QMap<AuResKey, AuGlobeFlora>		m_AquaticGrass;			// Ground cover near m_FloraViewer location.
 	AuGLVAO**							m_FloraVAOsHigh;		// High tessellation PLANT_VAOS entries for every species of plant.
+	AuGLVAO**							m_FloraVAOsFar;
+	struct AuPlantJobs*					m_PlantJobs;
 	mutable AuPoint						m_FloraViewer;			// Ground location under viewer when flora was made.
 	QMap<AuResKey, AuGlobeFlora>		m_Grass;				// Ground cover near m_FloraViewer location.
 

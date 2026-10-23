@@ -191,6 +191,8 @@ private:
 	AuPoint m_BoundsMin, m_BoundsMax;
 	bool m_BoundsValid;
 	double m_VertexMovement;
+	GLuint								m_IndexBuffer;
+	GLuint								m_Indices;
 
 public:
 	inline AuGLVAO()
@@ -202,6 +204,8 @@ public:
 		m_Vertices = 0;
 		m_BoundsValid = false;
 		m_VertexMovement = 0;
+		m_IndexBuffer = 0;
+		m_Indices = 0;
 	}
 
 	inline AuGLVAO(const AuGLVAO& c)
@@ -221,6 +225,8 @@ public:
 		m_BoundsMax = c.m_BoundsMax;
 		m_BoundsValid = c.m_BoundsValid;
 		m_VertexMovement = c.m_VertexMovement;
+		m_IndexBuffer = c.m_IndexBuffer;
+		m_Indices = c.m_Indices;
 	}
 
 	inline ~AuGLVAO()
@@ -368,10 +374,30 @@ public:
 		delete [] m_Buffers;
 		m_Buffers = 0;
 
+		if(m_IndexBuffer)
+		{
+			m_GLf->glDeleteBuffers(1, &m_IndexBuffer);
+			m_IndexBuffer = 0;
+			m_Indices = 0;
+		}
+
 		//Q_ASSERT(m_VAO);
 		m_GLf->glDeleteVertexArrays(1, &m_VAO);
 		m_VAO = 0;
 		m_BoundsValid = false;
+	}
+
+	inline void SetIndices(const QVector<GLuint>& indices)
+	{
+		if(!m_VAO || indices.isEmpty())
+			return;
+		m_GLf->glBindVertexArray(m_VAO);
+		if(!m_IndexBuffer)
+			m_GLf->glGenBuffers(1, &m_IndexBuffer);
+		m_GLf->glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_IndexBuffer);
+		m_GLf->glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.count() * sizeof(GLuint), indices.constData(), GL_STATIC_DRAW);
+		m_GLf->glBindVertexArray(0);
+		m_Indices = indices.count();
 	}
 
 	// Selects no vertex array as the current OpenGL vertex array.
@@ -388,9 +414,28 @@ public:
 		for(GLuint buffer=0; buffer<m_BufferCount; buffer++)
 			m_GLf->glEnableVertexAttribArray(buffer);
 
-		m_GLf->glDrawArrays(GL_TRIANGLES, 0, m_Vertices);
+		if(m_Indices)
+			m_GLf->glDrawElements(GL_TRIANGLES, m_Indices, GL_UNSIGNED_INT, 0);
+		else
+			m_GLf->glDrawArrays(GL_TRIANGLES, 0, m_Vertices);
 		AuRenderCounters::s_DrawCalls++;
-		AuRenderCounters::s_Vertices += m_Vertices;
+		AuRenderCounters::s_Vertices += m_Indices ? m_Indices : m_Vertices;
+
+		for(GLuint buffer=0; buffer<m_BufferCount; buffer++)
+			m_GLf->glDisableVertexAttribArray(buffer);
+	}
+
+	inline void DrawGLInstanced(GLsizei count) const
+	{
+		for(GLuint buffer=0; buffer<m_BufferCount; buffer++)
+			m_GLf->glEnableVertexAttribArray(buffer);
+
+		if(m_Indices)
+			m_GLf->glDrawElementsInstanced(GL_TRIANGLES, m_Indices, GL_UNSIGNED_INT, 0, count);
+		else
+			m_GLf->glDrawArraysInstanced(GL_TRIANGLES, 0, m_Vertices, count);
+		AuRenderCounters::s_DrawCalls++;
+		AuRenderCounters::s_Vertices += (m_Indices ? m_Indices : m_Vertices) * count;
 
 		for(GLuint buffer=0; buffer<m_BufferCount; buffer++)
 			m_GLf->glDisableVertexAttribArray(buffer);
@@ -401,9 +446,12 @@ public:
 		for(GLuint buffer=0; buffer<m_BufferCount; buffer++)
 			m_GLf->glEnableVertexAttribArray(buffer);
 
-		m_GLf->glDrawArrays(mode, 0, m_Vertices);
+		if(m_Indices)
+			m_GLf->glDrawElements(mode, m_Indices, GL_UNSIGNED_INT, 0);
+		else
+			m_GLf->glDrawArrays(mode, 0, m_Vertices);
 		AuRenderCounters::s_DrawCalls++;
-		AuRenderCounters::s_Vertices += m_Vertices;
+		AuRenderCounters::s_Vertices += m_Indices ? m_Indices : m_Vertices;
 
 		for(GLuint buffer=0; buffer<m_BufferCount; buffer++)
 			m_GLf->glDisableVertexAttribArray(buffer);
@@ -428,6 +476,8 @@ public:
 		m_BoundsMax = c.m_BoundsMax;
 		m_BoundsValid = c.m_BoundsValid;
 		m_VertexMovement = c.m_VertexMovement;
+		m_IndexBuffer = c.m_IndexBuffer;
+		m_Indices = c.m_Indices;
 
 		return *this;
 	}
@@ -539,7 +589,8 @@ public:
 	// Constructor loads and compiles the shader source code into an OpenGL shader object.
 	// OpenGL context must be current when this function is called.
 	// 'maxLights' can be 0 when compiling a fragment shader because it does not apply to them.
-	AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QString& shaderName, unsigned int maxLights=0);
+	AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QString& shaderName, unsigned int maxLights=0,
+			const QByteArray& extraDefines=QByteArray());
 
 	static void SetPerPixelLighting(bool on);
 	static bool PerPixelLighting();
@@ -6160,6 +6211,12 @@ private:
 	GLint								m_plantM;				// Location of 'plantM' uniform variable.
 	GLint								m_tex;					// Location of 'tex' uniform variable.
 	GLint								m_vForce;				// Location of 'vForce' uniform variable.
+	GLint								m_depthPass;
+	bool								m_ShadePass;
+	GLint								m_instanced;
+	GLint								m_instanceBase;
+	GLint								m_instances;
+	GLint								m_vForces;
 
 	//--------------------
 	// Lighting parameters
@@ -6186,8 +6243,10 @@ private:
 	//--------------------
 
 public:
-	AuGLSLFlora()
+	explicit AuGLSLFlora(bool shadePass = false)
 	{
+		m_ShadePass = shadePass;
+		m_depthPass = -1;
 		m_fogColor = -1;
 		m_fogDensity = -1;
 		m_glowAlpha = -1;
@@ -6198,6 +6257,10 @@ public:
 		m_plantM = -1;
 		m_tex = -1;
 		m_vForce = -1;
+		m_instanced = -1;
+		m_instanceBase = -1;
+		m_instances = -1;
+		m_vForces = -1;
 
 		m_LightsValid = false;
 		m_SunsValid = false;
@@ -6296,6 +6359,31 @@ public:
 	inline void SetForceVector(float x, float y, float z)
 	{
 		m_GLf->glUniform3f(m_vForce, x, y, z);
+	}
+
+	enum { InstanceUnit = 18 };
+	inline void SetDepthPass(bool on) const
+	{
+		if(m_depthPass >= 0)
+			m_GLf->glUniform1i(m_depthPass, on ? 1 : 0);
+	}
+
+	inline void SetInstanced(bool on, int base=0) const
+	{
+		m_GLf->glUniform1i(m_instanced, on ? 1 : 0);
+		m_GLf->glUniform1i(m_instanceBase, base);
+	}
+
+	inline void SetForceVectors(const AuPoint* v) const
+	{
+		GLfloat f[30];
+		for(int i=0; i<10; i++)
+		{
+			f[i*3] = v[i].x;
+			f[i*3+1] = v[i].y;
+			f[i*3+2] = v[i].z;
+		}
+		m_GLf->glUniform3fv(m_vForces, 10, f);
 	}
 
 	// Globe position for sun horizon calculation.
@@ -19196,6 +19284,99 @@ public:
 	}
 };
 
+class AUGL_DLL AuGLSLFloraDepth : public AuGLSLProgram
+{
+private:
+	GLint								m_mv;
+	GLint								m_OldTexture0;
+	GLint								m_p;
+	GLint								m_plantM;
+	GLint								m_tex;
+	GLint								m_vForce;
+	GLint								m_instanced;
+	GLint								m_instanceBase;
+	GLint								m_instances;
+	GLint								m_vForces;
+
+public:
+	AuGLSLFloraDepth()
+	{
+		m_mv = -1;
+		m_OldTexture0 = 0;
+		m_p = -1;
+		m_plantM = -1;
+		m_tex = -1;
+		m_vForce = -1;
+		m_instanced = -1;
+		m_instanceBase = -1;
+		m_instances = -1;
+		m_vForces = -1;
+	}
+
+	virtual void Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt);
+
+	virtual void Deselect()
+	{
+		AuGLSLProgram::Deselect();
+		m_GLf->glActiveTexture(GL_TEXTURE0);
+		m_GLf->glBindTexture(GL_TEXTURE_2D, m_OldTexture0);
+	}
+
+	virtual QString Name() const
+	{
+		return QString("FloraDepth");
+	}
+
+	inline void Select(const AuMatrix4x4& projection)
+	{
+		AuGLSLProgram::Select();
+		SetUniformMatrix(m_GLf, m_p, projection);
+		m_GLf->glUniform1i(m_tex, 0);
+		m_GLf->glActiveTexture(GL_TEXTURE0);
+		m_GLf->glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_OldTexture0);
+	}
+
+	inline void SetForceVector(float x, float y, float z) const
+	{
+		m_GLf->glUniform3f(m_vForce, x, y, z);
+	}
+
+	enum { InstanceUnit = 18 };
+	inline void SetInstanced(bool on, int base=0) const
+	{
+		m_GLf->glUniform1i(m_instanced, on ? 1 : 0);
+		m_GLf->glUniform1i(m_instanceBase, base);
+	}
+
+	inline void SetForceVectors(const AuPoint* v) const
+	{
+		GLfloat f[30];
+		for(int i=0; i<10; i++)
+		{
+			f[i*3] = v[i].x;
+			f[i*3+1] = v[i].y;
+			f[i*3+2] = v[i].z;
+		}
+		m_GLf->glUniform3fv(m_vForces, 10, f);
+	}
+
+	inline void SetModelView(const AuMatrix4x4& mv) const
+	{
+		SetUniformMatrix(m_GLf, m_mv, mv);
+	}
+
+	inline void SetPlantMatrix(const AuMatrix4x4& m) const
+	{
+		SetUniformMatrix(m_GLf, m_plantM, m);
+	}
+
+	inline void SetTexture(GLuint texName) const
+	{
+		m_GLf->glActiveTexture(GL_TEXTURE0);
+		m_GLf->glBindTexture(GL_TEXTURE_2D, texName);
+	}
+};
+
 // Renders Sc models without sun over the horizon or ringworld shadow panel effects, for scene not at a world.
 
 class AUGL_DLL AuGLSLSc : public AuGLSLScBase
@@ -23077,6 +23258,7 @@ private:
 	AuGLSLFarStar*						m_FarStar;
 	AuGLSLFlag*							m_Flag;
 	AuGLSLFlora*						m_Flora;
+	AuGLSLFlora*						m_FloraShade;
 	AuGLSLFloraRingworld*				m_FloraRingworld;
 	AuGLSLGalaxyCloud*					m_GalaxyCloud;
 	AuGLSLGalaxyStar*					m_GalaxyStar;
@@ -23130,6 +23312,7 @@ private:
 	AuGLSLBodyDepth*					m_BodyDepth;
 	AuGLSLModelDepth*					m_ModelDepth;
 	AuGLSLGlobeDepth*					m_GlobeDepth;
+	AuGLSLFloraDepth*					m_FloraDepth;
 	AuGLSLScDepthAlpha*					m_ScDepthAlpha;
 	AuGLSLShadowSquare*					m_ShadowSquare;
 	AuGLSLShield*						m_Shield;
@@ -23249,6 +23432,11 @@ public:
 	inline AuGLSLGlobeDepth& GlobeDepthShader()
 	{
 		return *m_GlobeDepth;
+	}
+
+	inline AuGLSLFloraDepth& FloraDepthShader()
+	{
+		return *m_FloraDepth;
 	}
 
 	inline AuGLSLScDepthAlpha& ScDepthAlphaShader()
@@ -23477,6 +23665,11 @@ public:
 	inline AuGLSLFlora& FloraShader()
 	{
 		return *m_Flora;
+	}
+
+	inline AuGLSLFlora& FloraShadeShader()
+	{
+		return *m_FloraShade;
 	}
 
 	inline AuGLSLFloraRingworld& FloraRingworldShader()

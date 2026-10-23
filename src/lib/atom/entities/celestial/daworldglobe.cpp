@@ -5,6 +5,12 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "daworldglobe.h"
+
+#include <map>
+#include <QAtomicInt>
+#include <QRunnable>
+#include <QThread>
+#include <QThreadPool>
 //
 #include "auatomrenderinfo.h"
 #include "aucombat.h"
@@ -226,6 +232,54 @@ static GLuint s_texSeaN[5] = {0,0,0,0,0};	// Sea surface bump maps by orbit zone
 static GLuint 							s_TexTerPalette[WORLDTEX_Count];	// Terrain texture tiles.
 static GLuint s_TexLegacyPavement[18];				// Original 2016 WORLDTEX 0..17, independent of natural terrain.
 
+class AuPlantJob : public QRunnable
+{
+public:
+	const DePlanetFlora*				m_Flora;
+	bool								m_Tree;
+	AuFloraDNA::ZONE					m_Region;
+	COMMODITYID							m_CID;
+	AuDice								m_Dice;
+	int									m_Lod;
+	QList<AuFloraVAOTri>				m_Tris;
+	QAtomicInt							m_Done;
+
+	AuPlantJob(const DePlanetFlora* flora, bool tree, AuFloraDNA::ZONE region, COMMODITYID cid, const AuDice& dice, int lod) :
+		m_Flora(flora), m_Tree(tree), m_Region(region), m_CID(cid), m_Dice(dice), m_Lod(lod), m_Done(0)
+	{
+		setAutoDelete(false);
+	}
+
+	virtual void run()
+	{
+		m_Flora->NewPlantTriangles(m_Tris, m_Tree, m_Region, m_CID, m_Dice, m_Lod);
+		m_Done.storeRelease(1);
+	}
+};
+
+struct AuPlantJobs
+{
+	QThreadPool							m_Pool;
+	QHash<int, AuPlantJob*>				m_Jobs;
+
+	AuPlantJobs()
+	{
+		m_Pool.setMaxThreadCount(qMax(1, QThread::idealThreadCount() - 1));
+	}
+
+	~AuPlantJobs()
+	{
+		WaitAll();
+	}
+
+	void WaitAll()
+	{
+		m_Pool.waitForDone();
+		qDeleteAll(m_Jobs);
+		m_Jobs.clear();
+	}
+};
+
 DaWorldGlobe::DaWorldGlobe()
 {
 	//m_AtmColor constructor sets it to 'invalid' state
@@ -233,6 +287,8 @@ DaWorldGlobe::DaWorldGlobe()
 	m_AtmType = ATMTYPE_Standard;
 	m_byWater = 0;
 	m_FloraVAOsHigh = 0;
+	m_FloraVAOsFar = 0;
+	m_PlantJobs = 0;
 	m_FogOfWar = new AuFogOfWar;
 	m_HengeColumn = 0;
 	m_HengeFirePit = 0;
@@ -300,6 +356,12 @@ DaWorldGlobe::~DaWorldGlobe()
 	if(m_FogOfWar)
 		delete m_FogOfWar;
 
+	if(m_PlantJobs)
+	{
+		delete m_PlantJobs;
+		m_PlantJobs = 0;
+	}
+
 	if(m_FloraVAOsHigh)
 	{
 		// We must delete the individually allocated vao objects in this array.
@@ -311,6 +373,15 @@ DaWorldGlobe::~DaWorldGlobe()
 
 		// Now we can delete the array itself.
 		delete [] m_FloraVAOsHigh;
+	}
+	if(m_FloraVAOsFar)
+	{
+		int maxFlora = PLANT_VAOS * AuFloraDNA::Zones * (1 + ZONE_TREES + ZONE_SHRUBS) * ResourceZones();
+		AuGLVAO** pvao = m_FloraVAOsFar;
+		for(int flora=0; flora<maxFlora; flora++, pvao++)
+			if(*pvao)
+				delete *pvao;
+		delete [] m_FloraVAOsFar;
 	}
 
 	if(m_RockVAOs)
@@ -419,6 +490,8 @@ DaWorldGlobe::DaWorldGlobe(const DaWorldGlobe &rhs) : DaWorldSphere(rhs)
 
 	m_Atmosphere = AuGLVAO();
 	m_FloraVAOsHigh = 0;
+	m_FloraVAOsFar = 0;
+	m_PlantJobs = 0;
 	m_NearGlobe = AuGLVAO();
 	m_RockVAOs = 0;
 	m_SeaGlobe = AuGLVAO();
@@ -602,6 +675,8 @@ void DaWorldGlobe::RxUpdate(QDataStream& fromServer, bool isFirstUpdate)
 
 	if(hasWhat & 0x10)
 	{
+		if(m_PlantJobs)
+			m_PlantJobs->WaitAll();
 		// This allows for farm and orchard plants in harsh environments.
 		if(!m_pFlora)
 			m_pFlora = new DePlanetFlora[ResourceZones()];
@@ -899,6 +974,8 @@ void DaWorldGlobe::CreatePlanet(HABITABILITY hab, const AuDice& Cdice)
 
 	// All bodies that could have cities on them must have plant DNA so the farms and orchards can make plants.
 	m_GlobeLock.lockForWrite();
+	if(m_PlantJobs)
+		m_PlantJobs->WaitAll();
 	if(!m_pFlora)
 		m_pFlora = new DePlanetFlora[ResourceZones()];
 	for(int rz=0; rz<ResourceZones(); rz++)
@@ -947,6 +1024,8 @@ void DaWorldGlobe::CreateTitan(HABITABILITY hab, const AuDice& Cdice)
 
 	// All bodies that could have cities on them must have plant DNA so the farms and orchards can make plants.
 	m_GlobeLock.lockForWrite();
+	if(m_PlantJobs)
+		m_PlantJobs->WaitAll();
 	if(!m_pFlora)
 		m_pFlora = new DePlanetFlora[ResourceZones()];
 	for(int rz=0; rz<ResourceZones(); rz++)
@@ -988,6 +1067,8 @@ void DaWorldGlobe::CreateMoon(const AuDice& Cdice)
 
 	// All bodies that could have cities on them must have plant DNA so the farms and orchards can make plants.
 	m_GlobeLock.lockForWrite();
+	if(m_PlantJobs)
+		m_PlantJobs->WaitAll();
 	if(!m_pFlora)
 		m_pFlora = new DePlanetFlora[ResourceZones()];
 	for(int rz=0; rz<ResourceZones(); rz++)
@@ -1019,6 +1100,8 @@ void DaWorldGlobe::CreateAsteroidBelt(const AuDice& Cdice, quint8 orbitIndex)
 
 	// All bodies that could have cities on them must have plant DNA so the farms and orchards can make plants.
 	m_GlobeLock.lockForWrite();
+	if(m_PlantJobs)
+		m_PlantJobs->WaitAll();
 	if(!m_pFlora)
 		m_pFlora = new DePlanetFlora[ResourceZones()];
 	for(int rz=0; rz<ResourceZones(); rz++)
@@ -4814,11 +4897,21 @@ void DaWorldGlobe::DeleteDeviceObjects(AuAtomRenderInfo& ari)
 
 void DaWorldGlobe::DeleteFloraDeviceObjects(AuGLEffects& re, AuGLModelMaker& mm)
 {
+	if(m_PlantJobs)
+		m_PlantJobs->WaitAll();
 	if(m_FloraVAOsHigh)
 	{
 		// We must delete the individually allocated vao objects in this array.
 		int maxFlora = PLANT_VAOS * AuFloraDNA::Zones * (1 + ZONE_TREES + ZONE_SHRUBS) * ResourceZones();
 		AuGLVAO** pvao = m_FloraVAOsHigh;
+		for(int flora=0; flora<maxFlora; flora++, pvao++)
+			if(*pvao)
+				(*pvao)->DeleteGL();
+	}
+	if(m_FloraVAOsFar)
+	{
+		int maxFlora = PLANT_VAOS * AuFloraDNA::Zones * (1 + ZONE_TREES + ZONE_SHRUBS) * ResourceZones();
+		AuGLVAO** pvao = m_FloraVAOsFar;
 		for(int flora=0; flora<maxFlora; flora++, pvao++)
 			if(*pvao)
 				(*pvao)->DeleteGL();
@@ -7453,9 +7546,211 @@ quint8 DaWorldGlobe::VegetationAt(const AuGlobeLL& ll, float terAltMSL, int inEn
 	return (quint8)(vegAt);
 }
 
+class AuFloraInstances
+{
+private:
+	struct Group
+	{
+		AuGLVAO*						vao;
+		int								zone;
+		QVector<GLfloat>				data;
+	};
+	std::map<std::pair<int, AuGLVAO*>, Group>	m_Groups;
+	int									m_Count;
+	static GLuint						s_Buffer;
+	static GLuint						s_Texture;
+
+public:
+	enum { MaxPlants = 10900 };
+
+	AuFloraInstances() : m_Count(0) {}
+
+	bool Room(int n) const
+	{
+		return m_Count + n <= MaxPlants;
+	}
+
+	bool Add(AuGLVAO* vao, int zone, const AuMatrix4x4& t, float glowR, float glowG, float glowB, int wind, float fade = 0.f,
+			bool light = false)
+	{
+		if(m_Count >= MaxPlants)
+			return false;
+		Group& g = m_Groups[std::make_pair(zone, vao)];
+		g.vao = vao;
+		g.zone = zone;
+		const double* m = t.GLMatrix();
+		for(int i=0; i<16; i++)
+			g.data.append((GLfloat)m[i]);
+		g.data << glowR << glowG << glowB << (GLfloat)(wind < 10 ? wind : 0);
+		g.data << fade << (light ? 1.f : 0.f) << 0.f << 0.f;
+		m_Count++;
+		return true;
+	}
+
+	bool IsEmpty() const
+	{
+		return !m_Count;
+	}
+
+	template<class SHADER, class TEXTURE> void Draw(AuOpenGLFunctions& GLf, SHADER& shader, TEXTURE texture, bool upload = true,
+			bool clear = true)
+	{
+		if(!m_Count)
+			return;
+		QVector<GLfloat> all;
+		all.reserve(m_Count * 24);
+		struct Draw { AuGLVAO* vao; int zone; int first; int count; };
+		QVector<Draw> draws;
+		for(auto gi = m_Groups.cbegin(); gi != m_Groups.cend(); gi++)
+		{
+			draws.append(Draw{gi->second.vao, gi->second.zone, all.count() / 24, gi->second.data.count() / 24});
+			all += gi->second.data;
+		}
+		if(!s_Buffer)
+		{
+			GLf.glGenBuffers(1, &s_Buffer);
+			GLf.glGenTextures(1, &s_Texture);
+		}
+		if(upload)
+		{
+			GLf.glBindBuffer(GL_TEXTURE_BUFFER, s_Buffer);
+			GLf.glBufferData(GL_TEXTURE_BUFFER, all.count() * sizeof(GLfloat), all.constData(), GL_STREAM_DRAW);
+			GLf.glBindBuffer(GL_TEXTURE_BUFFER, 0);
+		}
+		GLf.glActiveTexture(GL_TEXTURE0 + AuGLSLFlora::InstanceUnit);
+		GLf.glBindTexture(GL_TEXTURE_BUFFER, s_Texture);
+		GLf.glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, s_Buffer);
+		GLf.glActiveTexture(GL_TEXTURE0);
+
+		int zone = -1;
+		for(const Draw& d : draws)
+		{
+			if(d.zone != zone)
+			{
+				zone = d.zone;
+				shader.SetTexture(texture(zone));
+			}
+			shader.SetInstanced(true, d.first);
+			d.vao->SelectGL();
+			d.vao->DrawGLInstanced(d.count);
+			d.vao->DeselectGL();
+		}
+		shader.SetInstanced(false);
+		if(clear)
+		{
+			m_Groups.clear();
+			m_Count = 0;
+		}
+	}
+};
+
+GLuint AuFloraInstances::s_Buffer = 0;
+GLuint AuFloraInstances::s_Texture = 0;
+
+class AuViewFrustum
+{
+private:
+	double								m_Plane[5][4];
+
+public:
+	explicit AuViewFrustum(const AuMatrix4x4& projection)
+	{
+		const double* m = projection.GLMatrix();
+		double row[4][4];
+		for(int r=0; r<4; r++)
+			for(int c=0; c<4; c++)
+				row[r][c] = m[c*4 + r];
+		const int axis[5] = { 0, 0, 1, 1, 2 };
+		const double sign[5] = { 1, -1, 1, -1, 1 };
+		for(int p=0; p<5; p++)
+		{
+			double len = 0;
+			for(int c=0; c<4; c++)
+				m_Plane[p][c] = row[3][c] + sign[p] * row[axis[p]][c];
+			for(int c=0; c<3; c++)
+				len += m_Plane[p][c] * m_Plane[p][c];
+			len = sqrt(len);
+			if(len > 0)
+				for(int c=0; c<4; c++)
+					m_Plane[p][c] /= len;
+		}
+	}
+
+	inline bool Sees(const AuPoint& p, double radius) const
+	{
+		for(int k=0; k<5; k++)
+			if(m_Plane[k][0]*p.x + m_Plane[k][1]*p.y + m_Plane[k][2]*p.z + m_Plane[k][3] < -radius)
+				return false;
+		return true;
+	}
+};
+
+static const double s_GrassReach = 8, s_ShrubReach = 40, s_TreeReach = 140;
+
+static float FloraLodFt(bool tree)
+{
+	return tree ? qMax(200.f, sqrtf((float)g_Au.TreeViewRangeFt2()) * .25f) : qMax(80.f, sqrtf((float)g_Au.ShrubViewRangeFt2()) * .2f);
+}
+
+static float FloraLodBlend(float dist, float lodFt)
+{
+	const float band = lodFt * .2f;
+	return qBound(0.f, (dist - (lodFt - band * .5f)) / band, 1.f);
+}
+
+static AuPoint s_SunShadowWind[10];
+
+template<class PLANTS, class FLORA> static void SunShadowDepthPlants(PLANTS& plants, FLORA* flora, AuGLVAO** vaos,
+		double reach, double viewRange2, const AuMatrix4x4& model, AuGLSLFloraDepth& shader, AuSunShadowPass& sp, AuGLVAO*& curvao,
+		AuFloraInstances* instances = 0, AuGLVAO** farVaos = 0, float lodFt = 0.f)
+{
+	int resourceZone = -1;
+	int windIndex = -1;
+	for(typename PLANTS::iterator gi = plants.begin(); gi != plants.end(); gi++)
+	{
+		AuPoint pv = model.Project((*gi).Location());
+		if(pv.Length2() > viewRange2 || !sp.Asked(pv.x, pv.y, pv.z, reach) || !sp.Reaches(pv.x, pv.y, pv.z, reach))
+			continue;
+		AuGLVAO* vao = vaos[(*gi).m_VAOIndex];
+		if(farVaos && pv.Length2() > (double)lodFt * lodFt)
+		{
+			AuGLVAO* fv = farVaos[(*gi).m_VAOIndex];
+			if(fv && fv->VAO())
+				vao = fv;
+		}
+		if(!vao || !vao->VAO() || !flora[(*gi).m_ResourceZone].Texture())
+			continue;
+		if((*gi).m_ResourceZone != resourceZone)
+		{
+			resourceZone = (*gi).m_ResourceZone;
+			shader.SetTexture(flora[resourceZone].Texture());
+		}
+		if((*gi).m_WindIndex != windIndex && (*gi).m_WindIndex < 10)
+		{
+			windIndex = (*gi).m_WindIndex;
+			shader.SetForceVector(s_SunShadowWind[windIndex].x, s_SunShadowWind[windIndex].y, s_SunShadowWind[windIndex].z);
+		}
+		if(instances && instances->Add(vao, (*gi).m_ResourceZone, (*gi).Transform(), 0, 0, 0, (*gi).m_WindIndex))
+		{
+			sp.Drew();
+			continue;
+		}
+		shader.SetPlantMatrix((*gi).Transform());
+		if(vao != curvao)
+		{
+			if(curvao)
+				curvao->DeselectGL();
+			vao->SelectGL();
+			curvao = vao;
+		}
+		vao->DrawGL();
+		sp.Drew();
+	}
+}
+
 unsigned int DaWorldGlobe::SunShadowFamilies() const
 {
-	return 1u << SSF_Terrain;
+	return (1u << SSF_Terrain) | (1u << SSF_Plants);
 }
 
 unsigned int DaWorldGlobe::SunShadowVariants(int family) const
@@ -7478,6 +7773,69 @@ void DaWorldGlobe::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash
 		m_AtGlobe.m_Low.DrawGL();
 		m_AtGlobe.m_Low.DeselectGL();
 		sp.Drew();
+		return;
+	}
+	if(sp.m_Family == SSF_Plants)
+	{
+		const AuMatrix4x4& model = rmod.Matrix(Id());
+		AuGLSLFloraDepth& shader = ari.re->GLSL().FloraDepthShader();
+		shader.SetModelView(model);
+		AuGLVAO* curvao = 0;
+		if(m_pFlora && m_FloraVAOsHigh)
+		{
+			AuFloraInstances instances;
+			AuFloraInstances* inst = g_Au.NewFlora() ? &instances : 0;
+			AuGLVAO** lightModels = inst ? m_FloraVAOsFar : 0;
+			SunShadowDepthPlants(m_Trees, m_pFlora, m_FloraVAOsHigh, 80, g_Au.TreeViewRangeFt2(), model, shader, sp, curvao, inst,
+					lightModels, FloraLodFt(true));
+			if(!inst || sp.m_Cascade < SUN_SHADOW_CASCADES - 1)
+				SunShadowDepthPlants(m_Shrubs, m_pFlora, m_FloraVAOsHigh, 25, g_Au.ShrubViewRangeFt2(), model, shader, sp, curvao, inst,
+						lightModels, FloraLodFt(false));
+			if(g_Au.ShadowGrassDistance() > 0)
+			{
+				double grassFt = g_Au.ShadowGrassDistance() * FeetPerMeter();
+				double grassRange2 = qMin(grassFt * grassFt, g_Au.GrassViewRangeFt2() * .64);
+				SunShadowDepthPlants(m_Grass, m_pFlora, m_FloraVAOsHigh, 5, grassRange2, model, shader, sp, curvao, inst);
+			}
+			if(!instances.IsEmpty())
+			{
+				if(curvao)
+				{
+					curvao->DeselectGL();
+					curvao = 0;
+				}
+				shader.SetForceVectors(s_SunShadowWind);
+				DePlanetFlora* flora = m_pFlora;
+				instances.Draw(*ari.re, shader, [flora](int zone) { return flora[zone].Texture(); });
+			}
+		}
+		if(m_RockVAOs && !m_Rocks.isEmpty())
+		{
+			shader.SetTexture(s_TexRock);
+			shader.SetForceVector(0, 0, 0);
+			for(QMap<AuResKey, AuGlobeRock>::iterator gi = m_Rocks.begin(); gi != m_Rocks.end(); gi++)
+			{
+				const double reach = 25;
+				AuPoint pv = model.Project((*gi).Location());
+				if(pv.Length2() > g_Au.RockViewRangeFt2() || !sp.Asked(pv.x, pv.y, pv.z, reach) || !sp.Reaches(pv.x, pv.y, pv.z, reach))
+					continue;
+				AuGLVAO* vao = m_RockVAOs[(*gi).m_VAOIndex];
+				if(!vao || !vao->VAO())
+					continue;
+				shader.SetPlantMatrix((*gi).Transform());
+				if(vao != curvao)
+				{
+					if(curvao)
+						curvao->DeselectGL();
+					vao->SelectGL();
+					curvao = vao;
+				}
+				vao->DrawGL();
+				sp.Drew();
+			}
+		}
+		if(curvao)
+			curvao->DeselectGL();
 		return;
 	}
 	if(sp.m_Family != SSF_Terrain || m_AtGlobe.m_TriVAOs.empty())
@@ -8142,6 +8500,13 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 		for(int fauna=0; fauna<maxFlora; fauna++, pvao++)
 			*pvao = 0;
 	}
+	if(!m_FloraVAOsFar)
+	{
+		int maxFlora = PLANT_VAOS * AuFloraDNA::Zones * (1 + ZONE_TREES + ZONE_SHRUBS) * ResourceZones();
+		m_FloraVAOsFar = new AuGLVAO*[maxFlora];
+		for(int flora=0; flora<maxFlora; flora++)
+			m_FloraVAOsFar[flora] = 0;
+	}
 
 	// Determine wind vectors.
 	AuPoint vup = -GravityDir(viewerPos);
@@ -8218,6 +8583,9 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 			windVec[iwv] = AuPoint(0,0);
 	}
 
+	for(int iwv=0; iwv<10; iwv++)
+		s_SunShadowWind[iwv] = windVec[iwv];
+
 	// Place plants in the environment.
 	// Calculate location of viewer on the ground.
 	AuPoint groundPos = GetSurfaceLocation(viewerLL);
@@ -8277,6 +8645,10 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 	int resourceZone = -1;
 	int windIndex = -1;
 	AuGLVAO* curvao = 0;
+
+	const bool instancing = g_Au.NewFlora();
+	AuFloraInstances instances;
+	const AuViewFrustum frustum(projection);
 	double gfadeDist = g_Au.GrassViewRangeFt() * .8;				// Distance at which plants start to become transparent
 	double gfadeRange = g_Au.GrassViewRangeFt() - gfadeDist;
 	for(QMap<AuResKey, AuGlobeFlora>::const_iterator gi = m_Grass.cbegin(); gi != m_Grass.cend(); gi++)
@@ -8289,6 +8661,8 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 			// Clip when too far behind the viewer.
 			AuPoint viewPt = model.Project((*gi).Location());
 			if(viewPt.z > 0)
+				continue;
+			if(instancing && !frustum.Sees(viewPt, s_GrassReach))
 				continue;	// Grass is behind viewer.
 		}
 
@@ -8361,6 +8735,10 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 		if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
 			continue;
 
+		if(instancing && plantAlpha >= 1.f &&
+				instances.Add(vao, resourceZone, (*gi).Transform(), (*gi).m_GlowR, (*gi).m_GlowG, (*gi).m_GlowB, (*gi).m_WindIndex))
+			continue;
+
 		// Multiply by model matrix to place the plant in the view.
 		re.GLSL().FloraShader().SetPlantMatrix((*gi).Transform());
 
@@ -8409,6 +8787,64 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 			re.GLSL().FloraShader().SetTexture(m_pFlora[resourceZone].Texture());
 		}
 
+		auto plantVAO = [&](bool light) -> AuGLVAO*
+		{
+			AuGLVAO*& slot = (light ? m_FloraVAOsFar : m_FloraVAOsHigh)[(*gi).m_VAOIndex];
+			if(!slot)
+				slot = new AuGLVAO;
+			if(!slot->VAO())
+			{
+				AuDice dice;
+				dice.Seed(GenSeed() + (*gi).m_VAOIndex);
+				if(!m_pFlora[resourceZone].NewPalette())
+					m_pFlora[resourceZone].CreateShrubVAO(re, *slot, gi.key().LatitudeRegion(), (*gi).m_CID, dice, light ? 1 : 2);
+				else
+				{
+					if(!m_PlantJobs)
+						m_PlantJobs = new AuPlantJobs;
+					const int key = (*gi).m_VAOIndex * 2 + (light ? 1 : 0);
+					AuPlantJob* job = m_PlantJobs->m_Jobs.value(key);
+					if(!job)
+					{
+						job = new AuPlantJob(&m_pFlora[resourceZone], false, gi.key().LatitudeRegion(), (*gi).m_CID, dice,
+								light ? 1 : 2);
+						m_PlantJobs->m_Jobs.insert(key, job);
+						m_PlantJobs->m_Pool.start(job);
+					}
+					else if(job->m_Done.loadAcquire())
+					{
+						DeFlora::CreateIndexedVAOFromTriangles(re, *slot, job->m_Tris);
+						m_PlantJobs->m_Jobs.remove(key);
+						delete job;
+					}
+				}
+			}
+			return slot;
+		};
+		if(instancing && !frustum.Sees(viewPt, s_ShrubReach))
+			continue;
+		const float lightShare = instancing ? FloraLodBlend(sqrtf((float)viewPt.Length2()), FloraLodFt(false)) : 0.f;
+
+		if(instancing && plantAlpha >= 1.f && (*gi).m_CityR == 0 && (*gi).m_CityG == 0 && (*gi).m_CityB == 0 &&
+				instances.Room(lightShare > 0.f && lightShare < 1.f ? 2 : 1))
+		{
+			const AuMatrix4x4& t = (*gi).Transform();
+			if(lightShare < 1.f)
+			{
+				AuGLVAO* vao = plantVAO(false);
+				if(vao->VAO())
+					instances.Add(vao, resourceZone, t, (*gi).m_GlowR, (*gi).m_GlowG, (*gi).m_GlowB, (*gi).m_WindIndex, lightShare);
+			}
+			if(lightShare > 0.f)
+			{
+				AuGLVAO* vao = plantVAO(true);
+				if(vao->VAO())
+					instances.Add(vao, resourceZone, t, (*gi).m_GlowR, (*gi).m_GlowG, (*gi).m_GlowB, (*gi).m_WindIndex,
+							lightShare < 1.f ? -lightShare : 0.f, true);
+			}
+			continue;
+		}
+
 		// Configure ambient light.
 		float iambR = ambientLight + (*gi).m_CityR;
 		float iambG = ambientLight + (*gi).m_CityG;
@@ -8443,24 +8879,14 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 		}
 
 		// Insure we have the specific VAO that is referenced.
-		AuGLVAO* vao = m_FloraVAOsHigh[(*gi).m_VAOIndex];
-		if(!vao || !vao->VAO())
-		{
+
+		AuGLVAO* vao = plantVAO(lightShare >= .5f);
+		if(!vao->VAO())
+			continue;
 			if(!mm.LegacyDecorationStep()) continue;
 			// Create the specific VAO model we need.
-			if(!vao)
-			{
-				vao = new AuGLVAO;
-				m_FloraVAOsHigh[(*gi).m_VAOIndex] = vao;
-			}
 
 			// Create VAO of typical shrub.
-			AuDice dice;
-			dice.Seed(GenSeed() + (*gi).m_VAOIndex);
-			m_pFlora[resourceZone].CreateShrubVAO(re, *vao, gi.key().LatitudeRegion(), (*gi).m_CID, dice, 2);
-		}
-
-		Q_ASSERT(vao->VAO());
 
 		// Include the full plant and its maximum wind/current displacement.
 		if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
@@ -8510,6 +8936,64 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 			re.GLSL().FloraShader().SetTexture(m_pFlora[resourceZone].Texture());
 		}
 
+		auto plantVAO = [&](bool light) -> AuGLVAO*
+		{
+			AuGLVAO*& slot = (light ? m_FloraVAOsFar : m_FloraVAOsHigh)[(*gi).m_VAOIndex];
+			if(!slot)
+				slot = new AuGLVAO;
+			if(!slot->VAO())
+			{
+				AuDice dice;
+				dice.Seed(GenSeed() + (*gi).m_VAOIndex);
+				if(!m_pFlora[resourceZone].NewPalette())
+					m_pFlora[resourceZone].CreateTreeVAO(re, *slot, gi.key().LatitudeRegion(), (*gi).m_CID, dice, light ? 1 : 2);
+				else
+				{
+					if(!m_PlantJobs)
+						m_PlantJobs = new AuPlantJobs;
+					const int key = (*gi).m_VAOIndex * 2 + (light ? 1 : 0);
+					AuPlantJob* job = m_PlantJobs->m_Jobs.value(key);
+					if(!job)
+					{
+						job = new AuPlantJob(&m_pFlora[resourceZone], true, gi.key().LatitudeRegion(), (*gi).m_CID, dice,
+								light ? 1 : 2);
+						m_PlantJobs->m_Jobs.insert(key, job);
+						m_PlantJobs->m_Pool.start(job);
+					}
+					else if(job->m_Done.loadAcquire())
+					{
+						DeFlora::CreateIndexedVAOFromTriangles(re, *slot, job->m_Tris);
+						m_PlantJobs->m_Jobs.remove(key);
+						delete job;
+					}
+				}
+			}
+			return slot;
+		};
+		if(instancing && !frustum.Sees(viewPt, s_TreeReach))
+			continue;
+		const float lightShare = instancing ? FloraLodBlend(sqrtf((float)viewPt.Length2()), FloraLodFt(true)) : 0.f;
+
+		if(instancing && plantAlpha >= 1.f && (*gi).m_CityR == 0 && (*gi).m_CityG == 0 && (*gi).m_CityB == 0 &&
+				instances.Room(lightShare > 0.f && lightShare < 1.f ? 2 : 1))
+		{
+			const AuMatrix4x4& t = (*gi).Transform();
+			if(lightShare < 1.f)
+			{
+				AuGLVAO* vao = plantVAO(false);
+				if(vao->VAO())
+					instances.Add(vao, resourceZone, t, (*gi).m_GlowR, (*gi).m_GlowG, (*gi).m_GlowB, (*gi).m_WindIndex, lightShare);
+			}
+			if(lightShare > 0.f)
+			{
+				AuGLVAO* vao = plantVAO(true);
+				if(vao->VAO())
+					instances.Add(vao, resourceZone, t, (*gi).m_GlowR, (*gi).m_GlowG, (*gi).m_GlowB, (*gi).m_WindIndex,
+							lightShare < 1.f ? -lightShare : 0.f, true);
+			}
+			continue;
+		}
+
 		// Configure ambient light.
 		float iambR = ambientLight + (*gi).m_CityR;
 		float iambG = ambientLight + (*gi).m_CityG;
@@ -8544,24 +9028,14 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 		}
 
 		// Insure we have the specific VAO that is referenced.
-		AuGLVAO* vao = m_FloraVAOsHigh[(*gi).m_VAOIndex];
-		if(!vao || !vao->VAO())
-		{
+
+		AuGLVAO* vao = plantVAO(lightShare >= .5f);
+		if(!vao->VAO())
+			continue;
 			if(!mm.LegacyDecorationStep()) continue;
 			// Create the specific VAO model we need.
-			if(!vao)
-			{
-				vao = new AuGLVAO;
-				m_FloraVAOsHigh[(*gi).m_VAOIndex] = vao;
-			}
 
 			// Create VAO of typical tree.
-			AuDice dice;
-			dice.Seed(GenSeed() + (*gi).m_VAOIndex);
-			m_pFlora[resourceZone].CreateTreeVAO(re, *vao, gi.key().LatitudeRegion(), (*gi).m_CID, dice, 2);
-		}
-
-		Q_ASSERT(vao->VAO());
 
 		// Include the full plant and its maximum wind/current displacement.
 		if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
@@ -8584,6 +9058,45 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 	{
 		curvao->DeselectGL();
 		curvao = 0;
+	}
+
+	if(!instances.IsEmpty())
+	{
+		if(curvao)
+		{
+			curvao->DeselectGL();
+			curvao = 0;
+		}
+		re.GLSL().FloraShader().SetAmbientLight(ambientLight, ambientLight, ambientLight);
+		re.GLSL().FloraShader().SetGlowAlpha(0, 0, 0, 1.f);
+		re.glDisable(GL_BLEND);
+		re.GLSL().FloraShader().SetForceVectors(windVec);
+		DePlanetFlora* flora = m_pFlora;
+		auto texture = [flora](int zone) { return flora[zone].Texture(); };
+
+		GLint depthFunc = GL_LESS;
+		re.glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+		re.glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+		re.GLSL().FloraShader().SetDepthPass(true);
+		instances.Draw(re, re.GLSL().FloraShader(), texture, true, false);
+		re.GLSL().FloraShader().SetDepthPass(false);
+		re.glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+		AuGLSLFlora& shade = re.GLSL().FloraShadeShader();
+		shade.Select(projection, re);
+		shade.SetModelView(model);
+		shade.SetFog(fogDensity, fogR, fogG, fogB);
+		shade.SetGlobeLocation(globeP.x, globeP.y, globeP.z);
+		shade.SetAmbientLight(ambientLight, ambientLight, ambientLight);
+		shade.SetAmbientLightUp(ambientUp.x, ambientUp.y, ambientUp.z);
+		shade.SetGlowAlpha(0, 0, 0, 1.f);
+		shade.SetForceVectors(windVec);
+		re.glDepthFunc(GL_EQUAL);
+		re.glDepthMask(GL_FALSE);
+		instances.Draw(re, shade, texture, false, true);
+		re.glDepthMask(GL_TRUE);
+		re.glDepthFunc(depthFunc);
+		shade.Deselect();
 	}
 
 	re.GLSL().FloraShader().Deselect();

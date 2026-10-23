@@ -102,6 +102,8 @@ int main(int argc, char** argv)
 			AuGLSLShader::SetShadowLights(displaySettings.value(AuGlobal::ShadowLightsKey(), 0).toInt());
 			AuGLSLShader::SetShadowCasterLimitMeters(SSF_Creatures,
 					displaySettings.value(AuGlobal::ShadowCreatureDistanceKey(), 100).toInt());
+			AuGLSLShader::SetShadowCasterLimitMeters(SSF_Plants,
+					displaySettings.value(AuGlobal::ShadowPlantDistanceKey(), 150).toInt());
 		}
 		QSurfaceFormat::setDefaultFormat(glformat);
 

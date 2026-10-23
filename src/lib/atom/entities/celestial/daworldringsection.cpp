@@ -8353,15 +8353,99 @@ quint8 DaWorldRingSection::VegetationAt(const AuGlobeLL& ll, float terAltMSL, in
 	return (quint8)(vegAt);
 }
 
+static AuPoint s_SunShadowWind[10];
+
+template<class PLANTS, class FLORA> static void SunShadowDepthPlants(PLANTS& plants, FLORA* flora, AuGLVAO** vaos,
+		double reach, double viewRange2, const AuMatrix4x4& model, AuGLSLFloraDepth& shader, AuSunShadowPass& sp, AuGLVAO*& curvao)
+{
+	int resourceZone = -1;
+	int windIndex = -1;
+	for(typename PLANTS::iterator gi = plants.begin(); gi != plants.end(); gi++)
+	{
+		AuPoint pv = model.Project((*gi).Location());
+		if(pv.Length2() > viewRange2 || !sp.Asked(pv.x, pv.y, pv.z, reach) || !sp.Reaches(pv.x, pv.y, pv.z, reach))
+			continue;
+		AuGLVAO* vao = vaos[(*gi).m_VAOIndex];
+		if(!vao || !vao->VAO() || !flora[(*gi).m_ResourceZone].Texture())
+			continue;
+		if((*gi).m_ResourceZone != resourceZone)
+		{
+			resourceZone = (*gi).m_ResourceZone;
+			shader.SetTexture(flora[resourceZone].Texture());
+		}
+		if((*gi).m_WindIndex != windIndex && (*gi).m_WindIndex < 10)
+		{
+			windIndex = (*gi).m_WindIndex;
+			shader.SetForceVector(s_SunShadowWind[windIndex].x, s_SunShadowWind[windIndex].y, s_SunShadowWind[windIndex].z);
+		}
+		shader.SetPlantMatrix((*gi).Transform());
+		if(vao != curvao)
+		{
+			if(curvao)
+				curvao->DeselectGL();
+			vao->SelectGL();
+			curvao = vao;
+		}
+		vao->DrawGL();
+		sp.Drew();
+	}
+}
+
 unsigned int DaWorldRingSection::SunShadowFamilies() const
 {
-	return 1u << SSF_Terrain;
+	return (1u << SSF_Terrain) | (1u << SSF_Plants);
 }
 
 void DaWorldRingSection::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, const DaPerson* sceneAtom,
 		AuSunShadowPass& sp)
 {
 	Q_UNUSED(sceneAtom);
+	if(sp.m_Family == SSF_Plants)
+	{
+		const AuMatrix4x4& model = rmod.Matrix(Id());
+		AuGLSLFloraDepth& shader = ari.re->GLSL().FloraDepthShader();
+		shader.SetModelView(model);
+		AuGLVAO* curvao = 0;
+		if(m_pFlora && m_FloraVAOsHigh)
+		{
+			SunShadowDepthPlants(m_Trees, m_pFlora, m_FloraVAOsHigh, 80, g_Au.TreeViewRangeFt2(), model, shader, sp, curvao);
+			SunShadowDepthPlants(m_Shrubs, m_pFlora, m_FloraVAOsHigh, 25, g_Au.ShrubViewRangeFt2(), model, shader, sp, curvao);
+			if(g_Au.ShadowGrassDistance() > 0)
+			{
+				double grassFt = g_Au.ShadowGrassDistance() * FeetPerMeter();
+				double grassRange2 = qMin(grassFt * grassFt, g_Au.GrassViewRangeFt2() * .64);
+				SunShadowDepthPlants(m_Grass, m_pFlora, m_FloraVAOsHigh, 5, grassRange2, model, shader, sp, curvao);
+			}
+		}
+		if(m_RockVAOs && !m_Rocks.isEmpty())
+		{
+			shader.SetTexture(s_TexRock);
+			shader.SetForceVector(0, 0, 0);
+			for(QMap<AuResKey, AuGlobeRock>::iterator gi = m_Rocks.begin(); gi != m_Rocks.end(); gi++)
+			{
+				const double reach = 25;
+				AuPoint pv = model.Project((*gi).Location());
+				if(pv.Length2() > g_Au.RockViewRangeFt2() || !sp.Asked(pv.x, pv.y, pv.z, reach) || !sp.Reaches(pv.x, pv.y, pv.z, reach))
+					continue;
+				AuGLVAO* vao = m_RockVAOs[(*gi).m_VAOIndex];
+				if(!vao || !vao->VAO())
+					continue;
+				shader.SetPlantMatrix((*gi).Transform());
+				if(vao != curvao)
+				{
+					if(curvao)
+						curvao->DeselectGL();
+					vao->SelectGL();
+					curvao = vao;
+				}
+				vao->DrawGL();
+				sp.Drew();
+			}
+		}
+		if(curvao)
+			curvao->DeselectGL();
+		return;
+	}
 	if(sp.m_Family != SSF_Terrain || m_AtGlobe.m_TriVAOs.empty())
 		return;
 
@@ -8951,6 +9035,9 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 		for(int iwv=0; iwv<10; iwv++)
 			windVec[iwv] = AuPoint(0,0);
 	}
+
+	for(int iwv=0; iwv<10; iwv++)
+		s_SunShadowWind[iwv] = windVec[iwv];
 
 	// Place plants in the environment.
 	// Calculate location of viewer on the ground.

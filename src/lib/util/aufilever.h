@@ -25,6 +25,7 @@
 
 #define FLORA_TEXTURE_CACHE				0x16					// F12345Z0 plant texture files in temporary cache
 #define FLORA_TEXTURE_VER				0x21					// F12345Z0 plant texture files in temporary cache
+#define FLORA_NEW_TEXTURE_VER			0x01
 
 #define NEARGLOBE_MODEL_CACHE			0x17					// WGN12345 globe model files in temporary cache
 //auglmodelmaker.cpp #define NEARGLOBE_MODEL_VER				0x11					// WGN12345 globe models in temporary cache

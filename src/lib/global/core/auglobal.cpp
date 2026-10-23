@@ -293,6 +293,9 @@ void AuGlobal::Init(MODE mode, const QString& appName, const QString& company, D
 	m_ShadowLights = qBound(0, m_Settings.readNumEntry(ShadowLightsKey(), 0), 4);
 	m_ShadowCasters = (unsigned int)m_Settings.readNumEntry(ShadowCastersKey(), 15) & 15u;
 	m_ShadowCreatureDistance = qBound(10, m_Settings.readNumEntry(ShadowCreatureDistanceKey(), 100), 500);
+	m_ShadowPlantDistance = qBound(10, m_Settings.readNumEntry(ShadowPlantDistanceKey(), 150), 1000);
+	m_ShadowGrassDistance = qBound(0, m_Settings.readNumEntry(ShadowGrassDistanceKey(), 0), 100);
+	m_NewFlora = m_Settings.readBoolEntry(NewFloraKey(), false);
 
 	for(int joy=0; joy<6; joy++)
 		m_EnableJoystick[joy] = m_Settings.readBoolEntry(QString("/Settings/EnableJoystick%1").arg(joy), true);
@@ -2249,6 +2252,23 @@ void AuGlobal::SetShadowCreatureDistance(int meters)
 {
 	m_ShadowCreatureDistance = qBound(10, meters, 500);
 	m_Settings.writeEntry(ShadowCreatureDistanceKey(), m_ShadowCreatureDistance);
+}
+
+void AuGlobal::SetShadowPlantDistance(int meters)
+{
+	m_ShadowPlantDistance = qBound(10, meters, 1000);
+	m_Settings.writeEntry(ShadowPlantDistanceKey(), m_ShadowPlantDistance);
+}
+
+void AuGlobal::SetShadowGrassDistance(int meters)
+{
+	m_ShadowGrassDistance = qBound(0, meters, 100);
+	m_Settings.writeEntry(ShadowGrassDistanceKey(), m_ShadowGrassDistance);
+}
+
+void AuGlobal::SetNewFlora(bool newFlora)
+{
+	m_Settings.writeEntry(NewFloraKey(), newFlora);
 }
 
 void AuGlobal::SetBumpMapSeas(bool bumpMapSeas)
