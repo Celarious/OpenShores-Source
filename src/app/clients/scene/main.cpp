@@ -129,6 +129,16 @@ int main(int argc, char** argv)
 		a.SetFrame(&cw);
 		cw.showNormal();
 
+		int oldKind = -1;
+		if(args.contains("-spacecraft"))
+			oldKind = 1;
+		else if(args.contains("-building"))
+			oldKind = 2;
+		else if(args.contains("-designer"))
+			oldKind = 0;
+		if(oldKind >= 0)
+			QMetaObject::invokeMethod(&cw, "LaunchDesignerFromCommandLine", Qt::QueuedConnection, Q_ARG(int, oldKind));
+
 		// Start chuggin'.
 		returnValue = a.exec();
 	}

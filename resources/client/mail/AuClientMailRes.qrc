@@ -889,47 +889,107 @@
 	<file>data/clNStation.png</file>
 	<file>data/clNVeh.png</file>
 	<file>data/desired10x10.png</file>
+	<file>data/dp_ArmorDecrease.png</file>
+	<file>data/dp_ArmorIncrease.png</file>
 	<file>data/dp_Barracks.png</file>
 	<file>data/dp_Berth0.png</file>
+	<file>data/dp_Berth2.png</file>
 	<file>data/dp_Bridge.png</file>
 	<file>data/dp_Brig.png</file>
+	<file>data/dp_BrushSzDown.png</file>
+	<file>data/dp_BrushSzUp.png</file>
+	<file>data/dp_BurnCD.png</file>
 	<file>data/dp_Capacitor.png</file>
 	<file>data/dp_CaptCabin.png</file>
+	<file>data/dp_Cargo.png</file>
+	<file>data/dp_CargoDoor.png</file>
+	<file>data/dp_Check.png</file>
 	<file>data/dp_CmdConsole.png</file>
 	<file>data/dp_ContrailEmitter.png</file>
+	<file>data/dp_Corridor.png</file>
 	<file>data/dp_CrewCabin.png</file>
+	<file>data/dp_CrewDoor.png</file>
+	<file>data/dp_CrewHatch.png</file>
+	<file>data/dp_DeckAbove.png</file>
+	<file>data/dp_DeckBelow.png</file>
+	<file>data/dp_DelDeck.png</file>
+	<file>data/dp_DelDetail.png</file>
+	<file>data/dp_DelDetails.png</file>
+	<file>data/dp_DelRoom.png</file>
+	<file>data/dp_DelRoomCells.png</file>
+	<file>data/dp_Delete.png</file>
 	<file>data/dp_DesignerConsole.png</file>
+	<file>data/dp_Door.png</file>
 	<file>data/dp_DropPod.png</file>
+	<file>data/dp_EngineRoom.png</file>
 	<file>data/dp_EngineerConsole.png</file>
 	<file>data/dp_Exit.png</file>
 	<file>data/dp_FireControlConsole.png</file>
+	<file>data/dp_FlagPole.png</file>
+	<file>data/dp_Fuel.png</file>
+	<file>data/dp_Galley.png</file>
 	<file>data/dp_GameTable.png</file>
 	<file>data/dp_Gravity.png</file>
+	<file>data/dp_GravityWell.png</file>
+	<file>data/dp_Grid0.png</file>
+	<file>data/dp_Grid135.png</file>
+	<file>data/dp_Grid45.png</file>
+	<file>data/dp_Grid90.png</file>
+	<file>data/dp_Hatch.png</file>
 	<file>data/dp_HullDoor.png</file>
+	<file>data/dp_HullHatch.png</file>
+	<file>data/dp_HullOpening.png</file>
+	<file>data/dp_LandingBay.png</file>
+	<file>data/dp_LargeCrewDoor.png</file>
+	<file>data/dp_LargeDoor.png</file>
 	<file>data/dp_LifeSupport.png</file>
+	<file>data/dp_LightPole.png</file>
 	<file>data/dp_Load.png</file>
+	<file>data/dp_Lounge.png</file>
 	<file>data/dp_ManeuverDrive.png</file>
+	<file>data/dp_Move.png</file>
 	<file>data/dp_NavConsole.png</file>
+	<file>data/dp_New.png</file>
+	<file>data/dp_OpenToBelow.png</file>
 	<file>data/dp_OperatingTable.png</file>
 	<file>data/dp_PilotConsole.png</file>
 	<file>data/dp_PivotPoint.png</file>
 	<file>data/dp_PowerConsole.png</file>
 	<file>data/dp_PowerPlant.png</file>
+	<file>data/dp_Railing.png</file>
+	<file>data/dp_RenderMode.png</file>
+	<file>data/dp_RoofGable.png</file>
+	<file>data/dp_RoofHip.png</file>
+	<file>data/dp_RoofRound.png</file>
+	<file>data/dp_RoomIdDown.png</file>
+	<file>data/dp_RoomIdUp.png</file>
+	<file>data/dp_RoomMode0.png</file>
+	<file>data/dp_RoomMode1.png</file>
 	<file>data/dp_Save.png</file>
 	<file>data/dp_Sensor.png</file>
 	<file>data/dp_SensorConsole.png</file>
+	<file>data/dp_SensorRoom.png</file>
 	<file>data/dp_Shield.png</file>
 	<file>data/dp_ShieldConsole.png</file>
+	<file>data/dp_ShieldRoom.png</file>
 	<file>data/dp_ShowBacks.png</file>
 	<file>data/dp_ShowDesignPlane.png</file>
 	<file>data/dp_ShowEdges.png</file>
 	<file>data/dp_ShowFaces.png</file>
 	<file>data/dp_SickBay.png</file>
+	<file>data/dp_StairsStraight.png</file>
+	<file>data/dp_StairsTurnLeft.png</file>
+	<file>data/dp_StairsTurnRight.png</file>
+	<file>data/dp_StairsUTurnLeft.png</file>
+	<file>data/dp_StairsUTurnRight.png</file>
 	<file>data/dp_Stateroom.png</file>
 	<file>data/dp_SurgeryConsole.png</file>
 	<file>data/dp_TransporterConsole.png</file>
 	<file>data/dp_TransporterPad.png</file>
+	<file>data/dp_TransporterRoom.png</file>
+	<file>data/dp_TurretSide.png</file>
 	<file>data/dp_TurretTopBottom.png</file>
+	<file>data/dp_WallOpening.png</file>
 	<file>data/dp_Weapon.png</file>
 	<file>data/dp_WeaponBay.png</file>
 	<file>data/dp_WeaponEmitter.png</file>

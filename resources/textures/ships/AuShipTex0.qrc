@@ -106,6 +106,13 @@
 	<file>data/EffWormPos4.png</file>
 	<file>data/EffWormPos5.png</file>
 	<file>data/EffWormPos6.png</file>
+	<file>data/txBuildingLumber.png</file>
+	<file>data/txBuildingMagmium.png</file>
+	<file>data/txBuildingMetal.png</file>
+	<file>data/txBuildingStone.png</file>
+	<file>data/txBuildingVulcium.png</file>
+	<file>data/txBuildingWood.png</file>
 	<file>data/txSpacecraft0Lit.png</file>
+	<file>data/txSpacecraftDesign.png</file>
 </qresource>
 </RCC>

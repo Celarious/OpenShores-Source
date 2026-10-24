@@ -133,6 +133,13 @@ enum TEX_LIBRARY
 	TEXLIB_AdamantinePlateX,
 	TEXLIB_ChainLink,
 	TEXLIB_SandBags,
+	TEXLIB_OldSpacecraft,
+	TEXLIB_OldBuildingWood,
+	TEXLIB_OldBuildingLumber,
+	TEXLIB_OldBuildingStone,
+	TEXLIB_OldBuildingMetal,
+	TEXLIB_OldBuildingMagmium,
+	TEXLIB_OldBuildingVulcium,
 	TEXLIB_Count						// LAST ITEM.
 };
 

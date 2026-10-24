@@ -869,8 +869,10 @@ void DaDesigner::RenderEnvironment(const AuMatrix4x4& projection, const AuMatrix
 		// of near objects using a different near clip distance. The contents of the scene so far simple fall into the backdrop.
 		ari.re->glClear(GL_DEPTH_BUFFER_BIT);
 
+		const bool showDesign = g_Au.DesignerOldShipView() != AuGlobal::OLDSHIP_Lines;
+
 		// Render the ground.
-		if(ari.m_DesignerShowGround && m_Design)
+		if(showDesign && ari.m_DesignerShowGround && m_Design)
 		{
 			const AuScDesign* scd = dynamic_cast<const AuScDesign*>(m_Design);
 			if(scd)
@@ -916,11 +918,11 @@ void DaDesigner::RenderEnvironment(const AuMatrix4x4& projection, const AuMatrix
 					shadScRingworldFog, PASS_Near);
 
 			// Render the design solid faces.
-			if(ari.m_DesignerShowFaces || ari.m_DesignerShowBacks)
+			if(showDesign && (ari.m_DesignerShowFaces || ari.m_DesignerShowBacks))
 				RenderDesign(projection, tmodel, ari, sceneAtom, false);
 
 			// Render the design edge lines.
-			if(ari.m_DesignerShowEdges && m_Design)
+			if(showDesign && ari.m_DesignerShowEdges && m_Design)
 				m_Design->RenderEdges(projection, tmodel, *ari.re, ari.DesignerPartObjectSelection(), ari.DesignerObjectMode(),
 						ari.IsDragging(), ari.m_DragT, ari.m_DragCopy, ari.DesignerObjectIsolate());
 
@@ -933,16 +935,18 @@ void DaDesigner::RenderEnvironment(const AuMatrix4x4& projection, const AuMatrix
 					shadScRingworldFog, PASS_NearBlend);
 		}
 
-		RenderDesignPaths(projection, tmodel, ari, sceneAtom);
+		if(showDesign)
+			RenderDesignPaths(projection, tmodel, ari, sceneAtom);
 
 		// Render the design transparent faces, i.e. windows.
-		if(ari.m_DesignerShowFaces || ari.m_DesignerShowBacks)
+		if(showDesign && (ari.m_DesignerShowFaces || ari.m_DesignerShowBacks))
 			RenderDesign(projection, tmodel, ari, sceneAtom, true);
 
-		RenderDesignVoids(projection, tmodel, ari, sceneAtom);
+		if(showDesign)
+			RenderDesignVoids(projection, tmodel, ari, sceneAtom);
 
 		// Render the vertex sprites in object mode.
-		if(ari.DesignerObjectMode() && m_Design)
+		if(showDesign && ari.DesignerObjectMode() && m_Design)
 		{
 			if(g_Au.DesignerFindFaces())
 				m_Design->RenderFaceSprites(projection, tmodel, *ari.re, ari.DesignerPartObjectSelection(), ari.m_DragT);
@@ -1632,7 +1636,11 @@ bool DaDesigner::IsPathBlocked(const AuPoint& ol, const AuPoint& nl, AuPoint& hi
 	if(IsPreview())
 		return DaDesignBase::IsPathBlocked(ol, nl, hitLoc, hitNormal, toWho);
 
-	if(!g_Au.DesignerBlockPaths())
+	const AuGlobal::OLDSHIP_VIEW oldShipView = g_Au.DesignerOldShipView();
+	if(oldShipView == AuGlobal::OLDSHIP_Lines)
+		return false;
+
+	if(!g_Au.DesignerBlockPaths() && oldShipView != AuGlobal::OLDSHIP_Solid)
 		return false;
 
 	bool v = false;
@@ -5350,7 +5358,7 @@ void DaDesigner::GetAtomEnvironment(AuQueryEnvironment& qe, const DaAtom* atom) 
 		qe.m_fAirDensity = .5f;
 		qe.m_Environment |= EB_Atmosphere;
 		qe.m_Environment |= EB_Breathable;
-		if(IsGravityOn(atom->Id()))
+		if(IsGravityOn(atom->Id()) && g_Au.DesignerOldShipView() != AuGlobal::OLDSHIP_Lines)
 		{
 			// The design tells us information about gravity and the floor, considering different gravity orientations.
 			AuPoint floorLoc, gravityN, terN;

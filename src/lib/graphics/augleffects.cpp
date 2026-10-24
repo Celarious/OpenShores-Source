@@ -411,6 +411,27 @@ AuTextureLibItem s_TextureLibrary[TEXLIB_Count] =
 	AuTextureLibItem(TEXLIB_SandBags,
 			QObject::tr("Sand Bags"),
 			":data/SandBagWall.png"),
+	AuTextureLibItem(TEXLIB_OldSpacecraft,
+			QObject::tr("Old Spacecraft"),
+			":data/txSpacecraft0Lit.png"),
+	AuTextureLibItem(TEXLIB_OldBuildingWood,
+			QObject::tr("Old Building Wood"),
+			":data/txBuildingWood.png"),
+	AuTextureLibItem(TEXLIB_OldBuildingLumber,
+			QObject::tr("Old Building Lumber"),
+			":data/txBuildingLumber.png"),
+	AuTextureLibItem(TEXLIB_OldBuildingStone,
+			QObject::tr("Old Building Stone"),
+			":data/txBuildingStone.png"),
+	AuTextureLibItem(TEXLIB_OldBuildingMetal,
+			QObject::tr("Old Building Metal"),
+			":data/txBuildingMetal.png"),
+	AuTextureLibItem(TEXLIB_OldBuildingMagmium,
+			QObject::tr("Old Building Magmium"),
+			":data/txBuildingMagmium.png"),
+	AuTextureLibItem(TEXLIB_OldBuildingVulcium,
+			QObject::tr("Old Building Vulcium"),
+			":data/txBuildingVulcium.png"),
 };
 
 AuTextureLibItem s_EffectLibrary[AuTextureLibItem::EI_Count] =
@@ -629,12 +650,42 @@ AuTextureLibItem s_EffectLibrary[AuTextureLibItem::EI_Count] =
 			QObject::tr("Hull Damage 9"), ":data/EffDamage9.png"),
 };
 
+static QImage OldSpacecraftTexture(const QString& fileName)
+{
+	const int glassAlpha = 51;
+	QImage tiles = QImage(fileName).convertToFormat(QImage::Format_ARGB32);
+	for(int y = 0; y < tiles.height(); y++)
+	{
+		QRgb* line = (QRgb*)tiles.scanLine(y);
+		for(int x = 0; x < tiles.width(); x++)
+			if(qAlpha(line[x]) <= glassAlpha)
+				line[x] &= 0x00ffffff;
+	}
+	return tiles;
+}
+
 // Gets/loads a texture.
 // OpenGL context must be current when calling this function.
 //static
 GLuint AuTextureLibItem::LibraryTexture(AuGLEffects& re, quint16 libTexId)
 {
 	QString sid = QString("LTx%1").arg(libTexId);
+	if(libTexId == TEXLIB_OldSpacecraft)
+	{
+		GLuint made = re.UseTexture(STATIC_TEXTURE_ID, sid);
+		if(made)
+			return made;
+		return re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, sid, OldSpacecraftTexture(LibraryTextureFile(libTexId)), GL_LINEAR,
+				GL_LINEAR, false, 3);
+	}
+	if(libTexId >= TEXLIB_OldBuildingWood && libTexId <= TEXLIB_OldBuildingVulcium)
+	{
+		GLuint made = re.UseTexture(STATIC_TEXTURE_ID, sid);
+		if(made)
+			return made;
+		return re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, sid, QImage(LibraryTextureFile(libTexId)), GL_LINEAR, GL_LINEAR,
+				false, 3);
+	}
 	GLuint custom = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, sid, LibraryTextureFile(libTexId), GL_LINEAR, GL_LINEAR, true);
 	return custom;
 }
@@ -1126,6 +1177,11 @@ GLuint AuGLEffects::CreateTextureFromBitmap(unsigned int uiUserId, const QString
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		}
+		else if(clampEdges == 3)
+		{
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
 		/*
 		else if(clampEdges == 2)
 		{
@@ -1203,6 +1259,11 @@ GLuint AuGLEffects::CreateTextureFromFloats(unsigned int uiUserId, const QString
 		{
 			// Clamp edges and blend to the final edge texel color.
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		}
+		else if(clampEdges == 3)
+		{
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		}
 		/*

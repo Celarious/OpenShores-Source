@@ -67,6 +67,7 @@ class AuLocatorSystemScanDock;
 class AuLocatorWorldMapDock;
 class AuLogin;
 class AuMailDock;
+class AuOldShipDock;
 class AuPlayersOnlineDock;
 class AuScExchangeDock;
 class AuSettingsDialog;
@@ -144,6 +145,11 @@ private:
 	AuDesignerBar2*						m_DesignerBar2;
 	AuDesignerPartsDock*				m_DesignerPartsDock;
 	AuDesignerTextureWrapDock*			m_DesignerTextureWrapDock;
+	AuOldShipDock*						m_OldShipDock;
+	AuOldShipDock*						m_OldBuildingDock;
+	bool								m_OldShipMode;
+	bool								m_OldBuildingMode;
+	int									m_StartOldKind = 0;
 	AuGearDock*							m_GearDock;
 	AuGovernDock*						m_GovernDock;
 	AuGovAnnouncementsDock*				m_GovernAnnouncementsDock;
@@ -284,6 +290,8 @@ private:
 	QAction*							m_Designer_HullSpindle;
 	QAction*							m_Designer_HullTubing;
 	QAction*							m_Designer_Import3DS;
+	QAction*							m_Designer_ImportOldBuilding;
+	QAction*							m_Designer_ImportOldShip;
 	QAction*							m_Designer_ImportSTL;
 	QAction*							m_Designer_InteriorExtrusion;
 	QAction*							m_Designer_InteriorSphereLL;
@@ -330,6 +338,8 @@ private:
 	QAction*							m_Designer_MoveDoorSwitches;
 	QAction*							m_Designer_NewBuilding;
 	QAction*							m_Designer_NewItem;
+	QAction*							m_Designer_NewOldBuilding;
+	QAction*							m_Designer_NewOldShip;
 	QAction*							m_Designer_NewSpacecraft;
 	QAction*							m_Designer_NewVehicle;
 	QAction*							m_Designer_ObjectExtrusion;
@@ -480,6 +490,30 @@ public:
 	virtual ~AuDesignerFrame();
 
 	virtual void DisableAFK();
+
+	AuOldShipDock* OldShipDock() const
+	{
+		return m_OldShipMode && m_OldBuildingMode ? m_OldBuildingDock : m_OldShipDock;
+	}
+
+	AuOldShipDock* OldDock(bool building) const
+	{
+		return building ? m_OldBuildingDock : m_OldShipDock;
+	}
+
+	bool OldShipMode() const
+	{
+		return m_OldShipMode;
+	}
+
+	bool ConfirmLeaveOldMode();
+	void SetOldShipMode(bool on);
+	void SetOldBuildingMode(bool on);
+	void SetOldMode(bool on, bool building);
+	void ToggleOldUi(bool building);
+	int OldSenderOn();
+	void OldDockShown(bool building, bool shown);
+	void ConnectOldDock(AuOldShipDock* dock, bool building);
 
 	virtual bool IsAFK() const;
 
@@ -705,6 +739,8 @@ public slots:
 
 	void LaunchDesigner();
 
+	void LaunchDesignerFromCommandLine(int oldKind);
+
 	QString OrdersChannel() const;
 
 	void OrdnanceReceived(AuId loaderId, QByteArray ord);
@@ -808,6 +844,13 @@ public slots:
 	void ToggleConstructionUi();
 	void ToggleDesignPartsUi();
 	void ToggleDesignTextureWrapUi();
+	void ToggleOldBuildingUi();
+	void ToggleOldShipUi();
+	void OldShipEdited();
+	void OldShipGravity(bool on);
+	void OldShipRenderMode(bool solid);
+	void OldShipDockToggled(bool shown);
+	void OldBuildingDockToggled(bool shown);
 	void ToggleFullScreen();
 	void ToggleGearUi();
 	void ToggleGovernAnnouncementsUi();

@@ -19,8 +19,10 @@
 #include "dadesignbase.h"
 #include <QElapsedTimer>
 #include <QPoint>
+#include <functional>
 
 class AuAtomRenderInfo;
+class AuDesign;
 class AuDialog;
 class AuGameSettings;
 class AuGLModelCache;
@@ -39,6 +41,11 @@ class QKeyEvent;
 class QMouseEvent;
 class QTimer;
 class QWheelEvent;
+class AuOldShipPanel;
+class AuScDesign;
+class PsEngineTrail;
+class AuBdDesign;
+namespace OldShip { struct BuildingInfo; struct ConvertInfo; struct Drawing; }
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
@@ -693,6 +700,18 @@ private:
 	QString								m_FinalizeReport;		// Result of last attempt to finalize.
 	bool								m_IsDesignMode;			// true when in design env and design toolbar visible
 	bool								m_IsDesignPreview;		// true while previewing design as real atomic DaSc
+	QString								m_OldShipCursor;
+	OldShip::Drawing*					m_OldShipDrawing;
+	const AuOldShipPanel*				m_OldShipDrawnPanel;
+	int									m_OldShipDrawnDeck;
+	int									m_OldShipDrawnRevision;
+	QTimer*								m_OldShipTimer;
+	QTimer*								m_OldShipReportTimer;
+	int									m_OldShipReportMs;
+	GLuint								m_texOldShipIcons;
+	QList<PsEngineTrail*>				m_OldShipContrails;
+	const AuOldShipPanel*				m_OldShipContrailsPanel;
+	int									m_OldShipContrailsRevision;
 	bool								m_VertexSelected;		// true if vertex selected on mouse down.
 
 	// Game Table
@@ -884,6 +903,27 @@ public:
 	// Warn against losing changes to the current design. Provide an option to cancel.
 	// Returns true if it's ok to proceed, false if user wants to cancel.
 	bool DesignerConfirmLoseChanges();
+
+	bool OldShipAskToFinish();
+	void OldBuildingUpdateReport(AuOldShipPanel* panel);
+	void OldShipModeEntered();
+	void OldBuildingOpenFile(const QString& buildingFile);
+	void OldShipDesignEdited();
+	bool OldShipKeyPress(QKeyEvent* e);
+	bool OldShipMakeModel(bool blueprint = false, AuDesign** made = 0);
+	void OldShipFinalizeWhen(const std::function<bool(const AuDesign&)>& ready, const std::function<void()>& then, int tries);
+	bool OldShipStudioDesignIs(const std::function<bool(const AuDesign&)>& test);
+	void OldShipModeLeft();
+	void OldShipMouseMove(QMouseEvent* e);
+	void OldShipMousePress(QMouseEvent* e);
+	void OldShipOpenFile(const QString& shipFile);
+	AuOldShipPanel* OldShipPanel();
+	bool OldShipPick(DaPerson* sceneAtom, const QPoint& pxLoc, double& gx, double& gy);
+	void OldShipRender(DaPerson* sceneAtom);
+	void OldShipRenderModeChanged(bool solid);
+	bool OldShipSave(bool askName);
+	void OldShipScheduleReport(int delayMs=0);
+	bool OldShipSetCursor();
 
 	// Updates a drag operation in designer, for grab, rotate, and stretch.
 	void DesignerDragging(const AuMatrix4x4& t, bool isCopy);
@@ -1319,6 +1359,14 @@ protected:
 protected slots:
 	void AnimateScene();
 
+	void OldShipRebuildModel();
+	void OldShipUpdateReport();
+
+public slots:
+	void OldShipLookAt(double x, double y, int deck);
+
+protected slots:
+
 	void SaveSolitaireCheckPoint();
 
 	void ScreenShot();
@@ -1532,6 +1580,8 @@ public slots:
 	void DesignerHullSpindle();
 	void DesignerHullTubing();
 	void DesignerImport3DS();
+	void DesignerImportOldBuilding();
+	void DesignerImportOldShip();
 	void DesignerImportSTL();
 	void DesignerInteriorExtrusion();
 	void DesignerInteriorSphereEqDivs();
@@ -1574,7 +1624,10 @@ public slots:
 	void DesignerMoveMenu();			// Grab initiated off menu.
 	void DesignerNewBuilding();
 	void DesignerNewItem();
+	void DesignerNewOldBuilding();
+	void DesignerNewOldShip();
 	void DesignerNewSpacecraft();
+	void DesignerOldShipFinalize();
 	void DesignerNewVehicle();
 	void DesignerObjectExtrusion();
 	void DesignerObjectFace();
@@ -1607,7 +1660,7 @@ public slots:
 	void DesignerPasteRadial();
 	void DesignerPodBay();
 	void DesignerPolish();
-	void DesignerProperties();
+	bool DesignerProperties(AuDesign* accepted = 0);
 	void DesignerPunchFace();
 	void DesignerPushPull();
 	void DesignerRedo();

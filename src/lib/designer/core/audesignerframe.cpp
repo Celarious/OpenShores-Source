@@ -31,6 +31,7 @@
 #include "audamagereport.h"
 #include "audesignerbar.h"
 #include "audesignerbar2.h"
+#include "audesigneroldship.h"
 #include "audesignerparts.h"
 #include "audesignerview.h"
 #include "audesignertexturewrap.h"
@@ -331,6 +332,10 @@ AuDesignerFrame::AuDesignerFrame(QWidget *parent) : AuFrame(parent)
 	m_DesignerBar2 = 0;
 	m_DesignerPartsDock = 0;
 	m_DesignerTextureWrapDock = 0;
+	m_OldShipDock = 0;
+	m_OldBuildingDock = 0;
+	m_OldShipMode = false;
+	m_OldBuildingMode = false;
 	m_GearDock = 0;
 	m_GovernAnnouncementsDock = 0;
 	m_GovernCitiesDock = 0;
@@ -484,6 +489,8 @@ AuDesignerFrame::AuDesignerFrame(QWidget *parent) : AuFrame(parent)
 	m_Designer_HullSpindle = 0;
 	m_Designer_HullTubing = 0;
 	m_Designer_Import3DS = 0;
+	m_Designer_ImportOldBuilding = 0;
+	m_Designer_ImportOldShip = 0;
 	m_Designer_ImportSTL = 0;
 	m_Designer_InteriorExtrusion = 0;
 	m_Designer_InteriorSphereLL = 0;
@@ -526,6 +533,8 @@ AuDesignerFrame::AuDesignerFrame(QWidget *parent) : AuFrame(parent)
 	m_Designer_MoveDoorSwitches = 0;
 	m_Designer_NewBuilding = 0;
 	m_Designer_NewItem = 0;
+	m_Designer_NewOldBuilding = 0;
+	m_Designer_NewOldShip = 0;
 	m_Designer_NewSpacecraft = 0;
 	m_Designer_NewVehicle = 0;
 	m_Designer_ObjectExtrusion = 0;
@@ -1431,6 +1440,186 @@ void AuDesignerFrame::ToggleDesignTextureWrapUi()
 	}
 }
 
+void AuDesignerFrame::ToggleOldShipUi()
+{
+	ToggleOldUi(false);
+}
+
+void AuDesignerFrame::ToggleOldBuildingUi()
+{
+	ToggleOldUi(true);
+}
+
+void AuDesignerFrame::ToggleOldUi(bool building)
+{
+	if(m_View && m_View->SceneContext() == SCENE_Designer)
+	{
+		AuOldShipDock* dock = OldDock(building);
+		const bool isOn = m_OldShipMode && m_OldBuildingMode == building;
+		if(isOn && dock && dock->isHidden())
+			dock->show();
+		else if(!isOn || ConfirmLeaveOldMode())
+			SetOldMode(!isOn, building);
+	}
+	else
+		SetOldMode(false, building);
+}
+
+bool AuDesignerFrame::ConfirmLeaveOldMode()
+{
+	if(!m_OldShipMode)
+		return true;
+	AuOldShipDock* dock = OldShipDock();
+	return !dock || dock->Panel()->ConfirmLoseChanges();
+}
+
+void AuDesignerFrame::SetOldShipMode(bool on)
+{
+	SetOldMode(on, false);
+}
+
+void AuDesignerFrame::SetOldBuildingMode(bool on)
+{
+	SetOldMode(on, true);
+}
+
+void AuDesignerFrame::SetOldMode(bool on, bool building)
+{
+	if(!m_OldShipDock || !m_OldBuildingDock)
+		return;
+	if(on && (!m_View || m_View->SceneContext() != SCENE_Designer))
+		on = false;
+	if(on && m_OldShipMode && m_OldBuildingMode != building)
+	{
+		AuOldShipDock* other = OldShipDock();
+		other->hide();
+		other->Panel()->SetModelGone();
+		if(m_View)
+			m_View->OldShipModeLeft();
+		m_OldShipMode = false;
+	}
+	AuOldShipDock* dock = on ? OldDock(building) : OldShipDock();
+	if(on == m_OldShipMode)
+	{
+		if(on && dock->isHidden())
+			dock->show();
+		return;
+	}
+	m_OldShipMode = on;
+	if(on)
+		m_OldBuildingMode = building;
+	AuOldShipPanel* panel = dock->Panel();
+	if(on)
+	{
+		if(m_DesignerPartsDock)
+			m_DesignerPartsDock->hide();
+		if(m_DesignerTextureWrapDock)
+			m_DesignerTextureWrapDock->hide();
+		dock->setFloating(false);
+		dock->show();
+
+		panel->ShowLines();
+		panel->SetGravityShown(g_Au.DesignerGravityOn());
+		g_Au.DesignerSetOldShipView(AuGlobal::OLDSHIP_Lines);
+		panel->UpdateTitle();
+		if(m_View)
+			m_View->OldShipModeEntered();
+	}
+	else
+	{
+		g_Au.DesignerSetOldShipView(AuGlobal::OLDSHIP_Off);
+		dock->hide();
+
+		panel->SetModelGone();
+		if(m_View)
+		{
+			m_View->OldShipModeLeft();
+			if(m_View->SceneContext() == SCENE_Designer)
+			{
+				if(m_DesignerPartsDock)
+					m_DesignerPartsDock->show();
+				if(m_DesignerTextureWrapDock)
+					m_DesignerTextureWrapDock->show();
+			}
+		}
+	}
+}
+
+void AuDesignerFrame::OldShipEdited()
+{
+	if(m_View && m_OldShipMode)
+		m_View->OldShipDesignEdited();
+}
+
+void AuDesignerFrame::ConnectOldDock(AuOldShipDock* dock, bool building)
+{
+	connect(dock->Panel(), SIGNAL(DesignEdited()), SLOT(OldShipEdited()));
+	connect(dock->Panel(), SIGNAL(RenderModeToggled(bool)), SLOT(OldShipRenderMode(bool)));
+	connect(dock->Panel(), SIGNAL(GravityToggled(bool)), SLOT(OldShipGravity(bool)));
+	if(building)
+	{
+		connect(dock->Panel(), SIGNAL(NewRequested()), m_View, SLOT(DesignerNewOldBuilding()));
+		connect(dock->Panel(), SIGNAL(LoadRequested()), m_View, SLOT(DesignerImportOldBuilding()));
+	}
+	else
+	{
+		connect(dock->Panel(), SIGNAL(NewRequested()), m_View, SLOT(DesignerNewOldShip()));
+		connect(dock->Panel(), SIGNAL(LoadRequested()), m_View, SLOT(DesignerImportOldShip()));
+	}
+	connect(dock->Panel(), SIGNAL(LookRequested(double, double, int)), m_View, SLOT(OldShipLookAt(double, double, int)));
+	connect(dock->Panel(), SIGNAL(FinalizeRequested()), m_View, SLOT(DesignerOldShipFinalize()));
+	connect(dock->toggleViewAction(), SIGNAL(triggered(bool)), building ? SLOT(OldBuildingDockToggled(bool)) : SLOT(OldShipDockToggled(bool)));
+}
+
+void AuDesignerFrame::OldShipDockToggled(bool shown)
+{
+	OldDockShown(false, shown);
+}
+
+void AuDesignerFrame::OldBuildingDockToggled(bool shown)
+{
+	OldDockShown(true, shown);
+}
+
+void AuDesignerFrame::OldDockShown(bool building, bool shown)
+{
+	if(!shown || !OldDock(building))
+		return;
+	if(m_OldShipMode && m_OldBuildingMode == building)
+		return;
+	SetOldMode(true, building);
+	if(!(m_OldShipMode && m_OldBuildingMode == building))
+		OldDock(building)->hide();
+}
+
+int AuDesignerFrame::OldSenderOn()
+{
+	const AuOldShipPanel* panel = qobject_cast<const AuOldShipPanel*>(sender());
+	if(!panel)
+		return 1;
+	const bool building = panel->IsBuilding();
+	if(m_OldShipMode && m_OldBuildingMode == building)
+		return 1;
+	SetOldMode(true, building);
+	return m_OldShipMode && m_OldBuildingMode == building ? 2 : 0;
+}
+
+void AuDesignerFrame::OldShipGravity(bool on)
+{
+	if(m_View && m_View->SceneContext() == SCENE_Designer && m_Designer_GravityToggle)
+		DesignerSetGravityOn(on);
+}
+
+void AuDesignerFrame::OldShipRenderMode(bool solid)
+{
+	if(!m_View)
+		return;
+	if(OldSenderOn() != 1)
+		return;
+	if(m_OldShipMode)
+		m_View->OldShipRenderModeChanged(solid);
+}
+
 void AuDesignerFrame::ToggleHoldUi()
 {
 	if(m_HoldDock && m_HoldDockFree)
@@ -1688,6 +1877,16 @@ void AuDesignerFrame::closeEvent(QCloseEvent* event)
 {
 	// Qt example code does not depict them calling this base class implementation. I am guessing it just accepts the event.
 	if(m_View && !m_View->DesignerConfirmLoseChanges())
+	{
+		event->ignore();
+		return;
+	}
+	if(m_OldShipDock && !m_OldShipDock->Panel()->ConfirmLoseChanges())
+	{
+		event->ignore();
+		return;
+	}
+	if(m_OldBuildingDock && !m_OldBuildingDock->Panel()->ConfirmLoseChanges())
 	{
 		event->ignore();
 		return;
@@ -2203,6 +2402,18 @@ void AuDesignerFrame::CreateDockWidgets()
 		m_DesignerTextureWrapDock->hide();
 		m_DockBars.m_DockWidgets.append(AuFrameDock(m_DesignerTextureWrapDock));
 
+		m_OldShipDock = new AuOldShipDock(this);
+		ConnectOldDock(m_OldShipDock, false);
+		addDockWidget(Qt::RightDockWidgetArea, m_OldShipDock, Qt::Vertical);
+		m_OldShipDock->hide();
+		m_DockBars.m_DockWidgets.append(AuFrameDock(m_OldShipDock));
+
+		m_OldBuildingDock = new AuOldShipDock(this, AuOldShipPanel::KIND_Building);
+		ConnectOldDock(m_OldBuildingDock, true);
+		addDockWidget(Qt::RightDockWidgetArea, m_OldBuildingDock, Qt::Vertical);
+		m_OldBuildingDock->hide();
+		m_DockBars.m_DockWidgets.append(AuFrameDock(m_OldBuildingDock));
+
 		// Restore positions and visibility of dock widgets.
 		QByteArray windowState = g_Au.Settings().value("/Widget/MainFrame/DesignerWindowState").toByteArray();
 		if(!windowState.isEmpty())
@@ -2212,6 +2423,8 @@ void AuDesignerFrame::CreateDockWidgets()
 		m_DesignerBar2->show();
 		m_DesignerPartsDock->show();
 		m_DesignerTextureWrapDock->show();
+		m_OldShipDock->hide();
+		m_OldBuildingDock->hide();
 	}
 	else
 	{
@@ -2504,6 +2717,18 @@ void AuDesignerFrame::CreateDockWidgets()
 		m_DesignerTextureWrapDock->hide();
 		m_DockBars.m_DockWidgets.append(AuFrameDock(m_DesignerTextureWrapDock));
 
+		m_OldShipDock = new AuOldShipDock(this);
+		ConnectOldDock(m_OldShipDock, false);
+		addDockWidget(Qt::RightDockWidgetArea, m_OldShipDock, Qt::Vertical);
+		m_OldShipDock->hide();
+		m_DockBars.m_DockWidgets.append(AuFrameDock(m_OldShipDock));
+
+		m_OldBuildingDock = new AuOldShipDock(this, AuOldShipPanel::KIND_Building);
+		ConnectOldDock(m_OldBuildingDock, true);
+		addDockWidget(Qt::RightDockWidgetArea, m_OldBuildingDock, Qt::Vertical);
+		m_OldBuildingDock->hide();
+		m_DockBars.m_DockWidgets.append(AuFrameDock(m_OldBuildingDock));
+
 		// Players Online
 		if(solo)
 			m_PlayersOnlineDock = 0;
@@ -2605,6 +2830,8 @@ void AuDesignerFrame::CreateDockWidgets()
 		m_DesignerBar2->hide();
 		m_DesignerPartsDock->hide();
 		m_DesignerTextureWrapDock->hide();
+		m_OldShipDock->hide();
+		m_OldBuildingDock->hide();
 	}
 
 	m_DockBars.UpdateTitleShortcuts();
@@ -2632,10 +2859,24 @@ void AuDesignerFrame::SceneContextChanged(int sceneContext)
 			m_DesignerPartsDock->hide();
 		if(m_DesignerTextureWrapDock && !m_DesignerTextureWrapDock->isHidden())
 			m_DesignerTextureWrapDock->hide();
+		ConfirmLeaveOldMode();
+		SetOldShipMode(false);
+		if(m_OldShipDock && !m_OldShipDock->isHidden())
+			m_OldShipDock->hide();
+		if(m_DesignerPartsDock && !m_DesignerPartsDock->isHidden())
+			m_DesignerPartsDock->hide();
+		if(m_DesignerTextureWrapDock && !m_DesignerTextureWrapDock->isHidden())
+			m_DesignerTextureWrapDock->hide();
 		break;
 
 	case SCENE_Designer:
 		CreateDesignerMenu();			// Does nothing if the menu has already been created.
+		if(m_StartOldKind && m_View)
+		{
+			const char* slot = m_StartOldKind == 2 ? "DesignerNewOldBuilding" : "DesignerNewOldShip";
+			m_StartOldKind = 0;
+			QMetaObject::invokeMethod(m_View, slot, Qt::QueuedConnection);
+		}
 		if(menuBar()->isHidden())
 			menuBar()->show();
 		if(m_ConstructionDock && !m_ConstructionDock->isHidden())
@@ -2694,9 +2935,9 @@ void AuDesignerFrame::SceneContextChanged(int sceneContext)
 			m_DesignerBar->show();
 		if(m_DesignerBar2)
 			m_DesignerBar2->show();
-		if(m_DesignerPartsDock)
+		if(m_DesignerPartsDock && !m_OldShipMode)
 			m_DesignerPartsDock->show();
-		if(m_DesignerTextureWrapDock)
+		if(m_DesignerTextureWrapDock && !m_OldShipMode)
 			m_DesignerTextureWrapDock->show();
 		break;
 
@@ -2721,6 +2962,14 @@ void AuDesignerFrame::SceneContextChanged(int sceneContext)
 			m_DesignerBar->hide();
 		if(m_DesignerBar2 && !m_DesignerBar2->isHidden())
 			m_DesignerBar2->hide();
+		if(m_DesignerPartsDock && !m_DesignerPartsDock->isHidden())
+			m_DesignerPartsDock->hide();
+		if(m_DesignerTextureWrapDock && !m_DesignerTextureWrapDock->isHidden())
+			m_DesignerTextureWrapDock->hide();
+		ConfirmLeaveOldMode();
+		SetOldShipMode(false);
+		if(m_OldShipDock && !m_OldShipDock->isHidden())
+			m_OldShipDock->hide();
 		if(m_DesignerPartsDock && !m_DesignerPartsDock->isHidden())
 			m_DesignerPartsDock->hide();
 		if(m_DesignerTextureWrapDock && !m_DesignerTextureWrapDock->isHidden())
@@ -3503,6 +3752,14 @@ void AuDesignerFrame::DesignerExited()
 		m_DesignerPartsDock->hide();
 	if(m_DesignerTextureWrapDock)
 		m_DesignerTextureWrapDock->hide();
+	ConfirmLeaveOldMode();
+	SetOldShipMode(false);
+	if(m_OldShipDock)
+		m_OldShipDock->hide();
+	if(m_DesignerPartsDock)
+		m_DesignerPartsDock->hide();
+	if(m_DesignerTextureWrapDock)
+		m_DesignerTextureWrapDock->hide();
 }
 
 void AuDesignerFrame::CreateDesignerMenu()
@@ -3524,6 +3781,12 @@ void AuDesignerFrame::CreateDesignerMenu()
 			m_Designer_NewItem = nuMenu->addAction(tr("New &Item..."), m_View, SLOT(DesignerNewItem()));
 			m_Designer_NewItem->setIcon(QIcon(":data/Inventory.png"));
 
+			m_Designer_NewOldBuilding = nuMenu->addAction(tr("New Old B&uilding"), m_View, SLOT(DesignerNewOldBuilding()));
+			m_Designer_NewOldBuilding->setIcon(QIcon(":data/dp_New.png"));
+
+			m_Designer_NewOldShip = nuMenu->addAction(tr("New &Old Ship"), m_View, SLOT(DesignerNewOldShip()));
+			m_Designer_NewOldShip->setIcon(QIcon(":data/dp_New.png"));
+
 			m_Designer_NewSpacecraft = nuMenu->addAction(tr("New S&pacecraft"), m_View, SLOT(DesignerNewSpacecraft()));
 			m_Designer_NewSpacecraft->setIcon(QIcon(":data/c_Spacecraft.png"));
 
@@ -3533,6 +3796,12 @@ void AuDesignerFrame::CreateDesignerMenu()
 
 		m_Designer_Open = fileMenu->addAction(tr("&Open..."), m_View, SLOT(DesignerOpen()), QKeySequence::Open);
 		m_Designer_Open->setIcon(QIcon(":data/dp_Load.png"));
+
+		m_Designer_ImportOldShip = fileMenu->addAction(tr("Open Old Ship (.ship)..."), m_View, SLOT(DesignerImportOldShip()));
+		m_Designer_ImportOldShip->setIcon(QIcon(":data/dp_Load.png"));
+
+		m_Designer_ImportOldBuilding = fileMenu->addAction(tr("Open Old Building..."), m_View, SLOT(DesignerImportOldBuilding()));
+		m_Designer_ImportOldBuilding->setIcon(QIcon(":data/dp_Load.png"));
 
 		m_Designer_Save = fileMenu->addAction(tr("&Save"), m_View, SLOT(DesignerSave()), QKeySequence::Save);
 		m_Designer_Save->setIcon(QIcon(":data/dp_Save.png"));
@@ -4507,6 +4776,10 @@ void AuDesignerFrame::CreateDesignerMenu()
 		viewMenu->addAction(QIcon(":data/SoHDesignerIcon.png"), tr("Parts"), this, SLOT(ToggleDesignPartsUi()));
 
 		viewMenu->addAction(QIcon(":data/ScTexPalette.png"), tr("Texture &Wrapper"), this, SLOT(ToggleDesignTextureWrapUi()));
+
+		viewMenu->addAction(QIcon(":data/c_Spacecraft.png"), tr("&Old Spacecraft Design"), this, SLOT(ToggleOldShipUi()));
+
+		viewMenu->addAction(QIcon(":data/City.png"), tr("Old &Building Design"), this, SLOT(ToggleOldBuildingUi()));
 	}
 
 	QMenu* helpMenu = menuBar()->addMenu(tr("&Help"));
@@ -5192,6 +5465,10 @@ void AuDesignerFrame::DesignerSetGravityOn(bool grav)
 
 	if(m_DesignerBar)
 		m_DesignerBar->SetGravity(grav);
+	if(m_OldShipDock)
+		m_OldShipDock->Panel()->SetGravityShown(grav);
+	if(m_OldBuildingDock)
+		m_OldBuildingDock->Panel()->SetGravityShown(grav);
 
 	// This might only be needed for the old style designer.
 	auApp->DesignerSetGravity(grav);
@@ -5533,6 +5810,11 @@ void AuDesignerFrame::SpawnTie()
 
 void AuDesignerFrame::LaunchDesigner()
 {
+	LaunchDesignerFromCommandLine(-1);
+}
+
+void AuDesignerFrame::LaunchDesignerFromCommandLine(int oldKind)
+{
 	// We can't show the designer until the basic game data has been loaded. It is stored in a local cache file whenever
 	// the player logs into the server farm.
 	DgData& gd = g_Au.LockDataForWrite();
@@ -5570,9 +5852,10 @@ void AuDesignerFrame::LaunchDesigner()
 	}
 
 	AuSoloDesignerDlg dlg(this);
-	if(dlg.exec() != QDialog::Accepted)
+	if(oldKind < 0 && dlg.exec() != QDialog::Accepted)
 		return;
 	auApp->SetDefaultHuman(dlg.Name(), dlg.Handedness(), dlg.Gender(), dlg.DNA());
+	m_StartOldKind = qMax(0, oldKind);
 	auApp->SetRunState(AuApp::Designer);
 }
 

@@ -4,6 +4,9 @@
 // All rights reserved.
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+#include <QResizeEvent>
+#include <QTimer>
+#include <QWindowStateChangeEvent>
 #include "audesignerview.h"
 //
 #include "aubddesignprops.h"
@@ -20,6 +23,8 @@
 #include "audefusebomb.h"
 #include "audesignerapp.h"
 #include "audesignerframe.h"
+#include "audesigneroldship.h"
+#include "psenginetrail.h"
 #include "audesignergearopen.h"
 #include "audesignergearsave.h"
 #include "audesignlibopendlg.h"
@@ -189,7 +194,9 @@
 #include "dicontrolinput.h"
 #include "dtgl.h"
 #include "dttarget.h"
+#include "oldshipview.h"
 #include <QAction>
+#include <QApplication>
 #include <QCursor>
 #include <QDir>
 #include <QFileDialog>
@@ -1870,6 +1877,16 @@ AuDesignerView::AuDesignerView(QWidget* parent) : QOpenGLWidget(parent), m_Scene
 
 	m_IsDesignMode = false;
 	m_IsDesignPreview = false;
+	m_OldShipDrawing = 0;
+	m_OldShipDrawnPanel = 0;
+	m_OldShipDrawnDeck = 0;
+	m_OldShipDrawnRevision = -1;
+	m_OldShipTimer = 0;
+	m_OldShipReportTimer = 0;
+	m_OldShipReportMs = 0;
+	m_texOldShipIcons = 0;
+	m_OldShipContrailsPanel = 0;
+	m_OldShipContrailsRevision = -1;
 	m_bWaitingForScene = false;		// True when waiting for scene atom to init.
 
 	OnViewResetCamera();
@@ -1911,6 +1928,11 @@ AuDesignerView::~AuDesignerView()
 	// Save last known whereabouts of the scene atom for display on the login screen.
 	// Does nothing if there is no scene atom.
 	SaveWhereabouts();
+
+	delete m_OldShipDrawing;
+	m_OldShipDrawing = 0;
+	qDeleteAll(m_OldShipContrails);
+	m_OldShipContrails.clear();
 
 	if(m_pCommand[0])
 		delete m_pCommand[0];
@@ -2527,6 +2549,8 @@ void AuDesignerView::keyPressEvent(QKeyEvent *e)
 	{
 		if(Command() && Command()->OnKeyDown(e))
 			return;
+		if(!Command() && OldShipKeyPress(e))
+			return;
 	}
 
 	// Ignore repeats of the same key. The autorepeat bool is on when we get the initial key press event for the key.
@@ -2589,6 +2613,8 @@ void AuDesignerView::mouseDoubleClickEvent(QMouseEvent* e)
 		{
 			if(Command())
 				Command()->OnButtonDblClk(e);
+			else if(OldShipPanel())
+				;
 			else if(IsInNewDesignEnvironment())
 				ProcessDesignerMouseDoubleClick(e);
 		}
@@ -2631,6 +2657,8 @@ void AuDesignerView::mousePressEvent(QMouseEvent* e)
 		{
 			if(Command())
 				Command()->OnButtonDown(e);
+			else if(OldShipPanel())
+				OldShipMousePress(e);
 			else if(IsInNewDesignEnvironment())
 				ProcessDesignerMousePress(e);
 		}
@@ -2670,6 +2698,8 @@ void AuDesignerView::mouseReleaseEvent(QMouseEvent* e)
 		{
 			if(Command())
 				Command()->OnButtonUp(e);
+			else if(OldShipPanel())
+				;
 			else if(IsInNewDesignEnvironment())
 				ProcessDesignerMouseRelease(e);
 		}
@@ -2709,6 +2739,8 @@ void AuDesignerView::mouseMoveEvent(QMouseEvent* e)
 		{
 			if(Command())
 				Command()->OnMouseMove(e);
+			else if(OldShipPanel())
+				OldShipMouseMove(e);
 			else if(IsInNewDesignEnvironment())
 				ProcessDesignerMouseMove(e);
 		}
@@ -3006,7 +3038,7 @@ void AuDesignerView::RenderScene(DaPerson* sceneAtom)
 			DaDesignPlane* plane = pEnvironment->FindDesignPlane(sceneAtom->Id());
 			if(plane)
 			{
-				plane->m_GridOnBits = g_AuClient.DesignerShowGrid();
+				plane->m_GridOnBits = g_AuClient.DesignerShowGrid() && !OldShipPanel();
 				plane->SetGridSpacing(g_AuClient.DesignerGridSpacingFt(), g_AuClient.DesignerGridSpacingOm(),
 						g_AuClient.DesignerGridSpacingNoM());
 				plane->m_GridRad = g_AuClient.DesignerGridRadius();
@@ -3015,6 +3047,8 @@ void AuDesignerView::RenderScene(DaPerson* sceneAtom)
 		}
 
 		pEnvironment->RenderEnvironment(m_tProjection, m_tFarProjection, m_tCamera.Inverse(), *m_RenderInfo, sceneAtom);
+
+		OldShipRender(sceneAtom);
 	}
 
 	if(s_RenderScene)
@@ -3063,7 +3097,7 @@ void AuDesignerView::RenderScene(DaPerson* sceneAtom)
 		RenderTactical(sceneAtom, pEnvironment);
 
 	// Display the drag selection rectangle.
-	if(m_MouseDragging && !Command() && IsUIInputMode() && !IsDesignMode() && !m_bFreeCamera)
+	if(m_MouseDragging && !Command() && IsUIInputMode() && !IsDesignMode() && !m_bFreeCamera && !OldShipPanel())
 	{
 		if(IsInNewDesignEnvironment() && DragSelectedParts())
 		{
@@ -6335,6 +6369,10 @@ void AuDesignerView::SetCursor(DaPerson* sceneAtom)
 	{
 		Command()->SetCursor(m_tCamera, sceneAtom, m_MouseLast);
 		m_Cursor = CURSOR_Unknown;
+		m_OldShipCursor = QString();
+	}
+	else if(OldShipSetCursor())
+	{
 	}
 	else if(IsDesignMode())
 	{
@@ -12298,11 +12336,13 @@ void AuDesignerView::DesignerMoveMenu()
 void AuDesignerView::DesignerNewSpacecraft()
 {
 	// Warn against losing the current design. Provide an option to cancel.
-	if(!DesignerConfirmLoseChanges())
+	if(!DesignerConfirmLoseChanges() || !auDesignerApp->DesignerFrame()->ConfirmLeaveOldMode())
 		return;
 
 	// Start with no commands running.
 	EndCommands();
+
+	auDesignerApp->DesignerFrame()->SetOldShipMode(false);
 
 	// Start with the same structure as last time.
 	SPACECRAFT_STRUCTURE newStructure = (SPACECRAFT_STRUCTURE)g_Au.Settings().readNumEntry("/Designer/NewScStructure", SC_Starship);
@@ -12332,11 +12372,13 @@ void AuDesignerView::DesignerNewSpacecraft()
 void AuDesignerView::DesignerNewBuilding()
 {
 	// Warn against losing the current design. Provide an option to cancel.
-	if(!DesignerConfirmLoseChanges())
+	if(!DesignerConfirmLoseChanges() || !auDesignerApp->DesignerFrame()->ConfirmLeaveOldMode())
 		return;
 
 	// Start with no commands running.
 	EndCommands();
+
+	auDesignerApp->DesignerFrame()->SetOldShipMode(false);
 
 	// Start with the same structure as last time.
 	BUILDING_STRUCTURE newStructure = (BUILDING_STRUCTURE)g_Au.Settings().readNumEntry("/Designer/NewBdStructure", BD_Building);
@@ -12369,11 +12411,13 @@ void AuDesignerView::DesignerNewVehicle()
 void AuDesignerView::DesignerNewItem()
 {
 	// Warn against losing the current design. Provide an option to cancel.
-	if(!DesignerConfirmLoseChanges())
+	if(!DesignerConfirmLoseChanges() || !auDesignerApp->DesignerFrame()->ConfirmLeaveOldMode())
 		return;
 
 	// Start with no commands running.
 	EndCommands();
+
+	auDesignerApp->DesignerFrame()->SetOldShipMode(false);
 
 	// Start with the same structure as last time.
 	COMMODITYID newCommodityId = (COMMODITYID)g_Au.Settings().readNumEntry("/Designer/NewItCommodity", CID_Invalid);
@@ -12468,6 +12512,9 @@ void AuDesignerView::DesignerOpen()
 
 	// Get file name and open the file.
 	QString designFileName(m_DesignerFileName);
+	AuOldShipPanel* oldShipPanel = OldShipPanel();
+	if(oldShipPanel && !oldShipPanel->FileName().isEmpty())
+		designFileName = oldShipPanel->FileName();
 	if(designFileName.isEmpty())
 	{
 		designFileName = g_Au.Settings().readEntry("/Designer/LastSoHFile", "");
@@ -12481,19 +12528,46 @@ void AuDesignerView::DesignerOpen()
 		}
 	}
 
+	const QString buildingFilter = AuOldShipPanel::BuildingFileFilter();
+	QString buildingEndings = buildingFilter.mid(buildingFilter.indexOf('(') + 1);
+	buildingEndings.chop(1);
 	QString loadFile = QFileDialog::getOpenFileName(this, tr("OpenShores Design File"), designFileName,
-			"OpenShores Designs (*.SoH);;All Files (*.*)", 0,
-			g_Au.UseNativeFileDialog() ? QFileDialog::Options() : QFileDialog::DontUseNativeDialog);
+			QString("All Designs (*.SoH *.ship %1);;OpenShores Designs (*.SoH);;Old Spacecraft Designs (*.ship);;%2;;All Files (*.*)")
+				.arg(buildingEndings).arg(buildingFilter), 0,
+			(g_Au.UseNativeFileDialog() ? QFileDialog::Options() : QFileDialog::Options(QFileDialog::DontUseNativeDialog))
+				| QFileDialog::HideNameFilterDetails);
+	if(!loadFile.isEmpty() && AuOldShipPanel::IsBuildingFileName(loadFile))
+	{
+		AuOldShipDock* oldBuildingDock = auDesignerApp->DesignerFrame()->OldDock(true);
+		if(!oldBuildingDock || !oldBuildingDock->Panel()->ConfirmLoseChanges())
+			return;
+		g_Au.Settings().writeEntry("/Designer/LastBuildingFile", loadFile);
+		OldBuildingOpenFile(loadFile);
+		return;
+	}
+	if(!loadFile.isEmpty() && loadFile.right(5).compare(".ship", Qt::CaseInsensitive) == 0)
+	{
+		AuOldShipDock* oldShipDock = auDesignerApp->DesignerFrame()->OldDock(false);
+		if(!oldShipDock || !oldShipDock->Panel()->ConfirmLoseChanges())
+			return;
+		g_Au.Settings().writeEntry("/Designer/LastShipFile", loadFile);
+		OldShipOpenFile(loadFile);
+		return;
+	}
 	if(!loadFile.isEmpty() && loadFile.right(4).compare(".SoH", Qt::CaseInsensitive) == 0)
 	{
 		// Store last known .SoH file folder.
 		g_Au.Settings().writeEntry("/Designer/LastSoHFile", loadFile);
 
+		if(!auDesignerApp->DesignerFrame()->ConfirmLeaveOldMode())
+			return;
 		AuDesign* design = AuDesign::LoadFromFile(loadFile, SOH_FILE_TYPE);
 		if(design)
 		{
 			// Start with no commands running.
 			EndCommands();
+
+			auDesignerApp->DesignerFrame()->SetOldShipMode(false);
 
 			bool sizeOk = auApp->DesignerLoadedFromFile(*design);
 			delete design;
@@ -12766,13 +12840,14 @@ void AuDesignerView::DesignerPodBay()
 	StartCommand(new DdScPodBay(this));
 }
 
-void AuDesignerView::DesignerProperties()
+bool AuDesignerView::DesignerProperties(AuDesign* accepted)
 {
+	bool ok = false;
 	switch(m_DesignMode)
 	{
 	case DaDesignBase::InvalidMode:
 	case DaDesignBase::DESIGN_Unknown:
-		return;
+		return false;
 
 	case DaDesignBase::DESIGN_Spacecraft:
 		{
@@ -12802,6 +12877,11 @@ void AuDesignerView::DesignerProperties()
 					auApp->DesignerSetProperties(mods->m_DesignRec);
 
 					g_Au.Settings().writeEntry("/Designer/NewScStructure", mods->m_DesignRec.Structure());
+
+					OldShipScheduleReport(2000);
+					if(accepted)
+						accepted->SetProperties(mods->m_DesignRec);
+					ok = true;
 				}
 
 				mods->deleteLater();
@@ -12837,6 +12917,11 @@ void AuDesignerView::DesignerProperties()
 					auApp->DesignerSetProperties(mods->m_DesignRec);
 
 					g_Au.Settings().writeEntry("/Designer/NewBdStructure", mods->m_DesignRec.Structure());
+
+					OldShipScheduleReport(2000);
+					if(accepted)
+						accepted->SetProperties(mods->m_DesignRec);
+					ok = true;
 				}
 
 				mods->deleteLater();
@@ -12872,6 +12957,9 @@ void AuDesignerView::DesignerProperties()
 					auApp->DesignerSetProperties(mods->m_DesignRec);
 
 					g_Au.Settings().writeEntry("/Designer/NewItCommodity", mods->m_DesignRec.CommodityId());
+					if(accepted)
+						accepted->SetProperties(mods->m_DesignRec);
+					ok = true;
 				}
 
 				mods->deleteLater();
@@ -12882,6 +12970,7 @@ void AuDesignerView::DesignerProperties()
 	//case DaDesignBase::DESIGN_Vehicle:
 		//break;
 	}
+	return ok;
 }
 
 void AuDesignerView::DesignerPunchFace()
@@ -12973,6 +13062,9 @@ void AuDesignerView::DesignerRotate()
 
 void AuDesignerView::DesignerSave()
 {
+	if(OldShipSave(false))
+		return;
+
 	bool savedIt = false;
 
 	// Attempt to resave the file using it's last known file name.
@@ -13021,6 +13113,8 @@ void AuDesignerView::DesignerSaveAs()
 	if(!IsInNewDesignEnvironment())
 		return;
 	if(DesignMode() == DaDesignBase::DESIGN_Unknown)
+		return;
+	if(OldShipSave(true))
 		return;
 
 	// Get file name and save the file.
@@ -14118,8 +14212,10 @@ void AuDesignerView::DesignerScLibraryOpen()
 		return;
 
 	// Warn against losing the current design. Provide an option to cancel.
-	if(!DesignerConfirmLoseChanges())
+	if(!DesignerConfirmLoseChanges() || !auDesignerApp->DesignerFrame()->ConfirmLeaveOldMode())
 		return;
+
+	auDesignerApp->DesignerFrame()->SetOldShipMode(false);
 
 	// Get id and name of current design.
 	quint32 designId = 0;
@@ -14171,8 +14267,10 @@ void AuDesignerView::DesignerBdLibraryOpen()
 		return;
 
 	// Warn against losing the current design. Provide an option to cancel.
-	if(!DesignerConfirmLoseChanges())
+	if(!DesignerConfirmLoseChanges() || !auDesignerApp->DesignerFrame()->ConfirmLeaveOldMode())
 		return;
+
+	auDesignerApp->DesignerFrame()->SetOldShipMode(false);
 
 	// Get id and name of current design.
 	quint32 designId = 0;
@@ -14224,8 +14322,10 @@ void AuDesignerView::DesignerItLibraryOpen()
 		return;
 
 	// Warn against losing the current design. Provide an option to cancel.
-	if(!DesignerConfirmLoseChanges())
+	if(!DesignerConfirmLoseChanges() || !auDesignerApp->DesignerFrame()->ConfirmLeaveOldMode())
 		return;
+
+	auDesignerApp->DesignerFrame()->SetOldShipMode(false);
 
 	// Get id and name of current design.
 	quint32 designId = 0;
@@ -14274,6 +14374,8 @@ void AuDesignerView::DesignerLibrarySave()
 {
 	// On line only.
 	if(!IsInDesignEnvironment())
+		return;
+	if(OldShipAskToFinish())
 		return;
 
 	// Grab a clone of the current design.
@@ -14466,6 +14568,10 @@ void AuDesignerView::DesignerGearOpen()
 	AuDesignerGearOpen dlg(this);
 	if(auApp->Frame()->ExecDialog(dlg) == QDialog::Accepted)
 	{
+		if(!auDesignerApp->DesignerFrame()->ConfirmLeaveOldMode())
+			return;
+		auDesignerApp->DesignerFrame()->SetOldShipMode(false);
+
 		quint32 designId = dlg.DesignId();
 		AuGearPos pos = dlg.GearPos();
 		auApp->DesignerGearOpen(designId, pos);
@@ -14506,6 +14612,8 @@ void AuDesignerView::DesignerGearSaveSc()
 	// On line only.
 	if(!IsInDesignEnvironment())
 		return;
+	if(OldShipAskToFinish())
+		return;
 
 	AuDesignerGearSave dlg(SceneAtomId(), this);
 	if(auApp->Frame()->ExecDialog(dlg) == QDialog::Accepted)
@@ -14533,6 +14641,8 @@ void AuDesignerView::DesignerGearSaveSc()
 void AuDesignerView::DesignerFinalize()
 {
 	if(!IsInDesignEnvironment())
+		return;
+	if(OldShipAskToFinish())
 		return;
 
 	switch(m_DesignMode)

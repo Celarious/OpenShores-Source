@@ -579,6 +579,7 @@ private:
 	QColor								m_DesignerBackColor;	// Color of back faces in object mode.
 	bool								m_DesignerBlockPaths;
 	bool								m_DesignerGravityOn;
+	quint8								m_DesignerOldShipView;
 	QColor								m_DesignerGridColor;	// Color of design grid lines.
 	QColor								m_DesignerGridXColor;	// Color of X axis line and text
 	QColor								m_DesignerGridYColor;	// Color of Y axis line and text
@@ -2664,6 +2665,23 @@ public:
 	inline bool DesignerBlockPaths() const
 	{
 		return m_DesignerBlockPaths;
+	}
+
+	enum OLDSHIP_VIEW
+	{
+		OLDSHIP_Off,
+		OLDSHIP_Lines,
+		OLDSHIP_Solid
+	};
+
+	inline OLDSHIP_VIEW DesignerOldShipView() const
+	{
+		return (OLDSHIP_VIEW)m_DesignerOldShipView;
+	}
+
+	inline void DesignerSetOldShipView(OLDSHIP_VIEW view)
+	{
+		m_DesignerOldShipView = view;
 	}
 
 	inline void DesignerSetBlockPaths(bool block)

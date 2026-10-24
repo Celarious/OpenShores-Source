@@ -153,6 +153,8 @@ void AuGlobal::Init(MODE mode, const QString& appName, const QString& company, D
 
 	m_DesignerGravityOn = Settings().readBoolEntry("Designer/GravityOn", false);
 
+	m_DesignerOldShipView = OLDSHIP_Off;
+
 	m_Data = data;
 
 	m_DetailedTerrainRange = m_Settings.readNumEntry("/Settings/DetailedTerrainRange", 800);
