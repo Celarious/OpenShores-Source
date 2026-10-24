@@ -407,6 +407,7 @@ public:
 		Suit,
 		Helmet,
 		Visor,
+		Collar,
 	};
 
 public:
@@ -673,7 +674,7 @@ public:	// Methods
 	}
 
 	// Create VAO(s) for use with the AnimalClothing shader.
-	AuGLVAO CreateAnimalClothingVAO(AuOpenGLFunctions& re) const;
+	AuGLVAO CreateAnimalClothingVAO(AuOpenGLFunctions& re, bool skipNeck=false) const;
 	AuGLVAO CreateAnimalClothingBlendVAO(AuOpenGLFunctions& re) const;
 	AuGLVAO CreateHeadClothingVAO(AuOpenGLFunctions& re) const;
 	AuGLVAO CreateHeadClothingBlendVAO(AuOpenGLFunctions& re) const;

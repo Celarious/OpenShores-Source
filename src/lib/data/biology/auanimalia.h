@@ -33,6 +33,7 @@ private:
 	AuHairStyle::STYLE					m_Haircut;
 	float								m_HeadTilt;				// Head tilt angle. 0 = look ahead. + look up. - look down.
 	float								m_HeadTurn;				// Head turn angle. 0.0 = none = straight ahead.
+	bool								m_HeadHidden = false;
 	AuPose								m_Pose[AuAnimalPart::PS_Count];		// Current body pose.
 	float								m_PoseHz;				// Pose animation frequency in cycles per second.
 	AuHairStyle::SHAVE					m_Shave;
@@ -41,7 +42,9 @@ private:
 	AuClothingTextureArray				m_AnimalClothingTex;
 	// Full body VAOs
 	AuGLVAO								m_AnimalVAO;
+	AuGLVAO								m_AnimalNoNeckVAO;
 	AuGLVAO								m_AnimalClothingVAO;
+	AuGLVAO								m_AnimalNoNeckClothingVAO;
 	AuGLVAO								m_AnimalClothingBlendVAO;
 	AuGLVAO								m_AnimalHelmetBlendVAO;	// Just the visor of the helmet.
 	AuGLVAO								m_AnimalHairBottomVAO;	// Hair is always blended.
@@ -267,6 +270,9 @@ public:	// Methods
 	const AuMatrix4x4& HeadBaseMatrix() const;
 
 	AuPoint HeadLocation() const;
+
+	void HideHead(QList<AuAnimalBone>& saved);
+	void RestoreHead(const QList<AuAnimalBone>& saved);
 
 	// Y distance to the eye plane, for camera positioning.
 	float HeadThickness() const;

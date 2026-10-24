@@ -3005,14 +3005,19 @@ AuGLVAO AuMeatMesh::CreateLinesVAO(AuOpenGLFunctions& re) const
 	return vao;
 }
 
-AuGLVAO AuMeatMesh::CreateAnimalVAO(AuOpenGLFunctions& re) const
+AuGLVAO AuMeatMesh::CreateAnimalVAO(AuOpenGLFunctions& re, bool skipNeck) const
 {
 	AuGLVAO vao;
 	if(isEmpty())
 		return vao;
 
 	// Store count of triangles in the vertex array object.
-	int vertices = count()*3;
+	int tcount = count();
+	if(skipNeck)
+		for(const_iterator ti = cbegin(); ti != cend(); ti++)
+			if((*ti).Part() == AuMeatTri::Neck)
+				tcount--;
+	int vertices = tcount*3;
 
 	// Copy surface triangles into gl array buffers.
 	GLfloat* positionShine = new GLfloat[vertices*4];
@@ -3030,6 +3035,9 @@ AuGLVAO AuMeatMesh::CreateAnimalVAO(AuOpenGLFunctions& re) const
 	unsigned int dbi = 0;
 	for(const_iterator ti = cbegin(); ti != cend(); ti++)
 	{
+		if(skipNeck && (*ti).Part() == AuMeatTri::Neck)
+			continue;
+
 		const AuPointN& v0 = (*ti).m_V0;
 		const AuPointN& v1 = (*ti).m_V1;
 		const AuPointN& v2 = (*ti).m_V2;

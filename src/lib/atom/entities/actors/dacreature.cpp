@@ -2529,7 +2529,10 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 			}
 
 			// Render the body of this creature using the appropriate shader.
-			bool headless = this == sceneAtom && g_Au.DrawBodyModel() == 2;	// Scene atom may want his body to be headless.
+			bool headless = this == sceneAtom && (g_Au.DrawBodyModel() == 2 || IsCameraAtEyes(ari));	// Scene atom may want his body to be headless.
+			QList<AuAnimalBone> headBones;
+			if(headless && m_Animalia)
+				m_Animalia->HideHead(headBones);
 			if(IsInAtmosphere())
 			{
 				const DaWorld* world = FindParentPlanetInEnv();
@@ -2573,6 +2576,9 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 				else
 					m_Animalia->RenderAnimal(projection, tBody, *ari.re, false, visorState, ambientLightUp);
 			}
+
+			if(headless && m_Animalia)
+				m_Animalia->RestoreHead(headBones);
 
 			if(restoreHeadTilt)
 			{
@@ -2932,6 +2938,11 @@ void DaCreature::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari
 
 		quint8 visorState = (Helmet() != CID_Invalid) ? 1 : 0;
 
+		bool headless = this == sceneAtom && (g_Au.DrawBodyModel() == 2 || IsCameraAtEyes(ari));
+		QList<AuAnimalBone> headBones;
+		if(headless)
+			m_Animalia->HideHead(headBones);
+
 		AuPoint ambientLightUp = tBody.ProjectVector(GravityNormal());
 		ambientLightUp.Unit();
 		if(IsInAtmosphere())
@@ -2965,6 +2976,9 @@ void DaCreature::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari
 		}
 		else
 			m_Animalia->RenderAnimal(projection, tBody, *ari.re, true, visorState, ambientLightUp);
+
+		if(headless)
+			m_Animalia->RestoreHead(headBones);
 
 		// Restore suns that I disabled.
 		ari.re->EnableSuns(sunsDisabled);
@@ -3086,6 +3100,17 @@ void DaCreature::RenderScene(const AuMatrix4x4& projection, const AuMatrix4x4& f
 		ari.re->EnableAtomLights(ship->Id());
 }
 
+bool DaCreature::IsCameraAtEyes(const AuAtomRenderInfo& ari) const
+{
+	if(!ari.IsViewFirstPerson() || ari.m_ViewDist1st != 0)
+		return false;
+	if(m_Body)
+		return !m_Body->IsDead() && !m_Body->IsDying() && !m_Body->IsTurretIntegratedPose();
+	if(m_Animalia)
+		return !m_Animalia->IsDead() && !m_Animalia->IsDying() && !m_Animalia->IsTurretIntegratedPose();
+	return false;
+}
+
 // Sets up camera when this atom is going to render the scene.
 void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rFarClip, AuAtomRenderInfo& ari) const
 {
@@ -3128,6 +3153,9 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 		rNearClip = 1;			// For close in work.
 	else
 		rNearClip = 3;	// Clouds on ringworld sections at farthest orbit altitude just start to have Z collisions with the ground.
+	double eyeShiftClip = rNearClip;
+	if(rNearClip == 3 && IsCameraAtEyes(ari))
+		rNearClip = 0.1;
 
 	AuPose gp;
 	float headTilt;
@@ -3265,7 +3293,7 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 				headThick = m_Body->HeadThickness();
 			else
 				headThick = m_Animalia->HeadThickness();
-			tCamera.Translate(0, 0, rNearClip/2.0 - headThick);
+			tCamera.Translate(0, 0, eyeShiftClip/2.0 - headThick);
 
 			// Move camera back from the eye position, in the direction they are looking.
 			if(ari.IsViewFirstPerson())
@@ -3288,7 +3316,7 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 				headThick = m_Body->HeadThickness();
 			else
 				headThick = m_Animalia->HeadThickness();
-			tCamera.Translate(0, 0, rNearClip/2.0 - headThick);
+			tCamera.Translate(0, 0, eyeShiftClip/2.0 - headThick);
 
 			// Move camera back from the eye position, in the direction they are looking.
 			if(ari.IsViewFirstPerson())
@@ -3315,7 +3343,7 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 			headThick = m_Body->HeadThickness();
 		else
 			headThick = m_Animalia->HeadThickness();
-		tCamera.Translate(0, 0, rNearClip/2.0 - headThick);
+		tCamera.Translate(0, 0, eyeShiftClip/2.0 - headThick);
 
 		// Move camera back from the eye position, in the direction they are looking.
 		if(ari.IsViewFirstPerson())
@@ -3338,7 +3366,7 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 			headThick = m_Body->HeadThickness();
 		else
 			headThick = m_Animalia->HeadThickness();
-		tCamera.Translate(0, 0, rNearClip/2.0 - headThick);
+		tCamera.Translate(0, 0, eyeShiftClip/2.0 - headThick);
 
 		// Move camera back from the eye position, in the direction they are looking.
 		if(ari.IsViewFirstPerson())

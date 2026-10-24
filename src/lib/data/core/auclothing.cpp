@@ -349,14 +349,19 @@ void AuClothingMesh::SmoothNormals()
 	}
 }
 
-AuGLVAO AuClothingMesh::CreateAnimalClothingVAO(AuOpenGLFunctions& re) const
+AuGLVAO AuClothingMesh::CreateAnimalClothingVAO(AuOpenGLFunctions& re, bool skipNeck) const
 {
 	AuGLVAO vao;
 	if(isEmpty())
 		return vao;
 
 	// Store count of triangles in the vertex array object.
-	int vertices = CountUnblended()*3;
+	int tcount = CountUnblended();
+	if(skipNeck)
+		for(const_iterator ti = cbegin(); ti != cend(); ti++)
+			if(!(*ti).NeedsBlend() && (*ti).m_Part == AuClothingTri::Collar)
+				tcount--;
+	int vertices = tcount*3;
 
 	// Copy surface triangles into gl array buffers.
 	GLfloat* positionShine = new GLfloat[vertices*4];
@@ -378,6 +383,8 @@ AuGLVAO AuClothingMesh::CreateAnimalClothingVAO(AuOpenGLFunctions& re) const
 	{
 		if((*ti).NeedsBlend())
 			continue;	// Skip blended triangles.
+		if(skipNeck && (*ti).m_Part == AuClothingTri::Collar)
+			continue;
 		const AuClothingPoint& v0 = (*ti).m_V0;
 		const AuClothingPoint& v1 = (*ti).m_V1;
 		const AuClothingPoint& v2 = (*ti).m_V2;
@@ -1763,7 +1770,7 @@ void AuClothing::GetItemMesh(const AuItem& item, AuClothingMesh& clothing, const
 			int collarTex = ctex.IndexOf("C_Pleat", QColor(255,255,255));
 			float collarDist = .5f/12;
 			QColor collarColor(36, 36, 36);
-			GetNeckMesh(clothing, AuClothingTri::Suit, collarTex, dna, meat, collarDist, 1, collarColor);
+			GetNeckMesh(clothing, AuClothingTri::Collar, collarTex, dna, meat, collarDist, 1, collarColor);
 
 			// Gloves
 			int gloveTex = ctex.IndexOf("C_HomespunWhite", QColor(255,255,255));
@@ -1835,7 +1842,7 @@ void AuClothing::GetItemMesh(const AuItem& item, AuClothingMesh& clothing, const
 			int collarTex = ctex.IndexOf("C_Pleat", QColor(255,255,255));
 			float collarDist = .5f/12;
 			QColor collarColor(48, 48, 48);
-			GetNeckMesh(clothing, AuClothingTri::Suit, collarTex, dna, meat, collarDist, 1, collarColor);
+			GetNeckMesh(clothing, AuClothingTri::Collar, collarTex, dna, meat, collarDist, 1, collarColor);
 
 			// Gloves
 			int gloveTex = ctex.IndexOf("C_HomespunWhite", QColor(255,255,255));
@@ -1908,7 +1915,7 @@ void AuClothing::GetItemMesh(const AuItem& item, AuClothingMesh& clothing, const
 			int collarTex = ctex.IndexOf("C_Pleat", QColor(255,255,255));
 			float collarDist = .4f/12;
 			QColor collarColor(64, 48, 32);
-			GetNeckMesh(clothing, AuClothingTri::Suit, collarTex, dna, meat, collarDist, 1, collarColor);
+			GetNeckMesh(clothing, AuClothingTri::Collar, collarTex, dna, meat, collarDist, 1, collarColor);
 
 			// Gloves
 			int gloveTex = ctex.IndexOf("C_HomespunWhite", QColor(255,255,255));
@@ -1981,7 +1988,7 @@ void AuClothing::GetItemMesh(const AuItem& item, AuClothingMesh& clothing, const
 			int collarTex = ctex.IndexOf("C_Pleat", QColor(255,255,255));
 			float collarDist = .3f/12;
 			QColor collarColor(32, 64, 32);
-			GetNeckMesh(clothing, AuClothingTri::Suit, collarTex, dna, meat, collarDist, 1, collarColor);
+			GetNeckMesh(clothing, AuClothingTri::Collar, collarTex, dna, meat, collarDist, 1, collarColor);
 
 			// Gloves
 			int gloveTex = ctex.IndexOf("C_HomespunWhite", QColor(255,255,255));
@@ -3063,6 +3070,7 @@ void AuClothing::GetChestMesh(AuClothingMesh& clothing, AuClothingTri::PART part
 	float topTy = 0;
 	float bottomTy = 0;
 	bool haveTy = false;
+	float topZ = -10000;
 	for(AuMeatMesh::const_iterator mi = meat.cbegin(); mi != meat.cend(); mi++)
 	{
 		if((*mi).Part() != AuMeatTri::TorsoUpper &&
@@ -3078,6 +3086,10 @@ void AuClothing::GetChestMesh(AuClothingMesh& clothing, AuClothingTri::PART part
 			continue;
 		if(v0.z < waistAlt && v1.z < waistAlt && v2.z < waistAlt)
 			continue;
+
+		float zMax = qMax(v0.z, qMax(v1.z, v2.z));
+		if(zMax > topZ)
+			topZ = zMax;
 
 		if(!haveTy)
 		{
@@ -3106,6 +3118,8 @@ void AuClothing::GetChestMesh(AuClothingMesh& clothing, AuClothingTri::PART part
 		return;
 	float rangeTy = topTy - bottomTy;
 
+	float neckJoint = dna.NeckAltitude();
+	float neckCut = neckJoint + (topZ - neckJoint) * .6f;
 	AuClothingSegmentArray edges;
 	// Collect the cloth surface triangles.
 	AuClothingMesh cloth;
@@ -3140,7 +3154,8 @@ void AuClothing::GetChestMesh(AuClothingMesh& clothing, AuClothingTri::PART part
 		QColor dye1(dye);
 		QColor dye2(dye);
 
-		AuClothingTri tri(part, texIndex, *mi, v0, dye0, v1, dye2, v2, dye2);
+		bool aboveNeckJoint = (*mi).m_V0.z >= neckCut && (*mi).m_V1.z >= neckCut && (*mi).m_V2.z >= neckCut;
+		AuClothingTri tri(aboveNeckJoint ? AuClothingTri::Collar : part, texIndex, *mi, v0, dye0, v1, dye2, v2, dye2);
 		if(topTy != 0)
 		{
 			tri.m_V0.m_ClothingTy = (tri.m_V0.m_ClothingTy - bottomTy) / rangeTy;
@@ -3187,9 +3202,10 @@ void AuClothing::GetChestMesh(AuClothingMesh& clothing, AuClothingTri::PART part
 		AuClothingPoint b2(e2);
 		b2.AuPoint::operator-=(e2.m_N * thickness);
 
-		AuClothingTri tri1(part, texIndex, b1, b2, e2);
+		AuClothingTri::PART wallPart = ((*ei).m_Loc1.z >= neckCut && (*ei).m_Loc2.z >= neckCut) ? AuClothingTri::Collar : part;
+		AuClothingTri tri1(wallPart, texIndex, b1, b2, e2);
 		clothing.append(tri1);
-		AuClothingTri tri2(part, texIndex, e2, e1, b1);
+		AuClothingTri tri2(wallPart, texIndex, e2, e1, b1);
 		clothing.append(tri2);
 	}
 

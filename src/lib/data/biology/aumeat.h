@@ -691,7 +691,7 @@ public:	// Methods
 		return m_HairMesh.CreateAnimalHairVAO(re, isTop);
 	}
 
-	AuGLVAO CreateAnimalVAO(AuOpenGLFunctions& re) const;
+	AuGLVAO CreateAnimalVAO(AuOpenGLFunctions& re, bool skipNeck=false) const;
 
 	inline AuGLVAO CreateHeadHairVAO(AuOpenGLFunctions& re, bool isTop) const
 	{

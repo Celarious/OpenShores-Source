@@ -2144,7 +2144,7 @@ void DpBody::RenderSkin(const AuMatrix4x4& projection, const AuMatrix4x4& model,
 		}
 
 		// Display neck.
-		if(mNeck)
+		if(mNeck && !headless)
 		{
 			// Shader is currently configured for skin texture or helmet texture.
 			if(HasHelmetPowerArmorOn())
@@ -2544,7 +2544,7 @@ void DpBody::RenderSkinGlobe(const AuMatrix4x4& projection, const AuMatrix4x4& m
 		}
 
 		// Display neck.
-		if(mNeck)
+		if(mNeck && !headless)
 		{
 			// Shader is currently configured for skin texture or helmet texture.
 			if(HasHelmetPowerArmorOn())
@@ -2949,7 +2949,7 @@ void DpBody::RenderSkinRingworld(const AuMatrix4x4& projection, const AuMatrix4x
 		}
 
 		// Display neck.
-		if(mNeck)
+		if(mNeck && !headless)
 		{
 			// Shader is currently configured for skin texture or helmet texture.
 			if(HasHelmetPowerArmorOn())
@@ -3353,7 +3353,7 @@ void DpBody::RenderSkinFog(const AuMatrix4x4& projection, const AuMatrix4x4& mod
 		}
 
 		// Display neck.
-		if(mNeck)
+		if(mNeck && !headless)
 		{
 			// Shader is currently configured for skin texture or helmet texture.
 			if(HasHelmetPowerArmorOn())
@@ -3757,7 +3757,7 @@ void DpBody::RenderSkinFogGlobe(const AuMatrix4x4& projection, const AuMatrix4x4
 		}
 
 		// Display neck.
-		if(mNeck)
+		if(mNeck && !headless)
 		{
 			// Shader is currently configured for skin texture or helmet texture.
 			if(HasHelmetPowerArmorOn())
@@ -4166,7 +4166,7 @@ void DpBody::RenderSkinFogRingworld(const AuMatrix4x4& projection, const AuMatri
 		}
 
 		// Display neck.
-		if(mNeck)
+		if(mNeck && !headless)
 		{
 			// Shader is currently configured for skin texture or helmet texture.
 			if(HasHelmetPowerArmorOn())

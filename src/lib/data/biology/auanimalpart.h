@@ -80,6 +80,11 @@ public:	// Methods
 		return m_Bones;
 	}
 
+	inline void ReplaceBones(const QList<AuAnimalBone>& bones)
+	{
+		m_Bones = bones;
+	}
+
 	virtual AuAnimalPart* Clone() const = 0;
 
 	// Expects the bones to already be generated.
