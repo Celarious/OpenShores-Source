@@ -3293,7 +3293,7 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 				headThick = m_Body->HeadThickness();
 			else
 				headThick = m_Animalia->HeadThickness();
-			tCamera.Translate(0, 0, eyeShiftClip/2.0 - headThick);
+			tCamera.Translate(0, 0, 0 - headThick);
 
 			// Move camera back from the eye position, in the direction they are looking.
 			if(ari.IsViewFirstPerson())
@@ -3316,7 +3316,7 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 				headThick = m_Body->HeadThickness();
 			else
 				headThick = m_Animalia->HeadThickness();
-			tCamera.Translate(0, 0, eyeShiftClip/2.0 - headThick);
+			tCamera.Translate(0, 0, 0 - headThick);
 
 			// Move camera back from the eye position, in the direction they are looking.
 			if(ari.IsViewFirstPerson())
@@ -3343,7 +3343,7 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 			headThick = m_Body->HeadThickness();
 		else
 			headThick = m_Animalia->HeadThickness();
-		tCamera.Translate(0, 0, eyeShiftClip/2.0 - headThick);
+		tCamera.Translate(0, 0, 0 - headThick);
 
 		// Move camera back from the eye position, in the direction they are looking.
 		if(ari.IsViewFirstPerson())
@@ -3366,7 +3366,7 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 			headThick = m_Body->HeadThickness();
 		else
 			headThick = m_Animalia->HeadThickness();
-		tCamera.Translate(0, 0, eyeShiftClip/2.0 - headThick);
+		tCamera.Translate(0, 0, 0 - headThick);
 
 		// Move camera back from the eye position, in the direction they are looking.
 		if(ari.IsViewFirstPerson())
