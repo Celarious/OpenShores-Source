@@ -2086,8 +2086,8 @@ bool DaLegacyCity::OperateConstruction(DaPerson* person, quint32 id, bool fetch,
 	AuLegacyCity::State state=m_City;
 	auto found = std::find_if(state.developments.begin(),state.developments.end(),[id](const AuLegacyCity::Development& dev){return dev.id==id;});
 	if(found == state.developments.end() || found->components.isEmpty() || found->demolished)
-	{ error = QStringLiteral("There is no unfinished construction here."); return false; }
-	if(found->halted) { error = QStringLiteral("Resume construction before contributing materials or labor."); return false; }
+	{ return false; }
+	if(found->halted) { return false; }
 	// Completing a military base appends its flag. Reject before touching
 	// loose world cargo when that append would exceed the state codec bound.
 	if(labor && found->industryId == 10 && state.flags.size() >= 4096)
@@ -2101,7 +2101,7 @@ bool DaLegacyCity::OperateConstruction(DaPerson* person, quint32 id, bool fetch,
 		|| !AuLegacyCity::DecodeAccounting(state.accounting,accounting,error)) return false;
 	if(found->completedLevels!=original->completedLevels || found->constructionProcessId!=original->constructionProcessId
 		|| (found->completedLevels+1<found->targetLevels && found->laborRemaining<=possibleLabor && original->laborRemaining>possibleLabor))
-	{ error=QStringLiteral("Construction advanced while the site was being checked. Its current status is ready for the next effort."); return false; }
+	{ return false; }
 	if(accepted) *accepted=true;
 	// Keep the one-second cadence independently of clock-second boundaries.
 	// Allow a quarter second of arrival jitter, but advance the nominal effort
