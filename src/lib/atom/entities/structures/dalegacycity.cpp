@@ -1663,7 +1663,9 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 				if(city==this && inMargin)
 				{
 					const bool town=existing.industryId==1;
-					const bool road=existing.industryId==2 && existing.constructed && !landscapingRoad;
+					// New roads use the original unfinished-road-inclusive lookup
+					// (FINDDEV 0x10); buildings still require a finished road (0x1a).
+					const bool road=existing.industryId==2 && (industry==2 || existing.constructed) && !landscapingRoad;
 					// LockTestForAdjacentFinishedRoad 0x527fe0 explicitly tries
 					// the town square before a finished non-landscaping road.
 					if(category==3) adjacent=adjacent || (road && existing.roadSlab);
@@ -1685,7 +1687,12 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 		if(!troops || baseFlagsInZone>=(troops-1+populationMaximum/30)/troops+2)
 		{ error=QStringLiteral("This resource zone has reached its original military flag limit."); return false; }
 	}
-	if(!adjacent) { error = QStringLiteral("Build beside a completed city development or road."); return false; }
+	if(!adjacent)
+	{
+		error = industry == 2 ? QStringLiteral("Build beside a town square or road.")
+			: QStringLiteral("Build beside a completed city development or road.");
+		return false;
+	}
 	dev.selectedManufacturingRecipe = manufacturingRecipe;
 	dev.manufacturingCitizenEnabled = manufactureCitizen;
 	ConstructedDecks(dev);

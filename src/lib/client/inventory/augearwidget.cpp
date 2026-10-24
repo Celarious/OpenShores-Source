@@ -556,7 +556,8 @@ AuGearWidget::AuGearWidget(QWidget* parent) : QWidget(parent)
 				"</html>"));
 	connect(m_Sound, SIGNAL(clicked()), SLOT(SoundClicked()));
 
-	m_StorageMedia = new AuIconButton(QIcon(":data/c_Computer.png"), this);
+	m_StorageMedia = new AuIconButton(QIcon(g_Au.IsLegacyGeneration()
+		? ":/legacy/cities/ui/c_Computer.png" : ":data/c_Computer.png"), this);
 	m_StorageMedia->hide();
 	m_StorageMedia->setToolTip(tr("<html><b>Manage Contents of Storage Media</b><br>"
 				"Shows a list of data stored on media. "
@@ -1241,7 +1242,11 @@ void AuGearWidget::EnableControls()
 	if(showStarmapLoc)
 		m_StarmapLoc->show();
 	if(showStorageMedia)
+	{
+		m_StorageMedia->setIcon(QIcon(g_Au.IsLegacyGeneration()
+			? ":/legacy/cities/ui/c_Computer.png" : ":data/c_Computer.png"));
 		m_StorageMedia->show();
+	}
 	//if(showUse)
 		//m_Use->show();
 	if(showVisor)

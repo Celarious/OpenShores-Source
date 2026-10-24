@@ -10,6 +10,7 @@
 #include "aulegacycityproduction.h"
 #include "aulegacycityconstruction.h"
 #include "aulegacycitystate.h"
+#include "auterraininfo.h"
 #include "daperson.h"
 #include "dalegacycity.h"
 #include "daatomlist.h"
@@ -28,6 +29,57 @@ void AddLine(QList<AuPointAlpha>& vertices, const AuPoint& a, const AuPoint& b)
 	vertices.append(AuPointAlpha(a.x, a.y, a.z)); vertices.append(AuPointAlpha(b.x, b.y, b.z));
 }
 
+// Original DdPlanGlobeBuilding::SetCursor (0x140321130) status artwork.
+const char* PlacementProblem(int status, QString& message)
+{
+	switch(status)
+	{
+	case 2: message = QObject::tr("Location Too Hot"); return ":data/bldTooHot.png";
+	case 3: message = QObject::tr("Location Not In Terrain Or Too Far Away"); return ":data/bldNotTerrain.png";
+	case 4: message = QObject::tr("No More Levels Can Be Built at This Site"); return ":data/bldNoProcess.png";
+	case 5: message = QObject::tr("Location Too Cold"); return ":data/bldTooCold.png";
+	case 6: message = QObject::tr("Location Under Water"); return ":data/bldTooWet.png";
+	case 7: message = QObject::tr("Water Needed at Location"); return ":data/bldTooDry.png";
+	case 8: message = QObject::tr("Trees Needed at Location"); return ":data/bldNoTrees.png";
+	case 9: message = QObject::tr("Rocks Needed at Location"); return ":data/bldNoRocks.png";
+	case 10: message = QObject::tr("Blocked By Development at Location"); return ":data/bldBlocked.png";
+	case 12: message = QObject::tr("Road Slab Needed Next to Location"); return ":data/bldNoSlab.png";
+	case 13: message = QObject::tr("Road or Building Needed Next to Location"); return ":data/bldNoDev.png";
+	case 14: message = QObject::tr("Completed Road Needed Next to Location"); return ":data/bldNoRoad.png";
+	case 29: message = QObject::tr("Location In Forbidden Zone"); return ":data/bldForbiddenZone.png";
+	case 33: message = QObject::tr("Water Too Shallow at Location"); return ":data/bldTooShallow.png";
+	default: message.clear(); return nullptr;
+	}
+}
+
+int TerrainStatus(const DaWorldLL& world, const AuLegacyCity::Development& site,
+	const AuLegacyCity::ConstructionProcessRecord& recipe, unsigned int rocks, unsigned int trees, float water)
+{
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	const double radius = recipe.buildRadius * FeetPerMeter();
+	if(world.IsForbiddenZone(site.location, site.altitudeMSL, radius)) return 29;
+	if(site.altitudeMSL > world.AtmosphereHeightMSL()) return 3;
+	if(site.industryId == 62 && world.SurfaceAltitudeMSL(site.location) >= 0
+		&& (std::abs(site.location.Latitude()) > world.PolarLatitude() || world.OrbitZone() == OZONE_Frigid)) return 5;
+	AuTerrainInfo terrain; world.QueryTerrain(terrain, site.location);
+	const bool seaBottom = terrain.IsWater() && site.altitudeMSL <= -32;
+	if(seaBottom && -site.altitudeMSL < (catalogue->BuildingDesignMaximumDeck(
+		AuLegacyCity::IndustryId(site.industryId), AuLegacyCity::CommodityId(site.materialId)) + 4) * AuLegacyBd::DeckHeight) return 33;
+	const int category = recipe.terrain;
+	if((category == 1 || category == 2 || category == 3) && !seaBottom && (terrain.IsWater() || water > .1f)) return 6;
+	if((category == 7 || category == 8) && !seaBottom && (terrain.IsWater() || water > .25f)) return 6;
+	if(category == 7 && !trees) return 8;
+	if(category == 8 && !rocks) return 9;
+	if((category == 4 && (!terrain.m_byWater || water < .3f))
+		|| (category == 5 && (!terrain.m_byWater || water < .4f))
+		|| (category == 9 && (!terrain.m_byWater || water < .9f))
+		|| (category == 10 && (!terrain.m_byWater || water < 1.f))) return 7;
+	if((category == 11 || category == 13 || category == 14) && !seaBottom && terrain.IsWater()) return 6;
+	if(!catalogue->ConstructionLevelLimit(recipe.id, AuLegacyCity::CommodityId(site.materialId), world.OrbitZone() != OZONE_Inferno)
+		&& catalogue->ConstructionLevelLimit(recipe.id, AuLegacyCity::CommodityId(site.materialId))) return 2;
+	return 0;
+}
+
 double ClearSiteRadius(const AuLegacyCity::Development& dev)
 {
 	if(dev.industryId == 129) return dev.biodomeRadiusMeters * FeetPerMeter();
@@ -36,6 +88,33 @@ double ClearSiteRadius(const AuLegacyCity::Development& dev)
 		? catalogue->ConstructionProcess(AuLegacyCity::ConstructionProcessId(dev.constructionProcessId))
 		: catalogue->ConstructionProcessForIndustry(AuLegacyCity::IndustryId(dev.industryId));
 	return recipe ? recipe->buildRadius * FeetPerMeter() : 0;
+}
+
+double AlignmentFacing(const DaWorldLL& world, const AuPoint& point,
+	const AuLegacyCity::Development& development, const AuMatrix4x4& placement)
+{
+	AuGlobeLLF location; world.LLOfLoc(location, point);
+	const AuPoint surfacePoint = world.LocOfLL(location, 0);
+	if(development.industryId == 2)
+	{
+		// DpGlobeRoad::AlignmentRot (0x180652850): face the closest point
+		// on the road centerline. Slabs use the same rule as ordinary roads.
+		const double halfLength = development.roadLengthMeters * FeetPerMeter() / 2;
+		AuGlobeLLF start, end, closest;
+		world.LLOfLoc(start, placement.Project(AuPoint(0, -halfLength, 0)));
+		world.LLOfLoc(end, placement.Project(AuPoint(0, halfLength, 0)));
+		world.LLOfLoc(closest, surfacePoint.PointOnSegment(world.LocOfLL(start, 0), world.LocOfLL(end, 0)));
+		AuPoint direction = world.LocOfLL(closest, 0) - surfacePoint;
+		if(direction.IsZero()) direction = AuPoint(1, 0, 0);
+		AuMatrix4x4 basis; world.BuildingConstructionTransform(point, 0, nullptr, AuPoint(), basis);
+		return basis.Inverse().ProjectVector(direction).ZRotation() - PI / 2;
+	}
+	// DpBuilding::AlignmentRot (0x1805978b0): face the nearest side of
+	// the obstructing building, with the original Y-side tie preference.
+	const AuPoint local = placement.UnProject(surfacePoint);
+	if(std::abs(local.x) <= std::abs(local.y))
+		return development.facingRadians + (local.y <= 0 ? 0 : PI);
+	return development.facingRadians + (local.x <= 0 ? -PI / 2 : PI / 2);
 }
 
 struct ClearTarget
@@ -224,6 +303,8 @@ void DdPlanLegacyCity::UpdateSelection(const AuLegacyCityProtocol::Request& requ
 	m_Request.targetX = m_Request.targetY = m_Request.targetZ = 0;
 	if(!sameProcess) m_HasStart = false;
 	m_SiteBlocked = false;
+	m_SiteStatus = 0;
+	m_AlignmentAvailable = false;
 	m_ConflictWorld = 0; m_ConflictingPerimeters.clear();
 	m_PreviewValid = false;
 }
@@ -233,12 +314,20 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 	if(person && m_Request.action == AuLegacyCityProtocol::Build && m_Request.industryId != 2 && m_Request.industryId != 129)
 	{
 		AuPoint point;
-		if(const auto* world = m_pWnd->FindTerrainLocationAtPixel(person, pixel, point)) UpdateSite(*world, point);
+		if(const auto* world = m_pWnd->FindTerrainLocationAtPixel(person, pixel, point)) UpdateSite(*world, point, *person);
 		else
 		{
 			m_MaximumLevels = 0; m_SiteMaterial = 0; m_SiteBlocked = false;
+			m_SiteStatus = 3; PlacementProblem(m_SiteStatus, m_SiteMessage);
+			m_AlignmentAvailable = false;
 			m_ConflictWorld = 0; m_ConflictingPerimeters.clear();
 		}
+	}
+	if(person && g_Au.IsLegacyGeneration() && m_Request.action == AuLegacyCityProtocol::Build
+		&& m_Request.industryId != 2 && m_Request.industryId != 129 && m_SiteStatus)
+	{
+		QString reason;
+		m_pWnd->setCursor(QCursor(QPixmap(PlacementProblem(m_SiteStatus, reason)))); return;
 	}
 	auto cursor = m_Request;
 	if(m_SiteMaterial) cursor.material = m_SiteMaterial;
@@ -330,9 +419,24 @@ void DdPlanLegacyCity::ChangeProduct(int direction)
 	m_Interface->SetCursorProductChoices(choices, m_Request.manufacturingRecipe);
 }
 
-void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
+bool DdPlanLegacyCity::AlignToObstruction()
+{
+	if(!m_AlignmentAvailable || m_Request.action != AuLegacyCityProtocol::Build
+		|| m_Request.industryId == 2 || m_Request.industryId == 129) return false;
+	// DdPlanGlobeBuilding::Align (0x14031df10) retains the native world
+	// rotation after snapping. Coastal buildings face away from the obstruction.
+	double facing = m_AlignmentFacing;
+	if(m_Request.industryId == 34 || m_Request.industryId == 62 || m_Request.industryId == 85) facing += PI;
+	m_Request.headingDegrees = float(std::remainder(facing * RAD2DEG, 360.));
+	m_HeadingRelativeToNorth = false;
+	return true;
+}
+
+void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, const DaPerson& person)
 {
 	m_ConflictWorld = world.Id().GetID(); m_ConflictingPerimeters.clear();
+	m_AlignmentAvailable = false;
+	m_SiteStatus = 4; PlacementProblem(m_SiteStatus, m_SiteMessage);
 	QList<AuPointAlpha> conflictGround;
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
 	const auto* recipe = catalogue ? catalogue->ConstructionProcess(AuLegacyCity::ConstructionProcessId(m_Request.processId)) : nullptr;
@@ -340,10 +444,12 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 	AuLegacyCity::Development site;
 	site.industryId = m_Request.industryId; site.materialId = m_Request.material;
 	site.designId = m_Request.designId;
-	if(!world.LLOfLoc(site.location, point)) return;
+	if(!world.LLOfLoc(site.location, point)) { m_SiteStatus = 3; PlacementProblem(m_SiteStatus, m_SiteMessage); return; }
 	site.altitudeMSL = world.SurfaceAltitudeMSL(site.location);
+	const AuPoint clickedSurface = world.LocOfLL(site.location, site.altitudeMSL);
 	if(world.Hydrographics() && site.altitudeMSL > -32 && site.altitudeMSL < 1) site.altitudeMSL = 1;
-	site.facingRadians = m_Request.headingDegrees * DEG2RAD - world.BuildingConstructionNorthAngle(point, nullptr);
+	site.facingRadians = m_Request.headingDegrees * DEG2RAD
+		- (m_HeadingRelativeToNorth ? world.BuildingConstructionNorthAngle(point, nullptr) : 0);
 	const int previousExistingLevels = m_ExistingLevels;
 	m_ExistingLevels = 0;
 	m_SiteBlocked = false;
@@ -354,7 +460,9 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 	{
 		site = hit.development; m_ExistingLevels = site.completedLevels;
 		extensionCity = hit.city; extensionDevelopment = site.id;
-		m_SiteBlocked = !site.components.isEmpty();
+		m_SiteBlocked = !site.constructed || !site.components.isEmpty();
+		m_AlignmentAvailable = true;
+		m_AlignmentFacing = AlignmentFacing(world, point, site, hit.placement);
 		if(m_SiteBlocked) ClearOutline(world, hit, m_ConflictingPerimeters, conflictGround, true);
 	}
 	const bool siteChanged = m_PreviousSiteWorld != world.Id().GetID()
@@ -365,6 +473,7 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 	world.BuildingConstructionTransform(center, site.facingRadians, nullptr, AuPoint(), placement);
 	unsigned int rocks = 0, shrubs = 0, trees = 0; float water = 0;
 	const double radius = recipe->buildRadius * FeetPerMeter();
+	bool adjacent = extensionDevelopment || site.industryId == 1 || recipe->terrain == 15 || recipe->terrain == 16;
 	DaAtomList cities; world.ListNormalSubatoms(cities);
 	for(const auto* atom : cities)
 		if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
@@ -379,6 +488,22 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 				AuMatrix4x4 otherPlacement;
 				world.BuildingConstructionTransform(world.LocOfLL(existing.location, existing.altitudeMSL),
 					existing.facingRadians, nullptr, AuPoint(), otherPlacement);
+				if(city->EmpireId() == person.EmpireId())
+				{
+					const AuPoint local = otherPlacement.UnProject(center);
+					const double otherX = existing.industryId == 2 ? existing.roadWidthMeters * FeetPerMeter() / 2 : ClearSiteRadius(existing);
+					const double otherY = existing.industryId == 2 ? existing.roadLengthMeters * FeetPerMeter() / 2 : otherX;
+					const double angle = site.facingRadians - existing.facingRadians;
+					const double extent = radius * (std::abs(std::cos(angle)) + std::abs(std::sin(angle)));
+					if(std::abs(local.x) <= otherX + extent + 32.8084 && std::abs(local.y) <= otherY + extent + 32.8084)
+					{
+						const bool town = existing.industryId == 1, road = existing.industryId == 2 && existing.constructed;
+						if(recipe->terrain == 3) adjacent = adjacent || (road && existing.roadSlab);
+						else if(recipe->terrain == 13) adjacent = adjacent || town || road || existing.industryId == site.industryId;
+						else if(recipe->terrain == 14 || recipe->terrain == 9 || recipe->terrain == 10) adjacent = true;
+						else adjacent = adjacent || town || road;
+					}
+				}
 				bool interferes = false;
 				if(existing.industryId == 129)
 				{
@@ -402,6 +527,11 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 				if(interferes)
 				{
 					m_SiteBlocked = true;
+					if(!m_AlignmentAvailable && existing.industryId != 129)
+					{
+						m_AlignmentAvailable = true;
+						m_AlignmentFacing = AlignmentFacing(world, point, existing, otherPlacement);
+					}
 					ClearTarget conflict;
 					conflict.development = existing; conflict.placement = otherPlacement;
 					ClearOutline(world, conflict, m_ConflictingPerimeters, conflictGround, true);
@@ -411,8 +541,7 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 	m_ConflictingPerimeters.append(conflictGround);
 	// Original SetCursor 0x140321130 counts at most four resources and
 	// subtracts existing levels. Keep desired levels separate from this cap.
-	if(recipe->stackLimit >= 32 || site.industryId == 89)
-		world.ResourceDistributionAt(placement, center, AuPoint(radius, radius, 0), rocks, shrubs, trees, water, 4);
+	world.ResourceDistributionAt(placement, center, AuPoint(radius, radius, 0), rocks, shrubs, trees, water, 4);
 	const int maximum = qMax(0, qMin(catalogue->ConstructionLevelLimit(recipe->id,
 		AuLegacyCity::CommodityId(site.materialId), world.OrbitZone() != OZONE_Inferno),
 		catalogue->ConstructionResourceLevelLimit(recipe->id, rocks, shrubs, trees)) - m_ExistingLevels);
@@ -422,10 +551,15 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point)
 	m_MaximumLevels = maximum; m_SiteMaterial = site.materialId;
 	m_SiteDesignId = site.designId;
 	m_SiteCenter = center; m_SiteFacing = site.facingRadians;
-	m_SiteMessage = maximum ? QString() : QObject::tr("No more levels can be built at this site.");
-	if(m_SiteBlocked) m_SiteMessage = extensionDevelopment && !site.components.isEmpty()
-		? QObject::tr("Finish the current construction before adding more levels.")
-		: QObject::tr("The construction site overlaps an existing development.");
+	m_SiteStatus = m_SiteBlocked ? 10 : !extensionDevelopment ? TerrainStatus(world, site, *recipe, rocks, trees, water) : 0;
+	if(!m_SiteStatus && !maximum) m_SiteStatus = 4;
+	if(!m_SiteStatus && !adjacent) m_SiteStatus = recipe->terrain == 3 ? 12
+		: recipe->terrain == 13 || recipe->terrain == 14 || recipe->terrain == 9 || recipe->terrain == 10 ? 13 : 14;
+	AuMatrix4x4 avatar;
+	if(!m_SiteStatus && person.GetTransformRelativeToParent(avatar, &world)
+		&& clickedSurface.Distance2(avatar.Translation()) > std::pow(500 * FeetPerMeter(), 2)) m_SiteStatus = 3;
+	PlacementProblem(m_SiteStatus, m_SiteMessage);
+	if(m_SiteBlocked && extensionDevelopment) m_SiteMessage = QObject::tr("Finish the current construction before adding more levels.");
 	if(m_Request.citizenEnabled && (site.industryId == 50 || site.industryId == 51 || site.industryId == 89))
 	{
 		// Recovered cursor rules differ from F10: a well can always select
@@ -485,7 +619,21 @@ bool DdPlanLegacyCity::OnKeyDown(QKeyEvent* event)
 	case Qt::Key_Down: if(m_Request.industryId == 2) ChangeRotation(-1, false); else ChangeMaterial(-1); return true;
 	case Qt::Key_Plus: case Qt::Key_Equal: ChangeLevels(1); return true;
 	case Qt::Key_Minus: ChangeLevels(-1); return true;
-	case Qt::Key_Space: m_HasStart = false; return true;
+	case Qt::Key_Space:
+		if(m_Request.action == AuLegacyCityProtocol::Build && m_Request.industryId != 2 && m_Request.industryId != 129)
+		{
+			DaPerson* person = nullptr; m_pWnd->LockSceneAtom(&person);
+			AuPoint point;
+			if(const auto* world = person ? m_pWnd->FindTerrainLocationAtPixel(person,
+				m_pWnd->mapFromGlobal(QCursor::pos()), point) : nullptr)
+			{
+				UpdateSite(*world, point, *person);
+				if(AlignToObstruction()) UpdateSite(*world, point, *person);
+			}
+			m_pWnd->UnlockSceneAtom();
+		}
+		else m_HasStart = false;
+		return true;
 	default: return DdCommand::OnKeyDown(event);
 	}
 }
@@ -524,15 +672,25 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 	{
 		if(request.action == AuLegacyCityProtocol::Build && request.industryId != 2 && request.industryId != 129)
 		{
-			UpdateSite(*world, point);
-			if(!m_MaximumLevels || m_SiteBlocked) { m_pWnd->UnlockSceneAtom(); return; }
+			UpdateSite(*world, point, *person);
+			if(m_SiteStatus)
+			{
+				const QString reason = m_SiteMessage;
+				if(m_SiteStatus == 10 && AlignToObstruction()) UpdateSite(*world, point, *person);
+				m_Interface->ReportPlacementMessage(reason);
+				m_pWnd->UnlockSceneAtom(); return;
+			}
 			request = m_Request;
 			request.levels = quint8(qMin(int(request.levels), m_MaximumLevels));
 		}
 		if(request.action == AuLegacyCityProtocol::ClearLand)
 		{
 			ClearTarget hit;
-			if(!FindClearTarget(*world, point, hit) || !hit.allowed) { m_pWnd->UnlockSceneAtom(); return; }
+			if(!FindClearTarget(*world, point, hit) || !hit.allowed)
+			{
+				m_Interface->ReportPlacementMessage(QObject::tr("Select a development that can be cleared. Clear the rest of the city before its town square."));
+				m_pWnd->UnlockSceneAtom(); return;
+			}
 			request.cityId = hit.city; request.developmentId = hit.development.id;
 		}
 		if((request.industryId == 2 || request.industryId == 129) && request.action == AuLegacyCityProtocol::Build && !m_HasStart)
@@ -563,13 +721,15 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 			AuGlobeLLF location;
 			if(world->LLOfLoc(location, point))
 			{
-				if(request.action == AuLegacyCityProtocol::Build && request.industryId != 2 && request.industryId != 129)
+				if(request.action == AuLegacyCityProtocol::Build && request.industryId != 2 && request.industryId != 129
+					&& m_HeadingRelativeToNorth)
 					request.headingDegrees = float(std::remainder(request.headingDegrees - world->BuildingConstructionNorthAngle(point, nullptr) * RAD2DEG, 360.));
 				request.worldId = world->Id().GetID(); request.latitudeRadians = location.Latitude();
 				request.longitudeRadians = location.Longitude(); request.explicitLocation = true; submit = true;
 			}
 		}
 	}
+	else m_Interface->ReportPlacementMessage(QObject::tr("Location Not In Terrain Or Too Far Away"));
 	m_pWnd->UnlockSceneAtom();
 	if(submit && m_Interface) m_Interface->Submit(request);
 }
@@ -584,6 +744,13 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 {
 	Q_UNUSED(snapped);
 	if(!person || !g_Au.IsLegacyGeneration() || !info.re || !info.glw) return;
+	RenderSiteCursor(projection, camera, person, pixel, info);
+	RenderPlacementMessage(info);
+}
+
+void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuMatrix4x4& camera,
+	DaPerson* person, const QPoint& pixel, AuAtomRenderInfo& info)
+{
 	AuPoint point; auto* world = m_pWnd->FindTerrainLocationAtPixel(person, pixel, point);
 	auto* environment = person->FindEnvironmentAtom(); if(!world || !environment) return;
 	AuMatrix4x4 scene, terrain, placement;
@@ -765,7 +932,7 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 		effects.GLSL().LineShader().SetColor(.9f, clearAllowed ? .35f : .1f, .1f, .9f);
 	else
 	{
-		const bool blocked = m_MaximumLevels == 0 || m_SiteBlocked;
+		const bool blocked = m_SiteStatus != 0;
 		effects.GLSL().LineShader().SetColor(blocked ? .9f : .1f, blocked ? .1f : .9f, .1f, .9f);
 	}
 	effects.glEnable(GL_BLEND); effects.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -800,14 +967,34 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 	effects.glDepthMask(depthWrite);
 	if(depthTest) effects.glEnable(GL_DEPTH_TEST);
 	if(m_Request.action == AuLegacyCityProtocol::ClearLand) return;
+	if(m_Request.industryId != 2 && m_Request.industryId != 129) return;
 	QFont font; font.setPixelSize(14);
-	if(m_Request.industryId != 2 && m_Request.industryId != 129)
-	{
-		if(!m_SiteMessage.isEmpty()) effects.RenderText(pixel.x() + 16, pixel.y() + 24, m_SiteMessage,
-			font, QColor(255, 100, 70), info.glw->width(), info.glw->height());
-		return;
-	}
 	const QString text = m_Request.industryId == 2 ? (m_HasStart ? QObject::tr("Click road end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr("Click road start"))
 		: (m_HasStart ? QObject::tr("Click biodome radius — %1 m").arg(preview.biodomeRadiusMeters, 0, 'f', 1) : QObject::tr("Click biodome center"));
 	effects.RenderText(pixel.x() + 16, pixel.y() + 24, text, font, QColor(255, 230, 100), info.glw->width(), info.glw->height());
+}
+
+void DdPlanLegacyCity::RenderPlacementMessage(AuAtomRenderInfo& info) const
+{
+	float alpha = 0;
+	const QString message = m_Interface ? m_Interface->PlacementMessage(alpha) : QString();
+	if(message.isEmpty()) return;
+	// Follow the cursor for the original five-second lifetime. Place the
+	// wrapped label above it so the error does not obscure the site pointer.
+	const QPoint pixel = info.glw->mapFromGlobal(QCursor::pos()) - QPoint(0, 32);
+	QFont font; font.setPointSize(10); font.setBold(true);
+	auto& effects = *info.re;
+	const bool blend = effects.glIsEnabled(GL_BLEND);
+	GLint source, destination, sourceAlpha, destinationAlpha;
+	effects.glGetIntegerv(GL_BLEND_SRC_RGB, &source); effects.glGetIntegerv(GL_BLEND_DST_RGB, &destination);
+	effects.glGetIntegerv(GL_BLEND_SRC_ALPHA, &sourceAlpha); effects.glGetIntegerv(GL_BLEND_DST_ALPHA, &destinationAlpha);
+	effects.glEnable(GL_BLEND); effects.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	QColor color; color.setRgbF(0, 0, 0, alpha);
+	effects.RenderText(pixel.x(), pixel.y(), message, font, color, info.glw->width(), info.glw->height(),
+		Qt::AlignBottom | Qt::AlignHCenter | Qt::TextWordWrap, 200);
+	color.setRgbF(.9, .35, .1, alpha);
+	effects.RenderText(pixel.x() - 1, pixel.y() - 1, message, font, color, info.glw->width(), info.glw->height(),
+		Qt::AlignBottom | Qt::AlignHCenter | Qt::TextWordWrap, 200);
+	effects.glBlendFuncSeparate(source, destination, sourceAlpha, destinationAlpha);
+	if(!blend) effects.glDisable(GL_BLEND);
 }

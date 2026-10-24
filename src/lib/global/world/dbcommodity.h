@@ -1728,10 +1728,7 @@ public:	// Methods
 
 	// Returns the small square resource bitmap id used to represent this
 	// component on signs and things.
-	inline const QString BitmapName() const
-	{
-		return m_iconPath;
-	}
+	const QString BitmapName() const;
 
 	// True if this item can be stored in a cargo list such as a person's inventory, the inventory of a city, or the hold of a ship.
 	inline bool CanBeCargo() const

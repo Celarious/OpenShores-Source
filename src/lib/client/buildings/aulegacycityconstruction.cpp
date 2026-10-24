@@ -547,6 +547,7 @@ void AuLegacyCityConstruction::SetCursorProductChoices(const QVector<quint16>& a
 void AuLegacyCityConstruction::PlanningStopped()
 {
 	m_Planning = false;
+	m_PlacementMessage.clear(); m_PlacementMessageTime.invalidate();
 	if(auto* model = qobject_cast<QStandardItemModel*>(m_Products->model()))
 		for(int index = 0; index < m_Products->count(); ++index)
 			if(auto* item = model->item(index)) item->setEnabled(true);
@@ -609,9 +610,22 @@ void AuLegacyCityConstruction::Submit(AuLegacyCityProtocol::Request request)
 
 void AuLegacyCityConstruction::ReportMessage(const QString& message)
 {
-	// Keep transport feedback in the existing local Thoughts channel; AuTabBuild
-	// did not have an extra status row below its information panel.
+	if(m_Planning) { ReportPlacementMessage(message); return; }
 	if(auApp->Frame() && auApp->Frame()->View()) auApp->Frame()->View()->LocalLogMessage(message);
+}
+
+void AuLegacyCityConstruction::ReportPlacementMessage(const QString& message)
+{
+	m_PlacementMessage = message; m_PlacementMessageTime.start();
+}
+
+QString AuLegacyCityConstruction::PlacementMessage(float& alpha) const
+{
+	alpha = 0;
+	if(!m_PlacementMessageTime.isValid() || m_PlacementMessageTime.elapsed() >= 5000) return QString();
+	// DdPlanGlobeBuilding::RenderCursor: five seconds, alpha = 1 / (1 + seconds).
+	alpha = 1.f / (1.f + m_PlacementMessageTime.elapsed() / 1000.f);
+	return m_PlacementMessage;
 }
 
 void AuLegacyCityConstruction::Refresh()
@@ -624,7 +638,7 @@ void AuLegacyCityConstruction::ReceiveReply(QByteArray payload)
 	AuLegacyCityProtocol::Reply reply;
 	if(!AuLegacyCityProtocol::DecodeReply(payload, reply) || !m_PendingToken || reply.token != m_PendingToken) return;
 	m_PendingToken = 0; m_Timeout->stop();
-	if(!reply.message.isEmpty()) ReportMessage(reply.message);
+	if(!reply.accepted && !reply.message.isEmpty()) ReportMessage(reply.message);
 	UpdateControls();
 }
 

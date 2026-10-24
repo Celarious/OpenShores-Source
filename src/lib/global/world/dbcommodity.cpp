@@ -12,6 +12,15 @@
 #include <qsqlquery.h>
 #include <QVariant>
 
+const QString DbCommodity::BitmapName() const
+{
+	if(gp_AuGlobal && g_Au.IsLegacyGeneration()
+		&& (m_iconPath == QLatin1String(":data/c_Computer.png")
+			|| m_iconPath == QLatin1String(":/data/c_Computer.png")))
+		return QStringLiteral(":/legacy/cities/ui/c_Computer.png");
+	return m_iconPath;
+}
+
 QDebug operator<<(QDebug dbg, const AuSysId& sysId)
 {
 	dbg.nospace() << ScSystemName(sysId.System()) << ":" << sysId.Which();

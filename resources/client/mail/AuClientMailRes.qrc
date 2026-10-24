@@ -944,4 +944,7 @@
 	<file>data/question10x10.png</file>
 	<file>data/required10x10.png</file>
 </qresource>
+<qresource prefix="/legacy/cities/ui">
+	<file alias="c_Computer.png">../../runtime/legacy/cities/ui/c_Computer.png</file>
+</qresource>
 </RCC>

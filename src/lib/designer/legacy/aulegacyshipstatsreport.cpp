@@ -131,6 +131,8 @@ QString CommodityIcon(quint16 commodity, int size)
 	if(!data) return QString();
 	QString path = QString::fromUtf8(data->bitmap);
 	if(path.startsWith(QStringLiteral(":data/"))) path.insert(1, QLatin1Char('/'));
+	if(g_Au.IsLegacyGeneration() && path == QLatin1String(":/data/c_Computer.png"))
+		path = QStringLiteral(":/legacy/cities/ui/c_Computer.png");
 	if(!QResource(path).isValid()) return QString();
 	return QStringLiteral("<img height=\"%1\" src=\"qrc%2\"> ").arg(size).arg(path.toHtmlEscaped());
 }

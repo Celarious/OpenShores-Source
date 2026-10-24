@@ -32,6 +32,10 @@ private:
 	AuLegacyCityProtocol::Request m_Request;
 	bool m_HasStart = false;
 	bool m_SiteBlocked = false;
+	int m_SiteStatus = 0;
+	bool m_AlignmentAvailable = false;
+	bool m_HeadingRelativeToNorth = true;
+	double m_AlignmentFacing = 0;
 	quint32 m_ConflictWorld = 0;
 	QList<AuPointAlpha> m_ConflictingPerimeters;
 	int m_MaximumLevels = -1;
@@ -54,7 +58,11 @@ private:
 	void ChangeLevels(int direction);
 	void ChangeRotation(int direction, bool fine);
 	void ChangeProduct(int direction);
-	void UpdateSite(const DaWorldLL& world, const AuPoint& point);
+	bool AlignToObstruction();
+	void UpdateSite(const DaWorldLL& world, const AuPoint& point, const DaPerson& person);
+	void RenderSiteCursor(const AuMatrix4x4& projection, const AuMatrix4x4& camera, DaPerson* person,
+		const QPoint& pixel, AuAtomRenderInfo& info);
+	void RenderPlacementMessage(AuAtomRenderInfo& info) const;
 	void ConstrainRoad(const DaWorldLL& world, AuPoint& point, bool constrain) const;
 };
 

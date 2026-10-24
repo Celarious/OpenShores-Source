@@ -4,6 +4,7 @@
 #include "auclientlib.h"
 #include "aulegacycityprotocol.h"
 #include "audockwidget.h"
+#include <QElapsedTimer>
 #include <QWidget>
 
 class AuBldConstruct;
@@ -33,6 +34,8 @@ public:
 	void SetCursorLevels(quint8 levels) { if(m_Planning) m_ActiveRequest.levels = levels; }
 	void SetCursorProductChoices(const QVector<quint16>& allowed, quint16 selected);
 	void PlanningStopped();
+	void ReportPlacementMessage(const QString& message);
+	QString PlacementMessage(float& alpha) const;
 
 signals:
 	void PlanConstruction(AuLegacyCityProtocol::Request request);
@@ -57,6 +60,8 @@ private:
 	bool m_Loaded = false, m_Planning = false;
 	int m_LevelLimit = 1;
 	AuLegacyCityProtocol::Request m_ActiveRequest;
+	QString m_PlacementMessage;
+	QElapsedTimer m_PlacementMessageTime;
 	void LoadCatalogue();
 	void SelectCategory(int page);
 	void SelectProcess(quint8 processId);
