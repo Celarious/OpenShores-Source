@@ -56,7 +56,14 @@ bool ContainsSite(DaWorldLL& world, const AuLegacyCity::Development& dev, const 
 	if(center.Distance2(point) > std::pow(width + length + 100, 2)) return false;
 	AuMatrix4x4 placement;
 	world.BuildingConstructionTransform(center, dev.facingRadians, nullptr, AuPoint(), placement);
-	const AuPoint local = placement.UnProject(point);
+	AuPoint local = placement.UnProject(point);
+	if(dev.industryId == 30)
+	{
+		// Match the labor/runtime field footprint on sloping and curved ground.
+		AuGlobeLLF location;
+		if(!world.LLOfLoc(location, point)) return false;
+		local = placement.UnProject(world.LocOfLL(location, dev.altitudeMSL));
+	}
 	return dev.industryId == 129 ? local.x*local.x + local.y*local.y <= width*width
 		: std::abs(local.x) <= width + 1 && std::abs(local.y) <= length + 1;
 }

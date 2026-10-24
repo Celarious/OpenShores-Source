@@ -2037,7 +2037,12 @@ bool DaLegacyCity::OperateConstruction(DaPerson* person, quint32 id, bool fetch,
 		const double halfLength=original->industryId==2 ? original->roadLengthMeters*FeetPerMeter()/2 : halfWidth;
 		const double baseAltitude=original->industryId==2 ? original->roadStartAltitudeMSL+(original->roadEndAltitudeMSL-original->roadStartAltitudeMSL)
 			*qBound(0.0,(local.y+halfLength)/(2*halfLength),1.0) : original->altitudeMSL;
-		const double height=actorAltitude-baseAltitude;
+		double height=actorAltitude-baseAltitude;
+		// Farm fields extend beyond the small leveled building site. Labor
+		// there follows the actual terrain, rather than the farmhouse plane.
+		if(original->industryId==30 && qMax(std::abs(local.x),std::abs(local.y))
+			> TerrainLevelRadius(original->industryId,*AuLegacyCityCatalogue::BuiltIn(),original->constructionProcessId)+2.828427)
+			height=actorAltitude-world->TerrainAltitudeMSL(actorLL);
 		if(std::abs(local.x)>halfWidth || std::abs(local.y)>halfLength || (original->industryId==129 && std::hypot(local.x,local.y)>halfWidth)
 			|| height<(original->minimumDeck-1)*AuLegacyBd::DeckHeight
 			|| height>(original->industryId==129 ? AuLegacyBd::Biodome::RoofHeight(original->biodomeRadiusMeters*FeetPerMeter(),std::hypot(local.x,local.y))
@@ -2647,6 +2652,23 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 	const bool undersea=world->Hydrographics() && world->AltitudeMSL(Transform().Translation())<=-32;
 	const int enclosure=undersea ? 2 : world->HasBreathableAtmosphere() ? 0 : 1;
 	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
+	bool hasFarm=false;
+	for(const auto& building : m_Runtime->buildings)
+		if(building.state.industryId==30)
+		{
+			const auto* recipe=ConstructionRecipe(building.state.industryId,building.state.constructionProcessId);
+			if(recipe && location.Distance2(world->LocOfLL(building.state.location,building.state.altitudeMSL))
+				< std::pow(2*(recipe->buildRadius*FeetPerMeter()+32.8084),2)) { hasFarm=true; break; }
+		}
+	double farmGroundAltitude=0;
+	if(hasFarm)
+	{
+		// Terrain sampling re-enters AdjustSiteTerrain on this city. Never
+		// hold its runtime mutex while asking for the developed ground height.
+		lock.unlock();
+		farmGroundAltitude=world->TerrainAltitudeMSL(query.m_GlobeLL);
+		lock.relock();
+	}
 	AuMatrix4x4 actorToWorld; if(!actor.GetTransformRelativeToParent(actorToWorld, world)) return;
 	for(const auto& building : m_Runtime->buildings)
 	{
@@ -2663,8 +2685,11 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 		const double gradeAltitude=dev.industryId==2 ? dev.roadStartAltitudeMSL+(dev.roadEndAltitudeMSL-dev.roadStartAltitudeMSL)
 			*qBound(0.0,(surfaceLocal.y+halfLength)/(2*halfLength),1.0) : dev.altitudeMSL;
 		const bool curvedSite=dev.industryId==2 || dev.industryId==129;
-		const AuPoint& siteLocal=curvedSite ? surfaceLocal : local;
-		const double siteHeight=curvedSite ? query.m_fAltitudeMSL-gradeAltitude : local.z;
+		const bool farmField=dev.industryId==30 && qMax(std::abs(surfaceLocal.x),std::abs(surfaceLocal.y))
+			> TerrainLevelRadius(dev.industryId,*AuLegacyCityCatalogue::BuiltIn(),dev.constructionProcessId)+2.828427;
+		const AuPoint& siteLocal=curvedSite || farmField ? surfaceLocal : local;
+		const double siteHeight=farmField ? world->AltitudeMSL(location)-farmGroundAltitude
+			: curvedSite ? query.m_fAltitudeMSL-gradeAltitude : local.z;
 		const bool close=location.Distance2(transform.Translation())<std::pow(2*(qMax(halfWidth,halfLength)+32.8084),2);
 		if(close && !dev.demolished && (dev.industryId!=129 || query.m_LegacyDevelopmentId==0)
 			&& std::abs(siteLocal.x)<=halfWidth+2.828427 && std::abs(siteLocal.y)<=halfLength+2.828427
