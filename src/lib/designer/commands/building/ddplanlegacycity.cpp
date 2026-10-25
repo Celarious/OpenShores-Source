@@ -453,13 +453,13 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 	const int previousExistingLevels = m_ExistingLevels;
 	m_ExistingLevels = 0;
 	m_SiteBlocked = false;
-	quint32 extensionCity = 0, extensionDevelopment = 0;
+	quint32 extensionDevelopment = 0;
 	ClearTarget hit;
 	if(FindClearTarget(world, point, hit) && !hit.development.demolished
 		&& hit.development.industryId == site.industryId && site.industryId != 1)
 	{
 		site = hit.development; m_ExistingLevels = site.completedLevels;
-		extensionCity = hit.city; extensionDevelopment = site.id;
+		extensionDevelopment = site.id;
 		m_SiteBlocked = !site.constructed || !site.components.isEmpty();
 		m_AlignmentAvailable = true;
 		m_AlignmentFacing = AlignmentFacing(world, point, site, hit.placement);
@@ -474,7 +474,10 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 	unsigned int rocks = 0, shrubs = 0, trees = 0; float water = 0;
 	const double radius = recipe->buildRadius * FeetPerMeter();
 	bool adjacent = extensionDevelopment || site.industryId == 1 || recipe->terrain == 15 || recipe->terrain == 16;
-	DaAtomList cities; world.ListNormalSubatoms(cities);
+	// Extensions keep the existing footprint; only its current construction
+	// and level limits need checking, as in the server's ExtendConstruction.
+	DaAtomList cities;
+	if(!extensionDevelopment) world.ListNormalSubatoms(cities);
 	for(const auto* atom : cities)
 		if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
 		{
@@ -482,7 +485,7 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 			const auto state = city->Snapshot();
 			for(const auto& existing : state.developments)
 			{
-				if(existing.demolished || (city->Id().GetID() == extensionCity && existing.id == extensionDevelopment)) continue;
+				if(existing.demolished) continue;
 				if(existing.industryId == 2 && (existing.constructionProcessId == 5 || existing.constructionProcessId == 74
 					|| existing.constructionProcessId == 80 || existing.constructionProcessId == 81)) continue;
 				AuMatrix4x4 otherPlacement;

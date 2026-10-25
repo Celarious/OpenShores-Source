@@ -173,6 +173,34 @@ bool RoadContains(const DaWorldLL& world, const AuLegacyCity::Development& road,
 	return query.Distance2(edge) <= double(float(margin * margin));
 }
 
+bool BuildingSitesOverlap(const AuMatrix4x4& placement, double radius,
+	const AuMatrix4x4& otherPlacement, double otherRadius)
+{
+	const AuPoint siteX = placement.ProjectVector(AuPoint(1, 0, 0));
+	const AuPoint siteY = placement.ProjectVector(AuPoint(0, 1, 0));
+	const AuPoint otherX = otherPlacement.ProjectVector(AuPoint(1, 0, 0));
+	const AuPoint otherY = otherPlacement.ProjectVector(AuPoint(0, 1, 0));
+	// Project both footprints onto the same ground plane. Selecting either
+	// site's tangent plane makes the result depend on placement order when
+	// the sites have different elevations or surface normals.
+	AuPoint up = placement.ProjectVector(AuPoint(0, 0, 1))
+		+ otherPlacement.ProjectVector(AuPoint(0, 0, 1));
+	if(up.IsZero()) return false; // Opposite ground normals cannot share a site.
+	up.Unit();
+	const AuPoint delta = placement.Translation() - otherPlacement.Translation();
+	const AuPoint edges[] = {siteX, siteY, otherX, otherY};
+	for(const auto& edge : edges)
+	{
+		// Projecting tilted rectangles can produce parallelograms. Their
+		// separating axes are perpendicular to the projected edges.
+		AuPoint axis = up.Cross(edge); axis.Unit();
+		const double siteExtent = radius * (std::abs(axis.Dot(siteX)) + std::abs(axis.Dot(siteY)));
+		const double otherExtent = otherRadius * (std::abs(axis.Dot(otherX)) + std::abs(axis.Dot(otherY)));
+		if(std::abs(axis.Dot(delta)) >= siteExtent + otherExtent - .05) return false;
+	}
+	return true;
+}
+
 bool BuildingTouchesRoad(const DaWorldLL& world, const AuLegacyCity::Development& building,
 	const AuMatrix4x4& placement, double radius, const AuLegacyCity::Development& road,
 	const AuMatrix4x4& roadPlacement)
@@ -1486,6 +1514,8 @@ bool DaLegacyCity::ConstructionSitesOverlap(const DaWorldLL& world,
 		return BuildingTouchesRoad(world, site, placement, radius, existing, otherPlacement);
 	if(site.industryId == 2 && existing.industryId != 2 && existing.industryId != 129)
 		return RoadTouchesBuilding(world, site, placement, existing, otherPlacement, otherRadius);
+	if(site.industryId != 2 && site.industryId != 129 && existing.industryId != 2 && existing.industryId != 129)
+		return BuildingSitesOverlap(placement, radius, otherPlacement, otherRadius);
 	const AuPoint point = otherPlacement.UnProject(placement.Translation());
 	const double ownX = site.industryId == 2 ? site.roadWidthMeters * FeetPerMeter() / 2 : radius;
 	const double ownY = site.industryId == 2 ? site.roadLengthMeters * FeetPerMeter() / 2 : radius;
@@ -1495,7 +1525,7 @@ bool DaLegacyCity::ConstructionSitesOverlap(const DaWorldLL& world,
 	const double cosine = std::cos(angle), sine = std::sin(angle);
 	const double rx = ownX * std::abs(cosine) + ownY * std::abs(sine);
 	const double ry = ownX * std::abs(sine) + ownY * std::abs(cosine);
-	// The same four separating axes and edge tolerance as BeginConstruction.
+	// Retain the existing rectangle test for road/dome combinations.
 	return std::abs(point.x) < otherX + rx - .05
 		&& std::abs(point.y) < otherY + ry - .05
 		&& std::abs(point.x * cosine + point.y * sine) < ownX + otherX * std::abs(cosine) + otherY * std::abs(sine) - .05
