@@ -24727,12 +24727,12 @@ void DaBd::ReportCurrent(AuCityReport& report, bool resetBankActivity) const
 			}
 		}
 	}
-	// The first 20 fences are free.
-	if(fences > 20)
-		report.m_WorldBuildingCount += fences - 20;
-	// The first 20 street lights are free.
-	if(streetLights > 20)
-		report.m_WorldBuildingCount += streetLights - 20;
+	// The first 500 fences are free.
+	if(fences > 500)
+		report.m_WorldBuildingCount += fences - 500;
+	// The first 100 street lights are free.
+	if(streetLights > 100)
+		report.m_WorldBuildingCount += streetLights - 100;
 
 	// Abandonment and Neglect
 	AuId empireCapitol, galaxyCapitol, sectorCapitol;

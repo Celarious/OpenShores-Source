@@ -88,12 +88,12 @@ void AuSkyLineWidget::paintEvent(QPaintEvent* ev)
 
 	if(m_VolumeLimit)
 	{
-		// The first 20 street lights and the first 20 fences are free.
+		// The first 100 street lights and the first 500 fences are free.
 		quint32 bldCountForLimit = m_BuildingCount;
-		if(m_FenceCount > 20)
-			bldCountForLimit += m_FenceCount - 20;
-		if(m_StreetLightCount > 20)
-			bldCountForLimit += m_StreetLightCount - 20;
+		if(m_FenceCount > 500)
+			bldCountForLimit += m_FenceCount - 500;
+		if(m_StreetLightCount > 100)
+			bldCountForLimit += m_StreetLightCount - 100;
 
 		// Load sky background.
 		QImage bg;
@@ -1329,7 +1329,7 @@ AuConstructionWidget::AuConstructionWidget(QWidget* parent) : QWidget(parent)
 				"This tool tip will show the number and volume of buildings present. "
 				"It will also show the maximum volume of buildings supported by the world. "
 				"All worlds are limited to <b>%1</b> buildings, including street lights and fences. "
-				"The first 20 street lights and the first 20 fences are not counted. "
+				"The first 100 street lights and the first 500 fences are not counted. "
 				"</p>"
 				"</html>").arg(AuCityReport::WorldBuildingCountLimit()));
 
@@ -1519,7 +1519,7 @@ void AuConstructionWidget::UpdateContents()
 						"<p>"
 						"This world supports up to <b>%L3m%2</b> of buildings and street lights. "
 						"All worlds are limited to <b>%6</b> buildings; "
-						"the first 20 street lights and the first 20 fences do not count. "
+						"the first 100 street lights and the first 500 fences do not count. "
 						"</html>")
 					.arg(AuGlobal::CubedSymbol())
 					.arg(bldLimit)
@@ -1532,7 +1532,7 @@ void AuConstructionWidget::UpdateContents()
 						"<p>"
 						"This world supports up to <b>%L3m%2</b> of buildings and street lights. "
 						"All worlds are limited to <b>%6</b> buildings; "
-						"the first 20 street lights and the first 20 fences do not count. "
+						"the first 100 street lights and the first 500 fences do not count. "
 						"</p>"
 						"</html>")
 					.arg(bldVol)
@@ -1548,7 +1548,7 @@ void AuConstructionWidget::UpdateContents()
 					"This tool tip will show the number and volume of buildings present. "
 					"It will also show the maximum volume of buildings supported by the world. "
 					"All worlds are limited to <b>%6</b> buildings; "
-					"the first 20 street lights and the first 20 fences do not count. "
+					"the first 100 street lights and the first 500 fences do not count. "
 					"</p>"
 					"</html>")
 				.arg(AuCityReport::WorldBuildingCountLimit()));
