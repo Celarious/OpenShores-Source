@@ -665,6 +665,7 @@ QString AuViewButton::Image(VIEWBUTTON vb)
 		":data/c_ScDesignDrawing.png",	// VB_SpacecraftSpecs,
 		"",	// VB_UNUSED7,
 		":data/c_DesignDisk.png",		// VB_LegacySpacecraftDesign,
+		":data/legacy_dp_Exit.png",	// VB_LegacyDesignerExit,
 		"",								// VB_COUNT,
 	};
 	if(vb == VB_About)
@@ -755,6 +756,7 @@ QString AuViewButton::Name(VIEWBUTTON vb)
 		"Specifications",				// VB_SpacecraftSpecs,
 		"",						// VB_UNUSED7,
 		"Spacecraft Design",			// VB_LegacySpacecraftDesign,
+		"Exit Designer",				// VB_LegacyDesignerExit,
 		"",								// VB_COUNT,
 	};
 	if(vb < 0 || vb >= sizeof(names)/sizeof(QString))
@@ -844,6 +846,7 @@ QString AuViewButton::SettingsName(VIEWBUTTON vb)
 		"Spacecraft Specifications",	// VB_SpacecraftSpecs,
 		"",	// VB_UNUSED7,
 		"Legacy Spacecraft Design",	// VB_LegacySpacecraftDesign,
+		"Legacy Exit Designer",		// VB_LegacyDesignerExit,
 		"",								// VB_COUNT,
 	};
 	if(vb < 0 || vb >= sizeof(names)/sizeof(QString))
@@ -1104,6 +1107,7 @@ QString AuViewButton::TipBase(VIEWBUTTON vb)
 			"Show the <i>Spacecraft Specifications</i> window to view the design specifications of the spacecraft you are aboard."),
 		QObject::tr("<b>UNUSED7</b> %2<br>"),								// VB_UNUSED7
 		QObject::tr("<b>Spacecraft Design</b> %2<br>Show or hide the spacecraft design tools."),
+		QObject::tr("<b>Exit Designer</b> %2<br>Leave the legacy designer, with a prompt to save any changes."),
 		"",																		// VB_COUNT,
 	};
 	if(vb < 0 || vb >= sizeof(tips)/sizeof(QString) || tips[vb].isEmpty())
@@ -1151,6 +1155,9 @@ QString AuViewButton::Tip(const QString& tipBase) const
 		break;
 	case VB_LegacySpacecraftDesign:
 		keycommand = frame->ControlBinding(AuFrame::CI_ToggleDesignPartsUI);
+		break;
+	case VB_LegacyDesignerExit:
+		keycommand = QKeySequence(QKeySequence::Close).toString(QKeySequence::NativeText);
 		break;
 	case VB_Recall:
 		{
@@ -1343,6 +1350,7 @@ bool AuViewButton::IsHidden(SCENE_CONTEXT sceneContext, bool hasEmpire) const
 		return true;
 
 	case VB_LegacySpacecraftDesign:
+	case VB_LegacyDesignerExit:
 		return sceneContext != SCENE_Designer;
 
 	case VB_FullScreen:
@@ -2289,9 +2297,10 @@ void AuDesignerView::RenderScene()
 void AuDesignerView::resizeEvent(QResizeEvent* event)
 {
 	//qDebug() << "AuDesignerView::resizeEvent start";
-	PauseRendering();
 	m_SizeChanged.restart();
 
+	// Qt recreates the framebuffer and paints it synchronously here. Keep scene
+	// rendering active so resizing a dock does not present an empty black frame.
 	QOpenGLWidget::resizeEvent(event);
 	//qDebug() << "AuDesignerView::resizeEvent end";
 }
@@ -2312,6 +2321,33 @@ void AuDesignerView::ResumeRendering()
 	//qDebug() << "AuDesignerView::ResumeRendering";
 	m_RenderPaused = false;
 	update();
+}
+
+void AuDesignerView::SetInputSuspended(bool suspended)
+{
+	// Finish model-thread mouse/atom dispatch before clearing its state.
+	// UI callbacks never hold this mutex while invoking window commands.
+	m_InputSuspended.store(true);
+	QMutexLocker processing(&m_InputProcessLock);
+	{
+		QMutexLocker controls(&m_ControlLock);
+		m_ActiveKeys.clear(); m_AtomKeys.clear();
+		m_ActiveKeyMods = m_AtomKeyMods = Qt::NoModifier;
+		m_ActiveMouseMods = m_AtomMouseMods = Qt::NoModifier;
+		m_MouseButtonsAtom = m_MouseButtonsUI = Qt::NoButton;
+		m_MouseVecAtom = m_MouseVecUI = QPoint();
+		m_MouseDragging = m_MousePressed = false;
+		m_AtomControlTime = AuElapsedTimer();
+		if(m_pControlsAtom) m_pControlsAtom->ClearRanges();
+		if(m_pControlsUI) m_pControlsUI->ClearRanges();
+	}
+	ReleaseMouse();
+	m_bFreeMouse = true;
+	DaPerson* person = nullptr;
+	LockSceneAtom(&person);
+	if(person) person->ClearMovementInput();
+	UnlockSceneAtom();
+	if(!suspended) m_InputSuspended.store(false);
 }
 
 // emits the SceneContextChanged signal if the view context actually changes.
@@ -2638,6 +2674,7 @@ void AuDesignerView::focusOutEvent(QFocusEvent* e)
 
 void AuDesignerView::TabKeyPressed(Qt::KeyboardModifiers mods)
 {
+	if(m_InputSuspended.load()) return;
 	m_ControlLock.lock();
 	m_ActiveKeys.insert(pair<Qt::Key, AuElapsedTimer>(Qt::Key_Tab, AuElapsedTimer()));	// Insert a null time value when the key first goes down.
 	m_ActiveKeyMods = mods;
@@ -2648,6 +2685,7 @@ void AuDesignerView::TabKeyPressed(Qt::KeyboardModifiers mods)
 
 void AuDesignerView::keyPressEvent(QKeyEvent *e)
 {
+	if(m_InputSuspended.load()) { e->ignore(); return; }
 	//qDebug() << "AuDesignerView::keyPressEvent" << e->key() << e->isAutoRepeat() << "UI" << IsUIInputMode()
 		//<< "char" << IsCharacterInputMode();
 	QOpenGLWidget::keyPressEvent(e);
@@ -2675,6 +2713,7 @@ void AuDesignerView::keyPressEvent(QKeyEvent *e)
 
 void AuDesignerView::keyReleaseEvent(QKeyEvent *e)
 {
+	if(m_InputSuspended.load()) { e->ignore(); return; }
 	//qDebug() << "AuDesignerView::keyReleaseEvent" << e->key() << e->isAutoRepeat();
 	QOpenGLWidget::keyReleaseEvent(e);
 
@@ -2702,6 +2741,7 @@ void AuDesignerView::keyReleaseEvent(QKeyEvent *e)
 
 void AuDesignerView::mouseDoubleClickEvent(QMouseEvent* e)
 {
+	if(m_InputSuspended.load()) { e->ignore(); return; }
 	m_ControlLock.lock();
 	m_ActiveMouseMods = e->modifiers();
 	m_AtomMouseMods = m_ActiveMouseMods;
@@ -2731,6 +2771,7 @@ void AuDesignerView::mouseDoubleClickEvent(QMouseEvent* e)
 
 void AuDesignerView::mousePressEvent(QMouseEvent* e)
 {
+	if(m_InputSuspended.load()) { e->ignore(); return; }
 #if !defined(Q_OS_MACOS)
 	setFocus();
 #endif
@@ -2773,6 +2814,7 @@ void AuDesignerView::mousePressEvent(QMouseEvent* e)
 
 void AuDesignerView::mouseReleaseEvent(QMouseEvent* e)
 {
+	if(m_InputSuspended.load()) { e->ignore(); return; }
 	m_ControlLock.lock();
 	m_ActiveMouseMods = e->modifiers();
 	m_ControlLock.unlock();
@@ -2814,6 +2856,7 @@ void AuDesignerView::mouseReleaseEvent(QMouseEvent* e)
 
 void AuDesignerView::mouseMoveEvent(QMouseEvent* e)
 {
+	if(m_InputSuspended.load()) { e->ignore(); return; }
 	QOpenGLWidget::mouseMoveEvent(e);
 
 	m_ControlLock.lock();
@@ -2854,6 +2897,7 @@ void AuDesignerView::mouseMoveEvent(QMouseEvent* e)
 
 void AuDesignerView::wheelEvent(QWheelEvent *e)
 {
+	if(m_InputSuspended.load()) { e->ignore(); return; }
 	ProcessAtomWheelEvent(e);
 
 #if(QT_VERSION >= QT_VERSION_CHECK(5,14,0))
@@ -5355,6 +5399,9 @@ void AuDesignerView::UpdateSceneInfo(DaPerson* sceneAtom)
 // Called by AuModel (another thread) to process atom and UI controls.
 void AuDesignerView::ProcessControls()
 {
+	if(m_InputSuspended.load()) return;
+	QMutexLocker processing(&m_InputProcessLock);
+	if(m_InputSuspended.load()) return;
 	//qDebug() << "AuDesignerView::ProcessControls" << AuTime::Now();
 	if(!m_SceneRendered)
 	{
@@ -5420,7 +5467,11 @@ void AuDesignerView::ProcessControls()
 	}
 
 	// Process control inputs to user interface.
+	processing.unlock();
+	if(m_InputSuspended.load()) return;
 	ProcessUIControls();
+	processing.relock();
+	if(m_InputSuspended.load()) return;
 
 	// Process control inputs to scene atom.
 	DaPerson* person;
@@ -6472,6 +6523,13 @@ void AuDesignerView::SetCursor()
 
 void AuDesignerView::SetCursor(DaPerson* sceneAtom)
 {
+	if(m_InputSuspended.load())
+	{
+		ReleaseMouse();
+		setCursor(Qt::ArrowCursor);
+		m_Cursor = CURSOR_Arrow;
+		return;
+	}
 	bool grab = false;
 	if(Command())
 	{
@@ -7546,6 +7604,7 @@ void AuDesignerView::SpotTargetOrTerrain(bool logOnly)
 
 AuDesignerView::INPUTMODE AuDesignerView::AssessInputMode() const
 {
+	if(m_InputSuspended.load()) return UI;
 	//if(!isActiveWindow())
 		//return UI;			// UI mode when this window is not the active window
 	if(!m_MouseGrabbed && !underMouse())
@@ -8524,7 +8583,7 @@ QKeySequence AuDesignerView::ControlKeySequence(CONTROLINPUT control) const
 // Handles controls that affect the game UI.
 void AuDesignerView::ProcessControlInput(const DiControlInputArray& aActiveControls)
 {
-	if(aActiveControls.isEmpty())
+	if(m_InputSuspended.load() || aActiveControls.isEmpty())
 		return;
 
 	if(IsModalDlgUp())
@@ -8535,6 +8594,7 @@ void AuDesignerView::ProcessControlInput(const DiControlInputArray& aActiveContr
 
 	for(DiControlInputArray::const_iterator ci = aActiveControls.constBegin(); ci != aActiveControls.constEnd(); ci++)
 	{
+		if(m_InputSuspended.load()) return;
 		switch((*ci).GetId())
 		{
 		case CI_Title:
@@ -9267,6 +9327,7 @@ void AuDesignerView::CreateViewButtons(bool legacyDesigner)
 	{
 		m_ViewButtons << AuViewButton(AuViewButton::VB_About)
 			<< AuViewButton(AuViewButton::VB_LegacySpacecraftDesign)
+			<< AuViewButton(AuViewButton::VB_LegacyDesignerExit)
 			<< AuViewButton(AuViewButton::VB_HideWindows)
 			<< AuViewButton(AuViewButton::VB_FullScreen)
 			<< AuViewButton(AuViewButton::VB_Settings)
@@ -10297,6 +10358,9 @@ void AuDesignerView::ViewButtonClicked(AuViewButton::VIEWBUTTON button)
 		return;
 	case AuViewButton::VB_LegacySpacecraftDesign:
 		connect(&a, SIGNAL(triggered()), pFrame, SLOT(ToggleDesignPartsUi()), Qt::QueuedConnection);
+		break;
+	case AuViewButton::VB_LegacyDesignerExit:
+		connect(&a, SIGNAL(triggered()), pFrame, SLOT(ExitLegacyDesigner()), Qt::QueuedConnection);
 		break;
 	case AuViewButton::VB_SaveSolitaire:
 		connect(&a, SIGNAL(triggered()), this, SLOT(SaveSolitaireCheckPoint()), Qt::QueuedConnection);

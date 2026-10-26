@@ -13504,7 +13504,9 @@ AuItem* DaPerson::UseItemOnTarget(AuItem* item, const AuId& target, unsigned int
 								pItem->Kill();
 								useItem = true;	// Wear down the tool.
 
-								QString text(tr("Butchering the %1 produced %2, %3, %4 and some organs.")
+								QString text((g_Au.IsLegacyGeneration()
+										? tr("Butchering the %1 produced %2, %3 and %4.")
+										: tr("Butchering the %1 produced %2, %3, %4 and some organs."))
 										.arg(pItem->SayName())
 										.arg(g_Au.CommodityName(CID_AnimalMeat))
 										.arg(g_Au.CommodityName(CID_Bone))
@@ -13543,7 +13545,9 @@ AuItem* DaPerson::UseItemOnTarget(AuItem* item, const AuId& target, unsigned int
 								pItem->Kill();
 								useItem = true;	// Wear down the tool.
 
-								QString text(tr("Butchering the %1 produced %2 and some organs.")
+								QString text((g_Au.IsLegacyGeneration()
+										? tr("Butchering the %1 produced %2.")
+										: tr("Butchering the %1 produced %2 and some organs."))
 										.arg(pItem->SayName())
 										.arg(g_Au.CommodityName(CID_FishMeat)));
 								Thought(text);
@@ -13572,10 +13576,16 @@ AuItem* DaPerson::UseItemOnTarget(AuItem* item, const AuId& target, unsigned int
 								pItem->Kill();
 								useItem = true;	// Wear down the tool.
 
-								QString text(tr("Butchering the %1 produced %2 and a %3.")
-										.arg(g_Au.CommodityName(CID_Head))
-										.arg(g_Au.CommodityName(CID_Bone))
-										.arg(g_Au.CommodityName(CID_Brain)));
+								QString text;
+								if(g_Au.IsLegacyGeneration())
+									text = tr("Butchering the %1 produced %2.")
+											.arg(g_Au.CommodityName(CID_Head))
+											.arg(g_Au.CommodityName(CID_Bone));
+								else
+									text = tr("Butchering the %1 produced %2 and a %3.")
+											.arg(g_Au.CommodityName(CID_Head))
+											.arg(g_Au.CommodityName(CID_Bone))
+											.arg(g_Au.CommodityName(CID_Brain));
 								Thought(text);
 							}
 						}
@@ -13799,6 +13809,10 @@ AuItem* DaPerson::UseItemOnTarget(AuItem* item, const AuId& target, unsigned int
 DaItem* DaPerson::DropItemButchered(COMMODITYID cid, quint8 quality, quint32 empireOfOrigin, DaAtom* itemParent, AuMatrix4x4& t,
 		AuDNABase* dna, AuDNABase::CHROMATID dnaChroma, bool dnaIsViable, bool dnaIsSentient, GROWTHSTAGE dnaGrowthStage)
 {
+	// Modern organs have no descriptors or artwork in the active 2016 catalogue.
+	// Check before either DNA or ordinary item creation can spawn a missing object.
+	if(g_Au.IsLegacyGeneration() && !g_Au.HasLegacyCommodity(cid))
+		return 0;
 	AuEther* ether = Ether();
 	if(!ether)
 		return 0;

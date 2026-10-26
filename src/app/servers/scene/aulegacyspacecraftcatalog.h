@@ -6,6 +6,8 @@ class QString;
 class AuLegacyScDesign;
 class AuId;
 class AuScReport;
+class AuScDesignExchangeEntry;
+namespace AuLegacyShip { struct Design; }
 namespace AuLegacyScProtocol { struct Request; struct Reply; }
 
 #include <QtGlobal>
@@ -27,5 +29,11 @@ void ProcessLegacySpacecraftRequest(const AuLegacyScProtocol::Request& request,
 // legacy bytes. The caller must authorize the architect before calling.
 bool PrepareLegacySpacecraftSpawn(quint32 legacyId, const AuId& architectId,
 	const QString& architectName, AuScReport& report, QString& error);
+
+// Called after authorizing a saved, burnable legacy studio snapshot. Keep the
+// original .ship as authority and publish its existing legacy runtime adapter.
+bool SaveLegacyStudioDesign(const AuLegacyShip::Design& design, quint32& libraryId, QString& error);
+bool PrepareLegacyStudioMedia(quint32 libraryId,
+	AuScDesignExchangeEntry& exchange, QString& error);
 
 #endif // AuLegacySpacecraftCatalog_H

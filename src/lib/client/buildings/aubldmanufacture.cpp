@@ -5,6 +5,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "aubldmanufacture.h"
+#include "aubldscrollarea.h"
 //
 #include "auaddproductionline.h"
 #include "auapp.h"
@@ -967,7 +968,7 @@ AuBldManufacture::AuBldManufacture(QWidget* parent) : QWidget(parent)
 	m_PanelLay->setMargin(2);
 	panels->setLayout(m_PanelLay);
 
-	m_PanelScroller = new QScrollArea;
+	m_PanelScroller = new AuBldScrollArea;
 	m_PanelScroller->setWidget(panels);
 	m_PanelScroller->setWidgetResizable(true);
 

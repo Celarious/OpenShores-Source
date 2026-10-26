@@ -1833,6 +1833,9 @@ public:
 			const DaPerson& sceneAtom);
 
 	void DesignEnvironmentExit();
+	// A completed attempt consumes one blank disk, including a defective disk.
+	// Refresh gear weight after releasing the studio lock when this returns true.
+	bool BurnLegacyStudioMedia(const AuScDesignExchangeEntry& exchange, QString& message);
 
 	inline QString DesignPassword() const
 	{

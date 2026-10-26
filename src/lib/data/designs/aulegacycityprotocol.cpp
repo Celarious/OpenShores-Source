@@ -9,7 +9,8 @@ namespace
 using namespace AuLegacyCityProtocol;
 bool Valid(const Request& r)
 {
-	if(!r.token || r.action > BankClaimReward) return false;
+	if(!r.token || r.action > EnterSpacecraftStudio || (IsStudio(r.action) && (r.studioIndex >= 16
+		|| r.studioPassword.size() > 128))) return false;
 	if(r.action != List && r.action != Spawn && r.action != ConstructionList && r.action != Build
 		&& r.action != EconomyList && r.action != BankState
 		&& !(r.action == ClearLand && r.explicitLocation)
@@ -64,7 +65,8 @@ QByteArray AuLegacyCityProtocol::EncodeRequest(const Request& r)
 {
 	if(!Valid(r)) return QByteArray();
 	QByteArray bytes; QDataStream out(&bytes, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_4_1);
-	out << quint8(4) << quint8(r.action) << r.token << r.cityId << r.developmentId << r.designId
+	const quint8 version = IsStudio(r.action) ? quint8(6) : quint8(4);
+	out << version << quint8(r.action) << r.token << r.cityId << r.developmentId << r.designId
 		// Preserve the retired door boolean's version-1 byte position.
 		<< r.material << r.minimumDeck << r.maximumDeck << r.constructed << false
 		<< r.distanceMeters << r.headingDegrees << r.elevationMeters << r.targetX << r.targetY << r.targetZ;
@@ -72,6 +74,11 @@ QByteArray AuLegacyCityProtocol::EncodeRequest(const Request& r)
 	if(!Text(out, r.cityName, 512)) return QByteArray();
 	out << r.explicitLocation << r.worldId << r.latitudeRadians << r.longitudeRadians << r.roadSlab << r.biodomeRadiusMeters;
 	out << r.manufacturingRecipe << r.processSlot << r.minimumTechnology << r.money;
+	if(IsStudio(r.action))
+	{
+		out << r.studioIndex;
+		if(!Text(out, r.studioPassword, 512)) return QByteArray();
+	}
 	return out.status() == QDataStream::Ok && bytes.size() <= MaximumRequestBytes ? bytes : QByteArray();
 }
 bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& result)
@@ -82,7 +89,7 @@ bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& resul
 	in >> version >> action >> r.token >> r.cityId >> r.developmentId >> r.designId
 		>> r.material >> r.minimumDeck >> r.maximumDeck >> r.constructed >> retiredDoorsOpen
 		>> r.distanceMeters >> r.headingDegrees >> r.elevationMeters >> r.targetX >> r.targetY >> r.targetZ;
-	if(version >= 2 && version <= 4)
+	if(version >= 2 && version <= 6)
 	{
 		in >> r.industryId >> r.processId >> r.levels >> r.roadLengthMeters >> r.roadWidthMeters >> r.citizenEnabled;
 		if(!ReadText(in, r.cityName, 512)) return false;
@@ -90,9 +97,13 @@ bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& resul
 	}
 	if(version >= 3) in >> r.manufacturingRecipe >> r.processSlot >> r.minimumTechnology;
 	if(version >= 4) in >> r.money;
-	if((version < 1 || version > 4) || action > BankClaimReward || (version == 1 && action > Route)
+	if(version >= 5) in >> r.studioIndex;
+	if(version >= 6 && !ReadText(in, r.studioPassword, 512)) return false;
+	if((version < 1 || version > 6) || action > EnterSpacecraftStudio || (version == 1 && action > Route)
 		|| (version == 2 && action > ChangeRoad)
 		|| (version == 3 && action > RunIndustryProcess)
+		|| (version == 4 && action > BankClaimReward)
+		|| (version >= 5 && !IsStudio(static_cast<Action>(action)))
 		|| in.status() != QDataStream::Ok || !in.atEnd()) return false;
 	r.action = static_cast<Action>(action);
 	if(!Valid(r)) return false;
@@ -100,14 +111,17 @@ bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& resul
 }
 QByteArray AuLegacyCityProtocol::EncodeReply(const Reply& r)
 {
-	if(!r.token || r.action > BankClaimReward || r.entries.size() > MaximumEntries
+	if(!r.token || r.action > EnterSpacecraftStudio || r.entries.size() > MaximumEntries
 		|| r.production.size() > MaximumReplyBytes / 2
 		|| r.recipeChoices.size() > MaximumRecipeChoices
 		|| (!r.hasRecipeChoices && !r.recipeChoices.isEmpty())
 		|| (r.hasRecipeChoices && (!IsEconomy(r.action) || !r.hasEconomy))
 		|| r.bankAccounting.size() > 1024 || ((!IsBank(r.action) || !r.hasBank) && !r.bankAccounting.isEmpty())
 		|| (!r.bankGovernmentAuthorized && !r.bankAccounting.isEmpty()) || (r.hasBank && !IsBank(r.action))
-		|| ((!IsEconomy(r.action) || !r.hasEconomy) && !r.production.isEmpty())) return QByteArray();
+		|| ((!IsEconomy(r.action) || !r.hasEconomy) && !r.production.isEmpty())
+		|| (r.hasStudio && !IsStudio(r.action)) || r.studioCount > 16
+		|| (!r.hasStudio && (r.studioCount || r.occupiedStudios))
+		|| (quint32(r.occupiedStudios) >> r.studioCount)) return QByteArray();
 	for(double amount : {r.bankCitizenBalance, r.bankGovernmentBalance, r.bankLoanFunds,
 		r.bankPersonalBalance, r.bankPersonalLoan, r.bankCreditAvailable, r.bankPersonalReward}) if(!std::isfinite(amount)) return QByteArray();
 	QSet<quint16> recipes;
@@ -117,7 +131,7 @@ QByteArray AuLegacyCityProtocol::EncodeReply(const Reply& r)
 		recipes.insert(id);
 	}
 	QByteArray bytes; QDataStream out(&bytes, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_4_1);
-	const quint8 version = r.hasRecipeChoices ? 5 : 4;
+	const quint8 version = IsStudio(r.action) ? 6 : r.hasRecipeChoices ? 5 : 4;
 	out << version << quint8(r.action) << r.token << r.selectedCity << r.selectedDevelopment << r.hasList << r.truncated;
 	if(!Text(out, r.message, 4096)) return QByteArray();
 	out << quint16(r.entries.size());
@@ -148,6 +162,7 @@ QByteArray AuLegacyCityProtocol::EncodeReply(const Reply& r)
 		out << quint16(r.recipeChoices.size());
 		for(const quint16 id : r.recipeChoices) out << id;
 	}
+	if(version == 6) out << r.hasStudio << r.studioCount << r.occupiedStudios;
 	return out.status() == QDataStream::Ok && bytes.size() <= MaximumReplyBytes ? bytes : QByteArray();
 }
 bool AuLegacyCityProtocol::DecodeReply(const QByteArray& bytes, Reply& result)
@@ -156,9 +171,11 @@ bool AuLegacyCityProtocol::DecodeReply(const QByteArray& bytes, Reply& result)
 	Reply r; quint8 version = 0, action = 0; quint16 count = 0;
 	QDataStream in(bytes); in.setVersion(QDataStream::Qt_4_1);
 	in >> version >> action >> r.token >> r.selectedCity >> r.selectedDevelopment >> r.hasList >> r.truncated;
-	if((version < 1 || version > 5) || action > BankClaimReward || (version == 1 && action > Route)
+	if((version < 1 || version > 6) || action > EnterSpacecraftStudio || (version == 1 && action > Route)
 		|| (version == 2 && action > ChangeRoad)
 		|| (version == 3 && action > RunIndustryProcess)
+		|| (version < 6 && action > BankClaimReward)
+		|| (version == 6 && !IsStudio(static_cast<Action>(action)))
 		|| !r.token || !ReadText(in, r.message, 4096)) return false;
 	in >> count;
 	if(in.status() != QDataStream::Ok || count > MaximumEntries || (!r.hasList && count)
@@ -214,7 +231,7 @@ bool AuLegacyCityProtocol::DecodeReply(const QByteArray& bytes, Reply& result)
 		r.bankAccounting.resize(size);
 		if(in.readRawData(r.bankAccounting.data(), size) != size) return false;
 	}
-	if(version >= 5)
+	if(version == 5)
 	{
 		quint16 choices = 0; in >> choices;
 		if(in.status() != QDataStream::Ok || !r.hasEconomy || !IsEconomy(static_cast<Action>(action))
@@ -227,6 +244,13 @@ bool AuLegacyCityProtocol::DecodeReply(const QByteArray& bytes, Reply& result)
 			recipes.insert(id); r.recipeChoices.append(id);
 		}
 		r.hasRecipeChoices = true;
+	}
+	if(version == 6)
+	{
+		in >> r.hasStudio >> r.studioCount >> r.occupiedStudios;
+		if(r.hasEconomy || r.hasBank || r.studioCount > 16
+			|| (!r.hasStudio && (r.studioCount || r.occupiedStudios))
+			|| (quint32(r.occupiedStudios) >> r.studioCount)) return false;
 	}
 	if(in.status() != QDataStream::Ok || !in.atEnd()) return false;
 	r.action = static_cast<Action>(action); result = r; return true;

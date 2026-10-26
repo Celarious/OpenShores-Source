@@ -7,6 +7,7 @@
 #include "auapp.h"
 #include "aulegacyscprotocol.h"
 #include "aulegacycityprotocol.h"
+#include "aulegacystudioprotocol.h"
 //
 #include "auatommanager.h"
 #include "auclientglobal.h"
@@ -1965,6 +1966,8 @@ void AuApp::ConnectChat()
 					SIGNAL(LegacyScReplyReceived(QByteArray)), Qt::QueuedConnection);
 			connect(m_tChatChannel, SIGNAL(LegacyCityReplyReceived(QByteArray)),
 					SIGNAL(LegacyCityReplyReceived(QByteArray)), Qt::QueuedConnection);
+			connect(m_tChatChannel, SIGNAL(LegacyStudioReplyReceived(QByteArray)),
+					SIGNAL(LegacyStudioReplyReceived(QByteArray)), Qt::QueuedConnection);
 			connect(m_tChatChannel, SIGNAL(ScDesignDelete(quint32)), SLOT(ScDesignDelete(quint32)));
 			connect(m_tChatChannel, SIGNAL(ScDesignNeeded(quint32, quint8)), SLOT(ScDesignNeeded(quint32, quint8)));
 
@@ -4042,6 +4045,21 @@ quint32 AuApp::RequestLegacyCityTool(AuLegacyCityProtocol::Request request)
 	const QByteArray payload = AuLegacyCityProtocol::EncodeRequest(request);
 	if(payload.isEmpty()) return 0;
 	QByteArray packet(1, char(DtChatChannelPacket::PD_LegacyCity)); packet.append(payload);
+	QueueChatPacket(packet);
+	return request.token;
+}
+
+quint32 AuApp::RequestLegacyStudio(AuLegacyStudioProtocol::Request request)
+{
+	if(!g_Au.IsLegacyGeneration() || IsSingleUserMode() || !m_tChatChannel || !m_tChatChannel->IsConnected()) return 0;
+	if(!request.token)
+	{
+		if(++m_LegacyStudioNextToken == 0) ++m_LegacyStudioNextToken;
+		request.token = m_LegacyStudioNextToken;
+	}
+	const QByteArray payload = AuLegacyStudioProtocol::EncodeRequest(request);
+	if(payload.isEmpty()) return 0;
+	QByteArray packet(1, char(DtChatChannelPacket::PD_LegacyStudio)); packet.append(payload);
 	QueueChatPacket(packet);
 	return request.token;
 }

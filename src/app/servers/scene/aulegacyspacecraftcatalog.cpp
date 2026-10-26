@@ -7,9 +7,12 @@
 #include "aulegacyscgeometry.h"
 #include "aulegacysccollision.h"
 #include "aulegacyscprotocol.h"
+#include "aulegacystudioprotocol.h"
 #include "auscdesign.h"
 #include "auscparts.h"
 #include "auscreport.h"
+#include "auscdesignexchange.h"
+#include "aulegacyshipsave.h"
 #include "dgdata.h"
 #include <QCryptographicHash>
 #include <QDebug>
@@ -365,12 +368,68 @@ bool PrepareLegacySpacecraftSpawn(quint32 legacyId, const AuId& architectId,
 		return false;
 	}
 	DgData& data = g_Au.LockScDesignsForWrite();
+	const auto cached = data.m_ScDesigns->find(runtimeDesign.Id());
+	if(runtimeDesign.State() == AuDesign::FinalAssembly && cached != data.m_ScDesigns->end()
+		&& cached->second.State() == AuDesign::Final && cached->second.LegacyStats())
+		runtimeDesign.SetState(AuDesign::Final);
 	data.ScDesignAdd(runtimeDesign);
 	g_Au.UnlockScDesigns();
 	report = preparedReport;
 	qInfo() << "Legacy spacecraft catalog:" << "prepared legacy design" << legacyId
 		<< "as runtime blueprint" << runtimeId << (!regenerate ? "(existing)" : derived ? "(upgraded)" : "(created)");
 	return true;
+}
+
+bool SaveLegacyStudioDesign(const AuLegacyShip::Design& design, quint32& libraryId, QString& error)
+{
+	libraryId = 0;
+	AuLegacyShip::Design prepared;
+	if(!AuLegacyShip::PrepareForSave(design, prepared, error)) return false;
+	prepared.header.state = 0; prepared.header.versionStateRaw = 0x20;
+	if(!AuLegacyStudioProtocol::IsLibraryNameValid(prepared.header.name))
+	{ error = QStringLiteral("Enter a design name of 1 to 30 printable characters without / : ! | < > & or backslash."); return false; }
+	CatalogConnection connection;
+	if(!connection.Open()) { error = QStringLiteral("The legacy design database is unavailable."); return false; }
+	QSqlQuery allocate(connection.db);
+	if(!allocate.exec("SELECT nextval('n_legacyscdesign_id_seq')") || !allocate.next()
+		|| !ReadCatalogId(allocate.value(0), libraryId))
+	{ libraryId = 0; error = QStringLiteral("The design library could not allocate an identifier."); return false; }
+	allocate.finish();
+	// Put the allocated identity into the saved records. Later saves receive
+	// a new immutable source record; previously burned media retain their ID.
+	prepared.header.designId = libraryId;
+	for(auto& room : prepared.rooms) room.designId = libraryId;
+	for(auto& detail : prepared.details) detail.designId = libraryId;
+	QByteArray source;
+	if(!AuLegacyShip::Write(prepared, source, error)) return false;
+	QSharedPointer<AuLegacyScDesign> accepted(new AuLegacyScDesign);
+	if(!AuLegacyScDesign::ReadUpload(source, *accepted, error)) return false;
+	QSqlQuery write(connection.db);
+	write.prepare("INSERT INTO n_LegacyScDesign(id,contentHash,sourceName,name,sourceData) VALUES(?,?,?,?,?)");
+	write.addBindValue(qulonglong(libraryId)); write.addBindValue(QString::fromLatin1(accepted->ContentHash()));
+	write.addBindValue(QStringLiteral("studio/%1/%2.ship").arg(prepared.header.architectId).arg(prepared.header.name));
+	write.addBindValue(prepared.header.name); write.addBindValue(source);
+	if(!write.exec())
+	{ libraryId = 0; error = QStringLiteral("Unable to save the legacy design library record. Check the server logs."); return false; }
+	accepted->SetId(libraryId);
+	DgData& data = g_Au.LockScDesignsForWrite(); data.LegacyScDesignAdd(accepted); g_Au.UnlockScDesigns();
+	error.clear(); return true;
+}
+
+bool PrepareLegacyStudioMedia(quint32 libraryId, AuScDesignExchangeEntry& exchange, QString& error)
+{
+	const DgData& records = g_Au.LockScDesignsForRead();
+	const auto source = records.LegacyScDesign(libraryId);
+	g_Au.UnlockScDesigns();
+	if(!source) { error = QStringLiteral("The saved legacy design is unavailable in the library."); return false; }
+	const auto& design = source->SourceDesign();
+	AuScReport report;
+	if(!PrepareLegacySpacecraftSpawn(libraryId, AuId(design.header.architectId),
+		design.header.architectName, report, error)) return false;
+	// Preparation leaves new runtime records as assemblies. Publication is
+	// committed only after the authenticated actor actually uses blank media.
+	exchange = AuScDesignExchangeEntry(report, AuDesign::Final, 0, true, true, false, 0, POL_Neutral);
+	error.clear(); return true;
 }
 
 void ProcessLegacySpacecraftRequest(const AuLegacyScProtocol::Request& request, AuLegacyScProtocol::Reply& reply)

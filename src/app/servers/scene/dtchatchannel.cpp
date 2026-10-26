@@ -16,6 +16,7 @@
 #include "aujoboffer.h"
 #include "aulegacyscprotocol.h"
 #include "aulegacycityprotocol.h"
+#include "aulegacystudioprotocol.h"
 #include "aulegacyspacecraftcatalog.h"
 #include "aulogincomm.h"
 #include "auplayeronlinestatus.h"
@@ -345,7 +346,16 @@ void DtChatChannel::RxData(QTcpSocket& tcpSocket)
 			return;
 		}
 		if(!packetType.isEmpty())
-			tcpSocket.setReadBufferSize(quint8(packetType.at(0)) == DtChatChannelPacket::PD_LegacySc ? m_PacketSize : 0);
+		{
+			const quint8 type = quint8(packetType.at(0));
+			if(type == DtChatChannelPacket::PD_LegacyStudio
+				&& (m_PacketSize > AuLegacyStudioProtocol::MaximumPacketBytes + 1 || !LegacyCityAuthorized()))
+			{
+				tcpSocket.abort(); Disconnect(); return;
+			}
+			tcpSocket.setReadBufferSize(type == DtChatChannelPacket::PD_LegacySc
+				|| type == DtChatChannelPacket::PD_LegacyStudio ? m_PacketSize : 0);
+		}
 
 		// Wait until all of the bytes arrive.
 		if(tcpSocket.bytesAvailable() < m_PacketSize)
@@ -378,6 +388,9 @@ void DtChatChannel::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 		break;
 	case DtChatChannelPacket::PD_LegacyCity:
 		ReadLegacyCityPacket(ba.mid(1));
+		break;
+	case DtChatChannelPacket::PD_LegacyStudio:
+		ReadLegacyStudioPacket(ba.mid(1));
 		break;
 	case DtChatChannelPacket::PI_TurboLift:
 		{

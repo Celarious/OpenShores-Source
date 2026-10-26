@@ -20,18 +20,23 @@ class AUCLIENT_DLL AuBldDesignStudioPanel : public QWidget
 	bool		m_CitizenOk;	// is citizen worker enabled?
 	int			m_MPID;			// manufacturing process id
 	int			m_PanelIndex;
+	bool		m_Legacy;
+	bool		m_Occupied = false;
 
 public:
-	AuBldDesignStudioPanel(int panelIndex=0, QWidget* parent=0);
+	AuBldDesignStudioPanel(int panelIndex=0, QWidget* parent=0, bool legacy=false);
 	virtual ~AuBldDesignStudioPanel();
 
 	void UpdateContents(const DaAtom* pde);
+	void SetOccupied(bool occupied);
 
 protected slots:
 	void EnterDesignerPushed();
+	void EnterLegacyDesignerPushed();
 
 signals:
 	void Enter(int panelIndex, QString password);
+	void LegacyEnter(int panelIndex, QString password);
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
@@ -56,6 +61,26 @@ protected:
 
 protected slots:
 	void UpdateContents();
+};
+
+class AUCLIENT_DLL AuLegacyCityDesignStudio : public QWidget
+{
+	Q_OBJECT;
+	quint32 m_CityId;
+	quint32 m_DevelopmentId;
+	int m_StudioCount;
+	AuBldDesignStudioPanel* m_Panels[16];
+
+public:
+	AuLegacyCityDesignStudio(QWidget* parent=0);
+	void SetTarget(quint32 cityId, quint32 developmentId, int completedLevels);
+	void SetOccupied(int studioIndex, bool occupied);
+
+protected slots:
+	void EnterDesignerPushed(int studioIndex, QString password);
+
+signals:
+	void Enter(quint32 cityId, quint32 developmentId, int studioIndex, QString password);
 };
 
 #endif // AuBldDesignStudio_H

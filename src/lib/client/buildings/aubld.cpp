@@ -172,6 +172,7 @@ AuBld::AuBld(QWidget* parent) : QWidget(parent)
 	lay->addLayout(m_Pages, 1,0);	// The stack of pages that will be accessed by the tabs.
 	lay->setMargin(2);
 	lay->setSpacing(0);
+	lay->setSizeConstraint(QLayout::SetMinimumSize);
 	setLayout(lay);
 
 	// Create one of each kind of page needed by the MODEs.

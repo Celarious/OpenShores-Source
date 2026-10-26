@@ -12,6 +12,11 @@
 #include "aufilever.h"
 #include "augleffects.h"
 #include "auglobal.h"
+#include "aulegacycityprotocol.h"
+#include "aulegacystudioprotocol.h"
+#include "aulegacyshipsave.h"
+#include "aulegacyscdesign.h"
+#include "aulegacyshipperformance.h"
 #include "auitdesign.h"
 #include "auscdesign.h"
 #include "auscparts.h"
@@ -33,6 +38,10 @@
 #include <QProgressDialog>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QReadLocker>
+#include <QWriteLocker>
+#include <QSet>
+#include <limits>
 
 AuDesignUndoRedoItem::AuDesignUndoRedoItem(TYPE type)
 {
@@ -176,6 +185,7 @@ DaDesigner::DaDesigner(quint16 studioId) : DaDesignBase(studioId, DaDesignBase::
 	m_TransEmpty()
 {
 	m_Design = 0;
+	m_LegacyStudio = nullptr;
 	m_DesignModified = false;
 	for(int eff=EFF_None; eff<EFF_Count; eff++)
 		m_EffectCur[eff] = 0;
@@ -203,6 +213,7 @@ DaDesigner::DaDesigner() : m_CmdEmpty(),
 	m_TransEmpty()
 {
 	m_Design = 0;
+	m_LegacyStudio = nullptr;
 	m_DesignModified = false;
 	for(int eff=EFF_None; eff<EFF_Count; eff++)
 		m_EffectCur[eff] = 0;
@@ -220,6 +231,7 @@ DaDesigner::DaDesigner() : m_CmdEmpty(),
 
 DaDesigner::~DaDesigner()
 {
+	delete m_LegacyStudio;
 	if(m_Design)
 		delete m_Design;
 	if(m_Preview)
@@ -254,6 +266,7 @@ DaDesigner::DaDesigner(const DaDesigner &c) : DaDesignBase(c),
 	m_Architect = c.m_Architect;
 	m_idArchitect = c.m_idArchitect;
 	m_idOwner = c.m_idOwner;
+	m_LegacyStudio = c.m_LegacyStudio ? new AuLegacyStudioProtocol::State(*c.m_LegacyStudio) : nullptr;
 	if(c.m_Design)
 		m_Design = c.m_Design->Clone();
 	else
@@ -499,6 +512,9 @@ bool DaDesigner::Refresh(DaAtom* pAtom, AuAtomRenderInfo* ari)
 	pA->m_EnvLock.lockForRead();
 	m_EnvLock.lockForWrite();
 	m_idOwner = pA->m_idOwner;
+	delete m_LegacyStudio;
+	m_LegacyStudio = pA->m_LegacyStudio ? new AuLegacyStudioProtocol::State(*pA->m_LegacyStudio) : nullptr;
+	m_LegacyBurnRevision = 0;
 
 	if(m_Design)
 		delete m_Design;
@@ -1011,6 +1027,7 @@ void DaDesigner::DeleteDeviceObjects(AuAtomRenderInfo& ari)
 
 void DaDesigner::NewDesign(const AuId& idArchitect, const QString& architect, const AuDesign& design)
 {
+	if(IsLegacyStudio()) return;
 	switch(design.Type())
 	{
 	case AuDesign::BLUEPRINT_Invalid:
@@ -1080,6 +1097,273 @@ void DaDesigner::ResetPositions()
 	}
 }
 
+bool DaDesigner::IsLegacyStudio() const
+{
+	return (StudioId() & AuLegacyCityProtocol::PrivateStudioIdBase) != 0;
+}
+
+bool DaDesigner::InitializeLegacyStudio(const DaPerson& owner, QString& error)
+{
+	if(!IsLegacyStudio()) { error = tr("This is not a legacy studio."); return false; }
+	QWriteLocker lock(&m_EnvLock);
+	if(m_LegacyStudio) { error.clear(); return true; }
+	AuLegacyStudioProtocol::State initial;
+	initial.design.header.version = 2;
+	initial.design.header.designId = initial.generation;
+	initial.design.header.versionStateRaw = 0x20;
+	initial.design.header.streamline = 1;
+	initial.design.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
+	initial.design.header.architectId = owner.Id().GetID();
+	initial.design.header.architectName = owner.Name();
+	if(AuLegacyStudioProtocol::EncodeState(initial, error).isEmpty()) return false;
+	m_LegacyStudio = new AuLegacyStudioProtocol::State(initial);
+	m_idOwner = m_idArchitect = owner.Id();
+	m_Architect = owner.Name();
+	lock.unlock();
+	SetModified();
+	return true;
+}
+
+bool DaDesigner::BeginLegacyStudioOperation(const DaPerson& person,
+	const AuLegacyStudioProtocol::Request& request, bool& retry, QString& error)
+{
+	using namespace AuLegacyStudioProtocol;
+	retry = false; error.clear();
+	if(!IsLegacyStudio() || person.FindParentDesignerInEnv() != this || !request.operationId)
+	{ error = tr("You are no longer in this legacy studio."); return false; }
+	DaAtomList people; FindPeopleRecursive(people);
+	QSet<quint32> present;
+	for(const auto* member : people) present.insert(member->Id().GetID());
+	QWriteLocker lock(&m_EnvLock);
+	if(!m_LegacyStudio) { error = tr("The shared design is unavailable."); return false; }
+	if(m_LegacyReservedOperation && (!present.contains(m_LegacyReservedActor.GetID())
+		|| !m_LegacyReservationTime.isValid() || m_LegacyReservationTime.elapsed() >= 120000))
+		m_LegacyReservedOperation = 0;
+	if(m_LegacyReservedOperation)
+	{ retry = true; error = tr("Waiting for another studio operation to finish."); return false; }
+	if(request.generation != m_LegacyStudio->generation || request.revision != m_LegacyStudio->revision)
+	{ error = tr("The shared design changed. Review it and try again."); return false; }
+	if(request.action == BurnMedia)
+	{
+		if(!LegacyStudioCanBurn(person, error)) return false;
+	}
+	else if((request.action != Saved && request.action != AuLegacyStudioProtocol::LoadDesign) || !person.Is(m_idOwner))
+	{ error = tr("Only the studio owner can save or load library designs."); return false; }
+	m_LegacyReservedActor = person.Id(); m_LegacyReservedOperation = request.operationId;
+	m_LegacyReservedAction = quint8(request.action); m_LegacyReservationTime.start();
+	return true;
+}
+
+void DaDesigner::EndLegacyStudioOperation(const AuId& actorId, quint64 operationId)
+{
+	QWriteLocker lock(&m_EnvLock);
+	if(m_LegacyReservedActor == actorId && m_LegacyReservedOperation == operationId)
+	{ m_LegacyReservedOperation = 0; m_LegacyReservationTime = AuElapsedTimer(); }
+}
+
+void DaDesigner::ProcessLegacyStudioRequest(DaPerson& person,
+	const AuLegacyStudioProtocol::Request& request, AuLegacyStudioProtocol::Reply& reply,
+	const std::function<bool(AuLegacyShip::Design&, quint32&, QString&)>& store)
+{
+	using namespace AuLegacyStudioProtocol;
+	reply = Reply();
+	reply.token = request.token; reply.environmentId = Id().GetID();
+	if(!IsLegacyStudio() || person.FindParentDesignerInEnv() != this)
+	{ reply.message = tr("You are no longer in this legacy studio."); return; }
+	QString error;
+	if(!InitializeLegacyStudio(person, error)) { reply.message = error; return; }
+	DaAtomList people; FindPeopleRecursive(people);
+	QSet<quint32> participantIds;
+	for(const auto* atom : people)
+		if(const auto* member = dynamic_cast<const DaPerson*>(atom))
+		{
+			if(reply.members.size() >= MaximumMembers) break;
+			Member entry; entry.id = member->Id().GetID(); entry.name = member->Name();
+			reply.members.append(entry); participantIds.insert(entry.id);
+		}
+	const quint32 actorId = person.Id().GetID();
+	QWriteLocker lock(&m_EnvLock);
+	State& state = *m_LegacyStudio;
+	if(m_LegacyReservedOperation && (!participantIds.contains(m_LegacyReservedActor.GetID())
+		|| !m_LegacyReservationTime.isValid() || m_LegacyReservationTime.elapsed() >= 120000))
+		m_LegacyReservedOperation = 0;
+	// Remember retries for current participants, without allowing departed
+	// visitors to grow a saved studio's deduplication table indefinitely.
+	for(auto it = state.appliedOperations.begin(); it != state.appliedOperations.end(); )
+		if(!participantIds.contains(it.key())) it = state.appliedOperations.erase(it);
+		else ++it;
+	bool changed = false;
+	bool remember = false;
+	if(request.action != Snapshot && request.action != Library && m_LegacyReservedOperation
+		&& (m_LegacyReservedActor != person.Id() || m_LegacyReservedOperation != request.operationId
+			|| m_LegacyReservedAction != request.action))
+	{ reply.retry = true; reply.message = tr("Waiting for another studio operation to finish."); }
+	else if(request.action == Snapshot || (request.action == Library && person.Is(m_idOwner))) reply.accepted = true;
+	else if(request.action == Library) reply.message = tr("Only the studio owner can load designs from the design library.");
+	else if(!request.operationId) reply.message = tr("The studio operation has no identifier.");
+	else if((request.action == Replace || request.action == Saved || request.action == Password || request.action == AuLegacyStudioProtocol::LoadDesign)
+		&& !person.Is(m_idOwner))
+		reply.message = tr("Only the studio owner can create, load, save, or set its password.");
+	else if(request.operationId <= state.appliedOperations.value(actorId)) reply.accepted = true;
+	else if(request.generation != state.generation)
+		reply.message = tr("The design was replaced. Your edit was not applied; try it on the current design.");
+	else if((request.action == Replace || request.action == Saved || request.action == BurnMedia || request.action == AuLegacyStudioProtocol::LoadDesign)
+		&& request.revision != state.revision)
+		reply.message = tr("The shared design changed. Review the current design and try again.");
+	else if(state.revision == ~quint64(0)) reply.message = tr("The studio revision limit has been reached.");
+	else if(request.action == Edit)
+	{
+		AuLegacyShip::Design candidate(state.design);
+		if(Apply(request.edit, candidate, error, changed))
+		{
+			QString validationError;
+			if(!changed || !EncodeDocument(candidate, validationError).isEmpty())
+			{
+				if(changed) { state.design = candidate; state.modified = true; ++state.revision; }
+				reply.accepted = remember = true;
+			}
+			else error = validationError;
+		}
+		reply.message = error;
+	}
+	else if(request.action == Replace || request.action == AuLegacyStudioProtocol::LoadDesign)
+	{
+		AuLegacyShip::Design candidate;
+		quint32 libraryId = 0;
+		if(state.generation == ~quint32(0)) reply.message = tr("The studio document limit has been reached.");
+		else if(request.action == Replace ? DecodeDocument(request.document, candidate, error)
+			: store && store(candidate, libraryId, error) && libraryId)
+		{
+			candidate.header.designId = state.generation + 1;
+			candidate.header.architectId = actorId;
+			candidate.header.architectName = person.Name();
+			candidate.header.version = 2;
+			if(candidate.header.scalarSlots.isEmpty()) candidate.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
+			if(request.action == Replace) candidate.header.state = 0;
+			candidate.header.versionStateRaw = quint8(0x20 | candidate.header.state);
+			for(auto& room : candidate.rooms) room.designId = candidate.header.designId;
+			for(auto& detail : candidate.details) detail.designId = candidate.header.designId;
+			if(!EncodeDocument(candidate, error).isEmpty())
+			{
+				state.design = candidate; state.modified = false;
+				state.libraryDesignId = libraryId;
+				++state.generation; ++state.revision; state.appliedOperations.clear();
+				reply.accepted = remember = changed = true;
+			}
+		}
+		if(reply.message.isEmpty()) reply.message = error;
+	}
+	else if(request.action == Saved)
+	{
+		const QString name = request.name.isEmpty() ? state.design.header.name : request.name;
+		if(!IsLibraryNameValid(name))
+			reply.message = tr("Enter a design name of 1 to 30 printable characters without / : ! | < > & or backslash.");
+		else
+		{
+			AuLegacyShip::Design candidate(state.design);
+			candidate.header.name = name;
+			candidate.header.state = 0; candidate.header.versionStateRaw = 0x20;
+			quint32 libraryId = state.libraryDesignId;
+			if(store && store(candidate, libraryId, error) && libraryId)
+			{
+				state.design = candidate; state.libraryDesignId = libraryId;
+				state.modified = false; ++state.revision;
+				reply.accepted = remember = changed = true;
+				reply.message = tr("I saved \"%1\" to my design library.").arg(candidate.header.name);
+			}
+			else reply.message = error.isEmpty() ? tr("The design library service is unavailable.") : error;
+		}
+	}
+	else if(request.action == Password)
+	{
+		person.SetDesignPassword(request.password); person.SetModified();
+		++state.revision;
+		reply.accepted = remember = changed = true;
+	}
+	else if(request.action == BurnMedia)
+	{
+		if(LegacyStudioCanBurn(person, error) && store)
+		{
+			AuLegacyShip::Design candidate(state.design);
+			quint32 libraryId = state.libraryDesignId;
+			if(store(candidate, libraryId, error))
+			{
+				candidate.header.state = 1; candidate.header.versionStateRaw = 0x21;
+				state.design = candidate; state.modified = false; ++state.revision;
+				reply.accepted = remember = changed = true;
+			}
+		}
+		else if(error.isEmpty()) error = tr("The design media service is unavailable.");
+		reply.message = error;
+	}
+	if(remember) state.appliedOperations[actorId] = request.operationId;
+	reply.ownerId = m_idOwner.GetID(); reply.generation = state.generation;
+	reply.revision = state.revision; reply.modified = state.modified;
+	reply.lastOperation = state.appliedOperations.value(actorId);
+	reply.libraryDesignId = state.libraryDesignId;
+	QString burnError;
+	reply.canBurn = LegacyStudioCanBurn(person, burnError);
+	if(request.revision != state.revision || request.generation != state.generation)
+	{
+		reply.document = EncodeDocument(state.design, error);
+		reply.hasDocument = !reply.document.isEmpty();
+		if(!reply.hasDocument && reply.message.isEmpty()) reply.message = error;
+	}
+	lock.unlock();
+	if(changed || remember) SetModified();
+	if(remember && request.action == Saved) person.Thought(reply.message);
+}
+
+bool DaDesigner::LegacyStudioCanBurn(const DaPerson& person, QString& error)
+{
+	const auto& state = *m_LegacyStudio;
+	if(state.modified) { error = tr("Save the shared design before burning media."); return false; }
+	if(!state.libraryDesignId) { error = tr("Save the design to the design library before burning media."); return false; }
+	if(!AuLegacyStudioProtocol::IsLibraryNameValid(state.design.header.name))
+	{ error = tr("The design must have a saved name before burning media."); return false; }
+	const quint8 status = state.design.header.state;
+	if(status == 3 || status == 5 || (status == 0 && !person.Is(m_idOwner)))
+	{ error = tr("Only the studio owner can burn a writable design."); return false; }
+	if(m_LegacyBurnRevision != state.revision)
+	{
+		m_LegacyBurnRevision = state.revision; m_LegacyBurnValid = false; m_LegacyBurnError.clear();
+		AuLegacyShip::Design prepared;
+		QByteArray source;
+		AuLegacyScDesign accepted;
+		if(AuLegacyShip::PrepareForSave(state.design, prepared, m_LegacyBurnError)
+			&& AuLegacyShip::Write(prepared, source, m_LegacyBurnError)
+			&& AuLegacyScDesign::ReadUpload(source, accepted, m_LegacyBurnError))
+		{
+			const auto performance = AuLegacyShip::CalculatePerformance(accepted.SourceDesign(), accepted.Stats(),
+				accepted.SourceDesign().header.minimumTechLevel);
+			m_LegacyBurnValid = accepted.Stats().hasHull && accepted.Stats().hullContiguous && performance.structure != 0
+				&& performance.minimumTechLevel <= 31 && performance.manufacturing.valid && !performance.manufacturing.materials.isEmpty();
+			if(!m_LegacyBurnValid) m_LegacyBurnError = tr("The design needs a contiguous hull, a valid structure, and a manufacturing process at tech level 32 or below.");
+		}
+	}
+	error = m_LegacyBurnError;
+	return m_LegacyBurnValid;
+}
+
+QByteArray DaDesigner::LegacyStudioStorage() const
+{
+	if(!m_LegacyStudio) return QByteArray();
+	QString error;
+	const QByteArray bytes = AuLegacyStudioProtocol::EncodeState(*m_LegacyStudio, error);
+	if(bytes.isEmpty()) { qWarning() << "Could not store legacy studio" << Id().GetID() << error; return QByteArray(); }
+	return QByteArray("LST1", 4) + bytes;
+}
+
+bool DaDesigner::LoadLegacyStudioStorage(const QByteArray& bytes, QString& error)
+{
+	if(!bytes.startsWith("LST1") || bytes.size() > AuLegacyStudioProtocol::MaximumPacketBytes + 4)
+	{ error = tr("Invalid legacy studio checkpoint."); return false; }
+	AuLegacyStudioProtocol::State state;
+	if(!AuLegacyStudioProtocol::DecodeState(bytes.mid(4), state, error)) return false;
+	delete m_LegacyStudio; m_LegacyStudio = new AuLegacyStudioProtocol::State(state);
+	return true;
+}
+
 QString DaDesigner::EntryPassword() const
 {
 	// The owner person atom establishes the password for others to enter.
@@ -1109,6 +1393,7 @@ QString DaDesigner::EntryPassword() const
 // Insure a design plane exists for a particular architect.
 void DaDesigner::InitDesignPlane(const AuId& idArchitect)
 {
+	if(IsLegacyStudio()) return;
 	AuEther* ether = Ether();
 	if(!ether)
 		return;
@@ -1253,6 +1538,7 @@ int DaDesigner::LoadScDesign(quint32 designId, const AuId& idLoader, bool viewOn
 
 int DaDesigner::LoadDesign(AuDesign* d, const AuId& idLoader, bool viewOnly)
 {
+	if(IsLegacyStudio()) { delete d; return 2; }
 	switch(d->Type())
 	{
 	case AuDesign::BLUEPRINT_Invalid:
@@ -1337,7 +1623,14 @@ void DaDesigner::Insert(QSqlDatabase& db) const
 	qa.addBindValue(m_idOwner.GetID());
 
 	m_EnvLock.lockForRead();
-	if(m_Design)
+	if(m_LegacyStudio)
+	{
+		const QByteArray bytes = LegacyStudioStorage();
+		m_EnvLock.unlock();
+		if(bytes.isEmpty()) return;
+		qa.addBindValue(bytes);
+	}
+	else if(m_Design)
 	{
 		QByteArray ba(m_Design->Pack());
 		QByteArray bac(qCompress(ba));
@@ -1399,7 +1692,14 @@ void DaDesigner::Update(QSqlDatabase& db) const
 	qa.addBindValue(m_idOwner.GetID());
 
 	m_EnvLock.lockForRead();
-	if(m_Design)
+	if(m_LegacyStudio)
+	{
+		const QByteArray bytes = LegacyStudioStorage();
+		m_EnvLock.unlock();
+		if(bytes.isEmpty()) return;
+		qa.addBindValue(bytes);
+	}
+	else if(m_Design)
 	{
 		QByteArray ba(m_Design->Pack());
 		QByteArray bac(qCompress(ba));
@@ -1512,11 +1812,18 @@ DaDesigner* DaDesigner::LoadSubatoms(AuEther& ether, QSqlDatabase& db, const AuI
 				delete pnu->m_Preview;
 				pnu->m_Preview = 0;
 			}
+			bool checkpointValid = true;
 			int qvi = qv++;
 			if(!qa.value(qvi).isNull())
 			{
 				QByteArray bac(qa.value(qvi).toByteArray());
-				if(!bac.isEmpty())
+				if(bac.startsWith("LST1"))
+				{
+					QString error;
+					checkpointValid = pnu->LoadLegacyStudioStorage(bac, error);
+					if(!checkpointValid) qWarning() << "Invalid legacy studio checkpoint" << id.GetID() << error;
+				}
+				else if(!bac.isEmpty())
 				{
 					QByteArray ba = AuUncompress(bac, __FILE__, __LINE__,id.StringId());
 					if(ba.isEmpty())
@@ -1534,6 +1841,12 @@ DaDesigner* DaDesigner::LoadSubatoms(AuEther& ether, QSqlDatabase& db, const AuI
 			pnu->m_Architect = qa.value(qv++).toString();
 			pnu->SetDesignMode((DESIGNMODE)qa.value(qv++).toUInt());
 			pnu->m_ViewOnly = qa.value(qv++).toBool();
+			if(!checkpointValid || (pnu->m_LegacyStudio && !pnu->IsLegacyStudio()))
+			{
+				delete pnu;
+				if(!idToLoad.IsNull()) return nullptr;
+				continue;
+			}
 
 			pnu->ConnectSignals();
 			ether.AddAtom(pnu);
@@ -1655,7 +1968,7 @@ QString DaDesigner::DesignName() const
 quint32 DaDesigner::DbDesignId() const
 {
 	m_EnvLock.lockForRead();
-	quint32 v;
+	quint32 v = 0;
 	if(m_Design)
 		v = m_Design->Id();
 	else
@@ -1783,6 +2096,7 @@ bool DaDesigner::SaveToFile(const AuId& idArchitect, const QString& fileName, co
 
 bool DaDesigner::LoadedFromFile(const AuDesign& design)
 {
+	if(IsLegacyStudio()) return false;
 	switch(design.Type())
 	{
 	case AuDesign::BLUEPRINT_Invalid:
@@ -5917,6 +6231,15 @@ quint64 DaDesigner::MemoryUsage() const
 	mem += StringMemoryUsage(m_Architect);
 	if(m_Design)
 		mem += m_Design->MemoryUsage();
+	if(m_LegacyStudio)
+	{
+		const auto& design = m_LegacyStudio->design;
+		mem += sizeof(AuLegacyStudioProtocol::State) + design.rooms.size() * sizeof(AuLegacyShip::Room)
+			+ design.details.size() * sizeof(AuLegacyShip::Detail);
+		for(const auto& room : design.rooms)
+			mem += room.packedVertices.size() * sizeof(quint16) + room.workingBoundary.size() * sizeof(QPointF);
+		mem += m_LegacyStudio->appliedOperations.size() * (sizeof(quint32) + sizeof(quint64));
+	}
 	mem += (sizeof(quint16) + sizeof(AuElapsedTimer)) * m_DesignChangeTimes.size();
 	if(m_Preview)
 		mem += m_Preview->MemoryUsage();
@@ -6643,6 +6966,12 @@ void DaDesigner::operator>>(QDataStream& out) const
 	out << m_PreviewGenSeed;
 	out << m_PreviewHasPower;
 	out << m_UndoRedo;
+	if(IsLegacyStudio())
+	{
+		const QByteArray bytes = LegacyStudioStorage();
+		out << quint32(bytes.size());
+		out.writeRawData(bytes.constData(), bytes.size());
+	}
 	m_EnvLock.unlock();
 }
 
@@ -6678,6 +7007,20 @@ void DaDesigner::operator<<(QDataStream& in)
 	in >> m_PreviewGenSeed;
 	in >> m_PreviewHasPower;
 	in >> m_UndoRedo;
+	delete m_LegacyStudio; m_LegacyStudio = nullptr;
+	if(IsLegacyStudio())
+	{
+		quint32 size = 0; in >> size;
+		if(in.status() != QDataStream::Ok || size > AuLegacyStudioProtocol::MaximumPacketBytes + 4
+			|| size > quint64(in.device()->bytesAvailable())) in.setStatus(QDataStream::ReadCorruptData);
+		else if(size)
+		{
+			QByteArray bytes(int(size), '\0');
+			QString error;
+			if(in.readRawData(bytes.data(), int(size)) != int(size) || !LoadLegacyStudioStorage(bytes, error))
+				in.setStatus(QDataStream::ReadCorruptData);
+		}
+	}
 	m_EnvLock.unlock();
 }
 

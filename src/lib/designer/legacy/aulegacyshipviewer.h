@@ -3,12 +3,16 @@
 
 #include <QMainWindow>
 #include <QString>
+#include <QVector>
 #include <functional>
 
 class QCloseEvent;
+class AuCommPacket;
+namespace AuLegacyShip { struct Design; }
+namespace AuLegacyStudioProtocol { struct Request; struct LibraryEntry; }
 
-// Offline inspection of the recovered 2016 authoring format. Opening a design
-// here does not modify the file or convert it to the modern mesh design model.
+// Editor for the recovered 2016 authoring format. Shared studios apply server
+// snapshots while standalone editing keeps the original local file workflow.
 class AuLegacyShipViewer : public QMainWindow
 {
 public:
@@ -22,6 +26,16 @@ public:
 	bool ConfirmDiscardChanges();
 	void ControlsChanged();
 	void ToggleTools();
+	void SetStudioCommandHandler(const std::function<void(AuLegacyStudioProtocol::Request)>& handler);
+	void ApplyStudioState(const AuLegacyShip::Design& design, bool owner, bool modified,
+		quint32 generation, quint64 revision);
+	void SetStudioConnected(bool connected);
+	void SetStudioBusy(bool busy);
+	void SetStudioBurnAvailable(bool available);
+	void SetStudioLibraryDesignId(quint32 designId);
+	void ApplyStudioLibrary(const QVector<AuLegacyStudioProtocol::LibraryEntry>& entries, bool truncated);
+	void ShowStudioMessage(const QString& message);
+	void ChatReceived(AuCommPacket* message);
 
 protected:
 	void showEvent(QShowEvent* event) override;

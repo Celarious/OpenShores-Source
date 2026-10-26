@@ -24,6 +24,7 @@
 #include <QComboBox>
 #include <QMainWindow>
 #include <QMutex>
+#include <QPointer>
 
 class AuAgentDialog;
 class AuBdExchangeDock;
@@ -62,6 +63,7 @@ class AuIntroBase;
 class AuJoystick;
 class AuLaborDock;
 class AuLegacyShipViewer;
+class AuLegacyStudioSession;
 class AuLocatorCompassDock;
 class AuLocatorDock;
 class AuLocatorGPSDock;
@@ -115,6 +117,13 @@ private:
 	QTimer*								m_Timer;
 	AuDesignerView*						m_View;
 	AuLegacyShipViewer*				m_LegacyDesigner;
+	AuLegacyStudioSession* m_LegacyStudioSession = nullptr;
+	bool m_LegacyStudioPending = false, m_LegacyStudioAccepted = false;
+	bool m_LegacyStudioOnline = false, m_LegacyStudioReturning = false;
+	QTimer* m_LegacyStudioTimer;
+	AuElapsedTimer m_LegacyStudioEntryWait;
+	AuElapsedTimer m_LegacyStudioExitSent;
+	QList<QPointer<QWidget> > m_LegacyStudioWidgets;
 	QString								m_IntroWindowTitle;
 	bool								m_IntroMenuVisible;
 	bool								m_ResumeIntroMusic;
@@ -512,6 +521,7 @@ public:
 	{
 		m_ControlLock.lock();
 		m_ActiveKeys.clear();
+		m_ActiveKeyMods = Qt::NoModifier;
 		m_ControlLock.unlock();
 	}
 
@@ -579,6 +589,7 @@ public:
 
 public slots:
 	void AlertMessageReceived(AuMailMsg msg);
+	void ExitLegacyDesigner();
 
 	void AvatarsUpdated();
 
@@ -868,7 +879,10 @@ protected:
 	virtual void closeEvent(QCloseEvent* event);
 
 	void LaunchLegacyDesigner();
-	void ExitLegacyDesigner();
+	void BeginLegacyStudioEntry();
+	void FinishLegacyStudioEntry(bool accepted);
+	void UpdateLegacyStudio();
+	void RestoreLegacyStudioScene();
 
 	void CreateDockWidgets();
 

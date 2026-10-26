@@ -9,6 +9,7 @@
 #include "aulegacycityprotocol.h"
 #include "aulegacycitycatalogue.h"
 #include "aulegacycityproduction.h"
+#include "aulegacystudioprotocol.h"
 #include "aulegacyshipequipment.h"
 #include "aumatrix4x4.h"
 #include "auqueryenvironment.h"
@@ -16,6 +17,7 @@
 #include "daatomlist.h"
 #include "dgdata.h"
 #include "dalegacycity.h"
+#include "dadesigner.h"
 #include "daperson.h"
 #include "dasolarsystem.h"
 #include "dasector.h"
@@ -26,6 +28,8 @@
 #include <cmath>
 #include <memory>
 #include <limits>
+#include <QMutex>
+#include <QMutexLocker>
 
 namespace
 {
@@ -195,6 +199,89 @@ void BankRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityProto
 	city->OperateBank(person, selected, reply);
 }
 
+void StudioRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityProtocol::Reply& reply,
+	DaPerson& person, DaWorldLL& world, AuEther& ether, const AuPoint& origin)
+{
+	using namespace AuLegacyCityProtocol;
+	// Check and reserve a studio together, including requests from other players.
+	static QMutex studioLock;
+	QMutexLocker lock(&studioLock);
+	const auto* city = dynamic_cast<const DaLegacyCity*>(ether.FindNormalAtom(AuId(request.cityId)));
+	if(!city || city->IsDead() || city->Parent() != &world)
+	{ reply.message = QObject::tr("This design studio is no longer on your current world."); return; }
+	const auto state = city->Snapshot();
+	const AuLegacyCity::Development* selected = nullptr;
+	for(const auto& development : state.developments)
+		if(development.id == request.developmentId && !development.demolished)
+		{ selected = &development; break; }
+	if(!selected || selected->industryId != 3 || !selected->completedLevels
+		|| !ContainsSite(world, *selected, origin))
+	{ reply.message = QObject::tr("Stand at a completed Design Studio to enter a designer."); return; }
+	reply.selectedCity = request.cityId; reply.selectedDevelopment = request.developmentId;
+	reply.hasStudio = true; reply.studioCount = qMin(int(selected->completedLevels), 16);
+	DaDesigner* selectedStudio = nullptr;
+	bool createdStudio = false;
+	DaAtomList atoms; world.ListNormalSubatoms(atoms);
+	for(auto* atom : atoms)
+		if(auto* studio = dynamic_cast<DaDesigner*>(atom))
+		{
+			const quint16 index = studio->StudioId() ^ PrivateStudioIdBase;
+			if(index < reply.studioCount && studio->FindPersonRecursive()
+				&& ContainsSite(world, *selected, studio->Location()))
+			{
+				reply.occupiedStudios |= quint16(1u << index);
+				if(index == request.studioIndex) selectedStudio = studio;
+			}
+		}
+	if(request.action == StudioState) { reply.accepted = true; return; }
+	if(person.Parent() != &world)
+	{ reply.message = QObject::tr("Dismount and exit your vehicle or spacecraft before entering a design studio."); return; }
+	if(request.studioIndex >= reply.studioCount)
+	{ reply.message = QObject::tr("That studio level is not completed."); return; }
+	if(selectedStudio)
+	{
+		const QString password = selectedStudio->EntryPassword();
+		// The original blank password means private, including another blank.
+		if(password.isEmpty() || request.studioPassword != password)
+		{ reply.message = QObject::tr("This studio is private or its password does not match."); return; }
+		DaAtomList members; selectedStudio->FindPeopleRecursive(members);
+		if(members.size() >= AuLegacyStudioProtocol::MaximumMembers)
+		{ reply.message = QObject::tr("This design studio is full."); return; }
+		QString error;
+		const DaPerson* first = selectedStudio->FindPersonRecursive();
+		if(!first || !selectedStudio->InitializeLegacyStudio(*first, error))
+		{ reply.message = error; return; }
+	}
+	else
+	{
+		if(!g_AuDb.HasAtomIds())
+		{ reply.message = QObject::tr("The server is restocking atom IDs. Try again shortly."); return; }
+		std::unique_ptr<DaDesigner> studio(new DaDesigner(PrivateStudioIdBase | request.studioIndex));
+		studio->Create();
+		if(studio->Id().IsNull())
+		{ reply.message = QObject::tr("The server could not allocate a studio ID."); return; }
+		QString error;
+		if(!studio->InitializeLegacyStudio(person, error)) { reply.message = error; return; }
+		studio->ConnectSignals();
+		studio->SetPosAndOrient(person.Pos()); // All participants leave at the original studio entrance.
+		selectedStudio = studio.release();
+		createdStudio = true;
+		ether.AddAtom(selectedStudio);
+		g_Au.AtomAdded(selectedStudio->Id());
+	}
+	person.ClearMovementInput();
+	person.SetDesignPassword(request.studioPassword);
+	person.DismountAllRiders();
+	AuMatrix4x4 inside; inside.Translate(0, 0, person.GroundHeightAboveCG());
+	person.ForcePosStop(AuAtomPos(selectedStudio->Id(), inside));
+	person.SetModified();
+	// The shared working document remains separate from modern AuScDesign.
+	// Each participant's editor uses the dedicated studio protocol.
+	if(createdStudio) { selectedStudio->SetNormal(); selectedStudio->TickTockRecursive(); }
+	reply.occupiedStudios |= quint16(1u << request.studioIndex);
+	reply.accepted = true;
+}
+
 void ListBuildings(DaWorldLL& world, const AuPoint& origin, AuLegacyCityProtocol::Reply& reply)
 {
 	reply.hasList = true;
@@ -344,6 +431,8 @@ void DtChatChannel::ProcessLegacyConstructionRequest(const AuLegacyCityProtocol:
 	{ EconomyRequest(request, reply, *person, *world, *ether, origin); return; }
 	if(IsBank(request.action))
 	{ BankRequest(request, reply, *person, *world, *ether); return; }
+	if(IsStudio(request.action))
+	{ StudioRequest(request, reply, *person, *world, *ether, origin); return; }
 	if(request.action == ConstructionList)
 	{
 		// Use the same environment target as F10. This also prefers the actual

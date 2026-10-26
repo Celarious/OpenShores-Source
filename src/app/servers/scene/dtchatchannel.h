@@ -429,6 +429,7 @@ private:
 	void ReadLegacyScPacket(const QByteArray& payload);
 	void SpawnLegacySc(quint32 designId, AuLegacyScProtocol::Reply& reply);
 	void ReadLegacyCityPacket(const QByteArray& payload);
+	void ReadLegacyStudioPacket(const QByteArray& payload);
 	bool LegacyCityAuthorized();
 	void ProcessLegacyConstructionRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityProtocol::Reply& reply);
 	void ProcessLegacyCityRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityProtocol::Reply& reply);
@@ -510,6 +511,7 @@ private:
 	AuElapsedTimer m_LastLegacyScCatalogQuery;
 	AuElapsedTimer m_LastLegacyScSpawn;
 	AuElapsedTimer m_LastLegacyCityRequest;
+	AuElapsedTimer m_LastLegacyStudioRequest;
 	int									m_PacketSizeBytesLeft;	// Number of packet size bytes we are expecting.
 	int									m_socketDescriptor;		// Provided in the constructor.
 	AuTime								m_tmConnect;			// Time connection is established.

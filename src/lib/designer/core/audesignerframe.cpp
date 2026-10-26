@@ -29,6 +29,7 @@
 #include "aucomm.h"
 #include "auconstruction.h"
 #include "aulegacycityconstruction.h"
+#include "aulegacycityprotocol.h"
 #include "audamagereport.h"
 #include "audesignerbar.h"
 #include "audesignerbar2.h"
@@ -54,6 +55,7 @@
 #include "aujoystick.h"
 #include "aulaborhandcraft.h"
 #include "aulegacyshipviewer.h"
+#include "aulegacystudiosession.h"
 #include "aulocator.h"
 #include "aulocatorgps.h"
 #include "aulocatormap.h"
@@ -91,8 +93,10 @@
 #include "dgdata.h"
 #include "dicontrolinput.h"
 #include <QDesktopServices>
+#include <QDockWidget>
 #include <QGridLayout>
 #include <QInputDialog>
+#include <QLayout>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -101,6 +105,7 @@
 #include <QNetworkReply>
 #include <QPushButton>
 #include <QTimer>
+#include <QToolBar>
 #include <QUrl>
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
@@ -383,6 +388,20 @@ AuDesignerFrame::AuDesignerFrame(QWidget *parent) : AuFrame(parent)
 	m_SpacecraftSpecsDock = 0;
 	m_View = 0;
 	m_LegacyDesigner = 0;
+	m_LegacyStudioTimer = new QTimer(this);
+	m_LegacyStudioTimer->setInterval(100);
+	connect(m_LegacyStudioTimer, &QTimer::timeout, this, &AuDesignerFrame::UpdateLegacyStudio);
+	connect(auApp, &AuApp::LegacyStudioEntryStarted, this, &AuDesignerFrame::BeginLegacyStudioEntry);
+	connect(auApp, &AuApp::LegacyStudioEntryFinished, this, &AuDesignerFrame::FinishLegacyStudioEntry);
+	connect(auApp, &AuApp::LegacyScTransportReset, this, [this]() {
+		if(m_LegacyStudioPending)
+		{
+			m_LegacyStudioPending = m_LegacyStudioAccepted = false;
+			RestoreLegacyStudioScene();
+		}
+		// A connected editor owns local unsaved work. Keep it available after
+		// a disconnect; Exit Designer can return when the scene reconnects.
+	});
 	m_IntroMenuVisible = false;
 	m_ResumeIntroMusic = false;
 	m_WaitTime.start();
@@ -725,7 +744,7 @@ QSize AuDesignerFrame::sizeHint() const
 
 void AuDesignerFrame::Timer()
 {
-	if(m_LegacyDesigner)
+	if(m_LegacyDesigner && !m_LegacyStudioOnline)
 		return;
 
 	//qDebug() << "AuDesignerFrame::Timer" << auApp->RunState();
@@ -1684,7 +1703,9 @@ void AuDesignerFrame::ChatReceived(AuCommPacket& msg)
 		return;
 	}
 
-	if(m_View)
+	if(m_LegacyStudioOnline && m_LegacyDesigner && msg.IsThought())
+		m_LegacyDesigner->ChatReceived(&msg);
+	else if(m_View)
 	{
 		// Trap "Spot Target" messages from the local scene atom. They were
 		// already sent to the view in AuCommChannel::SendChat.
@@ -1730,6 +1751,11 @@ void AuDesignerFrame::ListOpenChannels(QStringList& channelNames) const
 
 void AuDesignerFrame::closeEvent(QCloseEvent* event)
 {
+	if(m_LegacyStudioSession && !m_LegacyStudioSession->ConfirmExit())
+	{
+		event->ignore();
+		return;
+	}
 	if(m_LegacyDesigner && !m_LegacyDesigner->ConfirmDiscardChanges())
 	{
 		event->ignore();
@@ -2695,6 +2721,29 @@ void AuDesignerFrame::CreateDockWidgets()
 // 'sceneContext' is an SCENE_CONTEXT value.
 void AuDesignerFrame::SceneContextChanged(int sceneContext)
 {
+	// Entry/exit replication must not briefly expose the modern editor for
+	// the private sandbox used by the recovered spacecraft editor.
+	if(m_LegacyStudioPending || m_LegacyStudioOnline || m_LegacyStudioReturning)
+		return;
+	if(sceneContext == SCENE_Designer && g_Au.IsLegacyGeneration() && m_View)
+	{
+		// A timed-out entry may finish on the server after its UI request
+		// was cancelled. Leave that sandbox without exposing modern tools.
+		DaPerson* person = nullptr;
+		m_View->LockSceneAtom(&person);
+		const DaDesignBase* environment = person ? person->FindParentDesignBaseInEnv() : nullptr;
+		const bool privateStudio = environment && (environment->StudioId() & AuLegacyCityProtocol::PrivateStudioIdBase);
+		m_View->UnlockSceneAtom();
+		if(privateStudio)
+		{
+			BeginLegacyStudioEntry();
+			m_LegacyStudioPending = false;
+			m_LegacyStudioReturning = true;
+			m_LegacyStudioExitSent = AuElapsedTimer();
+			UpdateLegacyStudio();
+			return;
+		}
+	}
 	if(sceneContext != SCENE_Universe || !g_Au.IsLegacyGeneration())
 	{
 		if(m_LegacyCityConstructionDock) m_LegacyCityConstructionDock->hide();
@@ -3064,7 +3113,8 @@ void AuDesignerFrame::KeyPressed(QKeyEvent* e)
 	}
 	//qDebug() << "AuDesignerFrame::KeyPressed" << e->key() << e->modifiers() << m_ActiveKeys.contains((Qt::Key)e->key());
 	// View does not get tab key press events so we'll forward this one.
-	if(m_View && e->key() == Qt::Key_Tab)
+	if(m_View && !m_LegacyDesigner && !m_LegacyStudioPending && !m_LegacyStudioReturning
+		&& e->key() == Qt::Key_Tab)
 	{
 		m_ControlLock.lock();
 		bool haskey = m_ActiveKeys.find((Qt::Key)e->key()) != m_ActiveKeys.end();
@@ -3121,7 +3171,7 @@ void AuDesignerFrame::ProcessControlInput(const DiControlInputArray& aActiveCont
 {
 	for(DiControlInputArray::const_iterator ci = aActiveControls.cbegin(); ci != aActiveControls.cend(); ci++)
 	{
-		if(m_LegacyDesigner)
+		if(m_LegacyDesigner || m_LegacyStudioPending || m_LegacyStudioReturning)
 		{
 			// Keep the normal window bindings available without dispatching
 			// world-only commands to the absent modern scene widget.
@@ -5771,8 +5821,32 @@ void AuDesignerFrame::ExitLegacyDesigner()
 {
 	if(!m_LegacyDesigner)
 		return;
+	if(m_LegacyStudioSession && !m_LegacyStudioSession->ConfirmExit()) return;
 	if(!m_LegacyDesigner->ConfirmDiscardChanges())
 		return;
+
+	if(m_LegacyStudioOnline)
+	{
+		if(m_LegacyStudioSession) m_LegacyStudioSession->Stop();
+		m_LegacyStudioSession = nullptr;
+		AuLegacyShipViewer* viewer = m_LegacyDesigner;
+		layout()->removeWidget(viewer);
+		viewer->hide();
+		viewer->deleteLater();
+		m_LegacyDesigner = nullptr;
+		m_LegacyStudioOnline = false;
+		m_LegacyStudioReturning = true;
+		setCentralWidget(m_View);
+		m_View->show();
+		setWindowTitle(m_IntroWindowTitle);
+		ClearActiveKeys();
+		// The live view stays suspended until its avatar has replicated the
+		// return to the world, so no modern designer UI receives input.
+		m_LegacyStudioExitSent = AuElapsedTimer();
+		m_LegacyStudioTimer->start();
+		UpdateLegacyStudio();
+		return;
+	}
 
 	AuLegacyShipViewer* viewer = m_LegacyDesigner;
 	takeCentralWidget();
@@ -5796,6 +5870,148 @@ void AuDesignerFrame::ExitLegacyDesigner()
 		&& !auApp->IsClientSoundPlaying(MUSIC_ShroudOfGlory))
 		auApp->PlayClientSound(MUSIC_ShroudOfGlory);
 	m_ResumeIntroMusic = false;
+}
+
+void AuDesignerFrame::BeginLegacyStudioEntry()
+{
+	if(!m_View || m_LegacyDesigner || m_LegacyStudioPending || m_LegacyStudioReturning)
+		return;
+	m_LegacyStudioPending = true;
+	m_LegacyStudioAccepted = false;
+	m_IntroWindowTitle = windowTitle();
+	m_IntroMenuVisible = menuWidget() && menuWidget()->isVisible();
+	m_LegacyStudioWidgets.clear();
+	// Save the visible game widgets without changing their saved layout.
+	const QList<QDockWidget*> docks = findChildren<QDockWidget*>(QString(), Qt::FindDirectChildrenOnly);
+	for(auto* dock : docks)
+		if(dock->isVisible()) { m_LegacyStudioWidgets.append(dock); dock->hide(); }
+	const QList<QToolBar*> bars = findChildren<QToolBar*>(QString(), Qt::FindDirectChildrenOnly);
+	for(auto* bar : bars)
+		if(bar->isVisible()) { m_LegacyStudioWidgets.append(bar); bar->hide(); }
+	if(menuWidget()) menuWidget()->hide();
+	m_View->SetInputSuspended(true);
+	m_View->EndCommands();
+	ClearActiveKeys();
+	m_LegacyStudioTimer->start();
+}
+
+void AuDesignerFrame::FinishLegacyStudioEntry(bool accepted)
+{
+	if(!m_LegacyStudioPending) return;
+	m_LegacyStudioAccepted = accepted;
+	if(!accepted)
+	{
+		m_LegacyStudioPending = false;
+		RestoreLegacyStudioScene();
+		return;
+	}
+	m_LegacyStudioEntryWait.start();
+	UpdateLegacyStudio();
+}
+
+void AuDesignerFrame::UpdateLegacyStudio()
+{
+	if(!m_View || (!m_LegacyStudioPending && !m_LegacyStudioReturning))
+	{
+		m_LegacyStudioTimer->stop();
+		return;
+	}
+	DaPerson* person = nullptr;
+	m_View->LockSceneAtom(&person);
+	const bool hasPerson = person && !person->IsInTransition();
+	const DaDesignBase* environment = hasPerson ? person->FindParentDesignBaseInEnv() : nullptr;
+	const bool privateStudio = environment && (environment->StudioId() & AuLegacyCityProtocol::PrivateStudioIdBase);
+	const bool inDesigner = environment != nullptr;
+	const quint32 environmentId = environment ? environment->Id().GetID() : 0;
+	const quint32 personId = person ? person->Id().GetID() : 0;
+	m_View->UnlockSceneAtom();
+	if(m_LegacyStudioPending)
+	{
+		if(m_LegacyStudioAccepted && !privateStudio && m_LegacyStudioEntryWait.elapsed() >= 60000)
+		{
+			if(auApp->IsSceneConnected()) auApp->DesignExit();
+			m_LegacyStudioPending = m_LegacyStudioAccepted = false;
+			RestoreLegacyStudioScene();
+			m_View->LocalLogMessage(tr("The design studio scene did not arrive. Please try again."));
+			return;
+		}
+		// Observe entry before offering Exit, since a reply can arrive ahead
+		// of the scene snapshot containing the sandbox and its occupant.
+		if(!m_LegacyStudioAccepted || !privateStudio) return;
+		m_LegacyStudioPending = m_LegacyStudioAccepted = false;
+		m_LegacyStudioOnline = true;
+		m_LegacyStudioTimer->stop();
+		// takeCentralWidget() reparents through nullptr, destroying the live
+		// OpenGL context and invalidating cached world/HUD objects. Remove
+		// only its layout item so both views stay children of this window.
+		layout()->removeWidget(m_View);
+		m_View->hide();
+		m_LegacyDesigner = new AuLegacyShipViewer(this);
+		m_LegacyDesigner->setWindowFlags(Qt::Widget);
+		m_LegacyStudioSession = new AuLegacyStudioSession(m_LegacyDesigner, environmentId, personId);
+		AuLegacyShipViewer* viewer = m_LegacyDesigner;
+		viewer->SetExitHandler([this, viewer]() {
+			if(m_LegacyDesigner == viewer) ExitLegacyDesigner();
+		});
+		connect(viewer, &QWidget::windowTitleChanged, this, [this, viewer](const QString& title) {
+			if(m_LegacyDesigner == viewer) setWindowTitle(title);
+		});
+		setWindowTitle(viewer->windowTitle());
+		setCentralWidget(viewer);
+		viewer->show();
+		viewer->setFocus();
+		ClearActiveKeys();
+		return;
+	}
+	if(!hasPerson) return;
+	if(privateStudio)
+	{
+		if(auApp->IsSceneConnected() && (!m_LegacyStudioExitSent.isValid()
+			|| m_LegacyStudioExitSent.elapsed() >= 1000))
+		{
+			auApp->DesignExit();
+			m_LegacyStudioExitSent.start();
+		}
+		return;
+	}
+	if(!inDesigner)
+	{
+		m_LegacyStudioReturning = false;
+		RestoreLegacyStudioScene();
+	}
+}
+
+void AuDesignerFrame::RestoreLegacyStudioScene()
+{
+	if(m_View)
+	{
+		DaPerson* person = nullptr;
+		m_View->LockSceneAtom(&person);
+		const DaDesignBase* environment = person ? person->FindParentDesignBaseInEnv() : nullptr;
+		const bool privateStudio = environment && (environment->StudioId() & AuLegacyCityProtocol::PrivateStudioIdBase);
+		m_View->UnlockSceneAtom();
+		if(privateStudio)
+		{
+			m_LegacyStudioReturning = true;
+			m_LegacyStudioExitSent = AuElapsedTimer();
+			m_LegacyStudioTimer->start();
+			UpdateLegacyStudio();
+			return;
+		}
+	}
+	m_LegacyStudioTimer->stop();
+	if(m_View)
+	{
+		m_View->SetInputSuspended(false);
+		SceneContextChanged(SCENE_Universe);
+		m_View->setFocus();
+	}
+	ClearActiveKeys();
+	setWindowTitle(m_IntroWindowTitle);
+	if(menuWidget()) menuWidget()->setVisible(m_IntroMenuVisible);
+	for(const auto& widget : m_LegacyStudioWidgets)
+		if(widget) widget->show();
+	m_LegacyStudioWidgets.clear();
 }
 
 void AuDesignerFrame::TransferCitizensAvailable(QByteArray ba)

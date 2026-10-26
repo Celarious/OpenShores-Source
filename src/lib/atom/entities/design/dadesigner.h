@@ -9,6 +9,7 @@
 
 #include "dadesignbase.h"
 #include "dpconsoleempty.h"
+#include <functional>
 
 class AuDesign;
 class AuDesignPosition;
@@ -17,6 +18,8 @@ class AuScPart;
 class AuScParts;
 class AuSpecies;
 class QStringList;
+namespace AuLegacyStudioProtocol { struct State; struct Request; struct Reply; }
+namespace AuLegacyShip { struct Design; }
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // AuDesignUndoRedoItem is one discrete step of an AuDesignUndoRedoTransaction.
@@ -268,6 +271,14 @@ private:
 	QHash<AuId, AuDesignUndoRedoList>	m_UndoRedo;				// Undo/redo transactions for all architects present.
 
 private:
+	AuLegacyStudioProtocol::State* m_LegacyStudio;
+	quint64 m_LegacyBurnRevision = 0;
+	bool m_LegacyBurnValid = false;
+	QString m_LegacyBurnError;
+	AuId m_LegacyReservedActor;
+	quint64 m_LegacyReservedOperation = 0;
+	quint8 m_LegacyReservedAction = 0;
+	AuElapsedTimer m_LegacyReservationTime;
 	// OpenGL
 	// Most normal faces are in the opaque and transparent VAOs.
 	GLuint								m_EffectCur[EFF_Count];
@@ -312,6 +323,15 @@ public:
 	DaDesigner(quint16 studioId);
 	DaDesigner();
 	virtual ~DaDesigner();
+
+	bool IsLegacyStudio() const;
+	bool InitializeLegacyStudio(const DaPerson& owner, QString& error);
+	bool BeginLegacyStudioOperation(const DaPerson& person, const AuLegacyStudioProtocol::Request& request,
+		bool& retry, QString& error);
+	void EndLegacyStudioOperation(const AuId& actorId, quint64 operationId);
+	void ProcessLegacyStudioRequest(DaPerson& person, const AuLegacyStudioProtocol::Request& request,
+		AuLegacyStudioProtocol::Reply& reply,
+		const std::function<bool(AuLegacyShip::Design&, quint32&, QString&)>& store = std::function<bool(AuLegacyShip::Design&, quint32&, QString&)>());
 
 protected:
 	DaDesigner(const DaDesigner &rhs);
@@ -946,6 +966,12 @@ public:
 	virtual void Update(QSqlDatabase& db) const;	// Update existing database record.
 
 protected:
+	// Caller holds m_EnvLock. The tagged document occupies the existing SQL
+	// design blob, separately from the modern AuDesign representation.
+	QByteArray LegacyStudioStorage() const;
+	bool LoadLegacyStudioStorage(const QByteArray& bytes, QString& error);
+	bool LegacyStudioCanBurn(const DaPerson& person, QString& error);
+
 	void AnimateEffectTextures();
 
 	// Returns a pointer to an array of effect textures that contains EFF_Count entries, one for each effect.

@@ -5,6 +5,7 @@
 #include "aulegacycitybank.h"
 #include "auapp.h"
 #include "aubldconstruct.h"
+#include "aublddesignstudio.h"
 #include "deconstructionprocess.h"
 #include "audialog.h"
 #include "auframe.h"
@@ -677,6 +678,7 @@ AuLegacyCityLabor::AuLegacyCityLabor(QWidget* parent) : QWidget(parent)
 	// AuLabor/AuLaborCity (2016, 0x1401bfdd0/0x1401ca750): a production
 	// building extending a level retains Construction and Manufacture tabs.
 	auto* layout = new QGridLayout(this); layout->setMargin(2); layout->setSpacing(0);
+	layout->setSizeConstraint(QLayout::SetMinimumSize);
 	m_LaborTabs = new QTabBar(this);
 	m_LaborTabs->addTab(QIcon(":data/ConstructionSign.png"), tr("Construction"));
 	m_LaborTabs->addTab(QIcon(":data/HammerAndSickle.png"), tr("Manufacture"));
@@ -685,6 +687,7 @@ AuLegacyCityLabor::AuLegacyCityLabor(QWidget* parent) : QWidget(parent)
 	m_Labor = new AuBldConstruct(this, true); m_LaborPages->addWidget(m_Labor);
 	m_Manufacture = new AuLegacyCityManufacture(this); m_LaborPages->addWidget(m_Manufacture);
 	m_Bank = new AuLegacyCityBank(this); m_LaborPages->addWidget(m_Bank);
+	m_Studio = new AuLegacyCityDesignStudio(this); m_LaborPages->addWidget(m_Studio);
 	m_Info = new QLabel(tr("<html><p>Use this window to use the buildings and roads in a city.</p>"
 		"<p>The contents of this window change based on the building or road site you occupy. "
 		"You do not have to be inside a building; stand anywhere at the site.</p><p><i>Tips</i></p>"
@@ -709,6 +712,23 @@ AuLegacyCityLabor::AuLegacyCityLabor(QWidget* parent) : QWidget(parent)
 	});
 	connect(m_Manufacture, &AuLegacyCityManufacture::AvailabilityChanged, this, [this](bool) { UpdateControls(); });
 	m_Timer = new QTimer(this); m_Timer->setInterval(1000);
+	m_StudioRequestTimer = new QTimer(this); m_StudioRequestTimer->setSingleShot(true); m_StudioRequestTimer->setInterval(250);
+	connect(m_Studio, &AuLegacyCityDesignStudio::Enter, this,
+		[this](quint32 city, quint32 development, int index, const QString& password) {
+			AuLegacyCityProtocol::Request request; request.action = AuLegacyCityProtocol::EnterSpacecraftStudio;
+			request.cityId = city; request.developmentId = development; request.studioIndex = quint8(index);
+			request.studioPassword = password;
+			QueueStudioRequest(request);
+		});
+	connect(m_StudioRequestTimer, &QTimer::timeout, this, [this]() {
+		if(!m_StudioRequestQueued) return;
+		if(m_PendingToken) { m_StudioRequestTimer->start(); return; }
+		const auto request = m_QueuedStudioRequest; m_StudioRequestQueued = false;
+		const auto* entry = Selected();
+		if(!isVisible() || !entry || entry->cityId != request.cityId || entry->developmentId != request.developmentId)
+		{ UpdateControls(); return; }
+		Submit(request);
+	});
 	connect(m_Timer, &QTimer::timeout, this, [this]() {
 		// The shared labor page runs its own work timer while visible. Keep
 		// following the avatar when the information page is visible instead.
@@ -716,9 +736,13 @@ AuLegacyCityLabor::AuLegacyCityLabor(QWidget* parent) : QWidget(parent)
 	});
 	m_Timeout = new QTimer(this); m_Timeout->setSingleShot(true); m_Timeout->setInterval(60000);
 	connect(m_Timeout, &QTimer::timeout, this, [this]() {
+		const bool studioEntry = m_PendingRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio;
+		if(studioEntry) m_AbandonedStudioToken = m_PendingToken;
 		m_PendingToken = 0; m_Labor->StopWorking();
 		m_HasDeferredCitizenRequest = false;
-		ReportMessage(tr("No server response from the construction site.")); UpdateControls();
+		if(studioEntry) emit auApp->LegacyStudioEntryFinished(false);
+		ReportMessage(studioEntry ? tr("No server response from the design studio.")
+			: tr("No server response from the construction site.")); UpdateControls();
 	});
 	connect(m_Labor, &AuBldConstruct::LegacyUpdateRequested, this, [this](bool working) {
 		if(!isVisible() || m_PendingToken) return;
@@ -739,16 +763,35 @@ const AuLegacyCityProtocol::Entry* AuLegacyCityLabor::Selected() const
 
 void AuLegacyCityLabor::Refresh()
 {
+	if(m_StudioRequestQueued) return;
 	AuLegacyCityProtocol::Request request; request.action = AuLegacyCityProtocol::ConstructionList; Submit(request);
 }
 
 void AuLegacyCityLabor::Submit(AuLegacyCityProtocol::Request request)
 {
 	if(m_PendingToken || !g_Au.IsLegacyGeneration() || auApp->IsSingleUserMode() || !auApp->IsSceneConnected()) return;
+	if(m_StudioRequestQueued && m_QueuedStudioRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio
+		&& request.action != AuLegacyCityProtocol::EnterSpacecraftStudio) return;
 	m_PendingRequest = request;
+	const bool studioEntry = request.action == AuLegacyCityProtocol::EnterSpacecraftStudio;
+	if(studioEntry) emit auApp->LegacyStudioEntryStarted();
 	m_PendingToken = auApp->RequestLegacyCityTool(request);
 	if(m_PendingToken) m_Timeout->start();
-	else m_Labor->StopWorking();
+	else
+	{
+		m_Labor->StopWorking();
+		if(studioEntry) emit auApp->LegacyStudioEntryFinished(false);
+	}
+	UpdateControls();
+}
+
+void AuLegacyCityLabor::QueueStudioRequest(AuLegacyCityProtocol::Request request)
+{
+	if(m_StudioRequestQueued && m_QueuedStudioRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio) return;
+	if(m_PendingToken && m_PendingRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio) return;
+	// Offset from the occupied-site poll to respect the server's shared city
+	// request rate gate. A click takes priority over another status refresh.
+	m_QueuedStudioRequest = request; m_StudioRequestQueued = true; m_StudioRequestTimer->start();
 	UpdateControls();
 }
 
@@ -771,8 +814,33 @@ void AuLegacyCityLabor::Operate(AuLegacyCityProtocol::Action action)
 void AuLegacyCityLabor::ReceiveReply(QByteArray payload)
 {
 	AuLegacyCityProtocol::Reply reply;
-	if(!AuLegacyCityProtocol::DecodeReply(payload, reply) || !m_PendingToken || reply.token != m_PendingToken) return;
+	if(!AuLegacyCityProtocol::DecodeReply(payload, reply)) return;
+	if(reply.token == m_AbandonedStudioToken && reply.action == AuLegacyCityProtocol::EnterSpacecraftStudio)
+	{
+		m_AbandonedStudioToken = 0;
+		if(reply.accepted) auApp->DesignExit();
+		return;
+	}
+	if(!m_PendingToken || reply.token != m_PendingToken) return;
 	m_PendingToken = 0; m_Timeout->stop();
+	if(AuLegacyCityProtocol::IsStudio(reply.action))
+	{
+		if(reply.hasStudio && reply.selectedCity == m_StudioCityId && reply.selectedDevelopment == m_StudioDevelopmentId)
+		{
+			m_StudioStateValid = true;
+			m_StudioLevelCount = reply.studioCount;
+			m_Studio->SetTarget(reply.selectedCity, reply.selectedDevelopment, reply.studioCount);
+			for(int index = 0; index < reply.studioCount; ++index)
+				m_Studio->SetOccupied(index, (reply.occupiedStudios & (1u << index)) != 0);
+		}
+		if(reply.action == AuLegacyCityProtocol::EnterSpacecraftStudio)
+		{
+			if(!reply.accepted && !reply.message.isEmpty()) ReportMessage(reply.message);
+			emit auApp->LegacyStudioEntryFinished(reply.accepted);
+		}
+		UpdateControls();
+		return;
+	}
 	if(reply.action == AuLegacyCityProtocol::Contribute && !reply.accepted) m_Labor->StopWorking();
 	quint32 city = reply.selectedCity, development = reply.selectedDevelopment;
 	if(!city && reply.action != AuLegacyCityProtocol::ConstructionList)
@@ -803,6 +871,12 @@ void AuLegacyCityLabor::ReceiveReply(QByteArray payload)
 		Submit(request);
 	}
 	UpdateControls();
+	if(reply.action == AuLegacyCityProtocol::ConstructionList && isVisible() && m_StudioCityId)
+	{
+		AuLegacyCityProtocol::Request request; request.action = AuLegacyCityProtocol::StudioState;
+		request.cityId = m_StudioCityId; request.developmentId = m_StudioDevelopmentId;
+		QueueStudioRequest(request);
+	}
 }
 
 void AuLegacyCityLabor::UpdateControls()
@@ -834,10 +908,21 @@ void AuLegacyCityLabor::UpdateControls()
 			&& m_DeferredCitizenRequest.developmentId == entry->developmentId)
 			m_CitizenEnabled = m_DeferredCitizenRequest.citizenEnabled;
 	}
-	m_Manufacture->SetTarget(entry ? entry->cityId : 0, entry ? entry->developmentId : 0);
+	const bool designStudio = online && entry && entry->completedLevels && entry->industryId == 3;
+	m_Timer->setInterval(designStudio ? 500 : 1000);
+	const quint32 studioCity = designStudio ? entry->cityId : 0;
+	const quint32 studioDevelopment = designStudio ? entry->developmentId : 0;
+	if(studioCity != m_StudioCityId || studioDevelopment != m_StudioDevelopmentId) m_StudioStateValid = false;
+	m_StudioCityId = studioCity; m_StudioDevelopmentId = studioDevelopment;
+	m_Studio->SetTarget(studioCity, studioDevelopment,
+		m_StudioStateValid ? m_StudioLevelCount : designStudio ? entry->completedLevels : 0);
+	m_Studio->setEnabled(m_StudioStateValid
+		&& !(m_StudioRequestQueued && m_QueuedStudioRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio)
+		&& !(m_PendingToken && m_PendingRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio));
+	m_Manufacture->SetTarget(entry && !designStudio ? entry->cityId : 0, entry && !designStudio ? entry->developmentId : 0);
 	// Hidden production pages still receive the occupied site's snapshot.
 	// This also discovers processes when the server initializes a new level.
-	if(online && entry && !m_Manufacture->isVisible()) m_Manufacture->Refresh();
+	if(online && entry && !designStudio && !m_Manufacture->isVisible()) m_Manufacture->Refresh();
 	QString name;
 	if(entry)
 	{
@@ -862,6 +947,7 @@ void AuLegacyCityLabor::UpdateControls()
 		if(online && unfinished) addPage(m_Labor, tr("Construction"));
 		if(manufacturing) addPage(m_Manufacture, tr("Manufacture"));
 		if(banking) addPage(m_Bank, entry->industryId == 123 ? tr("Government") : tr("Bank"));
+		if(designStudio) addPage(m_Studio, tr("Design Studio"));
 		for(int tab = 0; tab < m_LaborTabs->count(); ++tab)
 			if(m_LaborTabs->tabData(tab).toInt() == previousPage) m_LaborTabs->setCurrentIndex(tab);
 	}
@@ -873,7 +959,10 @@ void AuLegacyCityLabor::UpdateControls()
 
 void AuLegacyCityLabor::ResetTransport()
 {
+	const bool studioEntry = m_PendingToken && m_PendingRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio;
 	m_Labor->StopWorking(); m_PendingToken = 0; m_Timeout->stop(); m_Entries.clear(); m_Selected = -1;
+	m_StudioRequestTimer->stop(); m_StudioRequestQueued = m_StudioStateValid = false; m_AbandonedStudioToken = 0;
+	if(studioEntry) emit auApp->LegacyStudioEntryFinished(false);
 	m_HasDeferredCitizenRequest = false;
 	m_LastMessage.clear(); UpdateControls();
 }

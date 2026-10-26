@@ -1,4 +1,5 @@
 #include "aulegacycitymanufacture.h"
+#include "aubldscrollarea.h"
 #include "auapp.h"
 #include "auether.h"
 #include "auframe.h"
@@ -34,27 +35,6 @@
 
 namespace
 {
-class ManufactureScrollArea : public QScrollArea
-{
-public:
-	explicit ManufactureScrollArea(QWidget* parent) : QScrollArea(parent) {}
-
-protected:
-	bool eventFilter(QObject* watched, QEvent* event) override
-	{
-		const bool handled = QScrollArea::eventFilter(watched, event);
-		if(watched == widget() && event->type() == QEvent::LayoutRequest)
-		{
-			// QScrollArea normally lets its viewport shrink below the content's
-			// minimum. Keep every process column visible, reserving room for the
-			// vertical scrollbar even before additional processes require it.
-			setMinimumWidth(qMax(widget()->minimumSizeHint().width(), widget()->minimumWidth())
-				+ 2 * frameWidth() + verticalScrollBar()->sizeHint().width());
-		}
-		return handled;
-	}
-};
-
 bool CanConfigureIndustry(quint32 cityId)
 {
 	auto* view = auApp->Frame() ? auApp->Frame()->View() : nullptr;
@@ -318,7 +298,7 @@ AuLegacyCityManufacture::AuLegacyCityManufacture(QWidget* parent) : QWidget(pare
 	// AuLaborManufacture, executable 0x1401d1300, owns the scrolling panels.
 	auto* content = new QWidget(this); m_PanelLayout = new QVBoxLayout(content);
 	m_PanelLayout->setContentsMargins(2, 8, 2, 2); m_PanelLayout->setSpacing(2);
-	auto* scroll = new ManufactureScrollArea(this); scroll->setWidget(content); scroll->setWidgetResizable(true);
+	auto* scroll = new AuBldScrollArea(this); scroll->setWidget(content); scroll->setWidgetResizable(true);
 	m_Message = new QLabel(this); m_Message->setWordWrap(true); m_Message->hide();
 	auto* layout = new QVBoxLayout(this); layout->setMargin(0); layout->setSpacing(0);
 	layout->addWidget(scroll); layout->addWidget(m_Message);

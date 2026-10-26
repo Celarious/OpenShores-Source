@@ -15,6 +15,9 @@ constexpr int MaximumRequestBytes = 1024;
 constexpr int MaximumReplyBytes = 512 * 1024;
 constexpr int MaximumEntries = 256;
 constexpr int MaximumRecipeChoices = 526;
+// Recovered online editors use the existing empty design environment for
+// avatar isolation. Keep the original marker name for serialized studio IDs.
+constexpr quint16 PrivateStudioIdBase = 0x8000;
 constexpr float MinimumRoadLengthMeters = 1, MaximumRoadLengthMeters = 500;
 constexpr float MinimumBiodomeRadiusMeters = 47.74f, MaximumBiodomeRadiusMeters = 803.74f;
 // Keep the retired action's number reserved so stale clients cannot reinterpret
@@ -27,11 +30,13 @@ enum Action : quint8
 	Contribute = 11, Demolish = 12, ClearLand = 13, FetchMaterials = 14, EmployCitizen = 15, ChangeRoad = 16,
 	EconomyList = 17, SetIndustryProcess = 18, FetchIndustryMaterials = 19, RunIndustryProcess = 20,
 	BankState = 21, GovernmentDeposit = 22, GovernmentWithdraw = 23, BankBorrow = 24, BankRepay = 25,
-	SetEmpireCapital = 26, BankClaimReward = 27
+	SetEmpireCapital = 26, BankClaimReward = 27,
+	StudioState = 28, EnterSpacecraftStudio = 29
 };
 inline bool IsEconomy(Action action) { return action >= EconomyList && action <= RunIndustryProcess; }
 inline bool IsBank(Action action) { return action >= BankState && action <= BankClaimReward; }
-inline bool IsGameplay(Action action) { return action >= ConstructionList && action <= BankClaimReward; }
+inline bool IsStudio(Action action) { return action >= StudioState && action <= EnterSpacecraftStudio; }
+inline bool IsGameplay(Action action) { return action >= ConstructionList && action <= EnterSpacecraftStudio; }
 struct Request
 {
 	Action action = List;
@@ -54,6 +59,8 @@ struct Request
 	quint16 manufacturingRecipe = 0, processSlot = 0;
 	quint8 minimumTechnology = 0;
 	double money = 0;
+	quint8 studioIndex = 0;
+	QString studioPassword;
 };
 struct Entry
 {
@@ -92,6 +99,9 @@ struct Reply
 	double bankPersonalBalance = 0, bankPersonalLoan = 0, bankCreditAvailable = 0, bankPersonalReward = 0;
 	bool bankGovernmentAuthorized = false, bankCapitalAuthorized = false, bankHasCapital = false, bankIsCapital = false;
 	QByteArray bankAccounting;
+	bool hasStudio = false;
+	quint8 studioCount = 0;
+	quint16 occupiedStudios = 0;
 };
 AUDATA_DLL QByteArray EncodeRequest(const Request& request);
 AUDATA_DLL bool DecodeRequest(const QByteArray& bytes, Request& request);

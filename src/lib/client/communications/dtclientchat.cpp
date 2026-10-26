@@ -13,6 +13,7 @@
 #include "auitreport.h"
 #include "aulegacyscprotocol.h"
 #include "aulegacycityprotocol.h"
+#include "aulegacystudioprotocol.h"
 #include <utility>
 #include "aumission.h"
 #include "auscreport.h"
@@ -145,6 +146,12 @@ void DtClientChat::RxData(QTcpSocket& tcpSocket)
 			m_LastComm.restart();
 		}
 
+		const QByteArray packetType = tcpSocket.peek(1);
+		if(!packetType.isEmpty() && quint8(packetType.at(0)) == DtChatChannelPacket::PD_LegacyStudio
+			&& m_PacketSize > AuLegacyStudioProtocol::MaximumPacketBytes + 1)
+		{
+			tcpSocket.abort(); m_isConnected = false; return;
+		}
 		// Wait until all of the bytes arrive.
 		if(tcpSocket.bytesAvailable() < m_PacketSize)
 			break;
@@ -224,6 +231,14 @@ bool DtClientChat::ReadPacket(const QByteArray& ba, QTcpSocket& /*tcpSocket*/)
 			const QByteArray payload = ba.mid(1);
 			if(!AuLegacyCityProtocol::DecodeReply(payload, reply)) return false;
 			emit LegacyCityReplyReceived(payload);
+		}
+		break;
+	case DtChatChannelPacket::PD_LegacyStudio:
+		{
+			AuLegacyStudioProtocol::Reply reply;
+			const QByteArray payload = ba.mid(1);
+			if(!AuLegacyStudioProtocol::DecodeReply(payload, reply)) return false;
+			emit LegacyStudioReplyReceived(payload);
 		}
 		break;
 	case DtChatChannelPacket::PZ_QueryAvatars:

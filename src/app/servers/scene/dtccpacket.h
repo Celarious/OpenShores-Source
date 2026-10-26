@@ -229,6 +229,7 @@ namespace DtChatChannelPacket
 		PD_LegacySc,
 		PD_LegacyCity,
 		PV_LegacyWealthLevy,
+		PD_LegacyStudio,
 	};
 
 	inline const char* PacketName(PACKET p)
@@ -451,6 +452,7 @@ namespace DtChatChannelPacket
 		"PD_LegacySc",
 		"PD_LegacyCity",
 		"PV_LegacyWealthLevy",
+		"PD_LegacyStudio",
 		};
 		return packetNames[p];
 	}

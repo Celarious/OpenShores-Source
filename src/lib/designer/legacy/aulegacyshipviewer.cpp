@@ -1,4 +1,5 @@
 #include "aulegacyshipviewer.h"
+#include "aulegacystudioprotocol.h"
 #include "aulegacyship.h"
 #include "aulegacyshipedit.h"
 #include "aulegacyshipdetails.h"
@@ -16,6 +17,7 @@
 
 #include <QAction>
 #include <QActionGroup>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCheckBox>
@@ -29,9 +31,12 @@
 #include <QEventLoop>
 #include <QFrame>
 #include <QGridLayout>
+#include <QHeaderView>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMap>
 #include <QMargins>
 #include <QMessageBox>
@@ -49,6 +54,7 @@
 #include <QStandardPaths>
 #include <QStringList>
 #include <QStyle>
+#include <QTableWidget>
 #include <QTextDocument>
 #include <QTextBrowser>
 #include <QToolButton>
@@ -243,6 +249,16 @@ QString RoomName(int type)
 	return QStringLiteral("Type %1").arg(type);
 }
 
+bool ValidLegacyLibraryName(const QString& name)
+{
+	// AuDesignSave and its IsTextValid helper in the 2016 executable.
+	if(name.isEmpty() || name.size() > 30 || name.simplified() != name) return false;
+	const QString reserved = QStringLiteral("/:!|<>&\\");
+	for(const auto character : name)
+		if(!character.isPrint() || reserved.contains(character)) return false;
+	return true;
+}
+
 }
 
 class AuLegacyShipViewer::Impl
@@ -256,15 +272,24 @@ public:
 	{
 		renderView = new AuLegacyShipRender(window);
 
-		QAction* newAction = MakeAction("New spacecraft", "dp_New", "Start a new spacecraft (Ctrl+N).");
+		newAction = MakeAction("New spacecraft", "dp_New", "Start a new spacecraft (Ctrl+N).");
 		newAction->setShortcut(QKeySequence::New);
 		QObject::connect(newAction, &QAction::triggered, window, &AuLegacyShipViewer::NewDesign);
-		QAction* openAction = MakeAction("Open .ship...", "dp_Load", "Open a spacecraft design (Ctrl+O).");
+		openAction = MakeAction("Open .ship...", "dp_Load", "Open a spacecraft design (Ctrl+O).");
 		openAction->setShortcut(QKeySequence::Open);
 		QObject::connect(openAction, &QAction::triggered, window, &AuLegacyShipViewer::ChooseFile);
-		QAction* saveAction = MakeAction("Save spacecraft", "dp_Save", "Save spacecraft to a .ship file (Ctrl+S).");
+		saveAction = MakeAction("Save spacecraft", "dp_Save", "Save spacecraft to a .ship file (Ctrl+S).");
 		saveAction->setShortcut(QKeySequence::Save);
 		QObject::connect(saveAction, &QAction::triggered, window, [this]() { SaveDesign(); });
+		passwordAction = MakeAction("Studio Password...", "dp_Password", "Change the password used by other people to join this studio.");
+		passwordAction->setToolTip(QStringLiteral("Change the password used by other people to join this studio."));
+		passwordAction->setVisible(false);
+		passwordAction->setEnabled(false);
+		QObject::connect(passwordAction, &QAction::triggered, window, [this]() { ChangeStudioPassword(); });
+		burnAction = MakeAction("Burn CD", "dp_BurnCD",
+			"<b>Burn CD</b><br>Store the spacecraft design onto a disk. You must have a blank data disk in your inventory.");
+		burnAction->setEnabled(false);
+		QObject::connect(burnAction, &QAction::triggered, window, [this]() { BurnStudioMedia(); });
 		QAction* fitAction = MakeAction("Show design plane", "dp_ShowDesignPlane", "Move the scene camera to view the current design plane (F).");
 		fitAction->setShortcut(QKeySequence(QStringLiteral("F")));
 		QObject::connect(fitAction, &QAction::triggered, window, [this]() { FitDeck(); });
@@ -342,6 +367,7 @@ public:
 		}
 
 		closeAction = new QAction(QStringLiteral("Exit Designer"), window);
+		closeAction->setToolTip(QStringLiteral("Leave the designer, with a prompt to save any changes."));
 		closeAction->setShortcut(QKeySequence::Close);
 		closeAction->setAutoRepeat(false);
 		QAction* backAction = new QAction(QStringLiteral("Back"), window);
@@ -456,7 +482,7 @@ public:
 			"Rooms and equipment can be edited on the active plane in the 3D wireframe. Other decks remain visible and dimmed. Unavailable tools remain disabled.<br><br>"
 			"<b>WHEN FINISHED</b><br>"
 			"Use Exit Designer or Ctrl+W to exit.<br>"
-			"Use Save or Ctrl+S to save a .ship file. New, Open and Exit offer to save changes.<br>"
+			"Use Save or Ctrl+S to save your work. New, Open and Exit offer to save changes.<br>"
 			"The sidebar designer button or your Design Parts window binding hides or shows this panel. "
 			"Drag its title to dock it elsewhere or float it beside the 3D view.");
 		statsBrowser->setMinimumHeight(130);
@@ -474,6 +500,8 @@ public:
 		showTools->setIcon(designerIcon);
 		toolDock->addAction(showTools);
 		toolDock->addAction(closeAction);
+		toolDock->addAction(passwordAction);
+		toolDock->setContextMenuPolicy(Qt::ActionsContextMenu);
 		toolDock->addAction(backAction);
 		toolDock->addAction(interfaceAction);
 		window->addAction(showTools);
@@ -521,7 +549,7 @@ public:
 		return action;
 	}
 
-	void AddButton(QGridLayout* layout, QAction* action, int row, int column)
+	QToolButton* AddButton(QGridLayout* layout, QAction* action, int row, int column)
 	{
 		QToolButton* button = new QToolButton(layout->parentWidget());
 		button->setDefaultAction(action);
@@ -530,6 +558,7 @@ public:
 		button->setFixedSize(22, 22);
 		button->setToolButtonStyle(Qt::ToolButtonIconOnly);
 		layout->addWidget(button, row, column, Qt::AlignCenter);
+		return button;
 	}
 
 	void BuildPalette(QWidget* parent, QAction* newAction, QAction* openAction, QAction* saveAction)
@@ -540,9 +569,13 @@ public:
 		AddButton(outer, newAction, 0, 1);
 		AddButton(outer, openAction, 0, 2);
 		AddButton(outer, saveAction, 0, 3);
+		passwordButton = AddButton(outer, passwordAction, 0, 4);
+		passwordButton->hide();
 		AddButton(outer, renderAction, 1, 0);
 		AddButton(outer, gravityAction, 1, 1);
 		AddButton(outer, checkPathsAction, 1, 2);
+		burnButton = AddButton(outer, burnAction, 1, 3);
+		burnButton->hide();
 		AddButton(outer, deckUpAction, 2, 0);
 		AddButton(outer, lineActions[2], 2, 1);
 		AddButton(outer, lineActions[0], 2, 2);
@@ -550,7 +583,7 @@ public:
 		AddButton(outer, deckDownAction, 3, 0);
 		AddButton(outer, lineActions[1], 3, 1);
 		AddButton(outer, lineActions[3], 3, 2);
-		QAction* moveAction = MakeAction("Move/Copy Rooms And Equipment", "dp_Move",
+		moveAction = MakeAction("Move/Copy Rooms And Equipment", "dp_Move",
 			"<b>Move/Copy Rooms And Equipment</b><br>Moves rooms and equipment of the entire design or the current deck.<br>Copies rooms and equipment of the current deck.");
 		QObject::connect(moveAction, &QAction::triggered, window, [this]() { MoveCopyDesign(); });
 		AddButton(outer, moveAction, 3, 4);
@@ -653,6 +686,11 @@ public:
 		QObject::connect(streamline, &QCheckBox::toggled, window, [this](bool enabled) {
 			if (loaded && bool(design.header.streamline) != enabled)
 			{
+				if(studioHandler)
+				{
+					AuLegacyStudioProtocol::Command edit; edit.kind = AuLegacyStudioProtocol::Streamline; edit.value = enabled ? 1 : 0;
+					SendStudioEdit(edit); RefreshHeaderControls(); return;
+				}
 				design.header.streamline = enabled ? 1 : 0;
 				HeaderChanged(true);
 			}
@@ -666,11 +704,281 @@ public:
 		QObject::connect(minimumTech, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), window, [this](int index) {
 			if (loaded && index >= 0 && design.header.minimumTechLevel != minimumTech->itemData(index).toInt())
 			{
+				if(studioHandler)
+				{
+					AuLegacyStudioProtocol::Command edit; edit.kind = AuLegacyStudioProtocol::MinTech;
+					edit.value = minimumTech->itemData(index).toInt();
+					SendStudioEdit(edit); RefreshHeaderControls(); return;
+				}
 				design.header.minimumTechLevel = quint8(minimumTech->itemData(index).toInt());
 				HeaderChanged(true);
 			}
 		});
 		outer->addWidget(minimumTech, 5, 12, 1, 2);
+	}
+
+	void RefreshStudioControls()
+	{
+		const bool online = !studioHandler || (studioConnected && studioReady);
+		const bool ownsFileCommands = !studioHandler || (studioOwner && !studioBusy);
+		editPanel->setEnabled(loaded && (!studioHandler || studioReady));
+		tools->setEnabled(online);
+		deleteDeckAction->setEnabled(loaded && online);
+		moveAction->setEnabled(loaded && online);
+		streamline->setEnabled(online);
+		minimumTech->setEnabled(online);
+		roomNumber->setEnabled(online);
+		armorUpAction->setEnabled(loaded && online && design.header.armor < 10);
+		armorDownAction->setEnabled(loaded && online && design.header.armor > 0);
+		newAction->setEnabled(online && ownsFileCommands);
+		openAction->setEnabled(online && ownsFileCommands);
+		saveAction->setEnabled(loaded && (!studioHandler || studioReady) && ownsFileCommands);
+		passwordAction->setVisible(bool(studioHandler));
+		passwordButton->setVisible(bool(studioHandler));
+		passwordAction->setEnabled(bool(studioHandler) && online && studioOwner && !studioBusy);
+		const bool showBurn = bool(studioHandler) && !modified && studioCanBurn;
+		burnAction->setVisible(showBurn);
+		burnButton->setVisible(showBurn);
+		burnAction->setEnabled(bool(studioHandler) && online && !studioBusy && !modified && studioCanBurn);
+		saveAction->setToolTip(studioHandler && studioConnected
+			? QStringLiteral("Save the spacecraft design in your library or export a .ship file (Ctrl+S).")
+			: QStringLiteral("Save spacecraft to a .ship file (Ctrl+S)."));
+		editTool.active = loaded && online && !renderAction->isChecked() && toolMode != HandMode;
+		renderView->SetEditTool(editTool);
+	}
+
+	void SendStudioRequest(AuLegacyStudioProtocol::Request request)
+	{
+		if(!studioHandler) return;
+		if(!studioConnected || !studioReady)
+		{
+			SetFeedback(QStringLiteral("Waiting for the studio connection before editing."));
+			return;
+		}
+		request.generation = studioGeneration;
+		request.revision = studioRevision;
+		studioHandler(request);
+	}
+
+	void SendStudioEdit(const AuLegacyStudioProtocol::Command& edit)
+	{
+		AuLegacyStudioProtocol::Request request; request.action = AuLegacyStudioProtocol::Edit; request.edit = edit;
+		SendStudioRequest(request);
+	}
+
+	bool StudioFileCommandAllowed(bool saveSnapshot = false)
+	{
+		if(!studioHandler) return true;
+		if(!studioOwner)
+		{
+			SetFeedback(QStringLiteral("Only the studio owner can create, open, or save a design."));
+			return false;
+		}
+		if((!studioConnected && !saveSnapshot) || !studioReady || studioBusy)
+		{
+			SetFeedback(QStringLiteral("Wait for the studio changes to finish before using file commands."));
+			return false;
+		}
+		return true;
+	}
+
+	void ReplaceStudioDesign(const AuLegacyShip::Design& incoming)
+	{
+		if(!StudioFileCommandAllowed()) return;
+		QString error;
+		AuLegacyStudioProtocol::Request request; request.action = AuLegacyStudioProtocol::Replace;
+		request.document = AuLegacyStudioProtocol::EncodeDocument(incoming, error);
+		if(request.document.isEmpty()) { SetFeedback(error); return; }
+		SendStudioRequest(request);
+	}
+
+	void ChangeStudioPassword()
+	{
+		if(!studioHandler || !StudioFileCommandAllowed()) return;
+		bool accepted = false;
+		const QString password = QInputDialog::getText(window, QStringLiteral("Studio Password"),
+			QStringLiteral("Enter a design studio password.\n\n"
+				"The first person to enter becomes the owner. Other people may join when their password matches yours. "
+				"A blank password prevents anyone from joining, even if their password is blank.\n\n"
+				"Only the owner can use New, Open, or Save."), QLineEdit::Normal, QString(), &accepted);
+		if(!accepted || !StudioFileCommandAllowed()) return;
+		if(password.size() > AuLegacyStudioProtocol::MaximumPasswordCharacters)
+		{
+			SetFeedback(QStringLiteral("Studio passwords may contain at most %1 characters.")
+				.arg(AuLegacyStudioProtocol::MaximumPasswordCharacters));
+			return;
+		}
+		AuLegacyStudioProtocol::Request request; request.action = AuLegacyStudioProtocol::Password;
+		request.password = password; SendStudioRequest(request);
+	}
+
+	void BurnStudioMedia()
+	{
+		if(!studioHandler || !studioConnected || !studioReady || studioBusy || modified || !studioCanBurn) return;
+		const quint32 generation = studioGeneration;
+		const quint64 revision = studioRevision;
+		// AuView::DesignBurnCD (2016 executable 0x1402e8db0) confirms the
+		// first transition to Read Only, then asks the server to burn one disk.
+		if(design.header.state == 0 && QMessageBox::warning(window, QStringLiteral("Burn CD"),
+			QStringLiteral("Storing the design onto a disk or paper drawing causes the design to become Read Only.\n"
+				"A Read Only design can not be replaced later. A Read Only design\n"
+				"can be modified but changes must be saved using a different name."),
+			QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Ok) return;
+		if(!studioConnected || studioBusy || modified || !studioCanBurn
+			|| generation != studioGeneration || revision != studioRevision)
+		{
+			SetFeedback(QStringLiteral("The shared design changed. Review it before burning a disk."));
+			return;
+		}
+		AuLegacyStudioProtocol::Request request; request.action = AuLegacyStudioProtocol::BurnMedia;
+		SendStudioRequest(request);
+	}
+
+	void RequestStudioLibrary()
+	{
+		AuLegacyStudioProtocol::Request request; request.action = AuLegacyStudioProtocol::Library;
+		SendStudioRequest(request);
+	}
+
+	void RefreshStudioLibrary()
+	{
+		if(studioSaveNames)
+		{
+			const QString currentName = studioSaveNames->currentText();
+			const bool blocked = studioSaveNames->blockSignals(true);
+			studioSaveNames->clear();
+			for(const auto& entry : studioLibrary) studioSaveNames->addItem(entry.name, entry.id);
+			studioSaveNames->setEditText(currentName);
+			studioSaveNames->blockSignals(blocked);
+		}
+		if(studioSaveButton) studioSaveButton->setEnabled(studioLibraryLoaded);
+		if(studioLoadTable)
+		{
+			quint32 selectedId = studioLibraryDesignId;
+			if(studioLoadTable->currentRow() >= 0)
+				selectedId = studioLoadTable->item(studioLoadTable->currentRow(), 0)->data(Qt::UserRole).toUInt();
+			studioLoadTable->setSortingEnabled(false);
+			studioLoadTable->setRowCount(0);
+			const QStringList states = QStringList() << QStringLiteral("Writable") << QStringLiteral("Read Only")
+				<< QStringLiteral("Public") << QStringLiteral("View Only") << QStringLiteral("Published") << QStringLiteral("Deleted");
+			for(const auto& entry : studioLibrary)
+			{
+				const int row = studioLoadTable->rowCount();
+				studioLoadTable->insertRow(row);
+				QTableWidgetItem* reference = new QTableWidgetItem(QString::number(entry.id));
+				reference->setData(Qt::UserRole, entry.id);
+				studioLoadTable->setItem(row, 0, reference);
+				studioLoadTable->setItem(row, 1, new QTableWidgetItem(entry.name));
+				studioLoadTable->setItem(row, 2, new QTableWidgetItem(entry.state < states.size()
+					? states.at(entry.state) : QString::number(entry.state)));
+				if(entry.id == selectedId) studioLoadTable->selectRow(row);
+			}
+			studioLoadTable->resizeColumnsToContents();
+			studioLoadTable->sortByColumn(1, Qt::AscendingOrder);
+			studioLoadTable->setSortingEnabled(true);
+			studioLoadTable->horizontalHeader()->setStretchLastSection(true);
+		}
+		const QString status = !studioLibraryLoaded ? QStringLiteral("Loading spacecraft design library...")
+			: studioLibraryTruncated ? QStringLiteral("The first %1 designs are shown.").arg(studioLibrary.size())
+			: studioLibrary.isEmpty() ? QStringLiteral("No spacecraft designs are saved in your library.") : QString();
+		if(studioSaveLibraryStatus) studioSaveLibraryStatus->setText(status);
+		if(studioLoadLibraryStatus) studioLoadLibraryStatus->setText(status);
+	}
+
+	bool ChooseDesignFile()
+	{
+		if(!StudioFileCommandAllowed()) return false;
+		QString directory = fileName.isEmpty()
+			? settings.value(QStringLiteral("LegacySpacecraft/LastOpenDirectory")).toString()
+			: QFileInfo(fileName).absolutePath();
+		if(directory.isEmpty() || !QFileInfo(directory).isDir())
+			directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+		if(directory.isEmpty() || !QFileInfo(directory).isDir()) directory = QDir::homePath();
+		const QString selected = QFileDialog::getOpenFileName(window, QStringLiteral("Open spacecraft design"),
+			directory, QStringLiteral("Old spacecraft designs (*.ship);;All files (*)"));
+		return !selected.isEmpty() && window->OpenFile(selected);
+	}
+
+	void ChooseStudioDesign()
+	{
+		if(!StudioFileCommandAllowed()) return;
+		RequestStudioLibrary();
+		// AuDesignOpen (2016 executable 0x140183c60) offers the owner's
+		// library separately from importing a file from personal storage.
+		AuDialog dialog(window);
+		dialog.setAuDlgTitle(QStringLiteral("Load Spacecraft Design"));
+		dialog.setAuDlgIcon(AuLegacyShipIcon(QStringLiteral("c_DesignDisk")));
+		QGridLayout* layout = new QGridLayout;
+		layout->addWidget(new QLabel(QStringLiteral("Select a spacecraft design to load into the design studio.\n"
+			"The current contents of the design studio will be lost.\nBe sure to save your work before proceeding."), &dialog), 0, 0, 1, 2);
+		layout->addWidget(new QLabel(QStringLiteral("Spacecraft Design Library"), &dialog), 1, 0, 1, 2);
+		QTableWidget* library = new QTableWidget(&dialog);
+		studioLoadTable = library;
+		library->setObjectName(QStringLiteral("twlib"));
+		library->setColumnCount(3);
+		library->setHorizontalHeaderLabels(QStringList() << QStringLiteral("Reference") << QStringLiteral("Design Name") << QStringLiteral("State"));
+		library->setEditTriggers(QAbstractItemView::NoEditTriggers);
+		library->setSelectionBehavior(QAbstractItemView::SelectRows);
+		library->setSelectionMode(QAbstractItemView::SingleSelection);
+		library->setShowGrid(false);
+		library->verticalHeader()->hide();
+		library->setMinimumHeight(180);
+		library->setToolTip(QStringLiteral("Spacecraft designs in your personal library. Spacecraft designs are stored in your personal library when you save them."));
+		layout->addWidget(library, 2, 0, 1, 2);
+		studioLoadLibraryStatus = new QLabel(&dialog);
+		layout->addWidget(studioLoadLibraryStatus, 3, 0, 1, 2);
+		QPushButton* load = new QPushButton(QIcon(QStringLiteral(":/data/Library.png")), QStringLiteral("Load Design"), &dialog);
+		load->setObjectName(QStringLiteral("pbload"));
+		load->setEnabled(false);
+		load->setToolTip(QStringLiteral("Loads a spacecraft design from the library."));
+		QPushButton* file = new QPushButton(QIcon(QStringLiteral(":/data/c_BlankDisk.png")), QStringLiteral("Load Design From File"), &dialog);
+		file->setToolTip(QStringLiteral("Loads a spacecraft design from a file on your local computer."));
+		layout->addWidget(load, 4, 0);
+		layout->addWidget(file, 4, 1);
+		dialog.setAuDlgLayout(layout);
+		QObject::connect(library, &QTableWidget::itemSelectionChanged, &dialog, [library, load]() {
+			load->setEnabled(library->currentRow() >= 0 && !library->selectedItems().isEmpty());
+		});
+		QObject::connect(load, &QPushButton::clicked, &dialog, [this, library, &dialog]() {
+			if(library->currentRow() < 0 || !StudioFileCommandAllowed()) return;
+			const quint32 selectedId = library->item(library->currentRow(), 0)->data(Qt::UserRole).toUInt();
+			if(!selectedId || !ConfirmChanges(false) || !StudioFileCommandAllowed()) return;
+			AuLegacyStudioProtocol::Request request; request.action = AuLegacyStudioProtocol::LoadDesign;
+			request.designId = selectedId;
+			SendStudioRequest(request);
+			dialog.accept();
+		});
+		QObject::connect(file, &QPushButton::clicked, &dialog, [this, &dialog]() {
+			if(ChooseDesignFile()) dialog.accept();
+		});
+		RefreshStudioLibrary();
+		dialog.exec();
+	}
+
+	bool ConfirmChanges(bool leaving)
+	{
+		if(studioHandler && studioBusy)
+		{
+			SetFeedback(QStringLiteral("Wait for the studio changes to finish before leaving."));
+			return false;
+		}
+		if(!modified || (studioHandler && !studioOwner)) return true;
+		const QMessageBox::StandardButton choice = QMessageBox::question(window, QStringLiteral("Save changes?"),
+			QStringLiteral("Save changes to %1 before continuing?").arg(DisplayName()),
+			QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+		if(choice == QMessageBox::Discard) return true;
+		if(choice != QMessageBox::Save || !SaveDesign()) return false;
+		if(studioHandler && studioBusy)
+		{
+			studioExitAfterSave = leaving;
+			return false;
+		}
+		if(studioHandler && studioConnected && modified)
+		{
+			SetFeedback(QStringLiteral("The file copy is saved. Save the design to your library or discard the shared changes before continuing."));
+			return false;
+		}
+		return true;
 	}
 
 	void ChangeDeck(int delta)
@@ -779,6 +1087,11 @@ public:
 		settings.setValue(QStringLiteral("Widget/DesignMoveCopy/ZDelta"), value.vertical);
 		settings.setValue(QStringLiteral("Widget/DesignMoveCopy/RepeatCount"), value.copies);
 		if(!accepted) return;
+		if(studioHandler)
+		{
+			AuLegacyStudioProtocol::Command edit; edit.kind = AuLegacyStudioProtocol::MoveCopy; edit.move = value;
+			SendStudioEdit(edit); return;
+		}
 		const AuLegacyShip::MoveCopyResult result = AuLegacyShip::MoveCopy(design, value);
 		if(!result.accepted)
 		{
@@ -807,6 +1120,11 @@ public:
 	{
 		if (!loaded || (delta > 0 && design.header.armor >= 10) || (delta < 0 && design.header.armor == 0))
 			return;
+		if(studioHandler)
+		{
+			AuLegacyStudioProtocol::Command edit; edit.kind = AuLegacyStudioProtocol::Armor; edit.value = delta;
+			SendStudioEdit(edit); return;
+		}
 		design.header.armor = quint8(int(design.header.armor) + delta);
 		HeaderChanged(true);
 	}
@@ -824,6 +1142,7 @@ public:
 		const QString armor = QStringLiteral("Current armor: %1 (0-10).").arg(design.header.armor);
 		armorUpAction->setToolTip(QStringLiteral("Increase armor\n") + armor);
 		armorDownAction->setToolTip(QStringLiteral("Decrease armor\n") + armor);
+		RefreshStudioControls();
 	}
 
 	void HeaderChanged(bool geometryChanged = false)
@@ -867,7 +1186,13 @@ public:
 		progress.setAutoClose(false);
 		progress.setAutoReset(false);
 		progress.show();
-		const QString report = AuLegacyShipPathReport(design,
+		// Progress dispatches GUI events, including remote studio snapshots.
+		// Analyze a stable copy rather than allowing an update to replace the
+		// room/detail arrays while the path analyzer is traversing them.
+		const AuLegacyShip::Design checkedDesign = design;
+		const quint32 checkedGeneration = studioGeneration;
+		const quint64 checkedRevision = studioRevision;
+		const QString report = AuLegacyShipPathReport(checkedDesign,
 			[&progress](const QString& label, int value, int maximum) {
 				if (progress.wasCanceled())
 					return false;
@@ -885,6 +1210,11 @@ public:
 		checkPathsAction->setEnabled(loaded);
 		if (report.isEmpty())
 			return;
+		if(studioHandler && (checkedGeneration != studioGeneration || checkedRevision != studioRevision))
+		{
+			SetFeedback(QStringLiteral("The shared design changed while checking paths. Run the check again for the latest design."));
+			return;
+		}
 		QDialog* dialog = new QDialog(window);
 		pathReportDialog = dialog;
 		dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -937,6 +1267,11 @@ public:
 		if (modified)
 			report += QStringLiteral("<p style=\"margin: 0; color: #ffff00;\">Modified</p>");
 		report += designReport.isEmpty() ? designTips : designReport;
+		if(designReport.isEmpty() && studioHandler)
+			report += QStringLiteral("<br><br><b>STORING THE FINISHED DESIGN</b><br>"
+				"Check Paths, then walk through the spacecraft to inspect it.<br>"
+				"Save Design stores it in your spacecraft design library. Save Design To File creates a personal backup.<br>"
+				"Burn CD appears when the design is valid and saved in the library. Have a blank data disk in your inventory.");
 		if (!feedback.isEmpty())
 			report += QStringLiteral("<hr><p style=\"margin: 0;\">%1</p>")
 				.arg(feedback.toHtmlEscaped().replace(QLatin1Char('\n'), QStringLiteral("<br>")));
@@ -980,7 +1315,8 @@ public:
 	{
 		if(solid) PrepareSkyForScene();
 		renderView->SetRenderSolid(solid);
-		editTool.active = loaded && !solid && toolMode != HandMode;
+		editTool.active = loaded && !solid && toolMode != HandMode
+			&& (!studioHandler || (studioConnected && studioReady));
 		renderView->SetEditTool(editTool);
 		renderView->setFocus();
 		if (solid)
@@ -1035,7 +1371,7 @@ public:
 			SetFeedback(QStringLiteral("Hand cursor: select a room or equipment button to edit the design."));
 			return;
 		}
-		editTool.active = loaded;
+		editTool.active = loaded && (!studioHandler || (studioConnected && studioReady));
 		editTool.erasing = mode == EraseMode || mode == DeleteRoomMode || mode == DeleteEquipmentMode || mode == DeleteEquipmentAreaMode;
 		editTool.wholeRoom = mode == DeleteRoomMode;
 		editTool.equipment = mode == EquipmentMode || mode == DeleteEquipmentMode || mode == DeleteEquipmentAreaMode;
@@ -1115,6 +1451,26 @@ public:
 		if (!loaded || toolMode == HandMode || renderAction->isChecked())
 			return;
 		const int deck = currentDeck;
+		if(studioHandler)
+		{
+			AuLegacyStudioProtocol::Command edit; edit.deck = deck; edit.cursor = cursor;
+			if(editTool.equipment)
+			{
+				if(toolMode == EquipmentMode && !selectedEquipment) return;
+				edit.kind = toolMode == EquipmentMode ? AuLegacyStudioProtocol::PlaceDetail : AuLegacyStudioProtocol::EraseDetails;
+				edit.detailType = quint8(selectedEquipmentType);
+				edit.commodity = selectedEquipment ? selectedEquipment->commodity : 0;
+				edit.radius = editTool.radius;
+			}
+			else
+			{
+				edit.kind = toolMode == DeleteRoomMode ? AuLegacyStudioProtocol::EraseRoom : AuLegacyStudioProtocol::PaintCell;
+				edit.gridMask = gridMask;
+				edit.roomType = toolMode == EraseMode ? -1 : selectedRoomType;
+				edit.roomNumber = quint8(roomNumber->value() - 1);
+			}
+			SendStudioEdit(edit); return;
+		}
 		if (editTool.equipment)
 		{
 			if (toolMode == EquipmentMode && !selectedEquipment) return;
@@ -1168,6 +1524,11 @@ public:
 	void DeleteCurrentDeck()
 	{
 		if(!loaded) return;
+		if(studioHandler)
+		{
+			AuLegacyStudioProtocol::Command edit; edit.kind = AuLegacyStudioProtocol::EraseDeck; edit.deck = currentDeck;
+			SendStudioEdit(edit); return;
+		}
 		const AuLegacyShip::CellEditResult result = AuLegacyShip::DeleteDeck(design, currentDeck);
 		if(!result.accepted)
 		{
@@ -1269,7 +1630,85 @@ public:
 
 	bool SaveDesign()
 	{
-		if(!loaded)
+		if(!studioHandler || !studioConnected) return SaveDesignToFile();
+		if(!loaded || !StudioFileCommandAllowed()) return false;
+		// AuDesignSave (2016 executable 0x140186040) keeps the named
+		// server library save separate from an optional local file backup.
+		AuDialog dialog(window);
+		dialog.setAuDlgTitle(QStringLiteral("Save Spacecraft Design"));
+		dialog.setAuDlgIcon(AuLegacyShipIcon(QStringLiteral("dp_Save")));
+		QGridLayout* layout = new QGridLayout;
+		QLabel* libraryText = new QLabel(QStringLiteral(
+			"<html><b>SPACECRAFT DESIGN LIBRARY</b><br><br>To save the design into the spacecraft design library, enter a name<br>"
+			"for the spacecraft design.<br><br>The list shows your existing spacecraft designs in the library. If<br>"
+			"you use the name of an existing design, the existing design is<br>replaced.<br><br>"
+			"When a <i>read-only</i> design is replaced, existing spacecraft, disks and<br>"
+			"spacecraft factories referencing the design are not affected.<br>"
+			"The replaced design ceases to be published in any empire.<br></html>"), &dialog);
+		QComboBox* name = new QComboBox(&dialog);
+		studioSaveNames = name;
+		name->setEditable(true);
+		name->setEditText(design.header.name);
+		name->setAccessibleName(QStringLiteral("Spacecraft design name"));
+		QPushButton* librarySave = new QPushButton(AuLegacyShipIcon(QStringLiteral("dp_Save")),
+			QStringLiteral("Save Design"), &dialog);
+		studioSaveButton = librarySave;
+		librarySave->setToolTip(QStringLiteral("Saves the current design into the spacecraft design library."));
+		QLabel* fileText = new QLabel(QStringLiteral(
+			"<html><br><b>SPACECRAFT DESIGN FILE</b><br><br>To save the design to a file on your personal storage medium, press<br>"
+			"this button. Then you can choose to create a new file or replace an<br>existing file.<br></html>"), &dialog);
+		QPushButton* fileSave = new QPushButton(QIcon(QStringLiteral(":/data/c_BlankDisk.png")),
+			QStringLiteral("Save Design To File"), &dialog);
+		fileSave->setToolTip(QStringLiteral("Saves the current design into a file on your personal storage medium."));
+		layout->addWidget(libraryText, 0, 0, 1, 3);
+		layout->addWidget(name, 1, 0, 1, 2);
+		layout->addWidget(librarySave, 1, 2);
+		layout->addWidget(fileText, 2, 0, 1, 3);
+		layout->addWidget(fileSave, 3, 1, 1, 2);
+		studioSaveLibraryStatus = new QLabel(&dialog);
+		layout->addWidget(studioSaveLibraryStatus, 4, 0, 1, 3);
+		dialog.setAuDlgLayout(layout);
+		bool saved = false;
+		QObject::connect(librarySave, &QPushButton::clicked, &dialog, [this, &dialog, name, &saved]() {
+			if(!StudioFileCommandAllowed()) return;
+			const QString savedName = name->currentText().trimmed();
+			if(!ValidLegacyLibraryName(savedName))
+			{
+				QMessageBox::warning(&dialog, QStringLiteral("Invalid Design Name"),
+					QStringLiteral("Enter a valid design name of 1 to 30 characters without reserved characters or extra whitespace."));
+				return;
+			}
+			bool replacing = false;
+			for(const auto& entry : studioLibrary) if(entry.name == savedName) { replacing = true; break; }
+			const quint32 generation = studioGeneration;
+			const quint64 revision = studioRevision;
+			if(replacing && QMessageBox::question(&dialog, QStringLiteral("Replace Spacecraft Design"),
+				QStringLiteral("Confirm replacement of existing design '%1' in the spacecraft design library.").arg(savedName),
+				QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Ok) return;
+			if(!StudioFileCommandAllowed()) return;
+			if(generation != studioGeneration || revision != studioRevision)
+			{
+				SetFeedback(QStringLiteral("The shared design changed. Review it before saving to your library."));
+				return;
+			}
+			AuLegacyStudioProtocol::Request request; request.action = AuLegacyStudioProtocol::Saved;
+			request.name = savedName;
+			SendStudioRequest(request);
+			saved = true;
+			dialog.accept();
+		});
+		QObject::connect(fileSave, &QPushButton::clicked, &dialog, [this, &dialog, &saved]() {
+			if(SaveDesignToFile()) { saved = true; dialog.accept(); }
+		});
+		RefreshStudioLibrary();
+		RequestStudioLibrary();
+		dialog.exec();
+		return saved;
+	}
+
+	bool SaveDesignToFile()
+	{
+		if(!loaded || !StudioFileCommandAllowed(true))
 			return false;
 		QString suggested = fileName;
 		if(suggested.isEmpty())
@@ -1293,27 +1732,38 @@ public:
 		dialog.setDefaultSuffix(QStringLiteral("ship"));
 		if(dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty())
 			return false;
+		// A shared studio can change owner or receive edits while the dialog is open.
+		if(!StudioFileCommandAllowed(true)) return false;
 		const QString path = QFileInfo(dialog.selectedFiles().first()).absoluteFilePath();
 		// Name fresh designs from their first filename; preserve loaded QString
 		// bytes, including the distinction between null and empty names.
-		const QString fallbackName = fileName.isEmpty() ? QFileInfo(path).completeBaseName() : QString();
+		const QString fallbackName = fileName.isEmpty() || (studioHandler && design.header.name.isEmpty())
+			? QFileInfo(path).completeBaseName() : QString();
+		AuLegacyShip::Design exportedDesign = design;
 		QString error;
-		if(!AuLegacyShip::Save(path, design, error, fallbackName))
+		if(!AuLegacyShip::Save(path, exportedDesign, error, fallbackName))
 		{
 			QMessageBox::warning(window, QStringLiteral("Could not save spacecraft"), error);
 			return false;
 		}
-		if(design.header.name.isEmpty() && !fallbackName.isEmpty())
-			design.header.name = fallbackName;
-		if(design.header.version == 0 && design.header.scalarSlots.isEmpty())
-			design.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
-		design.header.version = 2;
-		design.header.versionStateRaw = quint8(0x20 | design.header.state);
+		if(!studioHandler)
+		{
+			if(design.header.name.isEmpty() && !fallbackName.isEmpty())
+				design.header.name = fallbackName;
+			if(design.header.version == 0 && design.header.scalarSlots.isEmpty())
+				design.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
+			design.header.version = 2;
+			design.header.versionStateRaw = quint8(0x20 | design.header.state);
+		}
 		fileName = path;
-		modified = false;
+		// Exporting a shared design is a backup, not a library save. Only
+		// the server's acknowledged library save can clear its dirty flag.
+		if(!studioHandler) modified = false;
 		ScheduleStatsRefresh();
 		UpdateTitle();
-		SetFeedback(QStringLiteral("Saved %1").arg(QFileInfo(path).fileName()));
+		SetFeedback(studioHandler && !studioConnected
+			? QStringLiteral("Saved the last confirmed studio snapshot to %1.").arg(QFileInfo(path).fileName())
+			: QStringLiteral("Saved %1").arg(QFileInfo(path).fileName()));
 		settings.setValue(QStringLiteral("LegacySpacecraft/LastOpenDirectory"), QFileInfo(path).absolutePath());
 		settings.sync();
 		return true;
@@ -1370,6 +1820,14 @@ public:
 	QAction* checkPathsAction;
 	QPointer<QDialog> pathReportDialog;
 	QAction* closeAction;
+	QAction* newAction;
+	QAction* openAction;
+	QAction* saveAction;
+	QAction* passwordAction;
+	QAction* burnAction;
+	QAction* moveAction;
+	QToolButton* passwordButton;
+	QToolButton* burnButton;
 	QAction* eraseAction;
 	QAction* deleteRoomAction;
 	QAction* deleteDeckAction;
@@ -1386,6 +1844,19 @@ public:
 	QMap<int, QAction*> roomActions;
 	QAction* lineActions[4];
 	std::function<void()> exitHandler;
+	std::function<void(AuLegacyStudioProtocol::Request)> studioHandler;
+	bool studioConnected = false, studioReady = false, studioOwner = false;
+	bool studioBusy = false, studioExitAfterSave = false, studioCanBurn = false;
+	bool studioLibraryLoaded = false, studioLibraryTruncated = false;
+	quint32 studioLibraryDesignId = 0;
+	QVector<AuLegacyStudioProtocol::LibraryEntry> studioLibrary;
+	QPointer<QComboBox> studioSaveNames;
+	QPointer<QPushButton> studioSaveButton;
+	QPointer<QTableWidget> studioLoadTable;
+	QPointer<QLabel> studioSaveLibraryStatus;
+	QPointer<QLabel> studioLoadLibraryStatus;
+	quint32 studioGeneration = 0;
+	quint64 studioRevision = 0;
 	AuLegacyShip::Design design;
 	QString fileName;
 	QString statsHtml;
@@ -1465,12 +1936,7 @@ void AuLegacyShipViewer::showEvent(QShowEvent* event)
 
 bool AuLegacyShipViewer::ConfirmDiscardChanges()
 {
-	if (!m_Impl->modified)
-		return true;
-	const QMessageBox::StandardButton choice = QMessageBox::question(this, QStringLiteral("Save changes?"),
-		QStringLiteral("Save changes to %1 before continuing?").arg(m_Impl->DisplayName()),
-		QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
-	return choice == QMessageBox::Discard || (choice == QMessageBox::Save && m_Impl->SaveDesign());
+	return m_Impl->ConfirmChanges(true);
 }
 
 void AuLegacyShipViewer::closeEvent(QCloseEvent* event)
@@ -1485,19 +1951,24 @@ void AuLegacyShipViewer::closeEvent(QCloseEvent* event)
 
 void AuLegacyShipViewer::NewDesign()
 {
-	if (!ConfirmDiscardChanges())
+	if (!m_Impl->StudioFileCommandAllowed() || !m_Impl->ConfirmChanges(false))
 		return;
 	AuLegacyShip::Design incoming;
 	incoming.header.version = 2;
 	incoming.header.versionStateRaw = 0x20;
 	incoming.header.streamline = 1;
 	incoming.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
+	if(m_Impl->studioHandler)
+	{
+		m_Impl->ReplaceStudioDesign(incoming);
+		return;
+	}
 	m_Impl->SetDesign(QString(), std::move(incoming));
 }
 
 bool AuLegacyShipViewer::OpenFile(const QString& fileName)
 {
-	if (!ConfirmDiscardChanges())
+	if (!m_Impl->StudioFileCommandAllowed() || !m_Impl->ConfirmChanges(false))
 		return false;
 	AuLegacyShip::Design incoming;
 	QString error;
@@ -1507,7 +1978,8 @@ bool AuLegacyShipViewer::OpenFile(const QString& fileName)
 			QStringLiteral("%1\n\n%2").arg(fileName, error));
 		return false;
 	}
-	m_Impl->SetDesign(fileName, std::move(incoming));
+	if(m_Impl->studioHandler) m_Impl->ReplaceStudioDesign(incoming);
+	else m_Impl->SetDesign(fileName, std::move(incoming));
 	m_Impl->settings.setValue(QStringLiteral("LegacySpacecraft/LastOpenDirectory"),
 		QFileInfo(fileName).absolutePath());
 	m_Impl->settings.sync();
@@ -1516,15 +1988,127 @@ bool AuLegacyShipViewer::OpenFile(const QString& fileName)
 
 void AuLegacyShipViewer::ChooseFile()
 {
-	QString directory = m_Impl->fileName.isEmpty()
-		? m_Impl->settings.value(QStringLiteral("LegacySpacecraft/LastOpenDirectory")).toString()
-		: QFileInfo(m_Impl->fileName).absolutePath();
-	if(directory.isEmpty() || !QFileInfo(directory).isDir())
-		directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-	if(directory.isEmpty() || !QFileInfo(directory).isDir())
-		directory = QDir::homePath();
-	const QString selected = QFileDialog::getOpenFileName(this, QStringLiteral("Open spacecraft design"),
-		directory, QStringLiteral("Old spacecraft designs (*.ship);;All files (*)"));
-	if (!selected.isEmpty())
-		OpenFile(selected);
+	if(m_Impl->studioHandler) m_Impl->ChooseStudioDesign();
+	else m_Impl->ChooseDesignFile();
+}
+
+void AuLegacyShipViewer::SetStudioCommandHandler(const std::function<void(AuLegacyStudioProtocol::Request)>& handler)
+{
+	m_Impl->studioHandler = handler;
+	m_Impl->studioReady = false;
+	m_Impl->studioExitAfterSave = false;
+	m_Impl->studioLibraryLoaded = false;
+	m_Impl->studioLibraryTruncated = false;
+	m_Impl->studioLibraryDesignId = 0;
+	m_Impl->studioLibrary.clear();
+	m_Impl->RefreshStudioControls();
+}
+
+void AuLegacyShipViewer::ApplyStudioState(const AuLegacyShip::Design& design, bool owner, bool modified,
+	quint32 generation, quint64 revision)
+{
+	if(!m_Impl->studioHandler) return;
+	if(m_Impl->studioReady && generation == m_Impl->studioGeneration && revision == m_Impl->studioRevision)
+	{
+		// Ownership/password/save metadata can change without geometry changes.
+		m_Impl->studioOwner = owner;
+		m_Impl->modified = modified;
+		m_Impl->RefreshStudioControls();
+		m_Impl->RefreshStats();
+		m_Impl->UpdateTitle();
+		return;
+	}
+	// Room boundaries retain their working doubles and the server's identity.
+	// Ordinary updates retain the local camera, grid, active deck and paint tool.
+	const bool replaced = !m_Impl->studioReady || generation != m_Impl->studioGeneration;
+	m_Impl->design = design;
+	m_Impl->studioOwner = owner;
+	m_Impl->studioGeneration = generation;
+	m_Impl->studioRevision = revision;
+	m_Impl->studioReady = true;
+	m_Impl->loaded = true;
+	m_Impl->modified = modified;
+	m_Impl->renderDirty = true;
+	if(replaced)
+	{
+		m_Impl->fileName.clear();
+		m_Impl->gravityAction->setChecked(false);
+		m_Impl->SetToolMode(Impl::HandMode);
+		m_Impl->renderView->UseHandCursor();
+	}
+	m_Impl->IndexDecks();
+	m_Impl->RefreshHeaderControls();
+	m_Impl->ShowDeck(replaced ? 0 : m_Impl->currentDeck);
+	m_Impl->UpdateTitle();
+	m_Impl->RefreshStats();
+}
+
+void AuLegacyShipViewer::SetStudioConnected(bool connected)
+{
+	m_Impl->studioConnected = connected;
+	m_Impl->RefreshStudioControls();
+	if(!connected && m_Impl->studioHandler)
+		m_Impl->SetFeedback(QStringLiteral("Studio connection lost. The displayed design is the last confirmed snapshot."));
+}
+
+void AuLegacyShipViewer::SetStudioBusy(bool busy)
+{
+	m_Impl->studioBusy = busy;
+	m_Impl->RefreshStudioControls();
+	if(busy || !m_Impl->studioExitAfterSave) return;
+	m_Impl->studioExitAfterSave = false;
+	if(m_Impl->modified)
+	{
+		m_Impl->SetFeedback(QStringLiteral("The shared design changed while saving. Save the new changes before leaving."));
+		return;
+	}
+	QTimer::singleShot(0, this, [this]() {
+		// A path check, startup preparation or another modal operation may
+		// dispatch the acknowledgement from a nested event loop. Its parented
+		// stack widgets must unwind before the viewer can be deleted.
+		if(m_Impl->pathsChecking || m_Impl->startingDesigner || QApplication::activeModalWidget())
+		{
+			m_Impl->SetFeedback(QStringLiteral("The design is saved. Finish the current operation, then exit the designer."));
+			return;
+		}
+		if(m_Impl->studioBusy || m_Impl->modified)
+		{
+			m_Impl->SetFeedback(QStringLiteral("The shared design changed while saving. Review the new changes before leaving."));
+			return;
+		}
+		if(m_Impl->exitHandler)
+		{
+			const std::function<void()> handler = m_Impl->exitHandler;
+			handler();
+		}
+	});
+}
+
+void AuLegacyShipViewer::SetStudioBurnAvailable(bool available)
+{
+	m_Impl->studioCanBurn = available;
+	m_Impl->RefreshStudioControls();
+}
+
+void AuLegacyShipViewer::SetStudioLibraryDesignId(quint32 designId)
+{
+	m_Impl->studioLibraryDesignId = designId;
+}
+
+void AuLegacyShipViewer::ApplyStudioLibrary(const QVector<AuLegacyStudioProtocol::LibraryEntry>& entries, bool truncated)
+{
+	m_Impl->studioLibrary = entries;
+	m_Impl->studioLibraryLoaded = true;
+	m_Impl->studioLibraryTruncated = truncated;
+	m_Impl->RefreshStudioLibrary();
+}
+
+void AuLegacyShipViewer::ShowStudioMessage(const QString& message)
+{
+	if(!message.isEmpty()) m_Impl->SetFeedback(message);
+}
+
+void AuLegacyShipViewer::ChatReceived(AuCommPacket* message)
+{
+	m_Impl->renderView->ChatReceived(message);
 }

@@ -19,6 +19,7 @@
 #include "dadesignbase.h"
 #include <QElapsedTimer>
 #include <QPoint>
+#include <atomic>
 
 class AuAtomRenderInfo;
 class AuDialog;
@@ -215,6 +216,7 @@ public:
 		VB_SpacecraftSpecs,
 		VB_UNUSED7,
 		VB_LegacySpacecraftDesign,
+		VB_LegacyDesignerExit,
 		VB_COUNT						// LAST ITEM
 	};
 
@@ -726,6 +728,8 @@ private:
 	QString								m_ViewButtonTexName;	// Style texture loaded int m_ViewButtonTex for button faces.
 
 private:
+	std::atomic<bool> m_InputSuspended{false};
+	QMutex m_InputProcessLock;
 	mutable QMutex						m_ControlLock;
 	unordered_map<Qt::Key, AuElapsedTimer, AuKey_Hash>	m_ActiveKeys;	// Keys currently down. Time is used by DiControlInput; starts null.
 	Qt::KeyboardModifiers				m_ActiveKeyMods;		// Keyboard modifiers active at last keyboard event.
@@ -1391,6 +1395,9 @@ public slots:
 	void PauseRendering();
 
 	void ResumeRendering();
+
+	// Keep a connected scene alive while another editor owns keyboard/mouse input.
+	void SetInputSuspended(bool suspended);
 
 	void SaveWhereabouts();
 

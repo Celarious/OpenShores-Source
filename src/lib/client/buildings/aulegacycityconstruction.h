@@ -10,6 +10,7 @@
 class AuBldConstruct;
 class AuLegacyCityBank;
 class AuLegacyCityManufacture;
+class AuLegacyCityDesignStudio;
 class QButtonGroup;
 class QCheckBox;
 class QComboBox;
@@ -94,11 +95,13 @@ private:
 	AuBldConstruct* m_Labor;
 	AuLegacyCityManufacture* m_Manufacture;
 	AuLegacyCityBank* m_Bank;
+	AuLegacyCityDesignStudio* m_Studio;
 	QStackedWidget* m_LaborPages;
 	QTabBar* m_LaborTabs;
 	bool m_DualPages = false;
 	QLabel* m_Info;
 	QTimer *m_Timer, *m_Timeout;
+	QTimer* m_StudioRequestTimer;
 	QVector<AuLegacyCityProtocol::Entry> m_Entries;
 	int m_Selected = -1;
 	quint32 m_PendingToken = 0;
@@ -106,6 +109,10 @@ private:
 	AuLegacyCityProtocol::Request m_PendingRequest, m_DeferredCitizenRequest;
 	bool m_HasDeferredCitizenRequest = false;
 	QString m_LastMessage;
+	AuLegacyCityProtocol::Request m_QueuedStudioRequest;
+	bool m_StudioRequestQueued = false, m_StudioStateValid = false;
+	quint8 m_StudioLevelCount = 0;
+	quint32 m_StudioCityId = 0, m_StudioDevelopmentId = 0, m_AbandonedStudioToken = 0;
 	const AuLegacyCityProtocol::Entry* Selected() const;
 	void Refresh();
 	void Submit(AuLegacyCityProtocol::Request request);
@@ -114,6 +121,7 @@ private:
 	void UpdateControls();
 	void ResetTransport();
 	void ReportMessage(const QString& message);
+	void QueueStudioRequest(AuLegacyCityProtocol::Request request);
 };
 
 class AUCLIENT_DLL AuLegacyCityLaborDock : public AuDockWidget
