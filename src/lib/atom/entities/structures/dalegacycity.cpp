@@ -883,7 +883,7 @@ struct DaLegacyCity::Runtime
 		QHash<quint32, const Building*> old;
 		QVector<AuLegacyCity::Development> oldStates;
 		for(const auto& building : previous) { old.insert(building.state.id, &building); oldStates.append(building.state); }
-		const bool reuseBiodomes = SameTerrainSites(oldStates, developments);
+		const bool reuseTerrainGeometry = SameTerrainSites(oldStates, developments);
 		QHash<quint16, QImage> atlases;
 		QHash<QString, QImage> textures;
 		buildings.clear();
@@ -892,7 +892,8 @@ struct DaLegacyCity::Runtime
 			if(cancelled && cancelled->load(std::memory_order_acquire)) return;
 			const auto found = old.constFind(dev.id);
 			if(found != old.cend() && SameBuildingGeometry((*found)->state, dev)
-				&& (dev.industryId != 129 || reuseBiodomes) && (!prepareRender || (*found)->render))
+				&& ((dev.industryId != 129 && dev.industryId != 2) || reuseTerrainGeometry)
+				&& (!prepareRender || (*found)->render))
 			{
 				Building building = **found; building.state = dev;
 				buildings.append(std::move(building)); continue;
@@ -904,7 +905,41 @@ struct DaLegacyCity::Runtime
 			AuLegacyBd::Geometry::Options options;
 			options.minimumDeck = dev.minimumDeck; options.maximumDeck = dev.maximumDeck;
 			options.materialCommodity = dev.materialId; options.constructed = dev.constructed;
-			building.mesh = design ? AuLegacyBd::Geometry::Build(*design, options) : AuLegacyBd::Geometry::BuildProcedural(dev);
+			AuLegacyBd::Geometry::RoadFixtureHeight roadFixtureHeight;
+			if(world && dev.industryId==2)
+			{
+				AuMatrix4x4 placement;
+				world->BuildingConstructionTransform(world->LocOfLL(dev.location,dev.altitudeMSL),dev.facingRadians,nullptr,AuPoint(),placement);
+				roadFixtureHeight=[this,world,placement,dev](const QVector3D& p) {
+					using AuLegacyBd::Geometry::RoadFixtureGround;
+					AuGlobeLL ll; if(!world->LLOfLoc(ll,placement.Project(Point(p)))) return RoadFixtureGround(p.z(),p.z());
+					WORLDTEX_TYPE pavement=WORLDTEX_Count; AuTime newest;
+					double altitude=world->VirginTerrainAltitudeMSL(ll,pavement,newest);
+					int leveled=0,grass=0; bool rocks=false,shrubs=false,trees=false;
+					// Use this job's site snapshot; querying the live city through
+					// TerrainAltitudeMSL would recursively acquire the runtime lock.
+					if(pavement==WORLDTEX_Count) altitude=AdjustTerrain(*world,altitude,ll,leveled,rocks,grass,shrubs,trees,pavement);
+					// FillTerrainAltInfo lowers rendered terrain two inches, and its
+					// triangles interpolate across site edges. Bury only the support
+					// below nearby site grades so those triangles cannot expose its
+					// bottom while the lamp and light source keep their sampled height.
+					double foundationAltitude=altitude;
+					for(const auto& site : sites)
+					{
+						const auto& nearby=site.state;
+						if(!SiteInRange(site,world->LocOfLL(ll,nearby.altitudeMSL))) continue;
+						const double minimumAltitude=nearby.industryId==2
+							? std::min(nearby.roadStartAltitudeMSL,nearby.roadEndAltitudeMSL)
+							: nearby.industryId==62 ? std::min(nearby.altitudeMSL,double(-9.84252f)) : nearby.altitudeMSL;
+						foundationAltitude=std::min(foundationAltitude,minimumAltitude);
+					}
+					// One foot of embedment also covers the terrain offset, the
+					// finite pole footprint on a slope, and render-coordinate rounding.
+					return RoadFixtureGround(altitude-dev.altitudeMSL, altitude-dev.altitudeMSL-10);
+				};
+			}
+			building.mesh = design ? AuLegacyBd::Geometry::Build(*design, options)
+				: AuLegacyBd::Geometry::BuildProcedural(dev,roadFixtureHeight);
 			if(world && dev.industryId==129)
 			{
 				AuMatrix4x4 placement;

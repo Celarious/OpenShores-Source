@@ -683,13 +683,14 @@ void FlagPole(Builder& out, const QPointF& location, int deck)
 	}
 }
 
-void StreetLight(Builder& out, const QPointF& location, int deck)
+void StreetLight(Builder& out, const QPointF& location, int deck, float foundationDepth = 0)
 {
 	// DpDevelopment::CreateStreetLight 0x64df90. The glass shade is the
 	// separate BuildingTexture 37 tile; no spacecraft light geometry is used.
 	const double base = deck * AuLegacyBd::DeckHeight;
 	const float twoPi = 6.2831855f;
 	const QVector3D center = Position(location, base);
+	const QVector3D buriedSupport(0, 0, foundationDepth);
 	out.mesh.exteriorLights.append({center + QVector3D(0, 0, 25.5f), false});
 	QVector3D shaft[9], rim[9];
 	for(int i = 0; i <= 8; ++i)
@@ -706,7 +707,7 @@ void StreetLight(Builder& out, const QPointF& location, int deck)
 		// CreateStreetLight emits native clockwise faces. Builder expects
 		// counterclockwise faces, like the rest of the shared collision mesh.
 		// Reverse positions and their UVs together to keep the original art.
-		out.Quad(7, deck, false, shaft[i - 1], shaft[i],
+		out.Quad(7, deck, false, shaft[i - 1] - buriedSupport, shaft[i] - buriedSupport,
 			shaft[i] + QVector3D(0, 0, 25), shaft[i - 1] + QVector3D(0, 0, 25),
 			{previous, 0}, {current, 0}, {current, 1}, {previous, 1});
 		out.Triangle(7, deck, false, rim[i - 1], rim[i], apex, {previous, 0}, {current, 0}, {previous + .0625f, 1});
@@ -715,7 +716,7 @@ void StreetLight(Builder& out, const QPointF& location, int deck)
 	}
 }
 
-void RunwayLight(Builder& out, const QPointF& location)
+void RunwayLight(Builder& out, const QPointF& location, float foundationDepth = 0)
 {
 	// DpDevelopment::CreateRunwayLight 0x64bc40: eight-sided one-foot
 	// fixture, 1/6-foot stem and half-foot light cap (BuildingTexture 38).
@@ -726,7 +727,7 @@ void RunwayLight(Builder& out, const QPointF& location)
 		const auto p=[&](float angle,float radius,float z) {
 			return QVector3D(float(location.x())+std::cos(angle)*radius,
 				float(location.y())+std::sin(angle)*radius,z); };
-		out.Quad(7,0,false,p(a,1.f/6,0),p(b,1.f/6,0),p(b,1.f/6,2.f/3),p(a,1.f/6,2.f/3));
+		out.Quad(7,0,false,p(a,1.f/6,-foundationDepth),p(b,1.f/6,-foundationDepth),p(b,1.f/6,2.f/3),p(a,1.f/6,2.f/3));
 		out.Quad(38,0,false,p(a,1.f/6,2.f/3),p(b,1.f/6,2.f/3),p(b,.5f,5.f/6),p(a,.5f,5.f/6));
 		out.Triangle(38,0,false,p(a,.5f,5.f/6),p(b,.5f,5.f/6),Position(location,1));
 	}
@@ -882,7 +883,7 @@ Mesh Build(const Design& design, const Options& options)
 	return std::move(out.mesh);
 }
 
-Mesh BuildProcedural(const AuLegacyCity::Development& dev)
+Mesh BuildProcedural(const AuLegacyCity::Development& dev, const RoadFixtureHeight& roadFixtureHeight)
 {
 	if(dev.industryId == 129) return AuLegacyBd::Biodome::Build(dev);
 	Builder out;
@@ -923,19 +924,28 @@ Mesh BuildProcedural(const AuLegacyCity::Development& dev)
 			for(int i=0;i<=int(std::ceil(length/spacing));++i)
 			{
 				const float along=std::min(length,i*spacing);
-				const float altitude=float(dev.roadStartAltitudeMSL-dev.altitudeMSL
+				const float grade=float(dev.roadStartAltitudeMSL-dev.altitudeMSL
 					+(dev.roadEndAltitudeMSL-dev.roadStartAltitudeMSL)*(along/length));
-				const int firstBatch=out.mesh.batches.size();
-				const int firstLight=out.mesh.exteriorLights.size();
-				// Keep each fixture in its own batch while translating its grade.
-				out.batchIndices.clear();
-				if(dev.roadSlab)
-				{ RunwayLight(out,QPointF(-halfWidth,along-length/2)); RunwayLight(out,QPointF(halfWidth,along-length/2)); }
-				else StreetLight(out,QPointF(i%2 ? halfWidth : -halfWidth,along-length/2),0);
-				for(int batch=firstBatch;batch<out.mesh.batches.size();++batch)
-					for(auto& vertex : out.mesh.batches[batch].vertices) vertex.position.setZ(vertex.position.z()+altitude);
-				for(int light=firstLight;light<out.mesh.exteriorLights.size();++light)
-					out.mesh.exteriorLights[light].position.setZ(out.mesh.exteriorLights[light].position.z()+altitude);
+				for(int fixture=0;fixture<(dev.roadSlab ? 2 : 1);++fixture)
+				{
+					const QPointF base(dev.roadSlab ? (fixture ? halfWidth : -halfWidth)
+						: (i%2 ? halfWidth : -halfWidth),along-length/2);
+					// A neighboring building can lower the ground below the stored
+					// road grade. Move each complete fixture and its light together.
+					const RoadFixtureGround ground=roadFixtureHeight
+						? roadFixtureHeight(QVector3D(base.x(),base.y(),grade)) : RoadFixtureGround(grade,grade);
+					const float altitude=float(ground.altitude);
+					const float foundationDepth=float(std::max(0.0,ground.altitude-ground.foundationAltitude));
+					const int firstBatch=out.mesh.batches.size();
+					const int firstLight=out.mesh.exteriorLights.size();
+					out.batchIndices.clear();
+					if(dev.roadSlab) RunwayLight(out,base,foundationDepth);
+					else StreetLight(out,base,0,foundationDepth);
+					for(int batch=firstBatch;batch<out.mesh.batches.size();++batch)
+						for(auto& vertex : out.mesh.batches[batch].vertices) vertex.position.setZ(vertex.position.z()+altitude);
+					for(int light=firstLight;light<out.mesh.exteriorLights.size();++light)
+						out.mesh.exteriorLights[light].position.setZ(out.mesh.exteriorLights[light].position.z()+altitude);
+				}
 			}
 		}
 		// Even dirt roads with no above-ground triangles occupy their full site.

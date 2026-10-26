@@ -5,6 +5,7 @@
 #include "aulegacyshipmesh.h"
 #include <QRect>
 #include <QSet>
+#include <functional>
 
 namespace AuLegacyCity { struct Development; }
 
@@ -83,7 +84,17 @@ struct Mesh
 // CPU triangles use CCW order for shared collision; scene upload reverses their
 // vertex order to the original 2016 CW rendering convention, preserving normals.
 AUDATA_DLL Mesh Build(const Design& design, const Options& options);
-AUDATA_DLL Mesh BuildProcedural(const AuLegacyCity::Development& development);
+struct RoadFixtureGround
+{
+	double altitude, foundationAltitude; // Feet relative to the road site's MSL.
+	RoadFixtureGround(double height, double foundation) : altitude(height), foundationAltitude(foundation) {}
+};
+// Sample the fixture height and the bottom of its buried support. Terrain
+// triangles can cut below the point sample near the edge of a leveled site.
+// Without a sampler, previews retain the stored road grade.
+using RoadFixtureHeight = std::function<RoadFixtureGround(const QVector3D&)>;
+AUDATA_DLL Mesh BuildProcedural(const AuLegacyCity::Development& development,
+	const RoadFixtureHeight& roadFixtureHeight = {});
 AUDATA_DLL QString MaterialAtlas(quint16 originalCommodity);
 // Original 18-entry terrain pavement palette. These slots are
 // used only in Legacy universes; they are not modern WORLDTEX material IDs.
