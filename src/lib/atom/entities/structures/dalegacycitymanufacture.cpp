@@ -33,7 +33,7 @@ bool DaLegacyCity::OperateIndustryProcess(DaPerson& person, quint32 developmentI
 	const bool atSite = actorEnvironment->LegacyCityId() == Id()
 		&& actorEnvironment->LegacyDevelopmentId() == developmentId;
 	person.UnlockEnvironmentQuery();
-	if(!atSite) { error = QStringLiteral("Stand inside this industry to fetch materials or start production."); return false; }
+	if(!atSite) { return false; }
 	State before; quint64 revision;
 	{ QReadLocker lock(&m_CityLock); before = m_City; revision = m_CityRevision; }
 	const auto original = std::find_if(before.developments.cbegin(), before.developments.cend(),

@@ -39,7 +39,7 @@ bool DaLegacyCity::OperateBank(DaPerson& person, const AuLegacyCityProtocol::Req
 	const bool atSite = environment->LegacyCityId() == Id()
 		&& environment->LegacyDevelopmentId() == request.developmentId;
 	person.UnlockEnvironmentQuery();
-	if(!atSite) { reply.message = tr("Stand inside this bank or capitol to use its services."); return false; }
+	if(!atSite) { return false; }
 	const State snapshot = Snapshot();
 	const Development* selected = nullptr;
 	for(const Development& development : snapshot.developments)
@@ -68,7 +68,7 @@ bool DaLegacyCity::OperateBank(DaPerson& person, const AuLegacyCityProtocol::Req
 		{ reply.message = tr("The city's citizen species is not available."); return false; }
 	}
 	else if(request.action != BankState && !inBank)
-	{ reply.message = tr("Stand inside a bank to transfer money or use its loan services."); return false; }
+	{ return false; }
 	const bool deposit = request.action == GovernmentDeposit;
 	const bool withdraw = request.action == GovernmentWithdraw;
 	const bool borrow = request.action == BankBorrow;
