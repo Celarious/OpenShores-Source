@@ -11,6 +11,7 @@
 #include "aulegacybiodome.h"
 #include "aulegacybuildinggeometry.h"
 #include "aulegacycitycatalogue.h"
+#include "aulegacycityprotocol.h"
 #include "aulegacycityinventory.h"
 #include "aulegacyconstructionmaterials.h"
 #include "aulegacycitizenconstruction.h"
@@ -452,10 +453,19 @@ void InitializeConstruction(AuLegacyCity::Development& dev, quint32 labor, quint
 	}
 }
 
-quint8 ConstructionEnvironment(const DaWorldLL& world, const AuGlobeLLF& location)
+quint8 ConstructionEnvironment(const DaWorldLL& world, const AuLegacyCity::Development& dev)
 {
-	AuTerrainInfo terrain; world.QueryTerrain(terrain, location);
-	if(terrain.IsWater() && world.SurfaceAltitudeMSL(location)<=-32) return 4;
+	if(dev.industryId == 2)
+	{
+		// LockAddRoad 0x5253d0 classifies the final endpoint grades, so a
+		// level causeway above submerged terrain uses surface requirements.
+		if(world.Hydrographics() && dev.roadStartAltitudeMSL <= -32 && dev.roadEndAltitudeMSL <= -32) return 4;
+	}
+	else
+	{
+		AuTerrainInfo terrain; world.QueryTerrain(terrain, dev.location);
+		if(terrain.IsWater() && world.SurfaceAltitudeMSL(dev.location)<=-32) return 4;
+	}
 	return world.HasBreathableAtmosphere() ? 1 : 2;
 }
 
@@ -1579,6 +1589,77 @@ int DaLegacyCity::ConstructionLevelLimit(quint8 industry, quint16 material)
 	return AuLegacyCityCatalogue::BuiltIn()->ConstructionLevelLimit(recipe->id,AuLegacyCity::CommodityId(material));
 }
 
+bool DaLegacyCity::RoadCrossesSeaSurface(const DaWorldLL& world, double startAltitudeMSL, double endAltitudeMSL)
+{
+	// LockTestBuildLocation 0x5264d0 rejects strict opposite signs before
+	// LockAddRoad applies its shallow-water fill. Level roads already use
+	// the first endpoint's altitude at both ends; dry worlds have no sea.
+	return world.Hydrographics() && ((startAltitudeMSL < 0 && endAltitudeMSL > 0)
+		|| (startAltitudeMSL > 0 && endAltitudeMSL < 0));
+}
+
+int DaLegacyCity::PrepareRoadPlacement(const DaWorldLL& world, AuLegacyCity::Development& road, QString& message)
+{
+	message.clear();
+	const auto fail = [&message](int status, const QString& reason) -> int { message = reason; return status; };
+	const auto* recipe = ConstructionRecipe(road.industryId, road.constructionProcessId);
+	if(road.industryId != 2 || !recipe || !std::isfinite(road.roadWidthMeters) || road.roadWidthMeters < 1)
+		return fail(4, QObject::tr("Invalid road construction process or width."));
+	if(!std::isfinite(road.roadLengthMeters) || road.roadLengthMeters < AuLegacyCityProtocol::MinimumRoadLengthMeters)
+		return fail(1, QObject::tr("Location Too Small"));
+	if(road.roadLengthMeters > AuLegacyCityProtocol::MaximumRoadLengthMeters)
+		return fail(30, QObject::tr("Too Big"));
+	road.materialId = recipe->id.value == 3 ? 23 : 76;
+	if(!AuLegacyCityCatalogue::BuiltIn()->ConstructionLevelLimit(recipe->id,
+		AuLegacyCity::CommodityId(road.materialId), world.OrbitZone() != OZONE_Inferno))
+		return fail(2, QObject::tr("Location Too Hot"));
+	const double halfWidth = road.roadWidthMeters * FeetPerMeter() / 2;
+	double middleAltitude = world.SurfaceAltitudeMSL(road.location);
+	if(world.Hydrographics() && middleAltitude > -32 && middleAltitude < 1) middleAltitude = 1;
+	AuMatrix4x4 placement;
+	world.BuildingConstructionTransform(world.LocOfLL(road.location, middleAltitude), road.facingRadians, nullptr, AuPoint(), placement);
+	AuGlobeLLF start, end;
+	const double halfLength = road.roadLengthMeters * FeetPerMeter() / 2;
+	if(!world.LLOfLoc(start, placement.Project(AuPoint(0, -halfLength, 0)))
+		|| !world.LLOfLoc(end, placement.Project(AuPoint(0, halfLength, 0))))
+		return fail(3, QObject::tr("Location Not In Terrain Or Too Far Away"));
+	road.roadStartAltitudeMSL = world.SurfaceAltitudeMSL(start);
+	road.roadEndAltitudeMSL = road.roadSlab ? road.roadStartAltitudeMSL : world.SurfaceAltitudeMSL(end);
+	if(world.IsForbiddenZone(road.location, middleAltitude, halfWidth)
+		|| world.IsForbiddenZone(end, road.roadEndAltitudeMSL, halfWidth))
+		return fail(29, QObject::tr("Location In Forbidden Zone"));
+	if(middleAltitude > world.AtmosphereHeightMSL() || road.roadEndAltitudeMSL > world.AtmosphereHeightMSL())
+		return fail(3, QObject::tr("Location Not In Terrain Or Too Far Away"));
+	if(RoadCrossesSeaSurface(world, road.roadStartAltitudeMSL, road.roadEndAltitudeMSL))
+		return fail(34, QObject::tr("Intersects sea surface."));
+	if(world.Hydrographics())
+	{
+		if(road.roadStartAltitudeMSL > -32 && road.roadStartAltitudeMSL < 1) road.roadStartAltitudeMSL = 1;
+		if(road.roadEndAltitudeMSL > -32 && road.roadEndAltitudeMSL < 1) road.roadEndAltitudeMSL = 1;
+	}
+	// DpGlobeRoad::CenterAlt 0x17d660 averages the endpoint grades.
+	road.altitudeMSL = (road.roadStartAltitudeMSL + road.roadEndAltitudeMSL) / 2;
+	// LockTestBuildLocation 0x5264d0 checks the destination's actual depth,
+	// even when slab grading raises the chosen endpoint above that terrain.
+	AuTerrainInfo terrain; world.QueryTerrain(terrain, end);
+	const double terrainAltitude = world.SurfaceAltitudeMSL(end);
+	const bool seaBottom = terrain.IsWater() && terrainAltitude < 0;
+	if(seaBottom && -terrainAltitude < (MaximumDesignDeck(2, road.materialId) + 4) * AuLegacyBd::DeckHeight)
+		return fail(33, QObject::tr("Water Too Shallow at Location"));
+	if(recipe->terrain == 2 && !seaBottom)
+	{
+		// DdPlanGlobeRoad::TestBuildLocation 0x140329070 overrides the
+		// recipe radius with half the selected road/slab width.
+		AuMatrix4x4 endpointPlacement;
+		world.BuildingConstructionTransform(world.LocOfLL(end, road.roadEndAltitudeMSL), road.facingRadians, nullptr, AuPoint(), endpointPlacement);
+		unsigned int rocks = 0, shrubs = 0, trees = 0; float water = 0;
+		world.ResourceDistributionAt(endpointPlacement, endpointPlacement.Translation(),
+			AuPoint(halfWidth, halfWidth, 0), rocks, shrubs, trees, water, 0);
+		if(terrain.IsWater() || water > .1f) return fail(6, QObject::tr("Location Under Water"));
+	}
+	return 0;
+}
+
 bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 process, quint32 designId,
 	quint16 material, const AuGlobeLLF& location, double heading, quint8 levels, QString& error,
 	double roadLength, double roadWidth, bool roadSlab, double biodomeRadius,
@@ -1620,46 +1701,40 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 	dev.biodomeRadiusMeters=float(biodomeRadius);
 	if(industry==129 && !AuLegacyCityCatalogue::BiodomeSegmentCount(dev.biodomeRadiusMeters*FeetPerMeter()))
 	{ error=QStringLiteral("The biodome circumference must contain 6 to 100 original fifty-meter segments."); return false; }
-	AuTerrainInfo terrain; world->QueryTerrain(terrain, location);
-	const double radius = industry==129 ? biodomeRadius*FeetPerMeter() : recipe->buildRadius * FeetPerMeter();
-	if(world->IsForbiddenZone(location,dev.altitudeMSL,radius) || dev.altitudeMSL>world->AtmosphereHeightMSL())
+	const double radius = industry==2 ? roadWidth*FeetPerMeter()/2
+		: industry==129 ? biodomeRadius*FeetPerMeter() : recipe->buildRadius * FeetPerMeter();
+	if(industry == 2)
+	{
+		if(PrepareRoadPlacement(*world, dev, error)) return false;
+	}
+	else if(world->IsForbiddenZone(location,dev.altitudeMSL,radius) || dev.altitudeMSL>world->AtmosphereHeightMSL())
 	{ error=QStringLiteral("This site is outside the world's permitted construction terrain."); return false; }
 	if(industry==62 && naturalAltitude>=0 && (std::abs(location.Latitude())>world->PolarLatitude() || world->OrbitZone()==OZONE_Frigid))
 	{ error=QStringLiteral("Hydroelectric power plants require unfrozen water outside the polar region."); return false; }
 	AuMatrix4x4 placement;
 	world->BuildingConstructionTransform(world->LocOfLL(location, dev.altitudeMSL), heading, nullptr, AuPoint(), placement);
-	if(industry == 2)
-	{
-		AuGlobeLLF start, end;
-		if(!world->LLOfLoc(start,placement.Project(AuPoint(0,-roadLength*FeetPerMeter()/2,0)))
-			|| !world->LLOfLoc(end,placement.Project(AuPoint(0,roadLength*FeetPerMeter()/2,0))))
-		{ error = QStringLiteral("The road endpoints must remain on this world's surface."); return false; }
-		dev.roadStartAltitudeMSL = world->SurfaceAltitudeMSL(start);
-		dev.roadEndAltitudeMSL = roadSlab ? dev.roadStartAltitudeMSL : world->SurfaceAltitudeMSL(end);
-		if(world->Hydrographics())
-		{
-			if(dev.roadStartAltitudeMSL>-32 && dev.roadStartAltitudeMSL<1) dev.roadStartAltitudeMSL=1;
-			if(dev.roadEndAltitudeMSL>-32 && dev.roadEndAltitudeMSL<1) dev.roadEndAltitudeMSL=1;
-		}
-	}
-	unsigned int rocks = 0, shrubs = 0, trees = 0; float water = 0;
-	world->ResourceDistributionAt(placement, placement.Translation(), AuPoint(radius,radius,0), rocks,shrubs,trees,water,4);
 	// Original terrain categories from LockTestBuildLocation 0x5264d0.
 	const int category = recipe->terrain;
-	bool terrainOk = true;
-	const bool seaBottom = terrain.IsWater() && dev.altitudeMSL <= -32;
-	if(seaBottom && -dev.altitudeMSL<(MaximumDesignDeck(industry,material)+4)*AuLegacyBd::DeckHeight)
-	{ error=QStringLiteral("The water is too shallow for this original building's required underwater clearance."); return false; }
-	if(category == 1 || category == 2 || category == 3) terrainOk = seaBottom || (!terrain.IsWater() && water <= .1f);
-	else if(category == 4) terrainOk = terrain.m_byWater && water >= .3f;
-	else if(category == 5) terrainOk = terrain.m_byWater && water >= .4f;
-	else if(category == 7) terrainOk = (seaBottom || (!terrain.IsWater() && water <= .25f)) && trees > 0;
-	else if(category == 8) terrainOk = (seaBottom || (!terrain.IsWater() && water <= .25f)) && rocks > 0;
-	else if(category == 9) terrainOk = terrain.m_byWater && water >= .9f;
-	else if(category == 10) terrainOk = terrain.m_byWater && water >= 1.f;
-	else if(category == 11 || category == 13 || category == 14) terrainOk = seaBottom || !terrain.IsWater();
-	if(!terrainOk || levels > ResourceLevelLimit(*world, dev))
-	{ error = QStringLiteral("This terrain or its natural resources cannot support the selected construction and levels."); return false; }
+	if(industry != 2)
+	{
+		AuTerrainInfo terrain; world->QueryTerrain(terrain, location);
+		unsigned int rocks = 0, shrubs = 0, trees = 0; float water = 0;
+		world->ResourceDistributionAt(placement, placement.Translation(), AuPoint(radius,radius,0), rocks,shrubs,trees,water,4);
+		bool terrainOk = true;
+		const bool seaBottom = terrain.IsWater() && dev.altitudeMSL <= -32;
+		if(seaBottom && -dev.altitudeMSL<(MaximumDesignDeck(industry,material)+4)*AuLegacyBd::DeckHeight)
+		{ error=QStringLiteral("The water is too shallow for this original building's required underwater clearance."); return false; }
+		if(category == 1 || category == 2 || category == 3) terrainOk = seaBottom || (!terrain.IsWater() && water <= .1f);
+		else if(category == 4) terrainOk = terrain.m_byWater && water >= .3f;
+		else if(category == 5) terrainOk = terrain.m_byWater && water >= .4f;
+		else if(category == 7) terrainOk = (seaBottom || (!terrain.IsWater() && water <= .25f)) && trees > 0;
+		else if(category == 8) terrainOk = (seaBottom || (!terrain.IsWater() && water <= .25f)) && rocks > 0;
+		else if(category == 9) terrainOk = terrain.m_byWater && water >= .9f;
+		else if(category == 10) terrainOk = terrain.m_byWater && water >= 1.f;
+		else if(category == 11 || category == 13 || category == 14) terrainOk = seaBottom || !terrain.IsWater();
+		if(!terrainOk || levels > ResourceLevelLimit(*world, dev))
+		{ error = QStringLiteral("This terrain or its natural resources cannot support the selected construction and levels."); return false; }
+	}
 	const AuPoint center = placement.Translation();
 	// LockTestBuildLocation 0x5264d0 permits actors, vehicles and spacecraft
 	// within a new construction site; only development overlaps are tested here.
@@ -1766,7 +1841,7 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 	dev.selectedManufacturingRecipe = manufacturingRecipe;
 	dev.manufacturingCitizenEnabled = manufactureCitizen;
 	ConstructedDecks(dev);
-	InitializeConstruction(dev, SitePreparationLabor(*world,dev), ConstructionEnvironment(*world,location));
+	InitializeConstruction(dev, SitePreparationLabor(*world,dev), ConstructionEnvironment(*world,dev));
 	QWriteLocker lock(&m_CityLock);
 	if(m_City.developments.size() >= AuLegacyCity::MaximumDevelopments)
 	{ error = QStringLiteral("The city has reached its development limit."); return false; }
@@ -1834,7 +1909,7 @@ bool DaLegacyCity::ExtendConstruction(DaPerson& person, quint32 id, quint8 level
 		dev.targetLevels = quint8(dev.completedLevels+levels);
 		dev.selectedManufacturingRecipe = manufacturingRecipe;
 		dev.manufacturingCitizenEnabled = manufactureCitizen;
-		InitializeConstruction(dev,SitePreparationLabor(*world,dev),ConstructionEnvironment(*world,dev.location));
+		InitializeConstruction(dev,SitePreparationLabor(*world,dev),ConstructionEnvironment(*world,dev));
 		return ReplaceFinishedDevelopment(dev,expectedProcess,dev.completedLevels,error);
 	}
 	error = QStringLiteral("The development no longer exists."); return false;
@@ -1946,7 +2021,7 @@ bool DaLegacyCity::ChangeRoadConstruction(DaPerson& person, quint32 id, quint8 p
 		dev.constructionProcessId=process; dev.materialId=process==3 ? 23 : 76;
 		dev.completedLevels=0; dev.targetLevels=1; dev.constructed=false; dev.halted=false;
 		const quint32 pavement=AuLegacyCityCatalogue::RoadPavementQuantity(dev.roadLengthMeters*FeetPerMeter(),dev.roadWidthMeters*FeetPerMeter());
-		InitializeConstruction(dev,qMin(quint32(65535),(pavement+1)/2+4),ConstructionEnvironment(*world,dev.location));
+		InitializeConstruction(dev,qMin(quint32(65535),(pavement+1)/2+4),ConstructionEnvironment(*world,dev));
 		return ReplaceFinishedDevelopment(dev,expectedProcess,expectedLevels,error);
 	}
 	error=QStringLiteral("The road no longer exists."); return false;
@@ -1966,7 +2041,7 @@ AuLegacyCity::CitizenConstructionFacts DaLegacyCity::GatherCitizenConstructionFa
 	{ facts.blocked = true; return facts; }
 	facts.blocked = !materialsOnly && ConstructionThreat(*world, Id(), development, state.controllingEmpire) != 0;
 	facts.ringworld = OnRingworld();
-	facts.environment = ConstructionEnvironment(*world, development.location);
+	facts.environment = ConstructionEnvironment(*world, development);
 	AuGlobeLL cityLL;
 	if(world->LLOfLoc(cityLL, Location()))
 		world->QueryNaturalResources(facts.natural, world->ResourceZone(cityLL.Longitude()));
@@ -2135,7 +2210,7 @@ bool DaLegacyCity::OperateConstruction(DaPerson* person, quint32 id, bool fetch,
 	AuGlobeLL cityLL;
 	if(!world->LLOfLoc(cityLL,Location())) return false;
 	AuZoneResource natural; world->QueryNaturalResources(natural,world->ResourceZone(cityLL.Longitude()));
-	const quint8 environment = ConstructionEnvironment(*world,original->location);
+	const quint8 environment = ConstructionEnvironment(*world,*original);
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn(); if(!catalogue) return false;
 	const bool ringworld = OnRingworld();
 	quint16 completionRecipe = 0;

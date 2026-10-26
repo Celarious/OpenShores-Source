@@ -34,6 +34,7 @@ const char* PlacementProblem(int status, QString& message)
 {
 	switch(status)
 	{
+	case 1: message = QObject::tr("Location Too Small"); return ":data/bldTooSmall.png";
 	case 2: message = QObject::tr("Location Too Hot"); return ":data/bldTooHot.png";
 	case 3: message = QObject::tr("Location Not In Terrain Or Too Far Away"); return ":data/bldNotTerrain.png";
 	case 4: message = QObject::tr("No More Levels Can Be Built at This Site"); return ":data/bldNoProcess.png";
@@ -47,7 +48,9 @@ const char* PlacementProblem(int status, QString& message)
 	case 13: message = QObject::tr("Road or Building Needed Next to Location"); return ":data/bldNoDev.png";
 	case 14: message = QObject::tr("Completed Road Needed Next to Location"); return ":data/bldNoRoad.png";
 	case 29: message = QObject::tr("Location In Forbidden Zone"); return ":data/bldForbiddenZone.png";
+	case 30: message = QObject::tr("Too Big"); return ":data/bldEdgeOfTerrain.png";
 	case 33: message = QObject::tr("Water Too Shallow at Location"); return ":data/bldTooShallow.png";
+	case 34: message = QObject::tr("Intersects sea surface."); return ":data/bldTooShallow.png";
 	default: message.clear(); return nullptr;
 	}
 }
@@ -323,8 +326,24 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 			m_ConflictWorld = 0; m_ConflictingPerimeters.clear();
 		}
 	}
+	if(person && m_Request.action == AuLegacyCityProtocol::Build && m_Request.industryId == 2)
+	{
+		m_SiteStatus = 0; m_SiteMessage.clear();
+		AuPoint point;
+		if(const auto* world = m_pWnd->FindTerrainLocationAtPixel(person, pixel, point))
+		{
+			if(m_HasStart && m_StartWorld == world->Id().GetID())
+			{
+				AuLegacyCityProtocol::Request request;
+				m_SiteStatus = PrepareRoadRequest(*world, point, QGuiApplication::keyboardModifiers() & Qt::ShiftModifier,
+					request, m_SiteMessage);
+			}
+		}
+		else m_SiteStatus = 3;
+		if(m_SiteStatus) PlacementProblem(m_SiteStatus, m_SiteMessage);
+	}
 	if(person && g_Au.IsLegacyGeneration() && m_Request.action == AuLegacyCityProtocol::Build
-		&& m_Request.industryId != 2 && m_Request.industryId != 129 && m_SiteStatus)
+		&& m_Request.industryId != 129 && m_SiteStatus)
 	{
 		QString reason;
 		m_pWnd->setCursor(QCursor(QPixmap(PlacementProblem(m_SiteStatus, reason)))); return;
@@ -664,6 +683,33 @@ void DdPlanLegacyCity::ConstrainRoad(const DaWorldLL& world, AuPoint& point, boo
 		point = world.LocOfLL(location, m_Request.roadSlab ? world.AltitudeMSL(m_Start) : world.SurfaceAltitudeMSL(location));
 }
 
+int DdPlanLegacyCity::PrepareRoadRequest(const DaWorldLL& world, AuPoint point, bool constrain,
+	AuLegacyCityProtocol::Request& request, QString& message) const
+{
+	ConstrainRoad(world, point, constrain);
+	const AuPoint middle = (m_Start + point) / 2;
+	AuGlobeLLF location;
+	if(!world.LLOfLoc(location, middle))
+	{ message = QObject::tr("Location Not In Terrain Or Too Far Away"); return 3; }
+	AuMatrix4x4 basis;
+	world.BuildingConstructionTransform(world.LocOfLL(location, world.SurfaceAltitudeMSL(location)), 0, nullptr, AuPoint(), basis);
+	const AuPoint delta = basis.Inverse().ProjectVector(point - m_Start);
+	request = m_Request;
+	request.headingDegrees = float(std::atan2(-delta.x, delta.y) * RAD2DEG);
+	request.roadLengthMeters = float((point - m_Start).Length() / FeetPerMeter());
+	request.worldId = world.Id().GetID(); request.latitudeRadians = location.Latitude();
+	request.longitudeRadians = location.Longitude(); request.explicitLocation = true;
+	// Use the request's float coordinates, heading and length, exactly as the
+	// server receives them. Checking the raw cursor point drifts at shorelines.
+	AuLegacyCity::Development road;
+	road.industryId = 2; road.constructionProcessId = request.processId;
+	road.location = AuGlobeLLF(request.longitudeRadians, request.latitudeRadians);
+	road.facingRadians = request.headingDegrees * DEG2RAD;
+	road.roadLengthMeters = request.roadLengthMeters; road.roadWidthMeters = request.roadWidthMeters;
+	road.roadSlab = request.roadSlab;
+	return DaLegacyCity::PrepareRoadPlacement(world, road, message);
+}
+
 void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 {
 	if(event->button() != Qt::LeftButton || !m_Interface || !g_Au.IsLegacyGeneration()) return;
@@ -703,26 +749,34 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 			if((request.industryId == 2 || request.industryId == 129) && m_HasStart)
 			{
 				if(m_StartWorld != world->Id().GetID()) { m_HasStart = false; m_pWnd->UnlockSceneAtom(); return; }
-				if(request.industryId == 2) ConstrainRoad(*world, point, event->modifiers() & Qt::ShiftModifier);
+				if(request.industryId == 2)
+				{
+					QString reason;
+					m_SiteStatus = PrepareRoadRequest(*world, point, event->modifiers() & Qt::ShiftModifier, request, reason);
+					if(m_SiteStatus)
+					{
+						m_SiteMessage = reason; m_Interface->ReportPlacementMessage(reason);
+						m_pWnd->UnlockSceneAtom(); return;
+					}
+					m_HasStart = false; submit = true;
+				}
 				else
 				{
 					AuGlobeLLF radiusLocation;
 					if(world->LLOfLoc(radiusLocation, point)) point = world->LocOfLL(radiusLocation, world->AltitudeMSL(m_Start));
+					AuPoint middle = m_Start;
+					AuGlobeLLF center;
+					if(world->LLOfLoc(center, middle))
+						middle = world->LocOfLL(center, world->SurfaceAltitudeMSL(center));
+					AuMatrix4x4 basis; world->BuildingConstructionTransform(middle, 0, nullptr, AuPoint(), basis);
+					const AuPoint delta = basis.Inverse().ProjectVector(point - m_Start);
+					request.headingDegrees = float(std::atan2(-delta.x, delta.y) * RAD2DEG);
+					request.biodomeRadiusMeters = float((point - m_Start).Length() / FeetPerMeter());
+					point = middle; m_HasStart = false;
 				}
-				AuPoint middle = request.industryId == 129 ? m_Start : (m_Start + point) / 2.;
-				AuGlobeLLF center;
-				if(world->LLOfLoc(center, middle))
-					middle = world->LocOfLL(center, world->SurfaceAltitudeMSL(center));
-				AuMatrix4x4 basis; world->BuildingConstructionTransform(middle, 0, nullptr, AuPoint(), basis);
-				const AuPoint delta = basis.Inverse().ProjectVector(point - m_Start);
-				request.headingDegrees = float(std::atan2(-delta.x, delta.y) * RAD2DEG);
-				const float sizeMeters = float((point - m_Start).Length() / FeetPerMeter());
-				if(request.industryId == 129) request.biodomeRadiusMeters = sizeMeters;
-				else request.roadLengthMeters = sizeMeters;
-				point = middle; m_HasStart = false;
 			}
 			AuGlobeLLF location;
-			if(world->LLOfLoc(location, point))
+			if(!submit && world->LLOfLoc(location, point))
 			{
 				if(request.action == AuLegacyCityProtocol::Build && request.industryId != 2 && request.industryId != 129
 					&& m_HeadingRelativeToNorth)

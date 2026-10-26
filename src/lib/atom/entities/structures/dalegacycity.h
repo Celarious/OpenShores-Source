@@ -103,6 +103,10 @@ public:
 		AuLegacyConstructionMaterials::Batch& materials, bool performLabor = true) const;
 	static int ConstructionLevelLimit(quint8 industryId, quint16 materialId);
 	// Shared by authoritative placement and the client's construction preview.
+	static bool RoadCrossesSeaSurface(const DaWorldLL& world, double startAltitudeMSL, double endAltitudeMSL);
+	// Resolves the submitted road's endpoints and grades, then checks its
+	// destination terrain using the selected width. No city state is changed.
+	static int PrepareRoadPlacement(const DaWorldLL& world, AuLegacyCity::Development& road, QString& message);
 	static bool ConstructionSitesOverlap(const DaWorldLL& world,
 		const AuLegacyCity::Development& site, const AuMatrix4x4& placement,
 		const AuLegacyCity::Development& existing, const AuMatrix4x4& otherPlacement);
