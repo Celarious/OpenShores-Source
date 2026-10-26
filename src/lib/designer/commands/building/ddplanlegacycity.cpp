@@ -329,6 +329,7 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 	if(person && m_Request.action == AuLegacyCityProtocol::Build && m_Request.industryId == 2)
 	{
 		m_SiteStatus = 0; m_SiteMessage.clear();
+		m_ConflictWorld = 0; m_ConflictingPerimeters.clear();
 		AuPoint point;
 		if(const auto* world = m_pWnd->FindTerrainLocationAtPixel(person, pixel, point))
 		{
@@ -684,8 +685,9 @@ void DdPlanLegacyCity::ConstrainRoad(const DaWorldLL& world, AuPoint& point, boo
 }
 
 int DdPlanLegacyCity::PrepareRoadRequest(const DaWorldLL& world, AuPoint point, bool constrain,
-	AuLegacyCityProtocol::Request& request, QString& message) const
+	AuLegacyCityProtocol::Request& request, QString& message)
 {
+	m_ConflictWorld = world.Id().GetID(); m_ConflictingPerimeters.clear();
 	ConstrainRoad(world, point, constrain);
 	const AuPoint middle = (m_Start + point) / 2;
 	AuGlobeLLF location;
@@ -707,7 +709,35 @@ int DdPlanLegacyCity::PrepareRoadRequest(const DaWorldLL& world, AuPoint point, 
 	road.facingRadians = request.headingDegrees * DEG2RAD;
 	road.roadLengthMeters = request.roadLengthMeters; road.roadWidthMeters = request.roadWidthMeters;
 	road.roadSlab = request.roadSlab;
-	return DaLegacyCity::PrepareRoadPlacement(world, road, message);
+	const int status = DaLegacyCity::PrepareRoadPlacement(world, road, message);
+	if(status) return status;
+	AuMatrix4x4 placement;
+	world.BuildingConstructionTransform(world.LocOfLL(road.location, road.altitudeMSL), road.facingRadians, nullptr, AuPoint(), placement);
+	DaAtomList cities; world.ListNormalSubatoms(cities);
+	QList<AuPointAlpha> ground;
+	bool blocked = false;
+	for(const auto* atom : cities)
+		if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+		{
+			if(city->IsDead()) continue;
+			const auto state = city->Snapshot();
+			for(const auto& existing : state.developments)
+			{
+				// Match BeginConstruction: roads may overlap roads and town
+				// squares; biodomes use their separate wall-containment rules.
+				if(existing.demolished || existing.industryId == 2 || existing.industryId == 1 || existing.industryId == 129) continue;
+				AuMatrix4x4 otherPlacement;
+				world.BuildingConstructionTransform(world.LocOfLL(existing.location, existing.altitudeMSL),
+					existing.facingRadians, nullptr, AuPoint(), otherPlacement);
+				if(!DaLegacyCity::ConstructionSitesOverlap(world, road, placement, existing, otherPlacement)) continue;
+				blocked = true;
+				ClearTarget hit; hit.city = city->Id().GetID(); hit.development = existing; hit.placement = otherPlacement;
+				ClearOutline(world, hit, m_ConflictingPerimeters, ground, true);
+			}
+		}
+	if(blocked)
+	{ message = QObject::tr("The construction site overlaps an existing development."); return 10; }
+	return 0;
 }
 
 void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
