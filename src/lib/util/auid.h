@@ -231,11 +231,6 @@ public:	// Methods
 		return AuId(1052);	// "MOB"
 	}
 
-	static AuId PigId()
-	{
-		return AuId(4279);	// "PIG"
-	}
-
 	static AuId Universe()
 	{
 		return AuId(101);

@@ -89,6 +89,7 @@ target_link_libraries(AuPlatform INTERFACE
     OpenGL::GLU
 )
 
+add_subdirectory(lib)
 add_subdirectory(resources)
 add_subdirectory(src)
 
