@@ -108,6 +108,69 @@ struct Builder
 		Triangle(slot, deck, interior, a, b, c, ua, ub, uc, doorId, detailId, twoSided);
 		Triangle(slot, deck, interior, a, c, d, ua, uc, ud, doorId, detailId, twoSided);
 	}
+	void TiledTriangle(int slot, int deck, bool interior, const QVector3D& a, const QVector3D& b,
+		const QVector3D& c, const QVector2D& ua, const QVector2D& ub, const QVector2D& uc)
+	{
+		// Keep each repeated tile in [0,1] so the renderer can still inset its
+		// cropped atlas texture. Clip the original triangle, preserving its plane,
+		// winding and collision coverage instead of changing the wall profile.
+		const QVector2D minimum(std::min(ua.x(), std::min(ub.x(), uc.x())),
+			std::min(ua.y(), std::min(ub.y(), uc.y())));
+		const QVector2D maximum(std::max(ua.x(), std::max(ub.x(), uc.x())),
+			std::max(ua.y(), std::max(ub.y(), uc.y())));
+		if(minimum.x() >= 0 && minimum.y() >= 0 && maximum.x() <= 1 && maximum.y() <= 1)
+		{
+			Triangle(slot, deck, interior, a, b, c, ua, ub, uc); return;
+		}
+		struct TileVertex { QVector3D position; QVector2D uv; };
+		const QVector<TileVertex> source = {{a, ua}, {b, ub}, {c, uc}};
+		const int firstX = int(std::floor(minimum.x())), firstY = int(std::floor(minimum.y()));
+		const int endX = std::max(firstX + 1, int(std::ceil(maximum.x())));
+		const int endY = std::max(firstY + 1, int(std::ceil(maximum.y())));
+		for(int x = firstX; x < endX; ++x)
+			for(int y = firstY; y < endY; ++y)
+			{
+				if(vertices + 3 > MaximumVertices)
+				{
+					Warning(QStringLiteral("Building geometry exceeds its bounded vertex budget.")); return;
+				}
+				QVector<TileVertex> polygon = source;
+				for(int axis = 0; axis < 2 && !polygon.isEmpty(); ++axis)
+					for(int side = 0; side < 2 && !polygon.isEmpty(); ++side)
+					{
+						const float boundary = float((axis ? y : x) + side);
+						QVector<TileVertex> clipped;
+						TileVertex previous = polygon.last();
+						float before = previous.uv[axis] - boundary;
+						for(const TileVertex& vertex : polygon)
+						{
+							const float after = vertex.uv[axis] - boundary;
+							const bool previousInside = side ? before <= 0 : before >= 0;
+							const bool inside = side ? after <= 0 : after >= 0;
+							if(previousInside != inside)
+							{
+								const float t = before / (before - after);
+								clipped.append({previous.position + (vertex.position - previous.position) * t,
+									previous.uv + (vertex.uv - previous.uv) * t});
+							}
+							if(inside) clipped.append(vertex);
+							previous = vertex; before = after;
+						}
+						polygon.swap(clipped);
+					}
+				const QVector2D origin{float(x), float(y)};
+				for(int i = 1; i + 1 < polygon.size(); ++i)
+					Triangle(slot, deck, interior, polygon[0].position, polygon[i].position, polygon[i + 1].position,
+						polygon[0].uv - origin, polygon[i].uv - origin, polygon[i + 1].uv - origin);
+			}
+	}
+	void TiledQuad(int slot, int deck, bool interior, const QVector3D& a, const QVector3D& b,
+		const QVector3D& c, const QVector3D& d, const QVector2D& ua, const QVector2D& ub,
+		const QVector2D& uc, const QVector2D& ud)
+	{
+		TiledTriangle(slot, deck, interior, a, b, c, ua, ub, uc);
+		TiledTriangle(slot, deck, interior, a, c, d, ua, uc, ud);
+	}
 };
 
 #include "aulegacybuildingturrets.inc"
@@ -296,6 +359,14 @@ int InteriorWallSlot(int roomType, double length)
 	return fill ? 22 : 21;
 }
 
+float WallRepeat(int slot, double length)
+{
+	// One full-width wall tile spans an eight-foot deck. Narrow fill and rail
+	// tiles retain their width relative to the atlas, across all six materials.
+	const double width = AuLegacyBd::DeckHeight * TextureTile(slot).width() / TextureTile(13).width();
+	return float(length / width);
+}
+
 void ExteriorWalls(Builder& out, const QVector<Edge>& edges, const Design& design,
 	int deck, int material, bool interior)
 {
@@ -333,13 +404,18 @@ void ExteriorWalls(Builder& out, const QVector<Edge>& edges, const Design& desig
 				const QVector3D d = Position(span.a + left * q.offset, base + q.height);
 				if(p.type == 3) { SideTurret(out, deck, a, b, c, d, interior); continue; }
 				const bool panel = p.type == 1 || p.type == 2;
-				// Original RenderExteriorWalls spans the tile once, even on
-				// long opaque walls. Length only selects the interior fill tile.
-				const float repeat = 1;
+				// Deliberate visual fix: repeat wall, window and trim artwork at
+				// a fixed scale, while keeping authored door panels intact.
+				const float repeat = panel ? 1 : WallRepeat(slot, length);
 				const float bottom = p.type == 4 ? float(p.height / AuLegacyBd::DeckHeight) : 0;
 				const float top = p.type == 4 ? float(q.height / AuLegacyBd::DeckHeight) : 1;
-				if(interior) out.Quad(slot, deck, true, b, a, d, c, {0, bottom}, {repeat, bottom}, {repeat, top}, {0, top}, panel ? span.detailId : 0);
-				else out.Quad(slot, deck, false, a, b, c, d, {0, bottom}, {repeat, bottom}, {repeat, top}, {0, top}, panel ? span.detailId : 0);
+				if(panel)
+				{
+					if(interior) out.Quad(slot, deck, true, b, a, d, c, {0, bottom}, {1, bottom}, {1, top}, {0, top}, span.detailId);
+					else out.Quad(slot, deck, false, a, b, c, d, {0, bottom}, {1, bottom}, {1, top}, {0, top}, span.detailId);
+				}
+				else if(interior) out.TiledQuad(slot, deck, true, b, a, d, c, {0, bottom}, {repeat, bottom}, {repeat, top}, {0, top});
+				else out.TiledQuad(slot, deck, false, a, b, c, d, {0, bottom}, {repeat, bottom}, {repeat, top}, {0, top});
 			}
 			if(span.type != next.type)
 			{
@@ -454,7 +530,9 @@ void DeckSurfaces(Builder& out, const Raster& raster, const Design& design,
 				if(span.detailType == 56)
 				{
 					const QPointF post = Unit(span.b - span.a) * .1;
-					out.Quad(29, deck, true, Position(span.b, base + 2.7), Position(span.a, base + 2.7), Position(span.a, base + 3), Position(span.b, base + 3));
+					const float repeat = WallRepeat(29, length);
+					out.TiledQuad(29, deck, true, Position(span.b, base + 2.7), Position(span.a, base + 2.7),
+						Position(span.a, base + 3), Position(span.b, base + 3), {0, 0}, {repeat, 0}, {repeat, 1}, {0, 1});
 					out.Quad(30, deck, true, Position(span.a + post, base), Position(span.a, base), Position(span.a, base + 2.7), Position(span.a + post, base + 2.7));
 					out.Quad(30, deck, true, Position(span.b, base), Position(span.b - post, base), Position(span.b - post, base + 2.7), Position(span.b, base + 2.7));
 					continue;
@@ -468,9 +546,16 @@ void DeckSurfaces(Builder& out, const Raster& raster, const Design& design,
 				case 54: slot = 3; break;
 				}
 				const bool door = span.detailType && span.detailType != 56;
-				out.Quad(slot, deck, true, Position(span.b, base), Position(span.a, base),
+				if(door) out.Quad(slot, deck, true, Position(span.b, base), Position(span.a, base),
 					Position(span.a, base + AuLegacyBd::DeckHeight), Position(span.b, base + AuLegacyBd::DeckHeight),
-					{0, 0}, {1, 0}, {1, 1}, {0, 1}, door ? span.detailId : 0);
+					{0, 0}, {1, 0}, {1, 1}, {0, 1}, span.detailId);
+				else
+				{
+					const float repeat = WallRepeat(slot, length);
+					out.TiledQuad(slot, deck, true, Position(span.b, base), Position(span.a, base),
+						Position(span.a, base + AuLegacyBd::DeckHeight), Position(span.b, base + AuLegacyBd::DeckHeight),
+						{0, 0}, {repeat, 0}, {repeat, 1}, {0, 1});
+				}
 			}
 }
 
@@ -492,7 +577,11 @@ void Roof(Builder& out, const AuLegacyShip::Room& room)
 		// vertical gable ends) together with its UVs. The underside faces down.
 		if((!underside && reverseExterior)
 			|| (underside && QVector3D::crossProduct(b - a, c - a).z() > 0))
-			out.Triangle(slot, deck, false, a, c, b, ua, uc, ub);
+		{
+			if(slot == 13) out.TiledTriangle(slot, deck, false, a, c, b, ua, uc, ub);
+			else out.Triangle(slot, deck, false, a, c, b, ua, uc, ub);
+		}
+		else if(slot == 13) out.TiledTriangle(slot, deck, false, a, b, c, ua, ub, uc);
 		else out.Triangle(slot, deck, false, a, b, c, ua, ub, uc);
 	};
 	// RenderRoof 0x5d3490: the underside sits 1/96 foot above the
@@ -533,8 +622,10 @@ void Roof(Builder& out, const AuLegacyShip::Room& room)
 		}
 	}
 	const QVector3D r0 = Position(first, base + rise), r1 = Position(last, base + rise);
-	triangle(room.roomType == 22 ? 13 : 11, p[1], r0, p[0], {0, 0}, {.5f, 1}, {1, 0});
-	triangle(room.roomType == 22 ? 13 : 11, p[3], r1, p[2], {0, 0}, {.5f, 1}, {1, 0});
+	const float gableRepeat = room.roomType == 22 ? WallRepeat(13, halfWidth * 2) : 1;
+	const float gableTop = room.roomType == 22 ? float(rise / AuLegacyBd::DeckHeight) : 1;
+	triangle(room.roomType == 22 ? 13 : 11, p[1], r0, p[0], {0, 0}, {gableRepeat / 2, gableTop}, {gableRepeat, 0});
+	triangle(room.roomType == 22 ? 13 : 11, p[3], r1, p[2], {0, 0}, {gableRepeat / 2, gableTop}, {gableRepeat, 0});
 	if(room.roomType == 22)
 	{
 		triangle(11, p[0], r0, r1, {0, 0}, {0, 1}, {1, 1});

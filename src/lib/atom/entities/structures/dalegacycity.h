@@ -5,11 +5,14 @@
 #include "aulegacycitystate.h"
 #include "aulegacybuildingpaths.h"
 #include <QHash>
+#include <QMap>
 #include <QScopedPointer>
 
 class AuCityReport;
 class AuCityReportHistory;
+class AuGlobeRock;
 class AuItemHash;
+class AuResKey;
 class DaItem;
 class DaVehicle;
 class AuLegacyCityCatalogue;
@@ -147,6 +150,9 @@ public:
 	// Signed distance in feet from 'll' to the nearest edge of pavement that
 	// AdjustSiteTerrain paints, negative inside. False if no site paints pavement.
 	bool SitePavementEdgeDistance(const DaWorldLL& world, const AuGlobeLL& ll, float& dist) const;
+	// Visual rock distributions only: retain the procedural resource nodes used
+	// by placement, mining and labor, but clear padded building footprints.
+	void RemoveInteriorRocks(const DaWorldLL& world, QMap<AuResKey, AuGlobeRock>& rocks) const;
 	void QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& locationWorld,
 		AuQueryEnvironment& result) const;
 	// Route positions are returned in the parent world's frame; source cell and

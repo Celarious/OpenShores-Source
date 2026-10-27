@@ -287,6 +287,9 @@ double TerrainLevelRadius(quint8 industry, const AuLegacyCityCatalogue& catalogu
 bool SameTerrainSite(const AuLegacyCity::Development& p, const AuLegacyCity::Development& q)
 {
 	return p.industryId == q.industryId && p.constructionProcessId == q.constructionProcessId && p.materialId == q.materialId && p.location == q.location
+		// Built room footprints also control the visual rock distribution.
+		&& p.designId == q.designId && p.minimumDeck == q.minimumDeck && p.maximumDeck == q.maximumDeck
+		&& p.completedLevels == q.completedLevels
 		&& p.altitudeMSL == q.altitudeMSL && p.facingRadians == q.facingRadians
 		&& p.constructed == q.constructed && p.demolished == q.demolished && p.roadSlab == q.roadSlab
 		&& p.components.isEmpty() == q.components.isEmpty()
@@ -1380,6 +1383,38 @@ bool DaLegacyCity::SitePavementEdgeDistance(const DaWorldLL& world, const AuGlob
 	return m_Runtime->PavementEdgeDistance(world,ll,dist);
 }
 
+void DaLegacyCity::RemoveInteriorRocks(const DaWorldLL& world, QMap<AuResKey, AuGlobeRock>& rocks) const
+{
+	if(!g_Au.IsLegacyGeneration() || IsDead() || rocks.isEmpty()) return;
+	const auto developments = Snapshot().developments;
+	for(const auto& dev : developments)
+	{
+		if(dev.demolished || !dev.constructed || !dev.completedLevels) continue;
+		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(dev.designId);
+		if(!design) continue;
+		QRectF footprint;
+		for(const auto& room : design->rooms)
+		{
+			if(room.deck < dev.minimumDeck || room.deck > dev.maximumDeck
+				|| room.roomType == 9 || room.roomType >= 22) continue;
+			footprint = footprint.united(AuLegacyShip::RoomBoundary(room).boundingRect());
+		}
+		if(footprint.isEmpty()) continue;
+		// Clear a padded rectangle at every height, including underground shafts.
+		// Ten feet covers rock protrusions and the room raster's boundary margin.
+		footprint.adjust(-10, -10, 10, 10);
+		AuMatrix4x4 placement;
+		world.BuildingConstructionTransform(world.LocOfLL(dev.location, dev.altitudeMSL),
+			dev.facingRadians, nullptr, AuPoint(), placement);
+		const auto inverse = placement.Inverse();
+		for(auto rock = rocks.begin(); rock != rocks.end();)
+		{
+			const AuPoint point = inverse.Project(rock->Location());
+			if(footprint.contains(QPointF(point.x, point.y))) rock = rocks.erase(rock); else ++rock;
+		}
+	}
+}
+
 bool DaLegacyCity::Runtime::PavementEdgeDistance(const DaWorldLL& world, const AuGlobeLL& ll, float& dist) const
 {
 	// Mirrors the pavement rules of AdjustTerrain. Overlapping sites are a union,
@@ -1542,6 +1577,9 @@ void DaLegacyCity::UpdateSiteTerrain(AuAtomRenderInfo& ari, bool removed)
 	m_Runtime->renderedSites = removed ? QVector<Runtime::Site>() : m_Runtime->sites;
 	m_Runtime->terrainDrawRevision = removed ? 0 : m_Runtime->terrainRevision;
 	lock.unlock();
+	// A worker started before construction/extension must not publish its old
+	// room mask after BuildingChanged requests a fresh distribution.
+	if(!dirty.isEmpty()) ari.mm.DeleteRockModel(world->Id());
 	for(const auto& site : dirty)
 		world->BuildingChanged(site.placement, (site.radius + 32.8084) * std::sqrt(2.0), ari.mm);
 }

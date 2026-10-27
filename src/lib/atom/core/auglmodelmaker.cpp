@@ -4267,7 +4267,16 @@ void AuRockModel::run()
 	}
 	g_Au.UnlockEtheriumDelete();
 	if(clonedWorld)
+	{
 		clonedWorld->CreateRocks(m_Rock, m_GroundLoc, genSeed, g_Au.RockViewRangeFt() + 100*FeetPerMeter(), true);
+		// Clear built legacy footprints from visual rocks on all world types.
+		// Resource queries never consume this distribution.
+		DaAtomList subs;
+		clonedWorld->ListNormalSubatoms(subs);
+		for(const DaAtom* atom : subs)
+			if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+				city->RemoveInteriorRocks(*clonedWorld, m_Rock);
+	}
 
 	RunFinish();
 	//qDebug() << "AuRockModel::run" << m_WorldId << "done.";
