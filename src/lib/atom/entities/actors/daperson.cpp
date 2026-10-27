@@ -20865,6 +20865,8 @@ void DaPerson::BdManufactureFetchMPID(quint16 mpid, const AuId& opBd)
 void DaPerson::BdManufactureGetPatents(const QSet<COMMODITYID>& patentCIDs, quint8 maxQ, const AuGearPos& mediaPos,
 		const AuId& opBd)
 {
+	if(g_Au.IsLegacyGeneration())
+		return;
 	DaBd* bd = BdOp(opBd);
 	if(!bd)
 		return;
@@ -21113,6 +21115,8 @@ void DaPerson::BdManufactureProcessSetStockLimitMPID(quint16 mpid, quint32 stock
 
 void DaPerson::BdManufactureRecordPatents(const AuKnownPatents& patents, const AuId& opBd)
 {
+	if(g_Au.IsLegacyGeneration())
+		return;
 	DaBd* bd = BdOp(opBd);
 	if(!bd)
 		return;
@@ -22094,6 +22098,8 @@ void DaPerson::BdManufactureSpacecraftSetMinQ(quint8 minQ, const AuId& opBd)
 
 void DaPerson::EmpireGetPatents(const QSet<COMMODITYID>& patentCIDs, quint8 maxQ, const AuGearPos& mediaPos)
 {
+	if(g_Au.IsLegacyGeneration())
+		return;
 	quint32 empireId = EmpireId();
 	if(!empireId)
 		return;
@@ -22185,6 +22191,8 @@ void DaPerson::EmpireGetPatents(const QSet<COMMODITYID>& patentCIDs, quint8 maxQ
 
 void DaPerson::EmpireRecordPatents(const AuKnownPatents& patents)
 {
+	if(g_Au.IsLegacyGeneration())
+		return;
 	quint32 empireId = EmpireId();
 	if(!empireId)
 		return;

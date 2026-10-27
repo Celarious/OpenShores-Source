@@ -19,6 +19,7 @@ class AuGovDiplomacy;
 class AuGovPatents;
 class AuGovPolicy;
 class AuGovTaxes;
+class AuGovernTabs;
 class QStackedLayout;
 
 class AUCLIENT_DLL AuGovern : public QWidget
@@ -35,6 +36,10 @@ private:
 	AuGovPatents*						m_Patents;
 	AuGovPolicy*						m_Policy;
 	AuGovTaxes*							m_Taxes;
+	AuGovernTabs*						m_Tabs;
+	int									m_PatentsTabIndex;
+
+	void UpdatePatentPage();
 
 public:
 	AuGovern(QWidget* parent=0);
@@ -44,6 +49,9 @@ public:
 
 public slots:
 	void UpdateDatabase();
+
+protected:
+	virtual void showEvent(QShowEvent* event);
 
 protected slots:
 	void CurrentTabChanged(int idx);

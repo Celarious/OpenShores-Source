@@ -85,6 +85,7 @@ AuCommSolicitItem::AuCommSolicitItem(COMMODITYID defCommodityId, QWidget* parent
 	QPushButton* pbpatents = new QPushButton(tr("Patents"));
 	pbpatents->setIcon(QIcon(CommodityFilterIcon(FILTER_Patents)));
 	pbpatents->setToolTip(tr("Ask for sales of patents."));
+	if(g_Au.IsLegacyGeneration()) pbpatents->hide();
 	connect(pbpatents, SIGNAL(clicked()), SLOT(PatentsPressed()));
 
 	QPushButton* pbtools = new QPushButton(tr("Tools"));
@@ -208,6 +209,7 @@ void AuCommSolicitItem::ArmorPressed()
 
 void AuCommSolicitItem::PatentsPressed()
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	m_SolicitType = Patents;
 	accept();
 }

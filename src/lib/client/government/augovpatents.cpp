@@ -130,6 +130,7 @@ void AuGovPatents::showEvent(QShowEvent* event)
 
 void AuGovPatents::GetPatent()
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	AuFrame* pFrame = auApp->Frame();
 	if(!pFrame)
 		return;
@@ -158,6 +159,7 @@ void AuGovPatents::GetPatent()
 
 void AuGovPatents::RecordPatent()
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	AuFrame* pFrame = auApp->Frame();
 	if(!pFrame)
 		return;

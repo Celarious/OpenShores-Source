@@ -39,7 +39,7 @@ AuGovern::AuGovern(QWidget* parent) : QWidget(parent)
 {
 	m_Pages = new QStackedLayout();
 
-	AuGovernTabs* tabs = new AuGovernTabs(this);
+	AuGovernTabs* tabs = m_Tabs = new AuGovernTabs(this);
 	connect(tabs, SIGNAL(CurrentChanged(int)), SLOT(CurrentTabChanged(int)));
 
 	QGridLayout* lay = new QGridLayout;
@@ -80,6 +80,7 @@ AuGovern::AuGovern(QWidget* parent) : QWidget(parent)
 
 	{
 		int tabIndex = tabs->AddTab(QIcon(":data/c_Patent.png"));
+		m_PatentsTabIndex = tabIndex;
 		tabs->SetTabToolTip(tabIndex, tr("Patents"));
 		m_Patents = new AuGovPatents(this);
 		m_Pages->addWidget(m_Patents);
@@ -105,6 +106,7 @@ AuGovern::AuGovern(QWidget* parent) : QWidget(parent)
 		m_Taxes = new AuGovTaxes(this);
 		m_Pages->addWidget(m_Taxes);
 	}
+	UpdatePatentPage();
 }
 
 AuGovern::~AuGovern()
@@ -113,6 +115,7 @@ AuGovern::~AuGovern()
 
 void AuGovern::UpdateDatabase()
 {
+	UpdatePatentPage();
 	AuFrame* frame = auApp->Frame();
 	if(frame && frame->GetAndResetEmpireDataReceived())
 	{
@@ -133,6 +136,29 @@ void AuGovern::UpdateDatabase()
 
 		m_Taxes->UpdateEmpireRecord();
 	}
+}
+
+void AuGovern::UpdatePatentPage()
+{
+	const int pageIndex = m_Pages->indexOf(m_Patents);
+	if(g_Au.IsLegacyGeneration() && pageIndex >= 0)
+	{
+		m_Pages->removeWidget(m_Patents);
+		m_Patents->hide();
+		m_Tabs->RemoveTab(pageIndex);
+	}
+	else if(!g_Au.IsLegacyGeneration() && pageIndex < 0)
+	{
+		m_Pages->insertWidget(m_PatentsTabIndex, m_Patents);
+		m_Tabs->InsertTab(m_PatentsTabIndex, QIcon(":data/c_Patent.png"));
+		m_Tabs->SetTabToolTip(m_PatentsTabIndex, tr("Patents"));
+	}
+}
+
+void AuGovern::showEvent(QShowEvent* event)
+{
+	UpdatePatentPage();
+	QWidget::showEvent(event);
 }
 
 void AuGovern::CurrentTabChanged(int idx)

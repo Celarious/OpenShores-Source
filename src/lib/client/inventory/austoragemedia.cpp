@@ -259,7 +259,7 @@ void AuStorageMedia::ListContent()
 					}
 				}
 
-				if(!item->Patents().empty())
+				if(!g_Au.IsLegacyGeneration() && !item->Patents().empty())
 				{
 					AuStorageMediaTreeItem* folderItem = new AuStorageMediaTreeItem(AuStorageMediaTreeItem::PatentsFolder,
 							m_ContentTree);

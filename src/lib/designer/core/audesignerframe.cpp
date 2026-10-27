@@ -1364,6 +1364,7 @@ void AuDesignerFrame::ToggleGovernDiplomacyUi()
 
 void AuDesignerFrame::ToggleGovernPatentsUi()
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	if(m_GovernPatentsDock)
 	{
 		if(m_GovernPatentsDock->isHidden() && m_View->SceneAtomEmpire())
@@ -2355,6 +2356,9 @@ void AuDesignerFrame::CreateDockWidgets()
 		m_GovernPatentsDock->hide();
 		m_GovernPatentsDock->setFloating(true);
 		m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernPatentsDock));
+		connect(m_GovernPatentsDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+			if(visible && g_Au.IsLegacyGeneration()) m_GovernPatentsDock->hide();
+		});
 
 		// Governance policy
 		m_GovernPolicyDock = new AuGovPolicyDock(this);
@@ -2650,6 +2654,8 @@ void AuDesignerFrame::CreateDockWidgets()
 		m_LegacyCityLaborDock->hide(); m_LegacyCityLaborDock->setFloating(true);
 		m_DockBars.m_DockWidgets.append(AuFrameDock(m_LegacyCityLaborDock));
 		connect(auApp, &AuApp::LegacyScTransportReset, this, [this]() {
+			if(m_GovernDock) m_GovernDock->hide();
+			if(m_GovernPatentsDock) m_GovernPatentsDock->hide();
 			if(m_LegacyCityConstructionDock) m_LegacyCityConstructionDock->hide();
 			if(m_LegacyCityLaborDock) m_LegacyCityLaborDock->hide();
 			if(m_ConstructionDock) m_ConstructionDock->hide();
@@ -2751,6 +2757,7 @@ void AuDesignerFrame::SceneContextChanged(int sceneContext)
 	}
 	if(g_Au.IsLegacyGeneration())
 	{
+		if(m_GovernPatentsDock) m_GovernPatentsDock->hide();
 		if(m_ConstructionDock) m_ConstructionDock->hide();
 		if(m_BuildingDock) m_BuildingDock->hide();
 	}

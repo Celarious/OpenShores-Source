@@ -1332,6 +1332,8 @@ QString AuViewButton::Tip(const QString& tipBase) const
 
 bool AuViewButton::IsHidden(SCENE_CONTEXT sceneContext, bool hasEmpire) const
 {
+	if(m_Id == VB_GovernPatents && g_Au.IsLegacyGeneration())
+		return true;
 	if(g_AuClient.ViewButtonHidden(m_Id))
 		return true;
 

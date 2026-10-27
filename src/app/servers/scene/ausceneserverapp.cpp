@@ -12227,6 +12227,8 @@ void AuSceneServerApp::BdDesignExchangeUnpublishedDown(quint32 designId)
 
 void AuSceneServerApp::EmpireRecordPatent(quint32 empireId, quint16 patentCID, quint8 patentQ)
 {
+	if(g_Au.IsLegacyGeneration())
+		return;
 	if(g_Au.IsSceneMaster())
 	{
 		// Scene master updates the empire record.

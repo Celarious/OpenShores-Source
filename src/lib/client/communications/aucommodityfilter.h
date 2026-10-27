@@ -43,6 +43,8 @@ public slots:
 	void WeaponsPressed();
 
 protected:
+	virtual void showEvent(QShowEvent* event);
+
 	// 'name' is the name of the filter, as returned by CommodityFilterName().
 	void SelectFilter(const QString& name);
 };

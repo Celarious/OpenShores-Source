@@ -83,6 +83,7 @@ AuCommodityFilter::AuCommodityFilter(bool horizontal, QWidget* parent) : QWidget
 	pbpatents->setCheckable(true);
 	pbpatents->setObjectName(CommodityFilterName(FILTER_Patents));
 	pbpatents->setToolTip(tr(CommodityFilterName(FILTER_Patents)));
+	if(g_Au.IsLegacyGeneration()) pbpatents->hide();
 	connect(pbpatents, SIGNAL(clicked()), SLOT(PatentsPressed()));
 
 	AuIconButton* pbtools = new AuIconButton(CommodityFilterIcon(FILTER_Tools));
@@ -131,6 +132,20 @@ AuCommodityFilter::AuCommodityFilter(bool horizontal, QWidget* parent) : QWidget
 
 AuCommodityFilter::~AuCommodityFilter()
 {
+}
+
+void AuCommodityFilter::showEvent(QShowEvent* event)
+{
+	QList<AuIconButton*> buttons = findChildren<AuIconButton*>();
+	for(QList<AuIconButton*>::iterator bi = buttons.begin(); bi != buttons.end(); bi++)
+		if((*bi)->objectName() == CommodityFilterName(FILTER_Patents))
+		{
+			(*bi)->setVisible(!g_Au.IsLegacyGeneration());
+			if(g_Au.IsLegacyGeneration() && (*bi)->isChecked())
+				SelectFilter(CommodityFilterName(FILTER_All));
+			break;
+		}
+	QWidget::showEvent(event);
 }
 
 void AuCommodityFilter::AllPressed()
@@ -211,6 +226,11 @@ void AuCommodityFilter::WeaponsPressed()
 // 'name' is the name of the filter, as returned by CommodityFilterName().
 void AuCommodityFilter::SelectFilter(const QString& name)
 {
+	if(g_Au.IsLegacyGeneration() && name == CommodityFilterName(FILTER_Patents))
+	{
+		SelectFilter(CommodityFilterName(FILTER_All));
+		return;
+	}
 	// Set the down state of all buttons to be false, except the one named 'name'.
 	QList<AuIconButton*> buttons = findChildren<AuIconButton*>();
 	for(QList<AuIconButton*>::iterator bi = buttons.begin(); bi != buttons.end(); bi++)
