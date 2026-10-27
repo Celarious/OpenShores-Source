@@ -6059,6 +6059,7 @@ void DaWorldLL::CitizenEncounter(const DaPerson& person)
 //  7=village is too far away
 //  8=person is in the village already
 //  9=village had an encounter within the last hour
+// 10=an established legacy city has replaced indigenous encounters
 int DaWorldLL::IndigenousEncounter(const DaPerson& person, const AuGlobeLLF& nearLL, int mode)
 {
 	if(g_Au.m_LogMessages & LOG_AnimalEncounter)
@@ -6069,6 +6070,12 @@ int DaWorldLL::IndigenousEncounter(const DaPerson& person, const AuGlobeLLF& nea
 
 	if(!IsHabitable(HABITABLE_System))
 		return 2;						// This world is not habitable.
+
+	// Legacy buildings do not supply the modern BdId/building-map checks.
+	// Once a settlement has a finished building, stop ordinary encounters on
+	// this world before they can create, rebuild or relocate its village.
+	if(mode == 0 && HasEstablishedLegacyCity())
+		return 10;
 
 	// No encounters if no atoms present.
 	if(!HasSubatoms())
@@ -6615,12 +6622,27 @@ DaItem* DaWorldLL::CreateItem(const AuItem& item, const AuMatrix4x4& m)
 	return pc;
 }
 
+bool DaWorldLL::HasEstablishedLegacyCity() const
+{
+	if(!g_Au.IsLegacyGeneration()) return false;
+	DaAtomList subs;
+	ListNormalSubatoms(subs);
+	for(DaAtomList::const_iterator it = subs.cbegin(); it != subs.cend(); ++it)
+	{
+		const DaLegacyCity* city = dynamic_cast<const DaLegacyCity*>(*it);
+		if(city && !city->IsDead() && city->HasCompletedBuilding()) return true;
+	}
+	return false;
+}
+
 bool DaWorldLL::HasVillage() const
 {
 	m_VillageLock.lockForRead();
 	bool v = m_Village && m_Village->Population();
 	m_VillageLock.unlock();
-	return v;
+	// An established settlement also releases the old camp's loose items to
+	// normal decay and removes it as a respawn/transporter destination.
+	return v && !HasEstablishedLegacyCity();
 }
 
 AuGlobeLLF DaWorldLL::ChooseEncounterLocation(const AuGlobeLLF& nearLL) const
@@ -8582,7 +8604,7 @@ void DaWorldLL::InvalidateTerrainInfoSprites() const
 	m_OverlayTrees.clear();
 }
 
-double DaWorldLL::TerrainAltitudeMSL(const AuGlobeLL& ll) const
+double DaWorldLL::TerrainAltitudeMSL(const AuGlobeLL& ll, const AuId& ignoreLegacyCity) const
 {
 	// Determine the altitude of the virgin terrain at ll.
 	WORLDTEX_TYPE pavementType = WORLDTEX_Count;
@@ -8596,8 +8618,9 @@ double DaWorldLL::TerrainAltitudeMSL(const AuGlobeLL& ll) const
 		bool hideRocks = false, hideShrubs = false, hideTrees = false;
 		for(const DaAtom* atom : subs)
 			if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
-				terAltMSL = city->AdjustSiteTerrain(*this, terAltMSL, ll, levelSites,
-					hideRocks, hideGrass, hideShrubs, hideTrees, pavementType);
+				if(!city->Is(ignoreLegacyCity))
+					terAltMSL = city->AdjustSiteTerrain(*this, terAltMSL, ll, levelSites,
+						hideRocks, hideGrass, hideShrubs, hideTrees, pavementType);
 		return terAltMSL;
 	}
 	if(!BdHere() || pavementType != WORLDTEX_Count)

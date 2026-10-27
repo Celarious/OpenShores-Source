@@ -47,9 +47,16 @@ AuLegacyCityBank::AuLegacyCityBank(QWidget* parent) : QWidget(parent)
 	connect(m_Amount, &QLineEdit::textChanged, this, [this](const QString&) { UpdateControls(); });
 	m_Timer = new QTimer(this); m_Timer->setInterval(1000);
 	m_Timeout = new QTimer(this); m_Timeout->setSingleShot(true); m_Timeout->setInterval(60000);
+	m_DeferredTimer = new QTimer(this); m_DeferredTimer->setSingleShot(true); m_DeferredTimer->setInterval(250);
 	connect(m_Timer, &QTimer::timeout, this, &AuLegacyCityBank::Refresh);
 	connect(m_Timeout, &QTimer::timeout, this, [this]() {
-		m_PendingToken = 0; m_Message->setText(tr("No server response from the bank.")); UpdateControls();
+		m_PendingToken = 0; m_DeferredTimer->stop(); m_DeferredRequests.clear();
+		m_Message->setText(tr("No server response from the bank."));
+	});
+	connect(m_DeferredTimer, &QTimer::timeout, this, [this]() {
+		if(m_PendingToken || m_DeferredRequests.isEmpty()) return;
+		const auto request = m_DeferredRequests.takeFirst();
+		if(request.cityId == m_CityId && request.developmentId == m_DevelopmentId) SendRequest(request);
 	});
 	connect(auApp, &AuApp::LegacyCityReplyReceived, this, &AuLegacyCityBank::ReceiveReply);
 	connect(auApp, &AuApp::LegacyScTransportReset, this, &AuLegacyCityBank::ResetTransport);
@@ -65,7 +72,7 @@ void AuLegacyCityBank::SetTarget(quint32 cityId, quint32 developmentId, bool cap
 
 void AuLegacyCityBank::Submit(AuLegacyCityProtocol::Action action)
 {
-	if(m_PendingToken || !m_CityId || !m_DevelopmentId || !g_Au.IsLegacyGeneration()
+	if(!m_CityId || !m_DevelopmentId || !g_Au.IsLegacyGeneration()
 		|| auApp->IsSingleUserMode() || !auApp->IsSceneConnected()) return;
 	AuLegacyCityProtocol::Request request;
 	request.action = action; request.cityId = m_CityId; request.developmentId = m_DevelopmentId;
@@ -77,15 +84,33 @@ void AuLegacyCityBank::Submit(AuLegacyCityProtocol::Action action)
 		if(!valid || !std::isfinite(request.money) || request.money <= 0)
 		{ m_Message->setText(tr("Enter a positive amount of money.")); return; }
 	}
+	if(m_PendingToken || m_DeferredTimer->isActive() || !m_DeferredRequests.isEmpty())
+	{
+		if(action == AuLegacyCityProtocol::BankState) return;
+		// Keep the amount and target from the click while the current request
+		// finishes. A status poll must not disable buttons or swallow actions.
+		if(m_DeferredRequests.size() < 32) m_DeferredRequests.append(request);
+		else m_Message->setText(tr("Wait for the queued bank requests to finish."));
+		return;
+	}
+	SendRequest(request);
+}
+
+void AuLegacyCityBank::SendRequest(const AuLegacyCityProtocol::Request& request)
+{
 	m_PendingToken = auApp->RequestLegacyCityTool(request);
 	if(m_PendingToken) m_Timeout->start();
-	else m_Message->setText(tr("The bank request could not be sent."));
-	UpdateControls();
+	else
+	{
+		m_DeferredRequests.clear();
+		m_Message->setText(tr("The bank request could not be sent."));
+	}
 }
 
 void AuLegacyCityBank::Refresh()
 {
-	if(!m_CityId || !m_DevelopmentId || m_PendingToken || m_RefreshQueued) return;
+	if(!m_CityId || !m_DevelopmentId || m_PendingToken || m_RefreshQueued
+		|| m_DeferredTimer->isActive() || !m_DeferredRequests.isEmpty()) return;
 	// Share the transport with the occupied-site and manufacture polls.
 	m_RefreshQueued = true;
 	QTimer::singleShot(500, this, [this]() {
@@ -98,9 +123,11 @@ void AuLegacyCityBank::ReceiveReply(QByteArray payload)
 	AuLegacyCityProtocol::Reply reply;
 	if(!AuLegacyCityProtocol::DecodeReply(payload, reply) || !m_PendingToken || reply.token != m_PendingToken) return;
 	m_PendingToken = 0; m_Timeout->stop();
-	if(reply.selectedCity == m_CityId && reply.selectedDevelopment == m_DevelopmentId) m_State = reply;
+	if(reply.hasBank && reply.selectedCity == m_CityId && reply.selectedDevelopment == m_DevelopmentId)
+	{ m_State = reply; m_HasState = true; }
 	if(reply.action != AuLegacyCityProtocol::BankState || !reply.hasBank) m_Message->setText(reply.message);
 	UpdateControls();
+	if(!m_DeferredRequests.isEmpty()) m_DeferredTimer->start();
 }
 
 void AuLegacyCityBank::UpdateControls()
@@ -116,7 +143,10 @@ void AuLegacyCityBank::UpdateControls()
 		balances += tr("<br>This city has not recognized an empire capital. Government deposits are discarded until it does.");
 	if(m_Capitol && m_State.bankIsCapital) balances += tr("<br>This city is the empire capital.");
 	m_Balances->setText(balances);
-	const bool ready = m_State.hasBank && !m_PendingToken;
+	// Pending transport is not bank state. Keep the last authoritative
+	// eligibility while polling, and allow actions before the first snapshot.
+	const bool ready = m_CityId && m_DevelopmentId && g_Au.IsLegacyGeneration()
+		&& !auApp->IsSingleUserMode() && auApp->IsSceneConnected();
 	bool amountValid = false;
 	const double amount = m_Amount->text().toDouble(&amountValid);
 	amountValid = amountValid && std::isfinite(amount) && amount > 0;
@@ -124,19 +154,20 @@ void AuLegacyCityBank::UpdateControls()
 	m_AmountLabel->setVisible(!m_Capitol);
 	m_Deposit->setVisible(!m_Capitol); m_Withdraw->setVisible(!m_Capitol);
 	m_Borrow->setVisible(!m_Capitol); m_Repay->setVisible(!m_Capitol);
-	m_Deposit->setEnabled(ready && amountValid && amount >= 100 && m_State.bankGovernmentAuthorized && amount <= m_State.bankPersonalBalance);
-	m_Withdraw->setEnabled(ready && amountValid && amount >= 100 && m_State.bankGovernmentAuthorized && amount <= m_State.bankGovernmentBalance);
-	m_Borrow->setEnabled(ready && amountValid && amount >= 1 && amount <= std::min(m_State.bankLoanFunds, m_State.bankCreditAvailable));
-	m_Repay->setEnabled(ready && amountValid && amount <= std::min(m_State.bankPersonalBalance, m_State.bankPersonalLoan));
+	m_Deposit->setEnabled(ready && amountValid && amount >= 100 && (!m_HasState || (m_State.bankGovernmentAuthorized && amount <= m_State.bankPersonalBalance)));
+	m_Withdraw->setEnabled(ready && amountValid && amount >= 100 && (!m_HasState || (m_State.bankGovernmentAuthorized && amount <= m_State.bankGovernmentBalance)));
+	m_Borrow->setEnabled(ready && amountValid && amount >= 1 && (!m_HasState || amount <= std::min(m_State.bankLoanFunds, m_State.bankCreditAvailable)));
+	m_Repay->setEnabled(ready && amountValid && (!m_HasState || amount <= std::min(m_State.bankPersonalBalance, m_State.bankPersonalLoan)));
 	m_SetCapital->setVisible(m_Capitol);
-	m_SetCapital->setEnabled(ready && m_State.bankCapitalAuthorized && !m_State.bankIsCapital);
+	m_SetCapital->setEnabled(ready && (!m_HasState || (m_State.bankCapitalAuthorized && !m_State.bankIsCapital)));
 	m_ClaimRewards->setVisible(!m_Capitol);
-	m_ClaimRewards->setEnabled(ready && m_State.bankPersonalReward > 0);
+	m_ClaimRewards->setEnabled(ready && (!m_HasState || m_State.bankPersonalReward > 0));
 }
 
 void AuLegacyCityBank::ResetTransport()
 {
-	m_PendingToken = 0; m_Timeout->stop(); m_State = AuLegacyCityProtocol::Reply(); m_Message->clear(); UpdateControls();
+	m_PendingToken = 0; m_Timeout->stop(); m_DeferredTimer->stop(); m_DeferredRequests.clear();
+	m_HasState = false; m_State = AuLegacyCityProtocol::Reply(); m_Message->clear(); UpdateControls();
 }
 
 void AuLegacyCityBank::showEvent(QShowEvent* event)

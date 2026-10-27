@@ -12,6 +12,7 @@
 #include "aupose.h"
 #include "auskill.h"
 #include "daunit.h"
+#include <QMutex>
 
 #define MAX_VEHICLE_CONTRAILS	2
 
@@ -125,6 +126,7 @@ private:
 
 private:
 	mutable QReadWriteLock				m_VehicleLock;
+	QMutex m_LegacyServiceLock; // Serialize occupants servicing the same city-supplied vehicle.
 	int									m_wActions;				// ACT_ Bits representing current actions to process during Tick.
 	AuId								m_MotherShip;			// Parent spaceship where I was fetched or last autoparked.
 	AuElapsedTimer						m_MotherShipChg;

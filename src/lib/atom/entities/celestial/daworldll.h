@@ -2442,7 +2442,10 @@ public:
 	// Shape for AuGlobeLL linear surface calculations.
 	virtual LLSHAPE LLShape() const = 0;
 
-	// Returns true if this world has a village with a non-zero population.
+	// Legacy settlements replace indigenous encounters after their first building.
+	bool HasEstablishedLegacyCity() const;
+
+	// Returns true if this world has an active village with a non-zero population.
 	bool HasVillage() const;
 
 	inline const AuVillage* LockVillage() const
@@ -2729,7 +2732,8 @@ public:
 
 	// Returns the altitude of the terrain at ll relative to MSL.
 	// Does not check for permanent terrain-like features such as the control center dais on a ringworld.
-	double TerrainAltitudeMSL(const AuGlobeLL& ll) const;
+	// Boat production excludes its own Legacy city's leveled shipyard terrain.
+	double TerrainAltitudeMSL(const AuGlobeLL& ll, const AuId& ignoreLegacyCity = AuId()) const;
 
 	// Returns the altitude of the terrain at ll relative to MSL.
 	// Does not check for permanent terrain-like features such as the control center dais on a ringworld.

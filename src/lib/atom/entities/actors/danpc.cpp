@@ -6072,7 +6072,7 @@ void DaNpc::MinuteTock()
 		else
 		{
 			const DaWorldLL* llworld = dynamic_cast<const DaWorldLL*>(FindParentPlanetInEnv());
-			if(!llworld || !llworld->Is(HomeWorldId()))
+			if(!llworld || !llworld->Is(HomeWorldId()) || llworld->HasEstablishedLegacyCity())
 				Kill();
 		}
 		break;

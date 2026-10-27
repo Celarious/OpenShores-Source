@@ -15,10 +15,17 @@
 void DaLegacyCity::ReceiveTaxLevy(double amount)
 {
 	if(!(amount > 0) || !std::isfinite(amount)) return;
+	const quint32 empire = EmpireId();
+	AuId capital;
+	const DgData& gd = g_Au.LockDataForRead();
+	const bool hasCapital = gd.EmpireCapital(empire, capital) && !capital.IsNull();
+	g_Au.UnlockData();
 	QWriteLocker lock(&m_CityLock);
 	AuLegacyCity::AccountingState accounting;
 	QString error;
-	if(!AuLegacyCity::DecodeAccounting(m_City.accounting, accounting, error) || !accounting.taxes.hasCapital) return;
+	if(m_City.controllingEmpire != empire || !AuLegacyCity::DecodeAccounting(m_City.accounting, accounting, error)) return;
+	accounting.taxes.hasCapital = hasCapital;
+	if(!accounting.taxes.hasCapital) return;
 	accounting.accounts.Credit(AuLegacyCity::GovernmentIncome::TaxLevy, amount, accounting.taxes.hasCapital);
 	QByteArray encoded;
 	if(!AuLegacyCity::EncodeAccounting(accounting, encoded, error)) return;
@@ -56,7 +63,7 @@ bool DaLegacyCity::OperateBank(DaPerson& person, const AuLegacyCityProtocol::Req
 	person.ChainOfPlaces(places);
 	AuId capital;
 	const DgData& gd = g_Au.LockDataForRead();
-	const bool hasCapital = gd.EmpireCapital(empire, capital);
+	const bool hasCapital = gd.EmpireCapital(empire, capital) && !capital.IsNull();
 	const bool governmentAuthorized = ownEmpire && gd.EmpireCitizenCanAccessGovtAccount(empire, person.Id(), places);
 	const bool capitalAuthorized = ownEmpire && gd.EmpireCitizenCanSetCapital(empire, person.Id());
 	g_Au.UnlockData();
@@ -104,6 +111,11 @@ bool DaLegacyCity::OperateBank(DaPerson& person, const AuLegacyCityProtocol::Req
 			&& development.industryId == selected->industryId) { exists = true; break; }
 	if(!exists || !DecodeAccounting(m_City.accounting, accounting, error))
 	{ reply.message = error.isEmpty() ? tr("The bank is no longer available.") : error; return false; }
+	// Capital designation is published through the empire registry. Refresh
+	// its presence before using the treasury rather than waiting for the next
+	// population cycle to update the accounting cache.
+	const bool capitalRecognitionChanged = accounting.taxes.hasCapital != hasCapital;
+	accounting.taxes.hasCapital = hasCapital;
 	AuSpecies capitalSpecies;
 	QString capitalName;
 	if(request.action == SetEmpireCapital)
@@ -117,8 +129,7 @@ bool DaLegacyCity::OperateBank(DaPerson& person, const AuLegacyCityProtocol::Req
 	{ reply.message = tr("The government treasury does not contain that much money."); return false; }
 	if(borrow && accounting.accounts.LoanFundsAvailable(m_City.population) < request.money)
 	{ reply.message = tr("Bank reserve policies prevent a loan of that size at this time."); return false; }
-	// Government credits use the original city-cached capital predicate. The
-	// original caller still debits player cash when the city ignores a deposit.
+	// The original caller still debits player cash when no capital exists.
 	if(deposit) accounting.accounts.Credit(GovernmentIncome::Deposit, request.money, accounting.taxes.hasCapital);
 	if(withdraw) accounting.accounts.Debit(GovernmentExpense::Withdrawal, request.money);
 	if(borrow) accounting.accounts.Debit(CitizenExpense::Loans, request.money);
@@ -141,10 +152,13 @@ bool DaLegacyCity::OperateBank(DaPerson& person, const AuLegacyCityProtocol::Req
 	}
 	QByteArray encoded;
 	if(!EncodeAccounting(accounting, encoded, error)) { reply.message = error; return false; }
-	if(mutation)
+	if(mutation || capitalRecognitionChanged)
 	{
 		m_City.accounting = encoded;
 		++m_CityRevision;
+	}
+	if(mutation)
+	{
 		reply.accepted = true;
 		reply.message = tr("Bank transaction completed.");
 	}
@@ -188,7 +202,7 @@ bool DaLegacyCity::OperateBank(DaPerson& person, const AuLegacyCityProtocol::Req
 	reply.bankPersonalLoan = person.LoanBalance();
 	reply.bankPersonalReward = person.GetReward();
 	reply.bankCreditAvailable = std::max(0.0, person.CreditLimit() - reply.bankPersonalLoan);
-	if(mutation) SetModified();
+	if(mutation || capitalRecognitionChanged) SetModified();
 	if(request.action == BankState) reply.accepted = true;
 	return true;
 }

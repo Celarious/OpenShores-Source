@@ -16,6 +16,7 @@
 #include "ausound.h"
 #include "daatomlist.h"
 #include "dabd.h"
+#include "dalegacycity.h"
 #include "daeffect.h"
 #include "dagalaxy.h"
 #include "daitem.h"
@@ -30,6 +31,7 @@
 #include "dgdata.h"
 #include "dicontrolinput.h"
 #include "psfiresmoketrail.h"
+#include <QMutexLocker>
 #include <QSqlError>
 #include <QSqlQuery>
 
@@ -8755,6 +8757,7 @@ void DaVehicle::SetAtRest()
 // 'person' may provide fuel if it can't be acquired from the environment.
 void DaVehicle::Service(DaPerson* person)
 {
+	QMutexLocker serviceLock(g_Au.IsLegacyGeneration() ? &m_LegacyServiceLock : nullptr);
 	if(IsLaunching())
 		return;
 	// Must be going less than 1m/s to get serviced.
@@ -8831,7 +8834,16 @@ void DaVehicle::Service(DaPerson* person)
 			DaWorld* planet = FindParentPlanetInEnv();
 			if(planet)
 			{
-				if(!BdId().IsNull())
+				if(g_Au.IsLegacyGeneration())
+				{
+					// Legacy slabs belong to city developments, without a DaBd
+					// identity. Both the Service button and CI_Service reach here.
+					const AuId cityId = LockEnvironmentQuery()->LegacyCityId();
+					UnlockEnvironmentQuery();
+					if(auto* city = dynamic_cast<DaLegacyCity*>(planet->FindSubatomId(cityId)))
+						city->ServiceVehicle(*this, *person);
+				}
+				else if(!BdId().IsNull())
 				{
 					// At a building.
 					INDUSTRYID iid = InIndustry();

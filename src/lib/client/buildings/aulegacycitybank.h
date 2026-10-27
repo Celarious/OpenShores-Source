@@ -24,13 +24,15 @@ protected:
 
 private:
 	quint32 m_CityId = 0, m_DevelopmentId = 0, m_PendingToken = 0;
-	bool m_Capitol = false, m_RefreshQueued = false;
+	bool m_Capitol = false, m_RefreshQueued = false, m_HasState = false;
 	AuLegacyCityProtocol::Reply m_State;
+	QVector<AuLegacyCityProtocol::Request> m_DeferredRequests;
 	QLabel *m_Balances, *m_Message, *m_AmountLabel;
 	QLineEdit* m_Amount;
 	QPushButton *m_Deposit, *m_Withdraw, *m_Borrow, *m_Repay, *m_SetCapital, *m_ClaimRewards;
-	QTimer *m_Timer, *m_Timeout;
+	QTimer *m_Timer, *m_Timeout, *m_DeferredTimer;
 	void Submit(AuLegacyCityProtocol::Action action);
+	void SendRequest(const AuLegacyCityProtocol::Request& request);
 	void ReceiveReply(QByteArray payload);
 	void UpdateControls();
 	void ResetTransport();

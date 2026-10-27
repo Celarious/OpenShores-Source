@@ -8,6 +8,7 @@
 #include "aulegacycitizenconstruction.h"
 #include "aulegacycitysupply.h"
 #include "aulegacycityfarm.h"
+#include "aulegacycityvehicles.h"
 #include "aulegacyconstructionmaterials.h"
 #include "aucityreport.h"
 #include "audice.h"
@@ -368,7 +369,7 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 	const quint8 zone = quint8(world->OrbitZone());
 	const bool populationDue = before.lastPopulationCycle && now >= before.lastPopulationCycle
 		&& double((now - before.lastPopulationCycle) / 1000) >= 771.4285714285714;
-	const auto empireTaxes = populationDue ? CityTaxes(before.controllingEmpire, HasBank(before)) : TaxRates();
+	const auto empireTaxes = CityTaxes(before.controllingEmpire, HasBank(before));
 	PopulationRuntimeFacts populationFacts;
 	QList<quint16> cycleVehicles;
 	if(populationDue)
@@ -403,6 +404,7 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 		cycleReport.reset(new AuCityReport(GatherCityReport(before, populationFacts)));
 	const auto cityLocation = Location();
 	QHash<quint32, ProcessEnvironment> environments;
+	QHash<quint32, AuZoneResource> vehicleResources;
 	QHash<quint32, CitizenConstructionFacts> constructionFacts;
 	QHash<quint32, DevelopmentSupplyFacts> supplyFacts;
 	QHash<quint32, quint16> defaultRecipes;
@@ -416,6 +418,7 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 	{
 		if(dev.demolished) continue;
 		environments.insert(dev.id, QueryProcessEnvironment(*world, cityLocation, dev));
+		vehicleResources.insert(dev.id, environments.value(dev.id).output);
 		if(!dev.components.isEmpty()) constructionFacts.insert(dev.id, GatherCitizenConstructionFacts(before, dev, now));
 		if(ManufacturingSlots(dev.industryId, dev.completedLevels))
 			supplyFacts.insert(dev.id, GatherDevelopmentSupplyFacts(before, dev, now));
@@ -434,6 +437,9 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 				COMMODITYID(catalogue->RuntimeCommodityId(CommodityId(historical))));
 		}));
 	}
+	VehicleProductionBatch vehicleProduction;
+	if(!PrepareVehicleProduction(*this, *world, before, existing, vehicleResources, now, vehicleProduction, existingError))
+	{ qWarning() << "Legacy city vehicles:" << Id() << existingError; return; }
 	AuLegacyConstructionMaterials::Batch constructionMaterials;
 	bool constructionChanged = false, physicalChanged = false;
 	PowerImportBatch powerImports(*this);
@@ -443,6 +449,10 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 	AuItemHash inventory; ProductionState production; AccountingState accounting; QString error;
 	if(!ReadEconomy(*catalogue, state, inventory, production, accounting, error))
 	{ qWarning() << "Legacy city economy:" << Id() << error; return; }
+	// Treasury availability follows the authoritative capital designation as
+	// soon as it arrives, including before the first population cycle. Tax
+	// percentages retain their original population-cycle refresh below.
+	accounting.taxes.hasCapital = empireTaxes.hasCapital;
 	TaxRates taxes = accounting.taxes;
 	bool jobsChanged = false;
 	QHash<quint32, int> developmentIndexes;
@@ -622,7 +632,17 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 				}
 				else if(output.unit)
 				{
-					switch(output.commodityId)
+					if(IsSpawnedProductionVehicle(output.commodityId))
+					{
+						if(vehicleProduction.Apply(dev.id, process.slot, output, state, inventory))
+						{
+							if(!production.vehicles.contains(output.commodityId)) production.vehicles.append(output.commodityId);
+							process.lastQuantity = 1;
+							ConsumeProductionComponents(process);
+						}
+						else process.lastQuantity = -1; // Keep applied materials for another spawn attempt.
+					}
+					else switch(output.commodityId)
 					{
 					case 54: // Mine machinery
 					case 70: // Commercial ship
@@ -639,7 +659,6 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 						process.lastQuantity = -99;
 						break;
 					default:
-						// Stage 6 supplies the remaining world-spawn transactions.
 						process.lastQuantity = -99;
 						break;
 					}
@@ -732,6 +751,7 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 	powerImports.Publish();
 	if(changed) SetModified();
 	farmProduction.Publish(state.controllingEmpire);
+	vehicleProduction.Publish(state.controllingEmpire);
 	constructionMaterials.Finalize();
 	if(before.population != state.population) world->WorldPopulationChanged();
 	if(physicalChanged) world->InvalidateEnvironmentRecursive();

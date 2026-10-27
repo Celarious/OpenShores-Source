@@ -916,9 +916,9 @@ void AuLegacyCityLabor::UpdateControls()
 	m_StudioCityId = studioCity; m_StudioDevelopmentId = studioDevelopment;
 	m_Studio->SetTarget(studioCity, studioDevelopment,
 		m_StudioStateValid ? m_StudioLevelCount : designStudio ? entry->completedLevels : 0);
-	m_Studio->setEnabled(m_StudioStateValid
-		&& !(m_StudioRequestQueued && m_QueuedStudioRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio)
-		&& !(m_PendingToken && m_PendingRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio));
+	// Occupancy snapshots control the individual studio buttons. Queued or
+	// pending requests must not disable the whole building interface.
+	m_Studio->setEnabled(designStudio);
 	m_Manufacture->SetTarget(entry && !designStudio ? entry->cityId : 0, entry && !designStudio ? entry->developmentId : 0);
 	// Hidden production pages still receive the occupied site's snapshot.
 	// This also discovers processes when the server initializes a new level.

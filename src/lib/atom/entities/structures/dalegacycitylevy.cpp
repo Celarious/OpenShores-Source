@@ -24,10 +24,17 @@ bool HasBank(const AuLegacyCity::State& state)
 bool DaLegacyCity::ReceiveConfiscatedWealth(quint32 empire, double amount)
 {
 	using namespace AuLegacyCity;
+	if(!std::isfinite(amount) || amount < 1) return false;
+	AuId capital;
+	const DgData& gd = g_Au.LockDataForRead();
+	const bool hasCapital = gd.EmpireCapital(empire, capital) && !capital.IsNull();
+	g_Au.UnlockData();
 	QWriteLocker lock(&m_CityLock);
 	AccountingState accounting; QString error;
-	if(!std::isfinite(amount) || amount < 1 || m_City.controllingEmpire != empire || !HasBank(m_City)
-		|| !DecodeAccounting(m_City.accounting, accounting, error) || !accounting.taxes.hasCapital) return false;
+	if(m_City.controllingEmpire != empire || !HasBank(m_City)
+		|| !DecodeAccounting(m_City.accounting, accounting, error)) return false;
+	accounting.taxes.hasCapital = hasCapital;
+	if(!accounting.taxes.hasCapital) return false;
 	accounting.accounts.Credit(GovernmentIncome::Confiscated, amount, accounting.taxes.hasCapital);
 	QByteArray bytes;
 	if(!EncodeAccounting(accounting, bytes, error)) return false;
@@ -48,6 +55,10 @@ void DaLegacyCity::ApplyWealthLevy(const AuLegacyCity::WealthLevyOrder& order)
 		{ QReadLocker read(&m_CityLock); candidate = m_City; revision = m_CityRevision; }
 		AccountingState accounting; QString error;
 		if(!DecodeAccounting(candidate.accounting, accounting, error)) return;
+		AuId capital;
+		const DgData& data = g_Au.LockDataForRead();
+		accounting.taxes.hasCapital = data.EmpireCapital(candidate.controllingEmpire, capital) && !capital.IsNull();
+		g_Au.UnlockData();
 		WealthLevyContext context;
 		context.population = candidate.population; context.loyalPopulation = candidate.loyalPopulation;
 		context.fraction = float(order.percent) / 100.0f;

@@ -11,6 +11,8 @@ class AuCityReport;
 class AuCityReportHistory;
 class AuItemHash;
 class DaItem;
+class DaVehicle;
+class AuLegacyCityCatalogue;
 namespace AuLegacyCity { struct CitizenConstructionFacts; struct ProductionState; }
 namespace AuLegacyCity { struct PopulationRuntimeFacts; struct PopulationRuntimeReport; struct AccountingState; struct EmploymentTotals; }
 namespace AuLegacyCity { struct CityConnection; class PowerImportBatch; }
@@ -38,6 +40,7 @@ public:
 	bool IsTicker() const override { return false; }
 	unsigned int IsTocker() const override { return 1; }
 	void Tock(const AuTime& last, const AuTime& now, const AuScripts& scripts, DtTockTransactions& transactions) override;
+	void RxChatMessage(const AuCommPacket* message, quint32& countSupplied, bool firstInGroup = true) override;
 	QString Name() const override;
 	void SetName(const QString& name) override;
 	quint32 EmpireId() const override;
@@ -48,6 +51,8 @@ public:
 	// destinations use the historical random ground point near the town square.
 	AuPoint SpawnLocation(const AuGlobeLLF* home = nullptr) const;
 	AuLegacyCity::State Snapshot() const;
+	// A finished building establishes the settlement; flags and landscaping do not.
+	bool HasCompletedBuilding() const;
 	void RegisterEmpireVisit(quint32 empireId, qint64 now);
 	// Newly authored shared display envelope; no 2016 database binary import.
 	bool ReportHistory(AuCityReportHistory& result) const;
@@ -83,6 +88,7 @@ public:
 		bool fetch, bool run, QString& error);
 	bool OperateBank(DaPerson& person, const AuLegacyCityProtocol::Request& request,
 		AuLegacyCityProtocol::Reply& reply);
+	void ServiceVehicle(DaVehicle& vehicle, DaPerson& person);
 	void ReceiveTaxLevy(double amount);
 	void ApplyWealthLevy(const AuLegacyCity::WealthLevyOrder& order);
 	bool Revolt(const QString& reason);
@@ -166,6 +172,10 @@ private:
 	AuLegacyCity::State m_City;
 	quint64 m_CityRevision = 1;
 	QHash<quint32, qint64> m_ConstructionLaborTimes;
+	bool m_TradeMonitored = false;
+	QHash<QByteArray, QPair<quint32, qint64>> m_ShopPrices;
+	quint32 CachedShopPrice(const AuLegacyCityCatalogue& catalogue, const AuLegacyCity::State& state,
+		const AuItemHash& inventory, const AuLegacyCity::ProductionState& production, const AuItem& item, quint8 industry);
 	struct Runtime;
 	mutable QScopedPointer<Runtime> m_Runtime;
 	bool ApplyPayload(const QByteArray& bytes, QString& error);

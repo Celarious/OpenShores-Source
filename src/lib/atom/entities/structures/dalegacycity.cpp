@@ -6,6 +6,7 @@
 #include "aucityreport.h"
 #include "aubox.h"
 #include "auglobal.h"
+#include "aucommstdchannel.h"
 #include "augllight.h"
 #include "aulegacybd.h"
 #include "aulegacybiodome.h"
@@ -1213,6 +1214,14 @@ DaLegacyCity::DaLegacyCity(const DaLegacyCity& city) : DaAtom(city), m_Runtime(n
 }
 DaAtom* DaLegacyCity::Clone() const { return new DaLegacyCity(*this); }
 AuLegacyCity::State DaLegacyCity::Snapshot() const { QReadLocker lock(&m_CityLock); return m_City; }
+bool DaLegacyCity::HasCompletedBuilding() const
+{
+	QReadLocker lock(&m_CityLock);
+	for(const auto& development : m_City.developments)
+		if(development.designId && development.completedLevels && !development.demolished)
+			return true;
+	return false;
+}
 bool DaLegacyCity::WriteReportHistory(const AuCityReportHistory& history, QByteArray& bytes, QString& error)
 {
 	error.clear();
@@ -2447,6 +2456,13 @@ void DaLegacyCity::Tock(const AuTime& last, const AuTime& now, const AuScripts& 
 	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker()) return;
 	DaAtom::Tock(last,now,scripts,transactions);
 	if(IsDead() || !last.IsNewPeriod(now,1000,Id().GetID())) return;
+	bool monitorTrade = false;
+	{
+		QWriteLocker lock(&m_CityLock);
+		if(!m_TradeMonitored || last.IsNewPeriod(now, 15 * d_MSecPerMin, Id().GetID()))
+		{ m_TradeMonitored = true; monitorTrade = true; }
+	}
+	if(monitorTrade) g_Au.MonitorChannel(AuCommStdChannel::TradeChannelName(), Id());
 	TockEconomy(last.MSecsSinceEpoch(), QDateTime::currentMSecsSinceEpoch());
 }
 
