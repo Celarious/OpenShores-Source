@@ -972,6 +972,7 @@ void AuSetProgram::BitChanged(int state, int bit)
 			g_Au.m_DebugSwitches |= 0x00000002;					// Turn the bit on.
 		else
 			g_Au.m_DebugSwitches &= ~0x00000002;				// Turn the bit off.
+		g_Au.Settings().writeEntry("Settings/ShowFrameTime", state != 0);
 		break;
 
 	case 9:								// Frame rate on screen.
@@ -979,6 +980,7 @@ void AuSetProgram::BitChanged(int state, int bit)
 			g_Au.m_DebugSwitches |= 0x00000001;					// Turn the bit on.
 		else
 			g_Au.m_DebugSwitches &= ~0x00000001;				// Turn the bit off.
+		g_Au.Settings().writeEntry("Settings/ShowFPS", state != 0);
 		break;
 
 	case 10:

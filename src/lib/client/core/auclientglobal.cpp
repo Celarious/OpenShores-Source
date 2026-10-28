@@ -336,6 +336,11 @@ AuClientGlobal::AuClientGlobal(const QString& appName, const QString& settingsAp
 
 	m_PopupNotify = Settings().readNumEntry("Settings/PopupNotify", 2);
 
+	if(Settings().readBoolEntry("Settings/ShowFPS", false))
+		m_DebugSwitches |= 0x00000001;
+	if(Settings().readBoolEntry("Settings/ShowFrameTime", false))
+		m_DebugSwitches |= 0x00000002;
+
 	m_ShowNet = Settings().readBoolEntry("Settings/ShowNet", true);
 
 	m_ShowThreads = Settings().readBoolEntry("Settings/ShowThreads", true);
