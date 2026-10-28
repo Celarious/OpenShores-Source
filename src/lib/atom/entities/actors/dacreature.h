@@ -1355,6 +1355,7 @@ public:
 			DaAtomList& shadScRingworldFog);
 
 	virtual bool RoughExtents(AuBox &fExt) const;
+	bool RenderGeometryInFrustum(const AuMatrix4x4& projection, const AuMatrix4x4& model, const AuAtomRenderInfo& ari) const;
 	bool LegacyStandingExtents(AuBox& extents) const;
 	bool LegacyAnimationHidden() const { return m_LegacyAnimationHidden; }
 	void SetLegacyAnimationHidden(bool hidden);

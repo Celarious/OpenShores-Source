@@ -21,6 +21,7 @@
 #include "aulegacyship.h"
 #include "ausound.h"
 #include "ausynccontroller.h"
+#include "auviewfrustum.h"
 #include "daanimal.h"
 #include "daatomlist.h"
 #include "dabd.h"
@@ -2419,19 +2420,20 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 		if(m_LegacyDevicesDeferred) CreateDeviceObjects(ari);
 		if(resume) AnimatePose(HasItemInHand(), MovementSpeedMod());
 	}
-	if(!legacyVisible)
-	{
-		// A hidden creature does not hide a separately visible rider/child.
-		DaAtomList subs;
-		ListSubatoms(subs);
-		for(DaAtom* atom : subs)
-			atom->RenderEnvironmentObject(projection, ari, rmod, sceneAtom, renderLast, pass,
-				shadSc, shadScFog, shadScGlobe, shadScGlobeFog, shadScRingworld, shadScRingworldFog);
-	}
+	// A culled creature does not hide a separately visible rider/child.
+	DaAtomList subs;
+	ListSubatoms(subs);
+	for(DaAtom* atom : subs)
+		atom->RenderEnvironmentObject(projection, ari, rmod, sceneAtom, renderLast, pass,
+			shadSc, shadScFog, shadScGlobe, shadScGlobeFog, shadScRingworld, shadScRingworldFog);
 
 	// Determine if this creature is in front of the camera plane.
 	//qDebug() << "DaCreature::RenderEnvironmentObject" << Id() << Name() << "pv.z" << pv.z;
-	if(legacyVisible && (pv.z < 0 || pv.Length2() < 10*10))
+	const bool geometryVisible = legacyVisible && (ari.re->FrustumCulling()
+		? RenderGeometryInFrustum(projection, tThis, ari) : (pv.z < 0 || pv.Length2() < 10*10));
+	BodyPoseAdjustTransform(tThis);
+	tThisBody = tThis;
+	if(geometryVisible)
 	{
 		// Set current ambient light and fog states.
 		float ambientR, ambientG, ambientB, fogDensity, fogR, fogG, fogB;
@@ -2445,17 +2447,6 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 		QList<int> sunsDisabled;
 		if(sunsBlocked)
 			ari.re->DisableSuns(sunsDisabled);
-
-		// This creature is in front of the camera plane or within 10' of the camera.
-		BodyPoseAdjustTransform(tThis);
-		tThisBody = tThis;
-
-		// Render atoms subordinate to this animal, i.e. riding.
-		DaAtomList subs;
-		ListSubatoms(subs);
-		for(DaAtomList::const_iterator it = subs.cbegin(); it != subs.cend(); it++)
-			(*it)->RenderEnvironmentObject(projection, ari, rmod, sceneAtom, renderLast, pass, shadSc, shadScFog, shadScGlobe,
-					shadScGlobeFog, shadScRingworld, shadScRingworldFog);
 
 		// Scene atom has an option to turn off rendering their body.
 		// Scene atom's body is not rendered when manning a turret so it doesn't get in the way.
@@ -2595,22 +2586,6 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 			}
 		}
 
-		// For the scene atom, the gun in hand and the console at which the scene atom is sitting are rendered in :RenderScene.
-		if(this != sceneAtom)
-		{
-			// Render the console at which this non-scene atom is sitting.
-			// Don't render anything when sitting at a game table.
-			if(m_Console && !AuStation::IsGameTable(m_Console->Type()))
-				m_Console->Render(projection, projection, tThis, *sceneAtom, this, ari);
-
-			// Render the item in hand. RenderItemInHand already accounts for my CGOffset, if any.
-			bool renderItemInHand = HasItemInHand() &&
-				((m_Body && !m_Body->CurrentGeneralPose().HeadOnly() && !m_Body->IsTurretIntegratedPose()) ||
-				((m_Animalia && !m_Animalia->CurrentGeneralPose().HeadOnly() && !m_Animalia->IsTurretIntegratedPose())));
-			if(renderItemInHand)
-				RenderItemInHand(projection, tThisBody, ari, 1, sceneAtom, &renderLast);
-		}
-
 		// Restore suns that I disabled.
 		ari.re->EnableSuns(sunsDisabled);
 
@@ -2657,9 +2632,22 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 		}
 		*/
 
-		if(HasDNA4() || IsAnyConditionVisible())
-			renderLast.Insert(rmod, this);
 	}
+	// Consoles, held models and their effects have independent geometry bounds.
+	// The scene atom draws these attachments in RenderScene instead.
+	if(this != sceneAtom && legacyVisible && (ari.re->FrustumCulling() || geometryVisible))
+	{
+		if(m_Console && !AuStation::IsGameTable(m_Console->Type()))
+			m_Console->Render(projection, projection, tThis, *sceneAtom, this, ari);
+		const bool renderItemInHand = HasItemInHand() &&
+			((m_Body && !m_Body->CurrentGeneralPose().HeadOnly() && !m_Body->IsTurretIntegratedPose()) ||
+			((m_Animalia && !m_Animalia->CurrentGeneralPose().HeadOnly() && !m_Animalia->IsTurretIntegratedPose())));
+		if(renderItemInHand)
+			RenderItemInHand(projection, tThisBody, ari, 1, sceneAtom, &renderLast);
+	}
+	// Effects may reach into the view even when the anatomy does not.
+	if((geometryVisible && HasDNA4()) || IsAnyConditionVisible())
+		renderLast.Insert(rmod, this);
 
 	// OpenAL audio sources
 	RenderAudioSources(sceneAtom, tThisBody, ari.al, ari.fade);
@@ -2871,6 +2859,7 @@ void DaCreature::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari
 	DaUnit::RenderLast(projection, ari, rmod, sceneAtom, shadSc, shadScFog, shadScGlobe, shadScGlobeFog, shadScRingworld,
 			shadScRingworldFog);
 
+	const bool geometryVisible = RenderGeometryInFrustum(projection, rmod.Matrix(Id()), ari);
 	bool renderItemInHand = HasItemInHand() && g_Au.DrawGun() &&
 		((m_Body && !m_Body->CurrentGeneralPose().HeadOnly() && !m_Body->IsTurretIntegratedPose()) ||
 		((m_Animalia && !m_Animalia->CurrentGeneralPose().HeadOnly() && !m_Animalia->IsTurretIntegratedPose())));
@@ -2905,7 +2894,7 @@ void DaCreature::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari
 		}
 	}
 
-	if(m_Animalia)
+	if(geometryVisible && m_Animalia)
 	{
 		// Set current ambient light and fog states.
 		float ambientR, ambientG, ambientB, fogDensity, fogR, fogG, fogB;
@@ -4001,6 +3990,35 @@ bool DaCreature::LegacyStandingExtents(AuBox& extents) const
 	const AuPoint margin(padding, padding, padding);
 	extents.SetFromMinMax(minimum - margin, maximum + margin);
 	return true;
+}
+
+bool DaCreature::RenderGeometryInFrustum(const AuMatrix4x4& projection, const AuMatrix4x4& model,
+	const AuAtomRenderInfo& ari) const
+{
+	if(!ari.re->FrustumCulling() || IsMini() || (!m_Body && !m_Animalia)) return true;
+	AuPoint minimum, maximum;
+	if(m_Body ? !m_Body->RenderExtents(minimum, maximum) : !m_Animalia->RenderExtents(minimum, maximum)) return true;
+	// These bounds come from the actual uploaded geometry and current bones.
+	// An origin sphere also covers body/head rotations at stationary consoles.
+	const AuBox anatomy(minimum, maximum);
+	double radiusSquared = 0;
+	for(const AuPoint& corner : anatomy.m_fCorners)
+	{
+		const double lengthSquared = corner.Length2();
+		if(!std::isfinite(lengthSquared)) return true;
+		radiusSquared = std::max(radiusSquared, lengthSquared);
+	}
+	const AuPoint scale = GrowthScaleBody();
+	const double growthScale = std::max(std::abs(scale.x), std::max(std::abs(scale.y), std::abs(scale.z)));
+	double radius = std::sqrt(radiusSquared) * growthScale + CGOffset().Length() + 2;
+	const DaCreature* mount = dynamic_cast<const DaCreature*>(Parent());
+	if(mount)
+	{
+		const double thickness = mount->TorsoThickness()/2;
+		const AuPoint rideOffset = mount->CGOffset() + AuPoint(0, -thickness, thickness + TorsoThickness()/2) - Location();
+		radius += rideOffset.Length();
+	}
+	return AuViewFrustum(projection * model).IntersectsSphere(AuPoint(), radius);
 }
 
 bool DaCreature::RoughExtents(AuBox &fExt) const

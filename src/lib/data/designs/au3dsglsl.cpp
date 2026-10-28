@@ -14,6 +14,7 @@
 #include "auline.h"
 #include "aumatrix3x3.h"
 #include "auplane.h"
+#include "auviewfrustum.h"
 #include <QFile>
 #include <QThreadPool>
 
@@ -4184,6 +4185,7 @@ bool Au3dsGLSLModelInstance::CreateDeviceObjects(AuGLEffects& re, bool bLightsOn
 		m_Objects.CreateDeviceObjects(re, m_ModelsLit, m_Materials, true, m_ModelType, GL_ONE_MINUS_SRC_ALPHA);
 	}
 
+	CacheVisualBounds();
 	return true;
 }
 
@@ -4299,6 +4301,7 @@ bool Au3dsGLSLModelInstance::GLModel(AuGLEffects& re)
 		m_IntModelsLit.clear();	// Intermediate data is no longer needed.
 	}
 
+	CacheVisualBounds();
 	return true;
 }
 
@@ -4316,6 +4319,8 @@ void Au3dsGLSLModelInstance::ResourceReport(QDataStream& out) const
 
 bool Au3dsGLSLModelInstance::MergeTorsoWithInstance(Au3dsGLSLModelInstance *&pDest, double fuzz, bool bConnectOnly)
 {
+	m_VisualBoundsValid = false;
+	if(pDest) pDest->m_VisualBoundsValid = false;
 	bool bReturn = true;
 	QVector<Au3dsGLSLVGroup>::iterator itDestBottom = 0;
 	//QVector<Au3dsGLSLVGroup>::iterator itSourceTop = 0;
@@ -4660,6 +4665,8 @@ bool Au3dsGLSLModelInstance::MergeTorsoWithInstance(Au3dsGLSLModelInstance *&pDe
 
 bool Au3dsGLSLModelInstance::MergeHeadWithInstance(Au3dsGLSLModelInstance *&pDest, double fuzz)
 {
+	m_VisualBoundsValid = false;
+	if(pDest) pDest->m_VisualBoundsValid = false;
 	bool bReturn = true;
 	//QVector<Au3dsGLSLVGroup>::const_iterator itDestBottom = 0;
 	//QVector<Au3dsGLSLVGroup>::const_iterator itSourceTop = 0;
@@ -4956,10 +4963,51 @@ bool Au3dsGLSLModelInstance::MergeHeadWithInstance(Au3dsGLSLModelInstance *&pDes
 	return bReturn;
 }
 
+bool Au3dsGLSLModelInstance::UploadedBounds(AuPoint& minimum, AuPoint& maximum) const
+{
+	bool haveBounds = false;
+	const QList<Au3dsGLSLVAO>* lists[] = { &m_Models, &m_ModelsLit };
+	for(const QList<Au3dsGLSLVAO>* list : lists)
+		for(const Au3dsGLSLVAO& vao : *list)
+		{
+			if(!vao.VAO()) continue;
+			AuPoint lower, upper;
+			if(!vao.GetBounds(lower, upper)) return false;
+			if(!haveBounds)
+			{
+				minimum = lower;
+				maximum = upper;
+				haveBounds = true;
+			}
+			else
+			{
+				minimum = minimum.Min(lower);
+				maximum = maximum.Max(upper);
+			}
+		}
+	return haveBounds;
+}
+
+void Au3dsGLSLModelInstance::CacheVisualBounds()
+{
+	// Uploaded bounds already include the model's transforms, scaling and
+	// decorative geometry that collision extents deliberately exclude.
+	m_VisualBoundsValid = UploadedBounds(m_VisualMinimum, m_VisualMaximum);
+}
+
+bool Au3dsGLSLModelInstance::RenderGeometryInFrustum(const AuMatrix4x4& projection, const AuMatrix4x4& model,
+	const AuGLEffects& re) const
+{
+	// Animated body models are culled using their posed anatomy by DaCreature.
+	return !re.FrustumCulling() || !m_VisualBoundsValid
+		|| AuViewFrustum(projection * model).IntersectsBox(m_VisualMinimum, m_VisualMaximum);
+}
+
 void Au3dsGLSLModelInstance::RenderGLSLModelTex(const AuMatrix4x4& projection, const AuMatrix4x4& mv, AuGLEffects& re,
 		float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp, bool lightOn,
 		float alpha, bool useModelBlending) const
 {
+	if(!RenderGeometryInFrustum(projection, mv, re)) return;
 	re.GLSL().ModelTexShader().Select(projection, re);
 	re.GLSL().ModelTexShader().SetAmbientLight(ambientLightR, ambientLightG, ambientLightB);
 	re.GLSL().ModelTexShader().SetTexture(Texture());
@@ -5034,7 +5082,7 @@ void Au3dsGLSLModelInstance::RenderGLSLModelTexFog(const AuMatrix4x4& projection
 		float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp,
 		bool lightOn, float fogDensity, float fogR, float fogG, float fogB, float alpha, bool useModelBlending) const
 {
-	Q_UNUSED(projection);
+	if(!RenderGeometryInFrustum(projection, mv, re)) return;
 	re.GLSL().ModelTexFogShader().Select(projection, re);
 	re.GLSL().ModelTexFogShader().SetModelView(mv);
 	re.GLSL().ModelTexFogShader().SetTexture(Texture());
@@ -5105,7 +5153,7 @@ void Au3dsGLSLModelInstance::RenderGLSLModelTexFogGlobe(const AuMatrix4x4& proje
 		const AuPoint& globeP, float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp,
 		bool lightOn, float fogDensity, float fogR, float fogG, float fogB, float alpha) const
 {
-	Q_UNUSED(projection);
+	if(!RenderGeometryInFrustum(projection, mv, re)) return;
 	re.GLSL().ModelTexFogGlobeShader().Select(projection, re);
 	re.GLSL().ModelTexFogGlobeShader().SetModelView(mv);
 	re.GLSL().ModelTexFogGlobeShader().SetTexture(Texture());
@@ -5171,7 +5219,7 @@ void Au3dsGLSLModelInstance::RenderGLSLModelTexFogRingworld(const AuMatrix4x4& p
 		float shadowPanelSunAngles[MAX_SUNS], float ambientLightR, float ambientLightG, float ambientLightB,
 		const AuPoint& ambientLightUp, bool lightOn, float fogDensity, float fogR, float fogG, float fogB, float alpha) const
 {
-	Q_UNUSED(projection);
+	if(!RenderGeometryInFrustum(projection, mv, re)) return;
 	re.GLSL().ModelTexFogRingworldShader().Select(projection, re);
 	re.GLSL().ModelTexFogRingworldShader().SetModelView(mv);
 	re.GLSL().ModelTexFogRingworldShader().SetTexture(Texture());

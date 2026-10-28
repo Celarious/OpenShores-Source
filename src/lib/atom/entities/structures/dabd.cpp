@@ -9013,7 +9013,7 @@ void DaBd::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRenderIn
 			insideVisible = true;
 			rendership = true;
 		}
-		else if(pv.z >= diag)
+		else if(!ari.re->FrustumCulling() && pv.z >= diag)
 		{
 			// This building is far behind the eye plane.
 			insideVisible = false;
@@ -9510,6 +9510,7 @@ void DaBd::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, AuMo
 							verts << AuPointAlpha(spriteLoc.x, spriteLoc.y, spriteLoc.z, 1);
 						}
 						AuGLVAO vao;
+						ari.re->CullSprites(projection * tPar, verts);
 						vao.CreateForSprites(*ari.re, verts, GL_STREAM_DRAW);
 						if(vao.VAO())
 						{
@@ -9528,6 +9529,7 @@ void DaBd::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, AuMo
 						QList<AuPointAlpha> verts;
 						verts << AuPointAlpha(top.x, top.y, top.z, 1);
 						AuGLVAO vao;
+						ari.re->CullSprites(projection * tPar, verts);
 						vao.CreateForSprites(*ari.re, verts, GL_STREAM_DRAW);
 						if(vao.VAO())
 						{
@@ -9652,6 +9654,7 @@ void DaBd::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, AuMo
 							AuPointTex(display.vll.x, display.vll.y, display.vll.z, s,t));
 
 					AuGLVAO vao;
+					ari.re->CullTriangles(projection * myM, tris);
 					vao.CreateForTexture(*ari.re, tris, GL_STREAM_DRAW);
 					if(vao.VAO())
 					{
@@ -14636,6 +14639,8 @@ void DaBd::RenderLightSprites(const AuMatrix4x4& projection, const AuMatrix4x4& 
 	if(m_AV->m_LensBeaconGlows.empty() && !IsStreetLightOn() && (!m_AV->m_IsDark || m_AV->m_LensNavGlows.empty()) &&
 			(!m_AV->m_StrobesLit || m_AV->m_LensStrobeGlows.empty()))
 		return;
+	const bool frustumCulling = ari.re->FrustumCulling();
+	const AuViewFrustum frustum(projection * model);
 
 	ari.re->glEnable(GL_DEPTH_TEST);
 	ari.re->glDepthMask(GL_FALSE);
@@ -14664,7 +14669,8 @@ void DaBd::RenderLightSprites(const AuMatrix4x4& projection, const AuMatrix4x4& 
 			QList<AuPointAlpha> verts;
 			for(QHash<quint16, AuLensGlow>::const_iterator gi = m_AV->m_LensHeadlightGlows.cbegin(); gi != m_AV->m_LensHeadlightGlows.cend();
 					gi++)
-				verts << AuPointAlpha((*gi).Loc());
+				if(!frustumCulling || frustum.IntersectsSphere((*gi).Loc(), 0))
+					verts << AuPointAlpha((*gi).Loc());
 
 			// Make a VAO of the vertex locations.
 			AuGLVAO vao;
@@ -14695,6 +14701,7 @@ void DaBd::RenderLightSprites(const AuMatrix4x4& projection, const AuMatrix4x4& 
 				verts.clear();
 				for(QHash<quint16, AuLensGlow>::const_iterator gi = m_AV->m_LensNavGlows.cbegin(); gi != m_AV->m_LensNavGlows.cend(); gi++)
 				{
+					if(frustumCulling && !frustum.IntersectsSphere((*gi).Loc(), 0)) continue;
 					if(doneColors.contains((*gi).Color()))
 						continue;	// Skip lens colors that have already been done.
 					if(!passColorValid)
@@ -14739,7 +14746,8 @@ void DaBd::RenderLightSprites(const AuMatrix4x4& projection, const AuMatrix4x4& 
 			// Vertex locations of the particles.
 			QList<AuPointAlpha> verts;
 			for(QHash<quint16, AuLensGlow>::const_iterator gi = m_AV->m_LensStrobeGlows.cbegin(); gi != m_AV->m_LensStrobeGlows.cend(); gi++)
-				verts << AuPointAlpha((*gi).Loc());
+				if(!frustumCulling || frustum.IntersectsSphere((*gi).Loc(), 0))
+					verts << AuPointAlpha((*gi).Loc());
 
 			// Make a VAO of the vertex locations.
 			AuGLVAO vao;
@@ -14805,6 +14813,7 @@ void DaBd::RenderLightSprites(const AuMatrix4x4& projection, const AuMatrix4x4& 
 			lmodel.Translate((*gi).Loc());
 			lmodel *= AuPoint(1,0,0).GetAlignmentTransform(*ai);
 			lmodel.RotateX(m_AV->m_LensBeaconAngle);
+			if(frustumCulling && !m_AV->m_LightSpotVAO.IntersectsFrustum(AuViewFrustum(projection * lmodel))) continue;
 
 			ari.re->GLSL().TextureShader().SetColor((*gi).Color().redF(), (*gi).Color().greenF(), (*gi).Color().blueF(), 1);
 			ari.re->GLSL().TextureShader().SetProjectionModelView(projection * lmodel);

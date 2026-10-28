@@ -125,6 +125,13 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 		"When unchecked, the rain/snow effects are not drawn in the scene.</html>"));
 	connect(ckdrawprecip, SIGNAL(stateChanged(int)), SLOT(SetDrawWeatherEffects(int)));
 
+	QCheckBox* frustumCulling = new QCheckBox(tr("Frustum Culling"));
+	frustumCulling->setChecked(g_Au.FrustumCulling());
+	frustumCulling->setToolTip(tr("<html>Skip geometry and lights whose bounds are completely outside the camera view.<br>"
+			"A small margin keeps objects ready at the screen edges. Off-screen objects still move, make sounds and interact.<br>"
+			"Changes take effect immediately. Uncheck to compare rendering performance.</html>"));
+	connect(frustumCulling, SIGNAL(stateChanged(int)), SLOT(SetFrustumCulling(int)));
+
 	ckdrawhelmethud = new QCheckBox(tr("Draw Helmet HUD When Screen Elements Are Hidden"));
 	ckdrawhelmethud->setCheckState(g_Au.DrawHelmetHUDAlways()?Qt::Checked:Qt::Unchecked);
 	ckdrawhelmethud->setToolTip(tr("<html>When checked, the helmet HUD is drawn even if screen elements are hidden.<br>"
@@ -604,6 +611,7 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	cklay->addWidget(ckdrawneb);
 	cklay->addWidget(ckdrawspecks);
 	cklay->addWidget(ckdrawprecip);
+	cklay->addWidget(frustumCulling);
 	cklay->addWidget(ckdrawhelmethud);
 	cklay->addWidget(classicLoadingAnimation);
 
@@ -690,6 +698,11 @@ void AuSetRender::SetBumpMapSeas(int value)
 void AuSetRender::SetDrawWeatherEffects(int value)
 {
 	g_Au.SetDrawWeatherEffects(value ? true : false);
+}
+
+void AuSetRender::SetFrustumCulling(int value)
+{
+	g_Au.SetFrustumCulling(value ? true : false);
 }
 
 void AuSetRender::SetDrawHelmetHUDAlways(int value)

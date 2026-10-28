@@ -1137,7 +1137,7 @@ void DaWorldRingSection::RenderEnvironmentObject(const AuMatrix4x4& projection, 
 			renderThisPass = pass == PASS_Far;
 			AuPoint pvs = model.Project(LocOfLL(AuGlobeLL(-PI,0)));	// Start-center location of ring section relative to the viewer.
 			AuPoint pve = model.Project(LocOfLL(AuGlobeLL(PI,0)));	// End-center location of ring section relative to the viewer.
-			if(pv.z < 0. || pvs.z < 0. || pve.z < 0.)
+			if(ari.re->FrustumCulling() || pv.z < 0. || pvs.z < 0. || pve.z < 0.)
 			{
 				// This planet is in front of the camera plane.
 				// We don't need the globe itself at this distance.
@@ -1411,6 +1411,7 @@ void DaWorldRingSection::RenderSeaGlobe(const AuMatrix4x4& projection, const AuM
 
 			// Generate vertex array(s) for this object. We only need one.
 			m_SeaGlobe.CreateGL(re, vertices, 4);
+			m_SeaGlobe.SetBounds(globePos, vertices, 3);
 
 			// Select vertex array to construct.
 			m_SeaGlobe.SelectGL();
@@ -1560,6 +1561,7 @@ void DaWorldRingSection::RenderSeaGlobe(const AuMatrix4x4& projection, const AuM
 
 			// Generate vertex array(s) for this object. We only need one.
 			m_UnderseaGlobe.CreateGL(re, vertices, 4);
+			m_UnderseaGlobe.SetBounds(globePos, vertices, 3);
 
 			// Select vertex array to construct.
 			m_UnderseaGlobe.SelectGL();
@@ -1594,6 +1596,14 @@ void DaWorldRingSection::RenderSeaGlobe(const AuMatrix4x4& projection, const AuM
 			delete [] globeTex;
 			delete [] globeTan;
 		}
+	}
+
+	if(re.FrustumCulling())
+	{
+		const AuViewFrustum frustum(projection * model);
+		if(!m_SeaGlobe.IntersectsFrustum(frustum)
+			&& (!bothLayers || !m_UnderseaGlobe.IntersectsFrustum(frustum)))
+			return;
 	}
 
 	if(g_Au.BumpMapSeas())
@@ -2115,6 +2125,7 @@ void DaWorldRingSection::CreateAtmosphereVAO(AuOpenGLFunctions& GLf)
 
 	// Generate vertex array(s) for this object. We only need one.
 	m_Atmosphere.CreateGL(GLf, vertices, 2);
+	m_Atmosphere.SetBounds(globePos, vertices, 3);
 
 	// Select vertex array to construct.
 	m_Atmosphere.SelectGL();
@@ -2233,6 +2244,7 @@ void DaWorldRingSection::CreateCloudsVAO(AuOpenGLFunctions& GLf)
 
 	// Generate vertex array(s) for this object. We only need one.
 	m_Clouds.CreateGL(GLf, vertices, 3);
+	m_Clouds.SetBounds(globePos, vertices, 3);
 
 	// Select vertex array to construct.
 	m_Clouds.SelectGL();
@@ -2271,6 +2283,10 @@ void DaWorldRingSection::CreateCloudsVAO(AuOpenGLFunctions& GLf)
 void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re,
 		AuGLModelMaker& mm, int viewerContext, double viewerAlt, bool clouds, float atmIllumination, float atmOpacity)
 {
+	const bool cull = re.FrustumCulling();
+	const AuViewFrustum frustum(projection * model);
+	const double shellPadding = qAbs(AtmosphereHeightMSL()) + 1;
+
 	if(viewerContext == 2)
 	{
 		// Far Globe
@@ -2342,7 +2358,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 			re.glFrontFace(GL_CCW);
 
 			m_Atmosphere.SelectGL();
-			m_Atmosphere.DrawGL();
+			if(!cull || m_Atmosphere.IntersectsFrustum(frustum, shellPadding))
+				m_Atmosphere.DrawGL();
 			m_Atmosphere.DeselectGL();
 
 			re.GLSL().AtmosphereRingworldShader().Deselect();
@@ -2408,7 +2425,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 							// Display a single cloud layer.
 							re.GLSL().CloudRingworldShader().SetCloudLiftMax(0);
 							m_Clouds.SelectGL();
-							m_Clouds.DrawGL();
+							if(!cull || m_Clouds.IntersectsFrustum(frustum, shellPadding))
+								m_Clouds.DrawGL();
 							m_Clouds.DeselectGL();
 						}
 						break;
@@ -2423,7 +2441,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 								{
 									float lift = liftMax * tops;
 									re.GLSL().CloudRingworldShader().SetCloudLiftMax(lift);
-									m_Clouds.DrawGL();
+									if(!cull || m_Clouds.IntersectsFrustum(frustum, shellPadding))
+										m_Clouds.DrawGL();
 								}
 								m_Clouds.DeselectGL();
 							}
@@ -2435,7 +2454,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 								{
 									float lift = liftMax * tops;
 									re.GLSL().CloudRingworldShader().SetCloudLiftMax(lift);
-									m_Clouds.DrawGL();
+									if(!cull || m_Clouds.IntersectsFrustum(frustum, shellPadding))
+										m_Clouds.DrawGL();
 								}
 								m_Clouds.DeselectGL();
 							}
@@ -2452,7 +2472,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 								{
 									float lift = liftMax * tops / 4;
 									re.GLSL().CloudRingworldShader().SetCloudLiftMax(lift);
-									m_Clouds.DrawGL();
+									if(!cull || m_Clouds.IntersectsFrustum(frustum, shellPadding))
+										m_Clouds.DrawGL();
 								}
 								m_Clouds.DeselectGL();
 							}
@@ -2464,7 +2485,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 								{
 									float lift = liftMax * tops / 4;
 									re.GLSL().CloudRingworldShader().SetCloudLiftMax(lift);
-									m_Clouds.DrawGL();
+									if(!cull || m_Clouds.IntersectsFrustum(frustum, shellPadding))
+										m_Clouds.DrawGL();
 								}
 								m_Clouds.DeselectGL();
 							}
@@ -2554,7 +2576,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 							// Display a single cloud layer.
 							re.GLSL().CloudRingworldShader().SetCloudLiftMax(0);
 							m_Clouds.SelectGL();
-							m_Clouds.DrawGL();
+							if(!cull || m_Clouds.IntersectsFrustum(frustum, shellPadding))
+								m_Clouds.DrawGL();
 							m_Clouds.DeselectGL();
 						}
 						break;
@@ -2567,7 +2590,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 							{
 								float lift = liftMax * tops;
 								re.GLSL().CloudRingworldShader().SetCloudLiftMax(lift);
-								m_Clouds.DrawGL();
+								if(!cull || m_Clouds.IntersectsFrustum(frustum, shellPadding))
+									m_Clouds.DrawGL();
 							}
 							m_Clouds.DeselectGL();
 						}
@@ -2581,7 +2605,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 							{
 								float lift = liftMax * tops / 4;
 								re.GLSL().CloudRingworldShader().SetCloudLiftMax(lift);
-								m_Clouds.DrawGL();
+								if(!cull || m_Clouds.IntersectsFrustum(frustum, shellPadding))
+									m_Clouds.DrawGL();
 							}
 							m_Clouds.DeselectGL();
 						}
@@ -2629,7 +2654,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 			{
 				double altMSL = topRad * shell / shells;
 				re.GLSL().AtmosphereRingworldShader().SetAtmosphereAltitudeMSL(altMSL);
-				m_Atmosphere.DrawGL();
+				if(!cull || m_Atmosphere.IntersectsFrustum(frustum, shellPadding))
+					m_Atmosphere.DrawGL();
 			}
 
 			m_Atmosphere.DeselectGL();
@@ -2695,7 +2721,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 
 				// Render the planet.
 				m_Clouds.SelectGL();
-				m_Clouds.DrawGL();
+				if(!cull || m_Clouds.IntersectsFrustum(frustum, shellPadding))
+					m_Clouds.DrawGL();
 				m_Clouds.DeselectGL();
 
 				re.GLSL().FarRingworldLitCloudsShader().Deselect();
@@ -2730,7 +2757,8 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 
 				// Render the planet.
 				m_Clouds.SelectGL();
-				m_Clouds.DrawGL();
+				if(!cull || m_Clouds.IntersectsFrustum(frustum, shellPadding))
+					m_Clouds.DrawGL();
 				m_Clouds.DeselectGL();
 
 				re.GLSL().FarRingworldLitShader().Deselect();
@@ -3017,6 +3045,7 @@ void DaWorldRingSection::CreateShadowSquareVAO(AuOpenGLFunctions& GLf)
 
 	// Generate vertex array(s) for this object. We only need one.
 	m_ShadowSquare.CreateGL(GLf, vertices, 3);
+	m_ShadowSquare.SetBounds(globePos, vertices, 3);
 
 	// Select vertex array to construct.
 	m_ShadowSquare.SelectGL();
@@ -3058,6 +3087,8 @@ void DaWorldRingSection::RenderShadowSquare(const AuMatrix4x4& projection, const
 	panelM.Translate(-panelVec);
 	panelM.RotateY(m_RotationAngle);
 	panelM.Translate(panelVec);
+	if(re.FrustumCulling() && !m_ShadowSquare.IntersectsFrustum(AuViewFrustum(projection * panelM)))
+		return;
 
 	// Configure far globe shader. All planet details are blended into a single surface texture.
 	re.GLSL().ShadowSquareShader().Select();
@@ -3099,6 +3130,8 @@ void DaWorldRingSection::RenderShadowSquareStatue(const AuMatrix4x4& projection,
 	panelM.Translate(-panelVec);
 	panelM.RotateY(m_RotationAngle);
 	panelM.Translate(panelVec);
+	if(re.FrustumCulling() && !m_ShadowSquare.IntersectsFrustum(AuViewFrustum(projection * panelM)))
+		return;
 
 	// Configure far globe shader. All planet details are blended into a single surface texture.
 	re.GLSL().RingworldStatueShader().Select();
@@ -3366,6 +3399,7 @@ void DaWorldRingSection::CreateHullVAO(AuOpenGLFunctions& GLf)
 
 	// Generate vertex array(s) for this object. We only need one.
 	m_Hull.CreateGL(GLf, vertices, 3);
+	m_Hull.SetBounds(globePos, vertices, 3);
 
 	// Select vertex array to construct.
 	m_Hull.SelectGL();
@@ -3400,6 +3434,8 @@ void DaWorldRingSection::RenderHull(const AuMatrix4x4& projection, const AuMatri
 {
 	if(!m_Hull.VAO())
 		CreateHullVAO(re);
+	if(re.FrustumCulling() && !m_Hull.IntersectsFrustum(AuViewFrustum(projection * model)))
+		return;
 
 	m_Hull.SelectGL();
 
@@ -3474,6 +3510,8 @@ void DaWorldRingSection::RenderHullStatue(const AuMatrix4x4& projection, const A
 {
 	if(!m_Hull.VAO())
 		CreateHullVAO(re);
+	if(re.FrustumCulling() && !m_Hull.IntersectsFrustum(AuViewFrustum(projection * model)))
+		return;
 
 	// Configure statue shader.
 	re.GLSL().RingworldStatueShader().Select();
@@ -3680,6 +3718,7 @@ void DaWorldRingSection::RenderControlCenter(const AuMatrix4x4& projection, cons
 
 		// Generate vertex array(s) for this object. We only need one.
 		m_Obelisk.CreateGL(re, vertices, 3);
+		m_Obelisk.SetBounds(pos, vertices, 3);
 
 		// Select vertex array to construct.
 		m_Obelisk.SelectGL();
@@ -3753,7 +3792,8 @@ void DaWorldRingSection::RenderControlCenter(const AuMatrix4x4& projection, cons
 	}
 
 	// Render the control center obelisks.
-	m_Obelisk.DrawGL();
+	if(!re.FrustumCulling() || m_Obelisk.IntersectsFrustum(AuViewFrustum(projection * model)))
+		m_Obelisk.DrawGL();
 
 	re.GLSL().RingworldStatueShader().Deselect();
 
@@ -8391,6 +8431,9 @@ void DaWorldRingSection::RenderNearGlobe(const AuMatrix4x4& projection, const Au
 	//glDisable(GL_CULL_FACE);
 	//glPolygonMode(GL_BACK, GL_LINE);
 
+	if(ari.re->FrustumCulling() && !m_NearGlobe.IntersectsFrustum(AuViewFrustum(projection * model)))
+		return;
+
 	m_NearGlobe.SelectGL();
 
 	// Cities use the glow shader for the glow effect of the city lights.
@@ -8489,6 +8532,9 @@ void DaWorldRingSection::RenderNearGlobeFog(const AuMatrix4x4& projection, const
 
 	//glDisable(GL_CULL_FACE);
 	//glPolygonMode(GL_BACK, GL_LINE);
+
+	if(ari.re->FrustumCulling() && !m_NearGlobe.IntersectsFrustum(AuViewFrustum(projection * model)))
+		return;
 
 	m_NearGlobe.SelectGL();
 
@@ -8626,6 +8672,9 @@ void DaWorldRingSection::RenderAtGlobe(const AuMatrix4x4& projection, const AuMa
 	//glPolygonMode(GL_BACK, GL_LINE);
 //#endif
 
+	const bool cull = ari.re->FrustumCulling();
+	const AuViewFrustum frustum(projection * model);
+
 	// Periodically we cleanup unneeded terrain patches. Our frame rate drops to a crawl if we do this in every frame.
 	bool timeForCleanup = !m_TerrainCleanupTime.isValid() || m_TerrainCleanupTime.elapsed() > 3000;
 	if(timeForCleanup)
@@ -8729,9 +8778,15 @@ void DaWorldRingSection::RenderAtGlobe(const AuMatrix4x4& projection, const AuMa
 			if(vi != m_AtGlobe.m_TriVAOs.end())
 			{
 				// Display the high-tessellation VAO.
-				(*vi).second.SelectGL();
-				(*vi).second.DrawGL();
-				(*vi).second.DeselectGL();
+				if(!cull || (*vi).second.IntersectsFrustum(frustum))
+				{
+					(*vi).second.SelectGL();
+					(*vi).second.DrawGL();
+					(*vi).second.DeselectGL();
+				}
+				else
+					(*vi).second.m_LastSelected.restart();	// Keep nearby cached terrain ready for a turn.
+				// Ready culled patches still cover the low-detail hole when turning.
 				countShown++;
 			}
 		}
@@ -8795,7 +8850,8 @@ void DaWorldRingSection::RenderAtGlobe(const AuMatrix4x4& projection, const AuMa
 
 	// Display low tessellation of globe.
 	m_AtGlobe.m_Low.SelectGL();
-	m_AtGlobe.m_Low.DrawGL();
+	if(!cull || m_AtGlobe.m_Low.IntersectsFrustum(frustum))
+		m_AtGlobe.m_Low.DrawGL();
 	m_AtGlobe.m_Low.DeselectGL();
 	ari.re->GLSL().RingworldLitFloraShader().Deselect();
 
@@ -8811,6 +8867,9 @@ void DaWorldRingSection::RenderAtGlobe(const AuMatrix4x4& projection, const AuMa
 void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, AuGLModelMaker& mm,
 		const AuPoint& viewerPos, float ambientLight, float fogDensity, float fogR, float fogG, float fogB)
 {
+	const bool cull = re.FrustumCulling();
+	const AuViewFrustum frustum(projection);
+
 	Q_UNUSED(projection);
 	if(g_Au.m_DebugSwitches & 0x00000200)
 		return;
@@ -8975,7 +9034,7 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 		double dist2 = (*gi).Location().Distance2(groundPos);
 		if(dist2 > g_Au.GrassViewRangeFt2())
 			continue;												// Grass is too far away from the viewer.
-		if(dist2 > 4*4)
+		if(!cull && dist2 > 4*4)
 		{
 			// Clip when too far behind the viewer.
 			AuPoint viewPt = model.Project((*gi).Location());
@@ -9044,6 +9103,10 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 
 		Q_ASSERT(vao->VAO());
 
+		// Include the full plant and its maximum wind/current displacement.
+		if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
+			continue;
+
 		// Multiply by model matrix to place the plant in the view.
 		re.GLSL().FloraRingworldShader().SetPlantMatrix((*gi).Transform());
 
@@ -9071,7 +9134,7 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 	{
 		// Calculate alpha based on position in the scene.
 		AuPoint viewPt = model.Project((*gi).Location());
-		float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.ShrubViewRangeFt2(), 50);
+		float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.ShrubViewRangeFt2(), 50, cull);
 		if(plantAlpha <= 0.)
 			continue;
 
@@ -9141,6 +9204,10 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 
 		Q_ASSERT(vao->VAO());
 
+		// Include the full plant and its maximum wind/current displacement.
+		if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
+			continue;
+
 		// Multiply by model matrix to place the plant in the view.
 		re.GLSL().FloraRingworldShader().SetPlantMatrix((*gi).Transform());
 
@@ -9164,7 +9231,7 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 	{
 		// Calculate alpha based on position in the scene.
 		AuPoint viewPt = model.Project((*gi).Location());
-		float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.TreeViewRangeFt2(), 250);
+		float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.TreeViewRangeFt2(), 250, cull);
 		if(plantAlpha <= 0.)
 			continue;
 
@@ -9234,6 +9301,10 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 
 		Q_ASSERT(vao->VAO());
 
+		// Include the full plant and its maximum wind/current displacement.
+		if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
+			continue;
+
 		// Multiply by model matrix to place the plant in the view.
 		re.GLSL().FloraRingworldShader().SetPlantMatrix((*gi).Transform());
 
@@ -9298,7 +9369,7 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 				double dist2 = (*gi).Location().Distance2(groundPos);
 				if(dist2 > g_Au.GrassViewRangeFt2())
 					continue;												// Grass is too far away from the viewer.
-				if(dist2 > 4*4)
+				if(!cull && dist2 > 4*4)
 				{
 					// Clip when too far behind the viewer.
 					AuPoint viewPt = model.Project((*gi).Location());
@@ -9367,6 +9438,10 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 
 				Q_ASSERT(vao->VAO());
 
+				// Include the full plant and its maximum wind/current displacement.
+				if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
+					continue;
+
 				// Multiply by model matrix to place the plant in the view.
 				re.GLSL().AquaticFloraRingworldShader().SetPlantMatrix((*gi).Transform());
 
@@ -9404,7 +9479,7 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 			{
 				// Calculate alpha based on position in the scene.
 				AuPoint viewPt = model.Project((*gi).Location());
-				float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.ShrubViewRangeFt2(), 50);
+				float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.ShrubViewRangeFt2(), 50, cull);
 				if(plantAlpha <= 0.)
 					continue;
 
@@ -9474,6 +9549,10 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 
 				Q_ASSERT(vao->VAO());
 
+				// Include the full plant and its maximum wind/current displacement.
+				if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
+					continue;
+
 				// Multiply by model matrix to place the plant in the view.
 				re.GLSL().AquaticFloraRingworldShader().SetPlantMatrix((*gi).Transform());
 
@@ -9508,6 +9587,8 @@ void DaWorldRingSection::RenderFlora(const AuMatrix4x4& projection, const AuMatr
 void DaWorldRingSection::RenderRocks(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, AuGLModelMaker& mm,
 		const AuPoint& viewerPos, float ambientLight, float fogDensity, float fogR, float fogG, float fogB)
 {
+	const bool cull = re.FrustumCulling();
+
 	Q_UNUSED(projection);
 	if(!m_RockVAOs)
 	{
@@ -9580,7 +9661,7 @@ void DaWorldRingSection::RenderRocks(const AuMatrix4x4& projection, const AuMatr
 	{
 		// Calculate alpha based on position in the scene.
 		AuPoint viewPt = model.Project((*gi).Location());
-		float rockAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.RockViewRangeFt2(), 20);
+		float rockAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.RockViewRangeFt2(), 20, cull);
 		if(rockAlpha <= 0.)
 			continue;
 
@@ -9627,6 +9708,9 @@ void DaWorldRingSection::RenderRocks(const AuMatrix4x4& projection, const AuMatr
 
 		if(vao->VAO())
 		{
+			if(cull && !vao->IntersectsFrustum(AuViewFrustum(projection * model * (*gi).Transform())))
+				continue;
+
 			// Multiply by model matrix to place the rock in the view.
 			re.GLSL().RockRingworldShader().SetRockMatrix((*gi).Transform());
 
@@ -9731,7 +9815,7 @@ void DaWorldRingSection::RenderHenges(const AuMatrix4x4& projection, const AuMat
 		// Draw the fire pit at the center.
 		AuPoint ambientUp = model.ProjectVector(hengeUpVec);
 		AuPoint px = hengeM.Translation();
-		if(px.z < 10)
+		if(ari.re->FrustumCulling() || px.z < 10)
 			m_HengeFirePit->RenderGLSLModelTexFogRingworld(projection, hengeM, *ari.re, shadowPanelSunAngles, ambientR, ambientG,
 					ambientB, ambientUp, false, fogDensity, fogR, fogG, fogB);
 
@@ -9773,7 +9857,7 @@ void DaWorldRingSection::RenderHenges(const AuMatrix4x4& projection, const AuMat
 
 			// Skip rocks behind the viewer.
 			AuPoint px = rockM.Translation();
-			if(px.z > 0)
+			if(!ari.re->FrustumCulling() && px.z > 0)
 				continue;
 
 			m_HengeRock->RenderGLSLModelTexFogRingworld(projection, rockM, *ari.re, shadowPanelSunAngles, ambientR, ambientG,
@@ -9805,7 +9889,7 @@ void DaWorldRingSection::RenderHenges(const AuMatrix4x4& projection, const AuMat
 
 			// Skip columns behind the viewer.
 			AuPoint px = colM.Translation();
-			if(px.z > 0)
+			if(!ari.re->FrustumCulling() && px.z > 0)
 				continue;
 
 			m_HengeColumn->RenderGLSLModelTexFogRingworld(projection, colM, *ari.re, shadowPanelSunAngles, ambientR, ambientG,

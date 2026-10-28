@@ -11,6 +11,8 @@
 #include "audesign.h"
 #include "auscparts.h"
 #include "aufilever.h"
+#include "augleffects.h"
+#include "auviewfrustum.h"
 
 //static
 AuGLModelInstance* AuGLModelInstance::Create(const QString& fileName)
@@ -57,6 +59,8 @@ bool AuSoHGLModelInstance::CreateGeometry(double scale)
 		t.Scale(scale, scale, scale);
 		m_Design->Parts().Transform(t);
 	}
+	if(m_Design)
+		m_Design->Parts().ModelExtents(m_RenderMinimum, m_RenderMaximum);
 	return m_Design ? true : false;
 }
 
@@ -117,6 +121,8 @@ bool AuSoHGLModelInstance::Render(const AuMatrix4x4& projection, const AuMatrix4
 		float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp, bool lightOn,
 		float alpha, int pass) const
 {
+	if(re.FrustumCulling() && m_Design
+		&& !AuViewFrustum(projection * model).IntersectsBox(m_RenderMinimum, m_RenderMaximum)) return false;
 	re.GLSL().ScShader().Select(projection, re);
 	bool hasTransparency = RenderShader(&re.GLSL().ScShader(), model, re, ambientLightR,ambientLightG,ambientLightB,
 			ambientLightUp, lightOn, alpha, pass);
@@ -129,6 +135,8 @@ bool AuSoHGLModelInstance::RenderFogGlobe(const AuMatrix4x4& projection, const A
 		float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp, bool lightOn,
 		float fogDensity, float fogR, float fogG, float fogB, float alpha, int pass) const
 {
+	if(re.FrustumCulling() && m_Design
+		&& !AuViewFrustum(projection * model).IntersectsBox(m_RenderMinimum, m_RenderMaximum)) return false;
 	re.GLSL().ScGlobeFogShader().Select(projection, re);
     re.GLSL().ScGlobeFogShader().SetFog(fogDensity, fogR, fogG, fogB);
     re.GLSL().ScGlobeFogShader().SetGlobeLocation(globeP);
@@ -143,6 +151,8 @@ bool AuSoHGLModelInstance::RenderFogRingworld(const AuMatrix4x4& projection, con
 		float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp, bool lightOn,
 		float fogDensity, float fogR, float fogG, float fogB, float alpha, int pass) const
 {
+	if(re.FrustumCulling() && m_Design
+		&& !AuViewFrustum(projection * model).IntersectsBox(m_RenderMinimum, m_RenderMaximum)) return false;
 	re.GLSL().ScRingworldFogShader().Select(projection, re);
 	re.GLSL().ScRingworldFogShader().SetEyeLocation(model.UnProject(re.EyeLocation()));
     re.GLSL().ScRingworldFogShader().SetFog(fogDensity, fogR, fogG, fogB);

@@ -92,6 +92,7 @@ protected slots:
 	void SetDrawSpecks(int value);
 	void SetDrawSkyBox(int value);
 	void SetDrawWeatherEffects(int value);
+	void SetFrustumCulling(int value);
 	void SetGrassViewRange(int value);
 	void SetGroundCoverQty(int value);
 	void SetMaxLights(int value);

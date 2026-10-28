@@ -109,6 +109,7 @@ void PsLandingSystem::Render(const AuMatrix4x4& projection, const AuMatrix4x4& m
 	{
 		// Create a VAO of the trail triangles.
 		AuGLVAO vao;
+		re.CullTriangles(projection * model, tris);
 		vao.CreateForTexture(re, tris, GL_STREAM_DRAW);
 		if(vao.VAO())
 		{
@@ -152,6 +153,7 @@ void PsLandingSystem::Render(const AuMatrix4x4& projection, const AuMatrix4x4& m
 			verts << AuPointAlpha(posr.x, posr.y, posr.z, 1);
 		}
 		AuGLVAO vao;
+		re.CullSprites(projection * model, verts);
 		vao.CreateForSprites(re, verts, GL_STREAM_DRAW);
 		if(vao.VAO())
 		{
@@ -180,6 +182,7 @@ void PsLandingSystem::Render(const AuMatrix4x4& projection, const AuMatrix4x4& m
 			verts << AuPointAlpha(emitPos.x, emitPos.y, emitPos.z, 1);
 		verts << AuPointAlpha(endPos.x, endPos.y, endPos.z, 1);
 		AuGLVAO vao;
+		re.CullSprites(projection * model, verts);
 		vao.CreateForSprites(re, verts, GL_STREAM_DRAW);
 		if(vao.VAO())
 		{

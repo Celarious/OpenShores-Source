@@ -13,6 +13,7 @@
 #include "auglsl.h"
 #include "auid.h"
 #include "aupoint.h"
+#include "auviewfrustum.h"
 #include <QColor>
 #include <QFile>
 #include <QImage>
@@ -636,6 +637,8 @@ class AUGL_DLL AuGLEffects : public AuOpenGLFunctions
 {
 public:
 private:
+	bool m_FrustumCulling;
+	AuViewFrustum m_SceneFrustum;
 	GLuint								m_HUDItemsTexture;		// This one gets requested a lot.
 	QVector<AuGLTexture*>				m_Textures;
 	QMutex								m_muTextures;
@@ -689,6 +692,16 @@ public:
 	AuGLEffects();
 
 	~AuGLEffects();
+
+	// Enabled only while drawing the world, never for HUDs or preview widgets.
+	bool FrustumCulling() const { return m_FrustumCulling; }
+	void SetFrustumCulling(bool enabled) { m_FrustumCulling = enabled; }
+	// Lighting is shared by near and distant passes, so only reject by sides.
+	void SetSceneFrustum(const AuMatrix4x4& projection) { m_SceneFrustum.Set(projection, false); }
+	bool LightIntersectsFrustum(const AuGLLight& light) const;
+	// Filter transient visual data before allocating/uploading its GPU buffers.
+	void CullSprites(const AuMatrix4x4& clip, QList<AuPointAlpha>& vertices) const;
+	void CullTriangles(const AuMatrix4x4& clip, QList<AuTriTex>& triangles) const;
 
 	// Returns 'col1' blended with 'col2' by 'blend' ammount. 'blend' is in the range of 0 to 1.
 	// 'blend' <= 0 returns col1

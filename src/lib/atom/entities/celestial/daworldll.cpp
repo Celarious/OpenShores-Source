@@ -1541,6 +1541,7 @@ void AuGlobeRock::CreateVAO(AuOpenGLFunctions& GLf, AuGLVAO& vao) const
 
 	// Generate vertex array(s) for this object. We only need one.
 	vao.CreateGL(GLf, vertices, 3);
+	vao.SetBounds(globePos, vertices, 3);
 
 	// Select vertex array to construct.
 	vao.SelectGL();

@@ -965,7 +965,7 @@ void DaWorldGasGiant::RenderEnvironmentObject(const AuMatrix4x4& projection, AuA
 	else
 	{
 		// The viewer is outside my atmosphere.
-		if(pv.z < 0 && rmod.RenderThisPass(pass, viewDistance))
+		if((ari.re->FrustumCulling() || pv.z < 0) && rmod.RenderThisPass(pass, viewDistance))
 		{
 			// This planet is in front of the camera plane.
 			// We don't need the globe itself at this distance.
@@ -1184,6 +1184,9 @@ void DaWorldGasGiant::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo
 // View and World transforms have already been set up.
 void DaWorldGasGiant::RenderGlobe(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, float ambientLight)
 {
+	if(re.FrustumCulling() && !AuViewFrustum(projection * model).IntersectsSphere(AuPoint(), AtmosphereRadius()))
+		return;
+
 	if(!m_NearGlobe.VAO())
 		CreateGasGiantModel(re);
 
@@ -1250,6 +1253,9 @@ void DaWorldGasGiant::RenderGlobe(const AuMatrix4x4& projection, const AuMatrix4
 void DaWorldGasGiant::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re,
 		int viewerContext, double viewerAlt, float atmIllumination)
 {
+	if(re.FrustumCulling() && !AuViewFrustum(projection * model).IntersectsSphere(AuPoint(), AtmosphereRadius()))
+		return;
+
 	if(!s_TexGasGiant)
 		s_TexGasGiant = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, "GasGiant", ":data/txGasGiants.png");
 
@@ -7233,6 +7239,9 @@ bool DaWorldGasGiant::FilterDestinationLoc(DaAtom* moveAtom, const AuPoint& oldL
 void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, AuGLModelMaker& mm,
 		const AuPoint& viewerPos, float ambientLight, float fogDensity, float fogR, float fogG, float fogB)
 {
+	const bool cull = re.FrustumCulling();
+	const AuViewFrustum frustum(projection);
+
 	Q_UNUSED(projection);
 	if(g_Au.m_DebugSwitches & 0x00000200)
 		return;
@@ -7395,7 +7404,7 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 		double dist2 = (*gi).Location().Distance2(groundPos);
 		if(dist2 > g_Au.GrassViewRangeFt2())
 			continue;												// Grass is too far away from the viewer.
-		if(dist2 > 4*4)
+		if(!cull && dist2 > 4*4)
 		{
 			// Clip when too far behind the viewer.
 			AuPoint viewPt = model.Project((*gi).Location());
@@ -7464,6 +7473,10 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 
 		Q_ASSERT(vao->VAO());
 
+		// Include the full plant and its maximum wind/current displacement.
+		if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
+			continue;
+
 		// Multiply by model matrix to place the plant in the view.
 		re.GLSL().FloraShader().SetPlantMatrix((*gi).Transform());
 
@@ -7491,7 +7504,7 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 	{
 		// Calculate alpha based on position in the scene.
 		AuPoint viewPt = model.Project((*gi).Location());
-		float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.ShrubViewRangeFt2(), 50);
+		float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.ShrubViewRangeFt2(), 50, cull);
 		if(plantAlpha <= 0.)
 			continue;
 
@@ -7561,6 +7574,10 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 
 		Q_ASSERT(vao->VAO());
 
+		// Include the full plant and its maximum wind/current displacement.
+		if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
+			continue;
+
 		// Multiply by model matrix to place the plant in the view.
 		re.GLSL().FloraShader().SetPlantMatrix((*gi).Transform());
 
@@ -7584,7 +7601,7 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 	{
 		// Calculate alpha based on position in the scene.
 		AuPoint viewPt = model.Project((*gi).Location());
-		float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.TreeViewRangeFt2(), 250);
+		float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.TreeViewRangeFt2(), 250, cull);
 		if(plantAlpha <= 0.)
 			continue;
 
@@ -7654,6 +7671,10 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 
 		Q_ASSERT(vao->VAO());
 
+		// Include the full plant and its maximum wind/current displacement.
+		if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
+			continue;
+
 		// Multiply by model matrix to place the plant in the view.
 		re.GLSL().FloraShader().SetPlantMatrix((*gi).Transform());
 
@@ -7713,7 +7734,7 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 				double dist2 = (*gi).Location().Distance2(groundPos);
 				if(dist2 > g_Au.GrassViewRangeFt2())
 					continue;												// Grass is too far away from the viewer.
-				if(dist2 > 4*4)
+				if(!cull && dist2 > 4*4)
 				{
 					// Clip when too far behind the viewer.
 					AuPoint viewPt = model.Project((*gi).Location());
@@ -7782,6 +7803,10 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 
 				Q_ASSERT(vao->VAO());
 
+				// Include the full plant and its maximum wind/current displacement.
+				if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
+					continue;
+
 				// Multiply by model matrix to place the plant in the view.
 				re.GLSL().AquaticFloraShader().SetPlantMatrix((*gi).Transform());
 
@@ -7819,7 +7844,7 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 			{
 				// Calculate alpha based on position in the scene.
 				AuPoint viewPt = model.Project((*gi).Location());
-				float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.ShrubViewRangeFt2(), 50);
+				float plantAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.ShrubViewRangeFt2(), 50, cull);
 				if(plantAlpha <= 0.)
 					continue;
 
@@ -7889,6 +7914,10 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 
 				Q_ASSERT(vao->VAO());
 
+				// Include the full plant and its maximum wind/current displacement.
+				if(cull && !vao->IntersectsFrustum(frustum, model * (*gi).Transform(), 2 * vao->VertexMovement()))
+					continue;
+
 				// Multiply by model matrix to place the plant in the view.
 				re.GLSL().AquaticFloraShader().SetPlantMatrix((*gi).Transform());
 
@@ -7923,6 +7952,8 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 void DaWorldGasGiant::RenderRocks(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, AuGLModelMaker& mm,
 		const AuPoint& viewerPos, float ambientLight, float fogDensity, float fogR, float fogG, float fogB)
 {
+	const bool cull = re.FrustumCulling();
+
 	Q_UNUSED(projection);
 	if(!m_RockVAOs)
 	{
@@ -7990,7 +8021,7 @@ void DaWorldGasGiant::RenderRocks(const AuMatrix4x4& projection, const AuMatrix4
 	{
 		// Calculate alpha based on position in the scene.
 		AuPoint viewPt = model.Project((*gi).Location());
-		float rockAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.RockViewRangeFt2(), 20);
+		float rockAlpha = (*gi).ViewAlpha(33, viewPt, groundPos, g_Au.RockViewRangeFt2(), 20, cull);
 		if(rockAlpha <= 0.)
 			continue;
 
@@ -8037,6 +8068,9 @@ void DaWorldGasGiant::RenderRocks(const AuMatrix4x4& projection, const AuMatrix4
 
 		if(vao->VAO())
 		{
+			if(cull && !vao->IntersectsFrustum(AuViewFrustum(projection * model * (*gi).Transform())))
+				continue;
+
 			// Multiply by model matrix to place the rock in the view.
 			re.GLSL().RockShader().SetRockMatrix((*gi).Transform());
 
@@ -8136,7 +8170,7 @@ void DaWorldGasGiant::RenderHenges(const AuMatrix4x4& projection, const AuMatrix
 		// Draw the fire pit at the center.
 		AuPoint ambientUp = model.ProjectVector(hengeUpVec);
 		AuPoint px = hengeM.Translation();
-		if(px.z < 10)
+		if(ari.re->FrustumCulling() || px.z < 10)
 			m_HengeFirePit->RenderGLSLModelTexFogGlobe(projection, hengeM, *ari.re, globeP, ambientR, ambientG, ambientB, ambientUp,
 					false, fogDensity, fogR, fogG, fogB);
 
@@ -8180,7 +8214,7 @@ void DaWorldGasGiant::RenderHenges(const AuMatrix4x4& projection, const AuMatrix
 
 			// Skip rocks behind the viewer.
 			AuPoint px = rockM.Translation();
-			if(px.z > 0)
+			if(!ari.re->FrustumCulling() && px.z > 0)
 				continue;
 
 			m_HengeRock->RenderGLSLModelTexFogGlobe(projection, rockM, *ari.re, globeP, ambientR, ambientG, ambientB, ambientUp,
@@ -8213,7 +8247,7 @@ void DaWorldGasGiant::RenderHenges(const AuMatrix4x4& projection, const AuMatrix
 
 			// Skip columns behind the viewer.
 			AuPoint px = colM.Translation();
-			if(px.z > 0)
+			if(!ari.re->FrustumCulling() && px.z > 0)
 				continue;
 
 			m_HengeColumn->RenderGLSLModelTexFogGlobe(projection, colM, *ari.re, globeP, ambientR, ambientG, ambientB, ambientUp,
@@ -8263,6 +8297,9 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 	//glDisable(GL_CULL_FACE);
 	//glPolygonMode(GL_BACK, GL_LINE);
 //#endif
+
+	const bool cull = ari.re->FrustumCulling();
+	const AuViewFrustum frustum(projection * model);
 
 	// Periodically we cleanup unneeded terrain patches. Our frame rate drops to a crawl if we do this in every frame.
 	bool timeForCleanup = !m_TerrainCleanupTime.isValid() || m_TerrainCleanupTime.elapsed() > 3000;
@@ -8365,9 +8402,15 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 				if(vi != m_AtGlobe.m_TriVAOs.end())
 				{
 					// Display the high-tessellation VAO.
-					(*vi).second.SelectGL();
-					(*vi).second.DrawGL();
-					(*vi).second.DeselectGL();
+					if(!cull || (*vi).second.IntersectsFrustum(frustum))
+					{
+						(*vi).second.SelectGL();
+						(*vi).second.DrawGL();
+						(*vi).second.DeselectGL();
+					}
+					else
+						(*vi).second.m_LastSelected.restart();	// Keep nearby cached terrain ready for a turn.
+					// Ready culled patches still cover the low-detail hole when turning.
 					countShown++;
 				}
 			}
@@ -8465,9 +8508,15 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 				if(vi != m_AtGlobe.m_TriVAOs.end())
 				{
 					// Display the high-tessellation VAO.
-					(*vi).second.SelectGL();
-					(*vi).second.DrawGL();
-					(*vi).second.DeselectGL();
+					if(!cull || (*vi).second.IntersectsFrustum(frustum))
+					{
+						(*vi).second.SelectGL();
+						(*vi).second.DrawGL();
+						(*vi).second.DeselectGL();
+					}
+					else
+						(*vi).second.m_LastSelected.restart();	// Keep nearby cached terrain ready for a turn.
+					// Ready culled patches still cover the low-detail hole when turning.
 					countShown++;
 				}
 			}
@@ -8536,7 +8585,8 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 
 		// Display low tessellation of globe.
 		m_AtGlobe.m_Low.SelectGL();
-		m_AtGlobe.m_Low.DrawGL();
+		if(!cull || m_AtGlobe.m_Low.IntersectsFrustum(frustum))
+			m_AtGlobe.m_Low.DrawGL();
 		m_AtGlobe.m_Low.DeselectGL();
 		//AuGLTexture::OutputGlError("DaWorldGasGiant::RenderAtGlobe rendered.");
 		ari.re->GLSL().GlobeLitFloraShader().Deselect();
@@ -8572,7 +8622,8 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 
 		// Display low tessellation of globe.
 		m_AtGlobe.m_Low.SelectGL();
-		m_AtGlobe.m_Low.DrawGL();
+		if(!cull || m_AtGlobe.m_Low.IntersectsFrustum(frustum))
+			m_AtGlobe.m_Low.DrawGL();
 		m_AtGlobe.m_Low.DeselectGL();
 		ari.re->GLSL().GlobeLitShader().Deselect();
 	}
@@ -9098,6 +9149,7 @@ void DaWorldGasGiant::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatr
 
 			// Generate vertex array(s) for this object. We only need one.
 			m_SeaGlobe.CreateGL(re, vertices, 3);
+			m_SeaGlobe.SetBounds(globePos, vertices, 3);
 
 			// Select vertex array to construct.
 			m_SeaGlobe.SelectGL();
@@ -9247,6 +9299,7 @@ void DaWorldGasGiant::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatr
 
 			// Generate vertex array(s) for this object. We only need one.
 			m_UnderseaGlobe.CreateGL(re, vertices, 3);
+			m_UnderseaGlobe.SetBounds(globePos, vertices, 3);
 
 			// Select vertex array to construct.
 			m_UnderseaGlobe.SelectGL();
@@ -9275,6 +9328,14 @@ void DaWorldGasGiant::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatr
 			delete [] globeTex;
 			delete [] globeTan;
 		}
+	}
+
+	if(re.FrustumCulling())
+	{
+		const AuViewFrustum frustum(projection * model);
+		if(!m_SeaGlobe.IntersectsFrustum(frustum)
+			&& (!bothLayers || !m_UnderseaGlobe.IntersectsFrustum(frustum)))
+			return;
 	}
 
 	if(g_Au.BumpMapSeas())

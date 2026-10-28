@@ -222,7 +222,7 @@ void DaAsteroid::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 
 	// Determine where the viewer is with respect to this planet.
 	const AuPoint& pv = rmod.ViewLoc(Id());
-	if(pv.z >= 0)
+	if(!ari.re->FrustumCulling() && pv.z >= 0)
 		return;	// this item is behind the camera plane
 	double viewDistance = pv.Length();
 	bool bViewerNearThisPlanet = viewDistance <= FeetPerOrbit()/2;	// true if all detail must be shown.

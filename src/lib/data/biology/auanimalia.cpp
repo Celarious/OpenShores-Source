@@ -10,6 +10,101 @@
 #include "aucombat.h"
 #include "auelapsedtimer.h"
 #include "austation.h"
+#include <cmath>
+
+template<class Mesh, class Append>
+static bool IncludeAnimalRenderMesh(const Mesh& mesh, const Append& append)
+{
+	for(const auto& triangle : mesh)
+		if(!append(triangle.m_V0, triangle.m_V0.m_BoneIndex, triangle.m_V0.m_BoneWeight)
+			|| !append(triangle.m_V1, triangle.m_V1.m_BoneIndex, triangle.m_V1.m_BoneWeight)
+			|| !append(triangle.m_V2, triangle.m_V2.m_BoneIndex, triangle.m_V2.m_BoneWeight)) return false;
+	return true;
+}
+
+void AuAnimalia::CacheRenderBounds(const AuMeatMesh& skinMesh, const AuClothingMesh& clothingMesh)
+{
+	m_RenderBoundsValid = false;
+	m_RenderBoneBounds.clear();
+	int boneCount = 0;
+	for(const AuAnimalPart* part : *this) boneCount += part->Bones().size();
+	if(boneCount <= 0 || boneCount > MAX_ANIMAL_BONES) return;
+	m_RenderBoneBounds.resize(boneCount);
+	bool any = false;
+	const auto append = [this, &any](const AuPoint& position, const quint8* indices, const float* weights) -> bool
+	{
+		// Match the float positions uploaded to the animal shaders.
+		const AuPoint point(float(position.x), float(position.y), float(position.z));
+		if(!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) return false;
+		double total = 0;
+		for(int influence = 0; influence < 4; ++influence)
+		{
+			const float weight = weights[influence];
+			if(!std::isfinite(weight) || weight < 0) return false;
+			if(weight == 0) continue;
+			if(indices[influence] >= m_RenderBoneBounds.size()) return false;
+			total += weight;
+			RenderBoneBounds& bounds = m_RenderBoneBounds[indices[influence]];
+			if(!bounds.used)
+			{
+				bounds.minimum = bounds.maximum = point;
+				bounds.used = true;
+			}
+			else
+			{
+				bounds.minimum = bounds.minimum.Min(point);
+				bounds.maximum = bounds.maximum.Max(point);
+			}
+		}
+		any = true;
+		return total > 0 && std::isfinite(total);
+	};
+	// These are the same generated vertices used by every body/head VAO variant.
+	if(!IncludeAnimalRenderMesh(skinMesh, append) || !IncludeAnimalRenderMesh(skinMesh.Hair(), append)
+		|| !IncludeAnimalRenderMesh(clothingMesh, append)) return;
+	m_RenderBoundsValid = any;
+}
+
+bool AuAnimalia::RenderExtents(AuPoint& minimum, AuPoint& maximum) const
+{
+	if(!m_RenderBoundsValid) return false;
+	bool any = false;
+	int index = 0;
+	for(const AuAnimalPart* part : *this)
+		for(const AuAnimalBone& bone : part->Bones())
+		{
+			if(index >= m_RenderBoneBounds.size()) return false;
+			const RenderBoneBounds& bounds = m_RenderBoneBounds[index++];
+			if(!bounds.used) continue;
+			const AuMatrix4x4& transform = bone.Matrix();
+			const double* matrix = transform.GLMatrix();
+			for(int component = 0; component < 16; ++component)
+				if(!std::isfinite(matrix[component])) return false;
+			if(matrix[3] != 0 || matrix[7] != 0 || matrix[11] != 0 || matrix[15] != 1) return false;
+			const AuPoint center = transform.Project((bounds.minimum + bounds.maximum) * .5);
+			const AuPoint extent = (bounds.maximum - bounds.minimum) * .5;
+			const AuPoint size(
+				std::abs(matrix[0])*extent.x + std::abs(matrix[4])*extent.y + std::abs(matrix[8])*extent.z + .01,
+				std::abs(matrix[1])*extent.x + std::abs(matrix[5])*extent.y + std::abs(matrix[9])*extent.z + .01,
+				std::abs(matrix[2])*extent.x + std::abs(matrix[6])*extent.y + std::abs(matrix[10])*extent.z + .01);
+			if(!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z)
+				|| !std::isfinite(size.x) || !std::isfinite(size.y) || !std::isfinite(size.z)) return false;
+			if(!any)
+			{
+				minimum = center - size;
+				maximum = center + size;
+				any = true;
+			}
+			else
+			{
+				minimum = minimum.Min(center - size);
+				maximum = maximum.Max(center + size);
+			}
+		}
+	// Nonnegative skin weights make every posed vertex a convex combination of
+	// its bone-transformed positions, all enclosed by this union of cached boxes.
+	return any && index == m_RenderBoneBounds.size();
+}
 
 AuAnimalia::AuAnimalia(const AuDNA& dna, AuDNA::CHROMATID chain, HANDEDNESS handedness, GROWTHSTAGE stage)
 {
@@ -72,6 +167,8 @@ AuAnimalia::AuAnimalia(const AuAnimalia& c) : QList<AuAnimalPart*>(), m_DNA(c.m_
 		append((*mpi)->Clone());
 
 	m_AnimalClothingTex = c.m_AnimalClothingTex;
+	m_RenderBoneBounds = c.m_RenderBoneBounds;
+	m_RenderBoundsValid = c.m_RenderBoundsValid;
 
 	m_AnimalVAO = c.m_AnimalVAO;
 	m_AnimalNoNeckVAO = c.m_AnimalNoNeckVAO;
@@ -113,6 +210,8 @@ const AuAnimalia& AuAnimalia::operator=(const AuAnimalia& c)
 		append((*mpi)->Clone());
 
 	m_AnimalClothingTex = c.m_AnimalClothingTex;
+	m_RenderBoneBounds = c.m_RenderBoneBounds;
+	m_RenderBoundsValid = c.m_RenderBoundsValid;
 
 	m_AnimalVAO = c.m_AnimalVAO;
 	m_AnimalNoNeckVAO = c.m_AnimalNoNeckVAO;
@@ -133,6 +232,7 @@ const AuAnimalia& AuAnimalia::operator=(const AuAnimalia& c)
 
 void AuAnimalia::ClearVAOs()
 {
+	m_RenderBoundsValid = false;
 	//m_AnimalClothingTex.clear();
 	m_AnimalVAO = AuGLVAO();
 	m_AnimalNoNeckVAO = AuGLVAO();
@@ -158,6 +258,8 @@ void AuAnimalia::CopyVAOs(const AuAnimalia& c)
 	m_Shave = c.m_Shave;
 
 	m_AnimalClothingTex = c.m_AnimalClothingTex;
+	m_RenderBoneBounds = c.m_RenderBoneBounds;
+	m_RenderBoundsValid = c.m_RenderBoundsValid;
 
 	m_AnimalVAO = c.m_AnimalVAO;
 	m_AnimalNoNeckVAO = c.m_AnimalNoNeckVAO;
@@ -2065,6 +2167,7 @@ void AuAnimalia::CreateMeshes(AuMeatMesh& skinMesh, AuClothingMesh& clothingMesh
 
 void AuAnimalia::CreateVAOs(AuOpenGLFunctions& re, const AuMeatMesh& skinMesh, const AuClothingMesh& clothingMesh)
 {
+	CacheRenderBounds(skinMesh, clothingMesh);
 //#if !defined(QT_NO_DEBUG)
 	//qDebug() << "AuAnimalia::CreateVAOs" << Description() << "skinTris" << skinMesh.size()
 		//<< "haircut" << AuHairStyle::Name(m_Haircut) << "shave" << AuHairStyle::ShaveName(m_Shave)
@@ -2131,6 +2234,7 @@ void AuAnimalia::CreateAnimalVAO(AuOpenGLFunctions& re, quint32 unique)
 
 void AuAnimalia::DeleteGL()
 {
+	m_RenderBoundsValid = false;
 	if(m_AnimalVAO.VAO())
 		m_AnimalVAO.DeleteGL();
 	if(m_AnimalNoNeckVAO.VAO())
@@ -2976,6 +3080,7 @@ float AuAnimalia::TorsoWidth() const
 
 void AuAnimalia::Init()
 {
+	m_RenderBoundsValid = false;
 	//DHH animalia
 }
 
@@ -3147,6 +3252,8 @@ void AuAnimalia::SetDNA(const AuDNA& dna, AuDNA::CHROMATID chromatid)
 {
 	if(m_Chain == chromatid && m_DNA == dna)
 		return;
+
+	m_RenderBoundsValid = false;
 
 	// Remove my current body parts.
 	for(iterator mpi=begin(); mpi != end(); mpi++)

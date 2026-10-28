@@ -84,6 +84,7 @@ void PsFireSmokeTrail::Render(const AuMatrix4x4& projection, const AuMatrix4x4& 
 
 	// Make a VAO of the vertex locations.
 	AuGLVAO vao;
+	re.CullSprites(projection * model, verts);
 	vao.CreateForSprites(re, verts, GL_STREAM_DRAW);
 
 	// Display the VAO once and clean it up.

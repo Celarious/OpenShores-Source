@@ -84,13 +84,17 @@ void PsExplodeSonic::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mo
 
 	// Make a VAO of the vertex locations.
 	AuGLVAO vao;
+	re.CullSprites(projection * model, verts);
 	vao.CreateForSprites(re, verts, GL_STREAM_DRAW);
 
 	// Display the VAO once and clean it up.
-	vao.SelectGL();
-	vao.DrawGL(GL_POINTS);
-	vao.DeselectGL();
-	vao.DeleteGL();
+	if(vao.VAO())
+	{
+		vao.SelectGL();
+		vao.DrawGL(GL_POINTS);
+		vao.DeselectGL();
+		vao.DeleteGL();
+	}
 
 	// Draw an overlay that grows to maximum radius in one second and keeps on going.
 	float radius = GetVelocityVar() * 500 * GetCurTime()/GetLifeCycle() * c_UnitScale * scale;
@@ -99,13 +103,17 @@ void PsExplodeSonic::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mo
 	verts << AuPointAlpha(emitPos.x, emitPos.y, emitPos.z, 1.);
 
 	// Make a VAO of the vertex locations.
+	re.CullSprites(projection * model, verts);
 	vao.CreateForSprites(re, verts, GL_STREAM_DRAW);
 
 	// Display the VAO once and clean it up.
-	vao.SelectGL();
-	vao.DrawGL(GL_POINTS);
-	vao.DeselectGL();
-	vao.DeleteGL();
+	if(vao.VAO())
+	{
+		vao.SelectGL();
+		vao.DrawGL(GL_POINTS);
+		vao.DeselectGL();
+		vao.DeleteGL();
+	}
 
 	re.glEnable(GL_CULL_FACE);
 	re.glDisable(GL_BLEND);

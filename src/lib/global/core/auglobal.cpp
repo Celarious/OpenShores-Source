@@ -265,6 +265,7 @@ void AuGlobal::Init(MODE mode, const QString& appName, const QString& company, D
 	if(m_SkyBoxPaneSize < 256 || m_SkyBoxPaneSize > 4096)
 		m_SkyBoxPaneSize = 1024;
 	m_DrawWeatherEffects = m_Settings.readBoolEntry("/Settings/DrawWeatherEffects", true);
+	m_FrustumCulling = m_Settings.readBoolEntry("/Settings/FrustumCulling", true);
 	m_UseClassicLoadingAnimation = m_Settings.readBoolEntry("/Settings/UseClassicLoadingAnimation", false);
 
 	m_FramedPictureSize = m_Settings.readNumEntry("/Settings/FramedPictureSize", 512);
@@ -2731,6 +2732,12 @@ void AuGlobal::SetDrawWeatherEffects(bool drawWeatherEffects)
 {
 	m_DrawWeatherEffects = drawWeatherEffects;
 	m_Settings.writeEntry("/Settings/DrawWeatherEffects", m_DrawWeatherEffects);
+}
+
+void AuGlobal::SetFrustumCulling(bool frustumCulling)
+{
+	m_FrustumCulling = frustumCulling;
+	m_Settings.writeEntry("/Settings/FrustumCulling", m_FrustumCulling);
 }
 
 void AuGlobal::SetUseClassicLoadingAnimation(bool useClassicLoadingAnimation)

@@ -12,6 +12,7 @@
 #include "aumatrix4x4.h"
 #include "auscface.h"
 #include "autriangle.h"
+#include "auviewfrustum.h"
 #include <QMap>
 #include <QVector>
 
@@ -175,6 +176,9 @@ private:
 	AuOpenGLFunctions*					m_GLf;
 	GLuint								m_VAO;					// Vertex Array Object identifier assigned by OpenGL
 	GLuint								m_Vertices;				// Number of vertices in this vertex array object.
+	AuPoint m_BoundsMin, m_BoundsMax;
+	bool m_BoundsValid;
+	double m_VertexMovement;
 
 public:
 	inline AuGLVAO()
@@ -184,6 +188,8 @@ public:
 		m_GLf = 0;
 		m_VAO = 0;
 		m_Vertices = 0;
+		m_BoundsValid = false;
+		m_VertexMovement = 0;
 	}
 
 	inline AuGLVAO(const AuGLVAO& c)
@@ -199,6 +205,10 @@ public:
 		m_GLf = c.m_GLf;
 		m_VAO = c.m_VAO;
 		m_Vertices = c.m_Vertices;
+		m_BoundsMin = c.m_BoundsMin;
+		m_BoundsMax = c.m_BoundsMax;
+		m_BoundsValid = c.m_BoundsValid;
+		m_VertexMovement = c.m_VertexMovement;
 	}
 
 	inline ~AuGLVAO()
@@ -294,10 +304,28 @@ public:
 	// DOES NOTHING if this VAO has already been created or if 'tris' is empty.
 	void CreateForTexture(AuOpenGLFunctions& GLf, const QList<AuTriTex>& tris, GLenum usage);
 
+	// Cache the actual uploaded positions once; no GPU reads or model loads while culling.
+	// Stride is measured in floats. Missing or invalid bounds always remain visible.
+	void SetBounds(const GLfloat* positions, unsigned int vertices, unsigned int stride=3);
+	bool GetBounds(AuPoint& minimum, AuPoint& maximum) const
+	{
+		if(!m_BoundsValid) return false;
+		minimum = m_BoundsMin;
+		maximum = m_BoundsMax;
+		return true;
+	}
+	bool IntersectsFrustum(const AuViewFrustum& frustum, double padding=0) const;
+	// Test transformed bounds with an additional eye-space shader displacement.
+	bool IntersectsFrustum(const AuViewFrustum& frustum, const AuMatrix4x4& model, double padding) const;
+	void SetVertexMovement(double movement) { m_VertexMovement = movement; }
+	double VertexMovement() const { return m_VertexMovement; }
+
 	// Creates the OpenGL VAO. Be sure to call DeleteGL some time.
 	inline void CreateGL(AuOpenGLFunctions& GLf, GLuint vertices, GLuint buffers)
 	{
 		m_GLf = &GLf;
+		m_BoundsValid = false;
+		m_VertexMovement = 0;
 
 		//Q_ASSERT(vertices);
 		//Q_ASSERT(!m_VAO);
@@ -324,6 +352,7 @@ public:
 		//Q_ASSERT(m_VAO);
 		m_GLf->glDeleteVertexArrays(1, &m_VAO);
 		m_VAO = 0;
+		m_BoundsValid = false;
 	}
 
 	// Selects no vertex array as the current OpenGL vertex array.
@@ -372,6 +401,10 @@ public:
 		m_GLf = c.m_GLf;
 		m_VAO = c.m_VAO;
 		m_Vertices = c.m_Vertices;
+		m_BoundsMin = c.m_BoundsMin;
+		m_BoundsMax = c.m_BoundsMax;
+		m_BoundsValid = c.m_BoundsValid;
+		m_VertexMovement = c.m_VertexMovement;
 
 		return *this;
 	}
@@ -18502,6 +18535,11 @@ class AUGL_DLL AuGLSLScBase : public AuGLSLProgram
 	mutable GLint m_LegacySurfaceMode;
 	mutable GLint m_LegacyTextureInset;
 	mutable GLint m_LegacySurfaceOpacity;
+	bool m_FrustumCulling = false;
+	AuMatrix4x4 m_CullProjection;
+	mutable AuMatrix4x4 m_CullModel;
+	mutable AuViewFrustum m_CullFrustum;
+	mutable bool m_CullFrustumDirty = true;
 public:
 	AuGLSLScBase() : m_LegacyUniformProgram(0), m_LegacySurfaceMode(-1), m_LegacyTextureInset(-1), m_LegacySurfaceOpacity(-1)
 	{
@@ -18533,11 +18571,17 @@ public:
 		return QString("ScBase");
 	}
 
-	virtual void Select(const AuMatrix4x4& projection, const AuGLEffects& re)
+	virtual void Select(const AuMatrix4x4& projection, const AuGLEffects& re);
+
+	bool IsVAOVisible(const AuGLVAO& vao) const
 	{
-		Q_UNUSED(projection);
-		Q_UNUSED(re);
-		AuGLSLProgram::Select();
+		if(!m_FrustumCulling) return true;
+		if(m_CullFrustumDirty)
+		{
+			m_CullFrustum.Set(m_CullProjection * m_CullModel);
+			m_CullFrustumDirty = false;
+		}
+		return vao.IntersectsFrustum(m_CullFrustum);
 	}
 
 	virtual void SetAmbientLight(float ambientR, float ambientG, float ambientB) const = 0;
@@ -18560,9 +18604,25 @@ public:
 
 	virtual void SetLightEnabled(int light, bool enabled) const = 0;
 
-	virtual void SetModelView(const AuMatrix4x4& p) const = 0;
+	virtual void SetModelView(const AuMatrix4x4& model) const
+	{
+		if(m_FrustumCulling)
+		{
+			m_CullModel = model;
+			m_CullFrustumDirty = true;
+		}
+		SetModelViewUniform(model);
+	}
 
-	virtual void SetProjection(const AuMatrix4x4& p) = 0;
+	virtual void SetProjection(const AuMatrix4x4& projection)
+	{
+		m_CullProjection = projection;
+		m_CullFrustumDirty = true;
+		SetProjectionUniform(projection);
+	}
+
+	virtual void SetModelViewUniform(const AuMatrix4x4& model) const = 0;
+	virtual void SetProjectionUniform(const AuMatrix4x4& projection) = 0;
 
 	// Setup sun for non-ringworld solar lighting shaders.
 	// 'sun' is an index from 0 to MAX_SUNS-1.
@@ -18780,7 +18840,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'mv' is model view matrix of the globe.
-	virtual void SetModelView(const AuMatrix4x4& mv) const
+	virtual void SetModelViewUniform(const AuMatrix4x4& mv) const
 	{
 		// Set uniform variables.
 		SetUniformMatrix(m_GLf, m_mv, mv);
@@ -18788,7 +18848,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'p' is projection matrix.
-	virtual void SetProjection(const AuMatrix4x4& p)
+	virtual void SetProjectionUniform(const AuMatrix4x4& p)
 	{
 		if(m_ProjectionValid && m_Projection == p)
 			return;
@@ -19078,7 +19138,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'mv' is model view matrix of the globe.
-	virtual void SetModelView(const AuMatrix4x4& mv) const
+	virtual void SetModelViewUniform(const AuMatrix4x4& mv) const
 	{
 		// Set uniform variables.
 		SetUniformMatrix(m_GLf, m_mv, mv);
@@ -19086,7 +19146,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'p' is projection matrix.
-	virtual void SetProjection(const AuMatrix4x4& p)
+	virtual void SetProjectionUniform(const AuMatrix4x4& p)
 	{
 		if(m_ProjectionValid && m_Projection == p)
 			return;
@@ -19361,7 +19421,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'mv' is model view matrix of the globe.
-	virtual void SetModelView(const AuMatrix4x4& mv) const
+	virtual void SetModelViewUniform(const AuMatrix4x4& mv) const
 	{
 		// Set uniform variables.
 		SetUniformMatrix(m_GLf, m_mv, mv);
@@ -19369,7 +19429,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'p' is projection matrix.
-	virtual void SetProjection(const AuMatrix4x4& p)
+	virtual void SetProjectionUniform(const AuMatrix4x4& p)
 	{
 		if(m_ProjectionValid && m_Projection == p)
 			return;
@@ -19668,7 +19728,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'mv' is model view matrix of the globe.
-	virtual void SetModelView(const AuMatrix4x4& mv) const
+	virtual void SetModelViewUniform(const AuMatrix4x4& mv) const
 	{
 		// Set uniform variables.
 		SetUniformMatrix(m_GLf, m_mv, mv);
@@ -19676,7 +19736,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'p' is projection matrix.
-	virtual void SetProjection(const AuMatrix4x4& p)
+	virtual void SetProjectionUniform(const AuMatrix4x4& p)
 	{
 		if(m_ProjectionValid && m_Projection == p)
 			return;
@@ -19958,7 +20018,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'mv' is model view matrix of the globe.
-	virtual void SetModelView(const AuMatrix4x4& mv) const
+	virtual void SetModelViewUniform(const AuMatrix4x4& mv) const
 	{
 		// Set uniform variables.
 		SetUniformMatrix(m_GLf, m_mv, mv);
@@ -19966,7 +20026,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'p' is projection matrix.
-	virtual void SetProjection(const AuMatrix4x4& p)
+	virtual void SetProjectionUniform(const AuMatrix4x4& p)
 	{
 		if(m_ProjectionValid && m_Projection == p)
 			return;
@@ -20269,7 +20329,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'mv' is model view matrix of the globe.
-	virtual void SetModelView(const AuMatrix4x4& mv) const
+	virtual void SetModelViewUniform(const AuMatrix4x4& mv) const
 	{
 		// Set uniform variables.
 		SetUniformMatrix(m_GLf, m_mv, mv);
@@ -20277,7 +20337,7 @@ public:
 
 	// This shader program must be selected into the current OpenGL context before calling this function.
 	// 'p' is projection matrix.
-	virtual void SetProjection(const AuMatrix4x4& p)
+	virtual void SetProjectionUniform(const AuMatrix4x4& p)
 	{
 		if(m_ProjectionValid && m_Projection == p)
 			return;

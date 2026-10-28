@@ -1301,6 +1301,7 @@ public:
 	}
 
 	void RoughExtents(AuPoint& min, AuPoint& max) const;
+	bool RenderExtents(AuPoint& minimum, AuPoint& maximum) const;
 
 	void RoughExtentChunk(AuPointArray& locs, DhDNA::BONES bone, const AuPoint& loc, float len) const;
 
@@ -1654,6 +1655,9 @@ private:
 	mutable float	m_Volume;		// Body volume cached to save work.
 
 	// Remaining members are not serialized.
+	void CacheRenderBounds();
+	bool m_RenderBoundsValid = false;
+	AuPoint m_RenderMinimum, m_RenderMaximum;
 	bool			m_BendArm;		// true to bend the dominant arm
 	AuMatrix4x4		m_Bones[DhDNA::BONE_Max];	// Bone matrices for vertex
 									// skinning.

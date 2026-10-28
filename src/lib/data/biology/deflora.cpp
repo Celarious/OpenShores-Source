@@ -1399,6 +1399,12 @@ void DeFlora::CreateVAO(AuOpenGLFunctions& GLf, AuGLVAO& vao, unsigned int textu
 
 	// Generate vertex array(s) for this object. We only need one.
 	vao.CreateGL(GLf, vertices, 3);
+	vao.SetBounds(vaoPos, vertices, 3);
+	// Flora shaders add wind/current displacement in eye space after placement.
+	double maxMovement = 0;
+	for(unsigned int vertex = 0; vertex < vertices; ++vertex)
+		maxMovement = qMax(maxMovement, double(qAbs(vaoTex[vertex*3 + 2])));
+	vao.SetVertexMovement(maxMovement);
 
 	// Select vertex array to construct.
 	vao.SelectGL();

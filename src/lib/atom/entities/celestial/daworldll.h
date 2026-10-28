@@ -1128,6 +1128,9 @@ public:
 		return AuGLVAO::Buffer(bufferIndex);
 	}
 
+	using AuGLVAO::SetBounds;
+	using AuGLVAO::IntersectsFrustum;
+
 	// Creates the OpenGL VAO. Be sure to call DeleteGL some time.
 	inline void CreateGL(AuOpenGLFunctions& GLf, GLuint vertices, GLuint buffers)
 	{
@@ -1410,11 +1413,11 @@ public:	// Methods
 	}
 
 	inline float ViewAlpha(float elapsedMs, const AuPoint& viewPt, const AuPoint& viewerPos, double viewRangeFt2,
-			float behindViewerRange)
+			float behindViewerRange, bool frustumCulling=false)
 	{
 		// Calculate distance to the viewer.
 		double dist2 = Location().Distance2(viewerPos);
-		if(dist2 > behindViewerRange*behindViewerRange)
+		if(!frustumCulling && dist2 > behindViewerRange*behindViewerRange)
 		{
 			// Clip when too far behind the viewer.
 			if(viewPt.z > 0)
@@ -1592,11 +1595,11 @@ public:	// Methods
 	}
 
 	inline float ViewAlpha(float elapsedMs, const AuPoint& viewPt, const AuPoint& viewerPos, double viewRangeFt2,
-			float behindViewerRange)
+			float behindViewerRange, bool frustumCulling=false)
 	{
 		// Calculate distance to the viewer.
 		double dist2 = Location().Distance2(viewerPos);
-		if(dist2 > behindViewerRange*behindViewerRange)
+		if(!frustumCulling && dist2 > behindViewerRange*behindViewerRange)
 		{
 			// Clip when too far behind the viewer.
 			if(viewPt.z > 0)

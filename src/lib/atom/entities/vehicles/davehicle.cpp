@@ -3047,29 +3047,32 @@ void DaVehicle::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRen
 		return;
 
 	const AuMatrix4x4& model = rmod.Matrix(Id());
-	if(sceneAtom->Parent() != this)
-	{
-		// The scene atom is not aboard this vehicle.
-		const AuPoint& pv = rmod.ViewLoc(Id());
-		if(pv.z >= 0 && pv.Length2() > 30*30)
-		{
-			// this vehicle is behind the camera plane and more than 30' away from the camera
-			// OpenAL audio sources
-			RenderAudioSources(sceneAtom, model, ari.al, ari.fade);
-
-			// Base atom class needs to render special effects.
-			DaAtom::RenderEnvironmentObject(projection, ari, rmod, sceneAtom, renderLast, pass, shadSc, shadScFog, shadScGlobe,
-					shadScGlobeFog, shadScRingworld, shadScRingworldFog);
-			return;
-		}
-	}
-
 	// Render atoms subordinate to this vehicle, i.e. riding.
 	DaAtomList subs;
 	ListSubatoms(subs);
 	for(DaAtomList::const_iterator it = subs.cbegin(); it != subs.cend(); it++)
 		(*it)->RenderEnvironmentObject(projection, ari, rmod, sceneAtom, renderLast, pass, shadSc, shadScFog, shadScGlobe,
 				shadScGlobeFog, shadScRingworld, shadScRingworldFog);
+
+	// Trails and condition effects can reach the view while the vehicle itself is outside it.
+	if(m_pEngineTrail[0] || /*m_Shield ||*/ IsAnyConditionVisible() || IsSmoldering() || ForwardSpeed() > SpeedOfLight()*.9)
+		renderLast.Insert(rmod, this);
+
+	bool geometryVisible = true;
+	// The shared model renderer tests its complete visual bounds. Collision
+	// extents deliberately exclude some decorative vehicle geometry.
+	if(!ari.re->FrustumCulling() && sceneAtom->Parent() != this)
+	{
+		const AuPoint& pv = rmod.ViewLoc(Id());
+		geometryVisible = pv.z < 0 || pv.Length2() <= 30*30;
+	}
+	if(!geometryVisible)
+	{
+		RenderAudioSources(sceneAtom, model, ari.al, ari.fade);
+		DaAtom::RenderEnvironmentObject(projection, ari, rmod, sceneAtom, renderLast, pass, shadSc, shadScFog, shadScGlobe,
+				shadScGlobeFog, shadScRingworld, shadScRingworldFog);
+		return;
+	}
 
 	// Get ambient lighting and fog values.
 	float ambientR, ambientG, ambientB, fogDensity, fogR, fogG, fogB;
@@ -3156,10 +3159,6 @@ void DaVehicle::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRen
 		ari.re->glEnable(GL_CULL_FACE);
 	}
 	*/
-
-	// Render engine trail in RenderLast.
-	if(m_pEngineTrail[0] || /*m_Shield ||*/ IsAnyConditionVisible() || IsSmoldering() || ForwardSpeed() > SpeedOfLight()*.9)
-		renderLast.Insert(rmod, this);
 
 	// OpenAL audio sources
 	RenderAudioSources(sceneAtom, model, ari.al, ari.fade);

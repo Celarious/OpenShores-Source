@@ -188,6 +188,7 @@ void AuTractorBeam::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mod
 	{
 		// Create a VAO of the trail triangles.
 		AuGLVAO vao;
+		re.CullTriangles(projection * model, tris);
 		vao.CreateForTexture(re, tris, GL_STREAM_DRAW);
 		if(vao.VAO())
 		{
@@ -228,6 +229,7 @@ void AuTractorBeam::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mod
 
 			// Make a VAO of the vertex locations.
 			AuGLVAO vao;
+			re.CullSprites(projection * model, verts);
 			vao.CreateForSprites(re, verts, GL_STREAM_DRAW);
 			if(vao.VAO())
 			{
@@ -251,6 +253,7 @@ void AuTractorBeam::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mod
 
 			// Make a VAO of the vertex locations.
 			AuGLVAO vao;
+			re.CullSprites(projection * model, verts);
 			vao.CreateForSprites(re, verts, GL_STREAM_DRAW);
 			if(vao.VAO())
 			{

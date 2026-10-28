@@ -7846,8 +7846,15 @@ bool DaAtom::IsConsoleSeatManned(quint16 stationId, unsigned int seatIndex) cons
 	return false;
 }
 
-void DaAtom::SetRenderLights(AuGLEffects& re, const QList<AuGLSun>& suns, const QList<AuGLLight>& lights, float ambientLight)
+void DaAtom::SetRenderLights(AuGLEffects& re, const QList<AuGLSun>& suns, const QList<AuGLLight>& sourceLights, float ambientLight)
 {
+	// Sources are collected regardless of mesh visibility. Filter their complete
+	// influence volumes before the limited shader slots are assigned.
+	QList<AuGLLight> visibleLights;
+	if(re.FrustumCulling())
+		for(QList<AuGLLight>::const_iterator light = sourceLights.cbegin(); light != sourceLights.cend(); ++light)
+			if(re.LightIntersectsFrustum(*light)) visibleLights.append(*light);
+	const QList<AuGLLight>& lights = re.FrustumCulling() ? visibleLights : sourceLights;
 	// Configure ambient lighting.
 	re.SetAmbientLight(ambientLight, ambientLight, ambientLight, 1.f);
 

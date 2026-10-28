@@ -13,6 +13,7 @@
 #include "auglobal.h"
 #include "auglmodel.h"
 #include "austation.h"
+#include <cmath>
 #include <QMap>
 
 //-+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
@@ -273,6 +274,9 @@ DpBody::DpBody(const DpBody& c) : QVector<DpBodyPart*>(), m_Models(c.m_Models)
 	m_LastSpecUse = c.m_LastSpecUse;
 	m_Max = c.m_Max;
 	m_Min = c.m_Min;
+	m_RenderBoundsValid = c.m_RenderBoundsValid;
+	m_RenderMinimum = c.m_RenderMinimum;
+	m_RenderMaximum = c.m_RenderMaximum;
 	for(int ps=0; ps<DpBody::PS_Count; ps++)
 		m_Pose[ps] = c.m_Pose[ps];
 	m_Sex = c.m_Sex;
@@ -356,6 +360,9 @@ const DpBody& DpBody::operator=(const DpBody& c)
 	m_LastSpecUse = c.m_LastSpecUse;
 	m_Max = c.m_Max;
 	m_Min = c.m_Min;
+	m_RenderBoundsValid = c.m_RenderBoundsValid;
+	m_RenderMinimum = c.m_RenderMinimum;
+	m_RenderMaximum = c.m_RenderMaximum;
 	for(int ps=0; ps<DpBody::PS_Count; ps++)
 		m_Pose[ps] = c.m_Pose[ps];
 	m_Sex = c.m_Sex;
@@ -1779,6 +1786,7 @@ void DpBody::CreateSkin(AuGLEffects& re, AuGLModelCache& mc)
 	SetupSkinMaterial();
 	for(QVector<DpBodyPart*>::const_iterator it = constBegin(); it != constEnd(); it++)
 		(*it)->CreateSkin(re, mc);
+	CacheRenderBounds();
 
 	/*
 	// Make a simple box of quads.
@@ -1873,6 +1881,57 @@ void DpBody::CreateSkin(AuGLEffects& re, AuGLModelCache& mc)
 		re.glVertex3f(-2.0, -0.5, -rht2);
 	re.glEnd();
 	*/
+}
+
+void DpBody::CacheRenderBounds()
+{
+	m_RenderBoundsValid = false;
+	for(const Au3dsGLSLModelInstance* model : m_Models)
+	{
+		AuPoint minimum, maximum;
+		if(!model || !model->UploadedBounds(minimum, maximum))
+		{
+			m_RenderBoundsValid = false;
+			return;
+		}
+		if(!m_RenderBoundsValid)
+		{
+			m_RenderMinimum = minimum;
+			m_RenderMaximum = maximum;
+			m_RenderBoundsValid = true;
+		}
+		else
+		{
+			m_RenderMinimum = m_RenderMinimum.Min(minimum);
+			m_RenderMaximum = m_RenderMaximum.Max(maximum);
+		}
+	}
+}
+
+bool DpBody::RenderExtents(AuPoint& minimum, AuPoint& maximum) const
+{
+	if(!m_RenderBoundsValid || m_Models.isEmpty()) return false;
+	minimum = m_RenderMinimum;
+	maximum = m_RenderMaximum;
+	const AuPoint center = (minimum + maximum) * .5;
+	const AuPoint extent = (maximum - minimum) * .5;
+	// Weighted skin is a convex combination of bone-transformed vertices.
+	// Their union bounds every generated feature without walking the mesh again.
+	for(int index = 0; index < DhDNA::BONE_Max; ++index)
+	{
+		const AuMatrix4x4& bone = m_Bones[index];
+		const double* matrix = bone.GLMatrix();
+		const AuPoint posedCenter = bone.Project(center);
+		const AuPoint posedExtent(
+			std::abs(matrix[0])*extent.x + std::abs(matrix[4])*extent.y + std::abs(matrix[8])*extent.z,
+			std::abs(matrix[1])*extent.x + std::abs(matrix[5])*extent.y + std::abs(matrix[9])*extent.z,
+			std::abs(matrix[2])*extent.x + std::abs(matrix[6])*extent.y + std::abs(matrix[10])*extent.z);
+		if(!std::isfinite(posedCenter.x) || !std::isfinite(posedCenter.y) || !std::isfinite(posedCenter.z)
+			|| !std::isfinite(posedExtent.x) || !std::isfinite(posedExtent.y) || !std::isfinite(posedExtent.z)) return false;
+		minimum = minimum.Min(posedCenter - posedExtent);
+		maximum = maximum.Max(posedCenter + posedExtent);
+	}
+	return true;
 }
 
 // One of many RenderSkin variations. If you change this one, be sure to apply those changes to the others.

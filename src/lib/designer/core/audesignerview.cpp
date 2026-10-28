@@ -3158,6 +3158,8 @@ void AuDesignerView::RenderScene(DaPerson* sceneAtom)
 	// Setup scene projection matrices.
 	SetupProjection();
 	m_RenderInfo->BeginLegacyNpcFrame(m_tProjection, m_tCamera.Inverse(), sceneAtom);
+	m_RenderInfo->re->SetSceneFrustum(m_tProjection);
+	m_RenderInfo->re->SetFrustumCulling(g_Au.FrustumCulling());
 
 	// Configure scene render info.
 	m_RenderInfo->fade = m_Fade * g_Au.SoundEffectsGain();	// Fade overall sound volume with screen fade.
@@ -3199,6 +3201,7 @@ void AuDesignerView::RenderScene(DaPerson* sceneAtom)
 
 		pEnvironment->RenderEnvironment(m_tProjection, m_tFarProjection, m_tCamera.Inverse(), *m_RenderInfo, sceneAtom);
 	}
+	m_RenderInfo->re->SetFrustumCulling(false);
 
 	if(s_RenderScene)
 	{

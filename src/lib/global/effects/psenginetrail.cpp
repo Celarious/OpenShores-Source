@@ -143,6 +143,7 @@ void PsEngineTrail::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mod
 	{
 		// Create a VAO of the engine trail triangles.
 		AuGLVAO vao;
+		re.CullTriangles(projection * model * m_tParent, tris);
 		vao.CreateForTexture(re, tris, GL_STREAM_DRAW);
 
 		if(vao.VAO())
@@ -188,6 +189,7 @@ void PsEngineTrail::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mod
 
 		// Make a VAO of the vertex locations.
 		AuGLVAO vao;
+		re.CullSprites(projection * model * m_tParent, verts);
 		vao.CreateForSprites(re, verts, GL_STREAM_DRAW);
 		if(vao.VAO())
 		{

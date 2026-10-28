@@ -14,6 +14,7 @@
 #include "auknownpatents.h"
 #include "auscdesign.h"
 #include "ausound.h"
+#include "auviewfrustum.h"
 #include "deconstructionprocess.h"
 #include "demanufacturingprocess.h"
 #include "dgdata.h"
@@ -8191,7 +8192,7 @@ double AuItemFloraDNA::Render(const AuMatrix4x4& projection, const AuMatrix4x4& 
 		return 0;
 
 	AuPoint pv = model.Project(AuPoint(0,0));
-	if(pv.z >= 0)
+	if(!re.FrustumCulling() && pv.z >= 0)
 	{
 		// Flower pot checks a point above the pot so the plant doesn't disappear when the pot is not in the scene.
 		AuPoint pv = model.Project(AuPoint(0,0,4));
@@ -8212,6 +8213,9 @@ double AuItemFloraDNA::Render(const AuMatrix4x4& projection, const AuMatrix4x4& 
 			plantM.Translate(0,0,.64);	// Measured off the model.
 		float pottedScale = (float)PottedSize() / 255.f;
 		plantM.Scale(pottedScale, pottedScale, pottedScale);
+		AuPoint pottedWindVec = windVec * (pottedScale * 2);
+		if(re.FrustumCulling() && !m_FloraVAO->IntersectsFrustum(AuViewFrustum(projection), model * plantM,
+			pottedWindVec.Length() * m_FloraVAO->VertexMovement())) return 0;
 
 		// Render the plant with spacecraft lighting.
 		re.GLSL().FloraShader().Select(projection, re);
@@ -8219,7 +8223,6 @@ double AuItemFloraDNA::Render(const AuMatrix4x4& projection, const AuMatrix4x4& 
 		re.GLSL().FloraShader().SetFog(0, 1, 1, 1);
 		re.GLSL().FloraShader().SetTexture(m_FloraTexture);
 		re.GLSL().FloraShader().SetPlantMatrix(plantM);
-		AuPoint pottedWindVec = windVec * (pottedScale * 2);
 		re.GLSL().FloraShader().SetForceVector(pottedWindVec.x, pottedWindVec.y, pottedWindVec.z);	// In eye space.
 
 		// Globe position in eye space is needed to calculate sun over-the-horizon effect.
@@ -8265,7 +8268,7 @@ double AuItemFloraDNA::RenderOnGlobe(const AuMatrix4x4& projection, const AuMatr
 		return 0;
 
 	AuPoint pv = model.Project(AuPoint(0,0));
-	if(pv.z >= 0)
+	if(!re.FrustumCulling() && pv.z >= 0)
 	{
 		// Flower pot checks a point above the pot so the plant doesn't disappear when the pot is not in the scene.
 		AuPoint pv = model.Project(AuPoint(0,0,4));
@@ -8286,6 +8289,9 @@ double AuItemFloraDNA::RenderOnGlobe(const AuMatrix4x4& projection, const AuMatr
 			plantM.Translate(0,0,.64);	// Measured off the model.
 		float pottedScale = (float)PottedSize() / 255.f;
 		plantM.Scale(pottedScale, pottedScale, pottedScale);
+		AuPoint pottedWindVec = windVec * (pottedScale * 2);
+		if(re.FrustumCulling() && !m_FloraVAO->IntersectsFrustum(AuViewFrustum(projection), model * plantM,
+			pottedWindVec.Length() * m_FloraVAO->VertexMovement())) return 0;
 
 		// Render the plant with globe lighting.
 		re.GLSL().FloraShader().Select(projection, re);
@@ -8293,7 +8299,6 @@ double AuItemFloraDNA::RenderOnGlobe(const AuMatrix4x4& projection, const AuMatr
 		re.GLSL().FloraShader().SetFog(fogDensity, fogR, fogG, fogB);
 		re.GLSL().FloraShader().SetTexture(m_FloraTexture);
 		re.GLSL().FloraShader().SetPlantMatrix(plantM);
-		AuPoint pottedWindVec = windVec * (pottedScale * 2);
 		re.GLSL().FloraShader().SetForceVector(pottedWindVec.x, pottedWindVec.y, pottedWindVec.z);	// In eye space.
 
 		// Globe position in eye space is needed to calculate sun over-the-horizon effect.
@@ -8339,7 +8344,7 @@ double AuItemFloraDNA::RenderOnRingworld(const AuMatrix4x4& projection, const Au
 		return 0;
 
 	AuPoint pv = model.Project(AuPoint(0,0));
-	if(pv.z >= 0)
+	if(!re.FrustumCulling() && pv.z >= 0)
 	{
 		// Flower pot checks a point above the pot so the plant doesn't disappear when the pot is not in the scene.
 		AuPoint pv = model.Project(AuPoint(0,0,4));
@@ -8360,6 +8365,9 @@ double AuItemFloraDNA::RenderOnRingworld(const AuMatrix4x4& projection, const Au
 			plantM.Translate(0,0,.64);	// Measured off the model.
 		float pottedScale = (float)PottedSize() / 255.f;
 		plantM.Scale(pottedScale, pottedScale, pottedScale);
+		AuPoint pottedWindVec = windVec * (pottedScale * 2);
+		if(re.FrustumCulling() && !m_FloraVAO->IntersectsFrustum(AuViewFrustum(projection), model * plantM,
+			pottedWindVec.Length() * m_FloraVAO->VertexMovement())) return 0;
 
 		// Render the plant with ringworld lighting.
 		re.GLSL().FloraRingworldShader().Select(projection, re);
@@ -8367,7 +8375,6 @@ double AuItemFloraDNA::RenderOnRingworld(const AuMatrix4x4& projection, const Au
 		re.GLSL().FloraRingworldShader().SetFog(fogDensity, fogR, fogG, fogB);
 		re.GLSL().FloraRingworldShader().SetTexture(m_FloraTexture);
 		re.GLSL().FloraRingworldShader().SetPlantMatrix(plantM);
-		AuPoint pottedWindVec = windVec * (pottedScale * 2);
 		re.GLSL().FloraRingworldShader().SetForceVector(pottedWindVec.x, pottedWindVec.y, pottedWindVec.z);	// In eye space.
 
 		// Ambient light
@@ -8790,6 +8797,7 @@ void AuItemPicture::RenderPicture(const AuMatrix4x4& projection, const AuMatrix4
 	// Render the picture.
 	if(m_PictureVAO)
 	{
+		if(re.FrustumCulling() && !m_PictureVAO->IntersectsFrustum(AuViewFrustum(projection * model))) return;
 		re.GLSL().TextureShader().Select();
 		re.GLSL().TextureShader().SetProjectionModelView(projection * model);
 		if(g_Au.DrawFramedPictures() && m_PictureTexture)

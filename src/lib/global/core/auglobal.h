@@ -571,6 +571,7 @@ private:
 	bool								m_SkyBoxMipMap;
 	unsigned int						m_SkyBoxPaneSize;		// Pixel edge size of sky box panes.
 	bool								m_DrawWeatherEffects;
+	bool								m_FrustumCulling;
 	bool								m_UseClassicLoadingAnimation;
 	int									m_FramedPictureSize;	// Maximum size of a framed picture.
 	int									m_ResourceIconSize;		// modifier for the top down view sprite sizes. Percentage of size.
@@ -1849,6 +1850,11 @@ public:
 		return m_DrawWeatherEffects;
 	}
 
+	inline bool FrustumCulling() const
+	{
+		return m_FrustumCulling;
+	}
+
 	inline bool UseClassicLoadingAnimation() const
 	{
 		return m_UseClassicLoadingAnimation;
@@ -2774,6 +2780,8 @@ public:
 	void SetSkyBoxPaneSize(unsigned int paneSize);
 
 	void SetDrawWeatherEffects(bool drawWeatherEffects);
+
+	void SetFrustumCulling(bool frustumCulling);
 
 	void SetUseClassicLoadingAnimation(bool useClassicLoadingAnimation);
 

@@ -1879,6 +1879,7 @@ public:
 			double uL, double uT, double lL, double lT, double hwL, QColor tC, float tS, 
 			QColor bC, float bS, float glow, float glowdim, bool bCreate, bool bSkip, GLuint destBlendFunc)
 	{
+		m_VisualBoundsValid = false; // DNA manipulation and bones invalidate file-space bounds.
 		// Delete this model if it was already created.
 		DeleteGL();
 
@@ -2017,6 +2018,7 @@ public:
 
 	inline void CreatePatchedModel(AuOpenGLFunctions& GLf)
 	{
+		m_VisualBoundsValid = false;
 		int modelCount = m_Objects.count();
 		if(modelCount < 0)
 			return;
@@ -2069,6 +2071,7 @@ public:
 
 		// First copy 'this' generic model instance
 		pModel->CopyInstance(this);
+		pModel->m_VisualBoundsValid = false;
 		if(!pModel->m_Objects.count())
 			return false;
 
@@ -2215,6 +2218,9 @@ public:
 
 	inline void CopyInstance(const Au3dsGLSLModelInstance* pModel)
 	{
+		m_VisualBoundsValid = pModel->m_VisualBoundsValid;
+		m_VisualMinimum = pModel->m_VisualMinimum;
+		m_VisualMaximum = pModel->m_VisualMaximum;
 		// Copy Object array
 		m_Objects = pModel->m_Objects;
 
@@ -2608,7 +2614,13 @@ public:
 
 	virtual void ResourceReport(QDataStream& out) const;
 
+	bool RenderGeometryInFrustum(const AuMatrix4x4& projection, const AuMatrix4x4& model, const AuGLEffects& re) const;
+	bool UploadedBounds(AuPoint& minimum, AuPoint& maximum) const;
+
 private:
+	void CacheVisualBounds();
+	bool m_VisualBoundsValid = false;
+	AuPoint m_VisualMinimum, m_VisualMaximum;
 	QString					m_FileName;		// A unique id for this instance.
 	// Keep display lists seperate
 	int						m_LitModelCount;// Number of Gl model ids with lights on

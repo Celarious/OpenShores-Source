@@ -667,6 +667,7 @@ struct DaLegacyCity::Runtime
 		AuGLVAO vao;
 		GLuint texture = 0;
 		quint32 empire = 0;
+		double radius = 16;
 	};
 	QMutex lock;
 	bool asynchronous = false;
@@ -3179,6 +3180,29 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		fogR, fogG, fogB, ari.IsViewTopDown(), sunsBlocked);
 	shader.SetAmbientLight(ambientR, ambientG, ambientB);
 	const AuMatrix4x4 worldModel = model->Matrix() * Transform().Inverse();
+	const AuViewFrustum worldFrustum(projection * worldModel);
+	struct BuildingView
+	{
+		const Runtime::Building* building = nullptr;
+		AuMatrix4x4 placement, model;
+		AuViewFrustum frustum, maskFrustum;
+	};
+	QHash<quint32, BuildingView> buildingViews;
+	for(const auto& building : m_Runtime->buildings)
+	{
+		BuildingView view;
+		view.building = &building;
+		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
+			building.state.facingRadians, nullptr, AuPoint(), view.placement);
+		view.model = worldModel * view.placement;
+		if(ari.re->FrustumCulling())
+		{
+			const AuMatrix4x4 clip = projection * view.model;
+			view.frustum.Set(clip);
+			view.maskFrustum.Set(clip, false);
+		}
+		buildingViews.insert(building.state.id, view);
+	}
 	shader.SetDirectTextureGlobe(worldModel.Translation(),
 		world->AtomType() == ATOM_WorldGlobe || world->AtomType() == ATOM_WorldGasGiant);
 	if(sunsBlocked)
@@ -3199,19 +3223,19 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 	for(const auto& draw : m_Runtime->drawBatches)
 	{
 		if(draw.interior != beforeTerrain) continue;
-		const auto found = std::find_if(m_Runtime->buildings.cbegin(), m_Runtime->buildings.cend(),
-			[&draw](const Runtime::Building& b) { return b.state.id == draw.development; });
-		if(found == m_Runtime->buildings.cend() || !draw.vao.VAO()) continue;
-		AuMatrix4x4 transform;
-		world->BuildingConstructionTransform(world->LocOfLL(found->state.location, found->state.altitudeMSL),
-			found->state.facingRadians, nullptr, AuPoint(), transform);
-		const AuMatrix4x4 buildingModel = worldModel * transform;
+		const auto found = buildingViews.constFind(draw.development);
+		if(found == buildingViews.cend() || !draw.vao.VAO()) continue;
+		const AuMatrix4x4& buildingModel = found->model;
+		// Test each uploaded chunk. Depth-clamped entrance masks must retain
+		// geometry crossing the camera's depth planes, so test their sides only.
+		if(ari.re->FrustumCulling()
+			&& !draw.vao.IntersectsFrustum(draw.depthOnly ? found->maskFrustum : found->frustum)) continue;
 		shader.SetModelView(buildingModel); shader.SetTexture(draw.texture);
 		AuPoint ambientUp = buildingModel.ProjectVector(0, 0, 1);
 		ambientUp.Unit();
 		shader.SetAmbientLightUp(ambientUp.x, ambientUp.y, ambientUp.z);
 		shader.SetColor(draw.tint.x(), draw.tint.y(), draw.tint.z(), draw.tint.w());
-		if(draw.exteriorLens && ExteriorLightsOn(*world, found->state, transform))
+		if(draw.exteriorLens && ExteriorLightsOn(*world, found->building->state, found->placement))
 		{
 			const QColor color = ExteriorLightColor(draw.exteriorLens == 2, powered);
 			shader.SetGlow(color.redF(), color.greenF(), color.blueF());
@@ -3285,7 +3309,9 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 				draw.empire = flag.empire;
 				draw.texture = ari.re->CreateTextureFromBitmap(Id().GetID(),
 					QStringLiteral("Flag:%1").arg(flag.empire), image, GL_LINEAR, GL_LINEAR, false, 1);
-				CreateFlagVAO(draw.vao, *ari.re, float(image.height()) / image.width());
+				const float aspectRatio = float(image.height()) / image.width();
+				CreateFlagVAO(draw.vao, *ari.re, aspectRatio);
+				draw.radius = 2 + std::sqrt(64.0 + 64.0 * aspectRatio * aspectRatio);
 			}
 			if(!draw.texture) continue;
 			// DaCity::CreateDeviceObjects 0x2813b0. Use the flag's own
@@ -3297,6 +3323,9 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 			const AuPoint base = placement.Translation();
 			const AuPoint up = -world->GravityDir(base);
 			const AuPoint location = base + up * 3.0 + (up * 27.0) * double(float(flag.level) / 30.f);
+			// Cloth can rotate and bend beyond its undeformed vertex bounds.
+			// Include the complete flag diagonal for unusually tall emblems.
+			if(ari.re->FrustumCulling() && !worldFrustum.IntersectsSphere(location, draw.radius)) continue;
 			float direction = 0, force = 1, period = 1;
 			if(!enclosureNeeded)
 			{

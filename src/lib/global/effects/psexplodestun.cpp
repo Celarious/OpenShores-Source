@@ -98,13 +98,17 @@ void PsExplodeStun::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mod
 
 	// Make a VAO of the vertex locations.
 	AuGLVAO vao;
+	re.CullSprites(projection * model, verts);
 	vao.CreateForSprites(re, verts, GL_STREAM_DRAW);
 
 	// Display the VAO once and clean it up.
-	vao.SelectGL();
-	vao.DrawGL(GL_POINTS);
-	vao.DeselectGL();
-	vao.DeleteGL();
+	if(vao.VAO())
+	{
+		vao.SelectGL();
+		vao.DrawGL(GL_POINTS);
+		vao.DeselectGL();
+		vao.DeleteGL();
+	}
 
 	re.glEnable(GL_CULL_FACE);
 	re.glDisable(GL_PROGRAM_POINT_SIZE); 

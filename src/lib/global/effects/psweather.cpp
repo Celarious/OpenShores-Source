@@ -69,10 +69,11 @@ void PsWeather::InitParticle(auParticle* pParticle)
 
 void PsWeather::Render(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, float scale)
 {
-	Q_UNUSED(projection);
 	Q_UNUSED(scale);
-	// The shaders use the active camera projection. Let OpenGL clip at the screen edges,
-	// including snowflake corners and rain streaks whose centers lie outside the view.
+	const bool cull = re.FrustumCulling();
+	const AuViewFrustum frustum(projection);
+	// Snow is billboarded in eye space, so include all four corners in its radius.
+	const double flakeRadius = qAbs(GetSize()) * .707107;
 	if(m_renderMethod == RENDER_METHOD_Snow)
 	{
 		if(!s_SnowFlakeVAO.VAO())
@@ -83,7 +84,9 @@ void PsWeather::Render(const AuMatrix4x4& projection, const AuMatrix4x4& model, 
 		{
 			// Skip the particles behind the viewer.
 			AuPoint viewPt = model.Project(pParticle->m_vCurPos);
-			if(viewPt.z >= 0)
+			if(!cull && viewPt.z >= 0)
+				continue;
+			if(cull && !frustum.IntersectsSphere(viewPt, flakeRadius))
 				continue;
 
 			re.GLSL().SnowShader().SetFlakePosition(pParticle->m_vCurPos.x, pParticle->m_vCurPos.y, pParticle->m_vCurPos.z);
@@ -102,7 +105,9 @@ void PsWeather::Render(const AuMatrix4x4& projection, const AuMatrix4x4& model, 
 		{
 			// Skip the particles behind the viewer.
 			AuPoint viewPt = model.Project(pParticle->m_vCurPos);
-			if(viewPt.z >= 0)
+			if(!cull && viewPt.z >= 0)
+				continue;
+			if(cull && !frustum.IntersectsSphere(viewPt, flakeRadius))
 				continue;
 
 			re.GLSL().SnowRingworldShader().SetFlakePosition(pParticle->m_vCurPos.x,pParticle->m_vCurPos.y,pParticle->m_vCurPos.z);
@@ -123,7 +128,12 @@ void PsWeather::Render(const AuMatrix4x4& projection, const AuMatrix4x4& model, 
 			AuPoint vOldPos(pParticle->m_vOldPos - vDir);
 
 			// Skip only streaks with both endpoints behind the viewer.
-			if(model.Project(pParticle->m_vCurPos).z >= 0 && model.Project(vOldPos).z >= 0)
+			const AuPoint current = model.Project(pParticle->m_vCurPos);
+			const AuPoint previous = model.Project(vOldPos);
+			if(current.z >= 0 && previous.z >= 0)
+				continue;
+			// Include the complete streak, even when both endpoints lie beyond different edges.
+			if(cull && !frustum.IntersectsSphere((current + previous) * .5, current.Distance(previous) * .5 + 1))
 				continue;
 
 			verts.append(vOldPos);

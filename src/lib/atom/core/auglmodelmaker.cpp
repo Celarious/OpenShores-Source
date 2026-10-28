@@ -2981,6 +2981,7 @@ AuGLVAO AuNearGlobeModel::VAO(AuOpenGLFunctions& GLf)
 
 		// Generate vertex array(s) for this object. We only need one.
 		m_VAO.CreateGL(GLf, vertices, 3);
+		m_VAO.SetBounds(globePos, vertices, 3);
 
 		// Select vertex array to construct.
 		m_VAO.SelectGL();
@@ -3225,6 +3226,7 @@ void AuGlobeModel::VAOs(AuOpenGLFunctions& GLf, AuAtGlobeVAO& vaos)
 
 			// Generate vertex array(s) for this object. We only need one.
 			m_VAO.m_Low.CreateGL(GLf, vertices, 3);
+			m_VAO.m_Low.SetBounds(globePos, vertices, 4);
 
 			// Select vertex array to construct.
 			m_VAO.m_Low.SelectGL();
@@ -3308,6 +3310,7 @@ void AuGlobeModel::VAOs(AuOpenGLFunctions& GLf, AuAtGlobeVAO& vaos)
 
 			// Generate vertex array(s) for this object. We only need one.
 			m_VAO.m_Low.CreateGL(GLf, vertices, 3);
+			m_VAO.m_Low.SetBounds(globePos, vertices, 4);
 
 			// Select vertex array to construct.
 			m_VAO.m_Low.SelectGL();
@@ -3621,6 +3624,7 @@ AuGLTriVAO AuGlobeModelTri::VAO(AuOpenGLFunctions& GLf)
 
 			// Generate vertex array(s) for this object. We only need one.
 			m_VAO.CreateGL(GLf, vertices, 4);
+			m_VAO.SetBounds(globePos, vertices, 4);
 
 			// Select vertex array to construct.
 			m_VAO.SelectGLNoTime();
@@ -3747,6 +3751,7 @@ AuGLTriVAO AuGlobeModelTri::VAO(AuOpenGLFunctions& GLf)
 			GLf.glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
 
 			// bind buffer for city presence and copy data into buffer.
+			m_VAO.SetBounds(globePos, vertices, 4);
 			GLf.glBindBuffer(GL_ARRAY_BUFFER, m_VAO.Buffer(3));
 			GLf.glBufferData(GL_ARRAY_BUFFER, cityIdx*sizeof(GLfloat), city, GL_STATIC_DRAW);
 			GLf.glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.

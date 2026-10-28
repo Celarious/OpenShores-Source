@@ -894,8 +894,80 @@ QColor AuGLSun::SunsetColor(const QColor& atmColor, float atmDensity) const
 
 AuGLEffects::AuGLEffects()
 {
+	m_FrustumCulling = false;
 	m_EyePos = AuPoint(0,0);
 	m_HUDItemsTexture = 0;
+}
+
+void AuGLEffects::CullSprites(const AuMatrix4x4& clip, QList<AuPointAlpha>& vertices) const
+{
+	if(!m_FrustumCulling || vertices.isEmpty()) return;
+	const AuViewFrustum frustum(clip);
+	QList<AuPointAlpha>::iterator output = vertices.begin();
+	for(QList<AuPointAlpha>::iterator point = vertices.begin(); point != vertices.end(); ++point)
+		// GL_POINTS are clipped by their center, even for large point sprites.
+		if(frustum.IntersectsSphere(*point, 0))
+		{
+			if(output != point) *output = *point;
+			++output;
+		}
+	vertices.erase(output, vertices.end());
+}
+
+void AuGLEffects::CullTriangles(const AuMatrix4x4& clip, QList<AuTriTex>& triangles) const
+{
+	if(!m_FrustumCulling || triangles.isEmpty()) return;
+	const AuViewFrustum frustum(clip);
+	QList<AuTriTex>::iterator output = triangles.begin();
+	for(QList<AuTriTex>::iterator triangle = triangles.begin(); triangle != triangles.end(); ++triangle)
+	{
+		const AuPoint minimum = triangle->m_V0.Min(triangle->m_V1).Min(triangle->m_V2);
+		const AuPoint maximum = triangle->m_V0.Max(triangle->m_V1).Max(triangle->m_V2);
+		if(frustum.IntersectsBox(minimum, maximum))
+		{
+			if(output != triangle) *output = *triangle;
+			++output;
+		}
+	}
+	triangles.erase(output, triangles.end());
+}
+
+bool AuGLEffects::LightIntersectsFrustum(const AuGLLight& light) const
+{
+	if(!m_FrustumCulling) return true;
+	if(!light.m_bEnabled) return false;
+	const double intensity = qMax(light.m_ColorR, qMax(light.m_ColorG, light.m_ColorB));
+	if(!std::isfinite(intensity) || !std::isfinite(light.m_kL) || !std::isfinite(light.m_kQ)
+		|| light.m_kL < 0 || light.m_kQ < 0) return true;
+	if(intensity <= 0) return false;
+	// Shaders attenuate by 1/(kL*d + kQ*d*d), with no hard range.
+	// Keep even very faint contributions (1/1024) and retain unbounded lights.
+	const double denominator = intensity * 1024.;
+	double radius;
+	if(light.m_kQ > 0)
+		radius = 2. * denominator / (light.m_kL + std::sqrt(light.m_kL * light.m_kL + 4. * light.m_kQ * denominator));
+	else if(light.m_kL > 0)
+		radius = denominator / light.m_kL;
+	else return true;
+	AuPoint center = light.m_Position;
+	// Enclose the entire illuminated cone, rather than testing its emitter.
+	// Wide/omnidirectional lights use the attenuation sphere unchanged.
+	const double cosine = light.m_cosOuter;
+	if(cosine > 0 && cosine <= 1 && std::isfinite(light.m_cosInner) && light.m_cosInner > cosine
+		&& std::isfinite(light.m_Direction.x)
+		&& std::isfinite(light.m_Direction.y) && std::isfinite(light.m_Direction.z))
+	{
+		const double length = light.m_Direction.Length();
+		// The shaders do not normalize the supplied direction. Preserve the
+		// attenuation sphere for scaled/malformed directions instead of narrowing it.
+		if(std::isfinite(length) && std::abs(length - 1.) <= 1.e-6)
+		{
+			const double offset = cosine >= std::sqrt(.5) ? radius / (2. * cosine) : radius * cosine;
+			center += light.m_Direction * (offset / length);
+			radius = cosine >= std::sqrt(.5) ? offset : radius * std::sqrt(1. - cosine * cosine);
+		}
+	}
+	return m_SceneFrustum.IntersectsSphere(center, radius);
 }
 
 AuGLEffects::~AuGLEffects()
@@ -1474,6 +1546,7 @@ void AuGLEffects::RenderText(const AuMatrix4x4& projection, const AuMatrix4x4& m
 			AuPointTex(ll.x, ll.y, ll.z, 0,0));
 
 	AuGLVAO vao;
+	CullTriangles(projection * model, tris);
 	vao.CreateForTexture(*this, tris, GL_STREAM_DRAW);
 	if(!vao.VAO())
 		return;
@@ -1533,6 +1606,7 @@ void AuGLEffects::RenderText(const AuMatrix4x4& projection, const AuMatrix4x4& m
 			AuPointTex(tloc.x, tloc.y, tloc.z, 0,0));
 
 	AuGLVAO vao;
+	CullTriangles(projection, tris);
 	vao.CreateForTexture(*this, tris, GL_STREAM_DRAW);
 	if(!vao.VAO())
 		return;
@@ -1591,6 +1665,7 @@ void AuGLEffects::RenderText_Shader(const AuMatrix4x4& projection, const AuMatri
 			AuPointTex(tloc.x, tloc.y, tloc.z, 0,0));
 
 	AuGLVAO vao;
+	CullTriangles(projection * model, tris);
 	vao.CreateForTexture(*this, tris, GL_STREAM_DRAW);
 	if(!vao.VAO())
 		return;
@@ -3569,6 +3644,10 @@ void AuGLEffects::RenderShieldBubble(const AuMatrix4x4& projection, const AuMatr
 		float top, bool topScram, float right, bool rightScram, float texOffset, float divisor,
 		float hitPosArray[MAX_SHIELD_HIT_EFFECTS*4], float hitDurArray[MAX_SHIELD_HIT_EFFECTS], bool hasShieldHits)
 {
+	// The vertex shader scales a unit sphere. Test the whole ellipsoid so a
+	// shield remains visible when its host hull lies outside the view.
+	const AuPoint extent(std::abs(double(sizeX)), std::abs(double(sizeY)), std::abs(double(sizeZ)));
+	if(FrustumCulling() && !AuViewFrustum(projection * model).IntersectsBox(-extent, extent)) return;
 	GLuint texShield = CreateTextureFromBitmap(STATIC_TEXTURE_ID, "Shield", ":data/TerNoise.png", GL_LINEAR, GL_LINEAR, false, 0);
 	if(!texShield)
 		return;

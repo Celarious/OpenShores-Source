@@ -111,6 +111,7 @@ void PsFireElectric::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mo
 	{
 		// Create a VAO of the trail triangles.
 		AuGLVAO vao;
+		re.CullTriangles(projection * model, tris);
 		vao.CreateForTexture(re, tris, GL_STREAM_DRAW);
 
 		// Render the VAO.
@@ -119,10 +120,13 @@ void PsFireElectric::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mo
 		re.GLSL().TextureShader().SetTexture(GetTextureID());
 		re.GLSL().TextureShader().SetColor(m_clrColor.redF(), m_clrColor.greenF(), m_clrColor.blueF(), 1.f);
 
-		vao.SelectGL();
-		vao.DrawGL();
-		vao.DeselectGL();
-		vao.DeleteGL();
+		if(vao.VAO())
+		{
+			vao.SelectGL();
+			vao.DrawGL();
+			vao.DeselectGL();
+			vao.DeleteGL();
+		}
 
 		re.GLSL().TextureShader().Deselect();
 	}
@@ -149,13 +153,17 @@ void PsFireElectric::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mo
 
 		// Make a VAO of the vertex locations.
 		AuGLVAO vao;
+		re.CullSprites(projection * model, verts);
 		vao.CreateForSprites(re, verts, GL_STREAM_DRAW);
 
 		// Display the VAO once and clean it up.
-		vao.SelectGL();
-		vao.DrawGL(GL_POINTS);
-		vao.DeselectGL();
-		vao.DeleteGL();
+		if(vao.VAO())
+		{
+			vao.SelectGL();
+			vao.DrawGL(GL_POINTS);
+			vao.DeselectGL();
+			vao.DeleteGL();
+		}
 
 		re.glDisable(GL_PROGRAM_POINT_SIZE); 
 

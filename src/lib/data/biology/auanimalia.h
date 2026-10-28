@@ -38,6 +38,16 @@ private:
 	float								m_PoseHz;				// Pose animation frequency in cycles per second.
 	AuHairStyle::SHAVE					m_Shave;
 
+	// Actual generated mesh bounds, partitioned by influencing shader bone.
+	struct RenderBoneBounds
+	{
+		AuPoint minimum, maximum;
+		bool used = false;
+	};
+	QVector<RenderBoneBounds> m_RenderBoneBounds;
+	bool m_RenderBoundsValid = false;
+	void CacheRenderBounds(const AuMeatMesh& skinMesh, const AuClothingMesh& clothingMesh);
+
 	// Render objects.
 	AuClothingTextureArray				m_AnimalClothingTex;
 	// Full body VAOs
@@ -674,6 +684,8 @@ public:	// Methods
 
 	// Returns the extents of the posed body, without referencing the skin mesh. Used by the server, who does not make a skin mesh.
 	void SightExtents(AuPoint& min, AuPoint& max) const;
+	// Includes generated clothing, hair and visors in the current pose. False means unknown.
+	bool RenderExtents(AuPoint& minimum, AuPoint& maximum) const;
 
 	float SightRange() const;
 

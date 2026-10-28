@@ -26,6 +26,8 @@ namespace AuLegacyCity
 namespace
 {
 const double SpawnRadius = 16.4041994750656; // Original five-metre obstruction test.
+const int BoatSearchRings = 4;
+const int BoatSearchSamplesPerRing = 16;
 
 AuPoint SearchOffset(int index)
 {
@@ -214,20 +216,38 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 		AuMatrix4x4 building;
 		world.BuildingConstructionTransform(world.LocOfLL(found->location, found->altitudeMSL),
 			found->facingRadians, nullptr, AuPoint(), building);
-		const double radius = construction->buildRadius * FeetPerMeter() + (boat ? -6.56167979002624 : 49.2125984251968);
+		// Boats search outside the level site, including its 2.828427-foot
+		// border. Land vehicles retain their original slab search radius.
+		const double radius = construction->buildRadius * FeetPerMeter() + (boat ? 2.828427f : 49.2125984251968);
+		const int samples = boat ? BoatSearchRings * BoatSearchSamplesPerRing : 16;
 		int tried = 0;
-		for(int index = 0; index < (boat ? 8 : 16); ++index)
+		for(int index = 0; index < samples; ++index)
 		{
-			const AuPoint offset = SearchOffset(index);
-			const AuPoint proposed = center + building.ProjectVector(AuPoint(offset.x * radius, offset.y * radius, 0));
+			const AuPoint offset = SearchOffset(boat ? index % BoatSearchSamplesPerRing : index);
+			AuPoint local(offset.x * radius, offset.y * radius, 0);
+			if(boat)
+			{
+				// Sample 20, 30, 40 and 50 metres beyond the square boundary.
+				// Move perpendicular to each side; normalize corner diagonals
+				// so they also stay within 50 metres. The first ring clears
+				// the site's ten-metre terrain blend and spawn obstruction radius.
+				AuPoint outward(std::abs(offset.x) == 1 ? offset.x : 0,
+					std::abs(offset.y) == 1 ? offset.y : 0, 0);
+				outward.Unit();
+				local += outward * ((20 + 10 * (index / BoatSearchSamplesPerRing)) * FeetPerMeter());
+			}
+			const AuPoint proposed = center + building.ProjectVector(local);
 			AuGlobeLLF ll;
 			if(!world.LLOfLoc(ll, proposed)) continue;
 			VehicleProductionBatch::Data::Candidate candidate;
 			if(boat)
 			{
 				if(!world.Hydrographics()) continue;
-				const double bottom = world.TerrainAltitudeMSL(AuGlobeLL(ll.Longitude(), ll.Latitude()), city.Id());
-				if(bottom > -3.28083989501312) continue;
+				// Include developed terrain, so neighboring sites and slabs
+				// cannot turn a naturally wet sample into a launch onto land.
+				const double bottom = world.TerrainAltitudeMSL(AuGlobeLL(ll.Longitude(), ll.Latitude()));
+				const double minimumDepth = FeetPerMeter() * (result.commodityId == 132 ? .5 : 1);
+				if(bottom > -minimumDepth) continue;
 				// Undersea submarine factories launch above the sea floor;
 				// other boats start on the water surface (SpawnBoat 0x52d6a0).
 				const bool submarine = result.commodityId == 77 && found->altitudeMSL <= -32;
@@ -241,10 +261,12 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 				candidate.slab = road->id;
 				candidate.ground = world.GetSurfaceLocation(ll);
 			}
-			// Original code considers at most four qualifying slab/water
-			// locations, even if more of its perimeter samples qualify.
-			if(++tried > 4) break;
+			// Land vehicles retain the original four qualifying slab limit.
+			// Keep boat alternatives for simultaneous production; Apply picks
+			// the first unobstructed position not reserved by another output.
+			if(!boat && ++tried > 4) break;
 			candidate.obstructed = world.IsSpawnAreaObstructed(candidate.ground, SpawnRadius);
+			if(boat && candidate.obstructed) continue;
 			candidate.bounds = SpawnBounds(world, candidate.ground);
 			candidate.placement.Translate(candidate.ground);
 			candidate.placement *= AuPoint(0, 0, 1).GetAlignmentTransform(-world.GravityDir(candidate.ground));

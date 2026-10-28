@@ -186,6 +186,7 @@ void PsWeaponEffect::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mo
 	{
 		// Create a VAO of the trail triangles.
 		AuGLVAO vao;
+		re.CullTriangles(projection * model, tris);
 		vao.CreateForTexture(re, tris, GL_STREAM_DRAW);
 		if(vao.VAO())
 		{
@@ -225,6 +226,7 @@ void PsWeaponEffect::Render(const AuMatrix4x4& projection, const AuMatrix4x4& mo
 
 		// Make a VAO of the vertex locations.
 		AuGLVAO vao;
+		re.CullSprites(projection * model, verts);
 		vao.CreateForSprites(re, verts, GL_STREAM_DRAW);
 		if(vao.VAO())
 		{

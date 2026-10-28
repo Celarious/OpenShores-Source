@@ -13,8 +13,51 @@
 #include "hashpack.h"
 #include <QFile>
 #include <limits>
+#include <cmath>
 
 const bool s_DebugGLSL = false;									// Set true to see debug messages generated in this file.
+
+void AuGLVAO::SetBounds(const GLfloat* positions, unsigned int vertices, unsigned int stride)
+{
+	m_BoundsValid = false;
+	if(!positions || !vertices || stride < 3) return;
+	AuPoint boundsMin(positions[0], positions[1], positions[2]);
+	AuPoint boundsMax(boundsMin);
+	for(unsigned int index = 0; index < vertices; ++index)
+	{
+		const GLfloat* position = positions + index * stride;
+		if(!std::isfinite(position[0]) || !std::isfinite(position[1]) || !std::isfinite(position[2])) return;
+		boundsMin.x = qMin(boundsMin.x, double(position[0]));
+		boundsMin.y = qMin(boundsMin.y, double(position[1]));
+		boundsMin.z = qMin(boundsMin.z, double(position[2]));
+		boundsMax.x = qMax(boundsMax.x, double(position[0]));
+		boundsMax.y = qMax(boundsMax.y, double(position[1]));
+		boundsMax.z = qMax(boundsMax.z, double(position[2]));
+	}
+	m_BoundsMin = boundsMin;
+	m_BoundsMax = boundsMax;
+	m_BoundsValid = true;
+}
+
+bool AuGLVAO::IntersectsFrustum(const AuViewFrustum& frustum, double padding) const
+{
+	if(!m_BoundsValid || !std::isfinite(padding) || padding < 0) return true;
+	const AuPoint allowance(padding, padding, padding);
+	return frustum.IntersectsBox(m_BoundsMin - allowance, m_BoundsMax + allowance);
+}
+
+bool AuGLVAO::IntersectsFrustum(const AuViewFrustum& frustum, const AuMatrix4x4& model, double padding) const
+{
+	if(!m_BoundsValid || !std::isfinite(padding) || padding < 0) return true;
+	const AuPoint center = model.Project((m_BoundsMin + m_BoundsMax) * .5);
+	const AuPoint extent = (m_BoundsMax - m_BoundsMin) * .5;
+	const double* matrix = model.GLMatrix();
+	const AuPoint transformedExtent(
+		std::abs(matrix[0])*extent.x + std::abs(matrix[4])*extent.y + std::abs(matrix[8])*extent.z + padding,
+		std::abs(matrix[1])*extent.x + std::abs(matrix[5])*extent.y + std::abs(matrix[9])*extent.z + padding,
+		std::abs(matrix[2])*extent.x + std::abs(matrix[6])*extent.y + std::abs(matrix[10])*extent.z + padding);
+	return frustum.IntersectsBox(center - transformedExtent, center + transformedExtent);
+}
 
 // Compressed source loaded from glsl.har. Only contains data during Initialize.
 thread_local QHash<QString, QByteArray>	s_GLSLProgramSrc;
@@ -113,6 +156,8 @@ void AuGLVAO::CreateForLines(AuOpenGLFunctions& GLf, const AuPointArray& verts, 
 	// bind buffer for positions and copy data into buffer.
 	GLf.glBindBuffer(GL_ARRAY_BUFFER, Buffer(0));
 	GLf.glBufferData(GL_ARRAY_BUFFER, pidx*sizeof(GLfloat), position, usage);
+	if(usage == GL_STATIC_DRAW)
+		SetBounds(position, vertices, 4);
 	GLf.glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
 
 	GLf.glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -401,6 +446,7 @@ void AuGLVAO::CreateForSc(AuOpenGLFunctions& GLf, const AuScVertexData& data, GL
 	// bind buffer for positions and copy data into buffer.
 	GLf.glBindBuffer(GL_ARRAY_BUFFER, Buffer(0));
 	GLf.glBufferData(GL_ARRAY_BUFFER, data.buffers[0].size()*sizeof(GLfloat), data.buffers[0].constData(), usage);
+	SetBounds(data.buffers[0].constData(), vertices, 4);
 	GLf.glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
 
 	// bind buffer for normals and copy data into buffer.
@@ -544,6 +590,23 @@ void AuGLVAO::CreateForBody(AuOpenGLFunctions& GLf, const QList<AuTriBody>& tris
 	// bind buffer for positions and copy data into buffer.
 	GLf.glBindBuffer(GL_ARRAY_BUFFER, Buffer(0));
 	GLf.glBufferData(GL_ARRAY_BUFFER, pidx*sizeof(GLfloat), position, usage);
+	SetBounds(position, vertices, pidx / vertices);
+	// Skinned bounds rely on convex combinations of valid bone transforms.
+	for(int vertex = 0; vertex < vertices && m_BoundsValid; ++vertex)
+	{
+		double totalWeight = 0;
+		for(int influence = 0; influence < 4; ++influence)
+		{
+			const int offset = vertex * 4 + influence;
+			const double weight = boneWeight[offset];
+			const double index = boneIndex[offset];
+			if(!std::isfinite(weight) || weight < 0 || !std::isfinite(index)
+				|| (weight > 0 && (index < 0 || index >= MAX_BONES || index != std::floor(index))))
+				m_BoundsValid = false;
+			totalWeight += weight;
+		}
+		if(std::abs(totalWeight - 1) > 1.e-5) m_BoundsValid = false;
+	}
 	GLf.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
 
 	// bind buffer for normals and copy data into buffer.
@@ -659,6 +722,7 @@ void AuGLVAO::CreateForModelTexFog(AuOpenGLFunctions& GLf, const QList<AuTriTexN
 	// bind buffer for positions and copy data into buffer.
 	GLf.glBindBuffer(GL_ARRAY_BUFFER, Buffer(1));
 	GLf.glBufferData(GL_ARRAY_BUFFER, pidx*sizeof(GLfloat), position, usage);
+	SetBounds(position, vertices, pidx / vertices);
 	GLf.glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
 
 	// bind buffer for texture coords and shininess and copy data into buffer.
@@ -689,6 +753,7 @@ void AuGLVAO::CreateForModelTexFog(AuOpenGLFunctions& GLf, const AuModelTexFogVe
 		return;
 
 	CreateGL(GLf, GLuint(vertices), 3);
+	SetBounds(data.position.constData(), GLuint(vertices), 3);
 	SelectGL();
 	const GLfloat* attributes[] = {data.normal.constData(), data.position.constData(), data.texCoordShine.constData()};
 	for(GLuint buffer = 0; buffer < 3; ++buffer)
@@ -768,6 +833,7 @@ void AuGLVAO::CreateForModel(AuOpenGLFunctions& GLf, const QList<AuTriTexNS>& tr
 	// bind buffer for positions and copy data into buffer.
 	GLf.glBindBuffer(GL_ARRAY_BUFFER, Buffer(1));
 	GLf.glBufferData(GL_ARRAY_BUFFER, pidx*sizeof(GLfloat), position, usage);
+	SetBounds(position, vertices, pidx / vertices);
 	GLf.glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
 
 	GLf.glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -835,6 +901,7 @@ void AuGLVAO::CreateForTexture(AuOpenGLFunctions& GLf, const QList<AuTriTex>& tr
 	// bind buffer for positions and copy data into buffer.
 	GLf.glBindBuffer(GL_ARRAY_BUFFER, Buffer(1));
 	GLf.glBufferData(GL_ARRAY_BUFFER, pidx*sizeof(GLfloat), position, usage);
+	SetBounds(position, vertices, pidx / vertices);
 	GLf.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
 
 	// bind buffer for tex coords and copy data into buffer.
@@ -909,6 +976,7 @@ void AuScVAO::DrawSc(const AuGLSLScBase& shader, const GLuint effectTex[EFF_Coun
 			else
 				shader.SetEffectTexture(effectTex[vi.key()], 2);			// All other surface effects glow.
 		}
+		if(!shader.IsVAOVisible(*vi)) continue;
 		(*vi).SelectGL();
 		(*vi).DrawGL();
 		(*vi).DeselectGL();
@@ -916,6 +984,14 @@ void AuScVAO::DrawSc(const AuGLSLScBase& shader, const GLuint effectTex[EFF_Coun
 }
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+
+void AuGLSLScBase::Select(const AuMatrix4x4& projection, const AuGLEffects& re)
+{
+	m_FrustumCulling = re.FrustumCulling();
+	m_CullProjection = projection;
+	m_CullFrustumDirty = true;
+	AuGLSLProgram::Select();
+}
 
 AuGLSL::AuGLSL()
 {

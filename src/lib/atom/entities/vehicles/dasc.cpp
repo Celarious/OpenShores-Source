@@ -1373,6 +1373,7 @@ bool DaSc::RenderLegacyDeck(const AuMatrix4x4& projection, const AuMatrix4x4& mo
 
 	AuMatrix4x4 authorModel(model);
 	authorModel.Translate(-plan->AuthorCenter());
+	const AuViewFrustum deckFrustum(projection * authorModel);
 	GLboolean depthTest, depthMask, cull, blend;
 	GLint depthFunction, sourceBlend, destinationBlend, sourceAlphaBlend, destinationAlphaBlend;
 	GLfloat lineWidth;
@@ -1398,13 +1399,15 @@ bool DaSc::RenderLegacyDeck(const AuMatrix4x4& projection, const AuMatrix4x4& mo
 	for(const LegacyDeckDraw& draw : m_LegacyDeckDraws)
 	{
 		if(!draw.vao.VAO()) continue;
+		if(ari.re->FrustumCulling() && !draw.vao.IntersectsFrustum(deckFrustum)) continue;
 		shader.SetColor(draw.color.x(), draw.color.y(), draw.color.z(), draw.color.w());
 		draw.vao.SelectGL();
 		draw.vao.DrawGL(draw.primitive);
 		draw.vao.DeselectGL();
 	}
 	shader.Deselect();
-	if(m_LegacyDeckAtlas && m_LegacyDeckIcons.VAO())
+	if(m_LegacyDeckAtlas && m_LegacyDeckIcons.VAO()
+		&& (!ari.re->FrustumCulling() || m_LegacyDeckIcons.IntersectsFrustum(deckFrustum)))
 	{
 		ari.re->glEnable(GL_CULL_FACE);
 		ari.re->glEnable(GL_BLEND);
@@ -9845,7 +9848,7 @@ void DaSc::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRenderIn
 		m_Design.Extents(hMax, hMin);
 		double diag = hMin.Distance(hMax);
 		double diag2 = diag * diag;	// diagonal distance, squared
-		if(pv.z >= 0 && dist2 > diag2)
+		if(!ari.re->FrustumCulling() && pv.z >= 0 && dist2 > diag2)
 		{
 			// this ship is behind the camera plane and more than 1/2 its extents away from the camera.
 			insideVisible = false;
@@ -10467,6 +10470,7 @@ void DaSc::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, AuMo
 						AuPointTex(display.vll.x, display.vll.y, display.vll.z, s,t));
 
 				AuGLVAO vao;
+				ari.re->CullTriangles(projection * myM, tris);
 				vao.CreateForTexture(*ari.re, tris, GL_STREAM_DRAW);
 				if(vao.VAO())
 				{
@@ -16944,6 +16948,8 @@ void DaSc::RenderLightSprites(const AuMatrix4x4& projection, const AuMatrix4x4& 
 {
 	if(!m_RotatingBeacons && !IsHeadlightOn() && !m_NavLights && !m_StrobesLit)
 		return;
+	const bool frustumCulling = ari.re->FrustumCulling();
+	const AuViewFrustum frustum(projection * model);
 
 	ari.re->glEnable(GL_DEPTH_TEST);
 	ari.re->glDepthMask(GL_FALSE);
@@ -16973,7 +16979,8 @@ void DaSc::RenderLightSprites(const AuMatrix4x4& projection, const AuMatrix4x4& 
 			QList<AuPointAlpha> verts;
 			for(QHash<quint16, AuLensGlow>::const_iterator gi = m_LensHeadlightGlows.cbegin(); gi != m_LensHeadlightGlows.cend();
 					gi++)
-				verts << AuPointAlpha((*gi).Loc());
+				if(!frustumCulling || frustum.IntersectsSphere((*gi).Loc(), 0))
+					verts << AuPointAlpha((*gi).Loc());
 
 			// Make a VAO of the vertex locations.
 			AuGLVAO vao;
@@ -17004,6 +17011,7 @@ void DaSc::RenderLightSprites(const AuMatrix4x4& projection, const AuMatrix4x4& 
 				verts.clear();
 				for(QHash<quint16, AuLensGlow>::const_iterator gi = m_LensNavGlows.cbegin(); gi != m_LensNavGlows.cend(); gi++)
 				{
+					if(frustumCulling && !frustum.IntersectsSphere((*gi).Loc(), 0)) continue;
 					if(doneColors.contains((*gi).Color()))
 						continue;	// Skip lens colors that have already been done.
 					if(!passColorValid)
@@ -17048,7 +17056,8 @@ void DaSc::RenderLightSprites(const AuMatrix4x4& projection, const AuMatrix4x4& 
 			// Vertex locations of the particles.
 			QList<AuPointAlpha> verts;
 			for(QHash<quint16, AuLensGlow>::const_iterator gi = m_LensStrobeGlows.cbegin(); gi != m_LensStrobeGlows.cend(); gi++)
-				verts << AuPointAlpha((*gi).Loc());
+				if(!frustumCulling || frustum.IntersectsSphere((*gi).Loc(), 0))
+					verts << AuPointAlpha((*gi).Loc());
 
 			// Make a VAO of the vertex locations.
 			AuGLVAO vao;
@@ -17114,6 +17123,7 @@ void DaSc::RenderLightSprites(const AuMatrix4x4& projection, const AuMatrix4x4& 
 			lmodel.Translate((*gi).Loc());
 			lmodel *= AuPoint(1,0,0).GetAlignmentTransform(*ai);
 			lmodel.RotateX(m_LensBeaconAngle);
+			if(frustumCulling && !m_LightSpotVAO.IntersectsFrustum(AuViewFrustum(projection * lmodel))) continue;
 
 			ari.re->GLSL().TextureShader().SetColor((*gi).Color().redF(), (*gi).Color().greenF(), (*gi).Color().blueF(), 1);
 			ari.re->GLSL().TextureShader().SetProjectionModelView(projection * lmodel);

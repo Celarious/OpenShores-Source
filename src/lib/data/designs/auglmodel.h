@@ -115,6 +115,7 @@ class AuSoHGLModelInstance : public AuGLModelInstance
 	AuDesign*							m_Design;				// Loaded from m_FileName.
 	QString								m_FileName;
 	double								m_GeometryScale;		// Scaling that was applied in CreateGeometry.
+	AuPoint m_RenderMinimum, m_RenderMaximum;
 
 	AuGLVAO								m_OpaqueVAO;
 	AuTexturePalette					m_Textures;
