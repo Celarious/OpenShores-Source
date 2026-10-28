@@ -39,6 +39,12 @@ void DpConsoleTransporter::AnimateDeviceObjects(AuGLEffects& re, const DaVessel&
 	DpConsole::AnimateDeviceObjects(re, ship, last, sceneAtom);					// Secondary display screen.
 }
 
+void DpConsoleTransporter::AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+		const AuPoint& location, const DaCreature& sceneAtom)
+{
+	DpStationTransporter::AnimateDeviceObjects(re, city, last, location, sceneAtom);
+}
+
 void DpConsoleTransporter::Render(const AuMatrix4x4& projection, const AuMatrix4x4& farProjection, const AuMatrix4x4& tModel,
 		const DaPerson& sceneAtom, const DaCreature* seatedCreature, AuAtomRenderInfo& ari)
 {

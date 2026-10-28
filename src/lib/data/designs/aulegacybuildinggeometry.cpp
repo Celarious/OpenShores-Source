@@ -67,7 +67,8 @@ struct Builder
 	void Triangle(int slot, int deck, bool interior, const QVector3D& a, const QVector3D& b,
 		const QVector3D& c, const QVector2D& ua = {0, 0}, const QVector2D& ub = {1, 0},
 		const QVector2D& uc = {1, 1}, quint32 doorId = 0, quint32 detailId = 0,
-		bool twoSided = false, bool stairs = false, bool collisionOnly = false, bool depthOnly = false)
+		bool twoSided = false, bool stairs = false, bool collisionOnly = false, bool depthOnly = false,
+		bool equipment = false)
 	{
 		if(vertices + 3 > MaximumVertices)
 		{
@@ -76,14 +77,15 @@ struct Builder
 		QVector3D normal = QVector3D::crossProduct(b - a, c - a);
 		if(normal.lengthSquared() < 1e-12f) return;
 		normal.normalize();
-		const QString key = QStringLiteral("%1/%2/%3/%4/%5/%6/%7/%8/%9")
-			.arg(slot).arg(deck).arg(interior).arg(doorId).arg(detailId).arg(twoSided).arg(stairs).arg(collisionOnly).arg(depthOnly);
+		const QString key = QStringLiteral("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10")
+			.arg(slot).arg(deck).arg(interior).arg(doorId).arg(detailId).arg(twoSided).arg(stairs).arg(collisionOnly).arg(depthOnly).arg(equipment);
 		int index = batchIndices.value(key, -1);
 		if(index < 0)
 		{
 			index = mesh.batches.size(); batchIndices.insert(key, index);
 			Batch batch; batch.textureSlot = slot; batch.deck = deck; batch.interior = interior;
 			batch.doorId = doorId; batch.detailId = detailId; batch.twoSided = twoSided;
+			batch.equipment = equipment;
 			batch.stairs = stairs;
 			batch.collisionOnly = collisionOnly;
 			batch.depthOnly = depthOnly;
@@ -718,7 +720,8 @@ void SharedDetails(Builder& out, const Design& design, const Options& options)
 				{
 					const auto& a = batch.vertices.at(i); const auto& b = batch.vertices.at(i + 1); const auto& c = batch.vertices.at(i + 2);
 					out.Triangle(slot, batch.deck + deck, true, a.position + offset, b.position + offset, c.position + offset,
-						a.uv, b.uv, c.uv, batch.doorId, batch.detailId, batch.twoSided, slot >= 31 && slot <= 33, collisionOnly);
+						a.uv, b.uv, c.uv, batch.doorId, batch.detailId, batch.twoSided, slot >= 31 && slot <= 33,
+						collisionOnly, false, batch.equipment);
 				}
 			}
 		};
@@ -731,6 +734,7 @@ void SharedDetails(Builder& out, const Design& design, const Options& options)
 			}
 			Batch imported; imported.vertices = batch.vertices; imported.deck = deck + batch.deck;
 			imported.textureSlot = -1; imported.interior = true; imported.detailId = batch.detailId;
+			imported.equipment = batch.equipment;
 			imported.textureFile = batch.textureFile; imported.tint = batch.tint;
 			imported.selfIllumination = batch.selfIllumination; imported.twoSided = batch.twoSided;
 			const QVector3D offset(0, 0, float(deck * AuLegacyBd::DeckHeight));

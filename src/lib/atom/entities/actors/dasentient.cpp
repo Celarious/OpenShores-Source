@@ -24,6 +24,7 @@
 #include "dabd.h"
 #include "dagalaxy.h"
 #include "daitem.h"
+#include "dalegacycity.h"
 #include "danpc.h"
 #include "daperson.h"
 #include "dasc.h"
@@ -11896,6 +11897,16 @@ void DaSentient::DoStayHere()
 	// Must exit my console or turret.
 	if(IsLockedPose())
 	{
+		if(g_Au.IsLegacyGeneration() && IsNpcWorker() && IsMedicStationPose())
+		{
+			DaAtom* parent = Parent();
+			DaLegacyCity* city = parent ? dynamic_cast<DaLegacyCity*>(parent->FindSubatomId(OrderTarget())) : nullptr;
+			if(city)
+			{
+				StayIdle();
+				return;
+			}
+		}
 		ExitConsole();
 		return;
 	}

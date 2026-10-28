@@ -180,7 +180,7 @@ void DpStationShield::Tx(QDataStream& out) const
 	out << m_ShieldUnits;
 }
 
-void DpStationShield::Rx(QDataStream& in, DaCapsule& capsule)
+void DpStationShield::Rx(QDataStream& in, DaAtom& capsule)
 {
 	DpStation::Rx(in, capsule);
 	for(int side=0; side<6; side++)

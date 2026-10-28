@@ -149,6 +149,8 @@ public:
 public:
 	virtual void AnimateDeviceObjects(AuGLEffects& re, const DaBd& bd, const AuElapsedTimer& last,
 			const AuPoint& location, const DaCreature& sceneAtom);
+	virtual void AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+			const AuPoint& location, const DaCreature& sceneAtom);
 
 	virtual void AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship, const AuElapsedTimer& last,
 			const AuPoint& location, const DaCreature& sceneAtom);
@@ -171,6 +173,8 @@ public:
 
 	virtual void ProcessControlInput(const DiControlInputArray &aActiveControls, DaPerson* pSceneAtom, DaBd& bd,
 			CONTROL_CONTEXT cc, const AuPoint& location);
+	virtual void ProcessControlInput(const DiControlInputArray& controls, DaPerson* person, DaLegacyCity& city,
+			CONTROL_CONTEXT context, const AuPoint& location);
 
 	virtual void ProcessControlInput(const DiControlInputArray &aActiveControls, DaPerson* pSceneAtom, DaVessel& ship,
 			CONTROL_CONTEXT cc, const AuPoint& location);
@@ -187,7 +191,7 @@ public:
 
 	virtual bool Tick(const AuElapsedTimer& last, const AuElapsedTimer& now, DaPerson* person);
 
-	virtual void Rx(QDataStream& in, DaCapsule& capsule);
+	virtual void Rx(QDataStream& in, DaAtom& capsule);
 	virtual void RxSettings(QDataStream& in);
 	virtual void Tx(QDataStream& out) const;
 	virtual void TxSettings(QDataStream& out) const;
@@ -233,7 +237,8 @@ public:
 	}
 
 protected:
-	void AnimateDeviceObjects(AuGLEffects& re, const DaCapsule& capsule, const AuElapsedTimer& last);
+	void AnimateDeviceObjects(AuGLEffects& re, const DaAtom& capsule, const AuElapsedTimer& last);
+	void ProcessGroundControlInput(const DiControlInputArray& controls, DaPerson* person, DaAtom& owner, CONTROL_CONTEXT context);
 	static GLuint CreateDisplayTexture(AuGLEffects& re, const AuId& parentId);
 	void DrawSolarSystemDisplay(QPainter& p, const QSize &sz, const DaAtom& ref, quint32 refEmpire);
 	void DrawSectorDisplay(QPainter& p, const QSize &sz, const DaAtom& ref, quint32 refEmpire);

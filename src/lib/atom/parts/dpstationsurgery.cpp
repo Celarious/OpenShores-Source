@@ -14,12 +14,14 @@
 #include "ausound.h"
 #include "dabd.h"
 #include "dacitizen.h"
+#include "dalegacycity.h"
 #include "daperson.h"
 #include "dgdata.h"
 #include "dicontrolinput.h"
 #include "dipanelcontrol.h"
 #include <QPainter>
 #include <QPixmap>
+#include <memory>
 
 #define d_Patient						SOUND_Bleep2
 #define d_Procedure						SOUND_Bleep1
@@ -110,7 +112,7 @@ DpStationSurgery::DpStationSurgery(const DpStationSurgery& c) : DpStation(c)
 	m_ScreenTex = 0;
 }
 
-void DpStationSurgery::Rx(QDataStream& in, DaCapsule& capsule)
+void DpStationSurgery::Rx(QDataStream& in, DaAtom& capsule)
 {
 	DpStation::Rx(in, capsule);
 	in >> m_Conditions;
@@ -166,50 +168,40 @@ bool DpStationSurgery::Tick(const AuElapsedTimer& last, const AuElapsedTimer& no
 	Q_UNUSED(last);
 	Q_UNUSED(now);
 	// Monitor patient on server.
-	if(person->IsInCapsule())
+	const DaAtom* owner = person->StationOwner();
+	const DaCapsule* ship = dynamic_cast<const DaCapsule*>(owner);
+	const DaLegacyCity* city = dynamic_cast<const DaLegacyCity*>(owner);
+	if(!ship && !city) return false;
+	const DaCreature* patient = ship ? ship->FindPatient(*person) : city->FindPatient(*person);
+	if(patient)
 	{
-		DaCapsule* ship = dynamic_cast<DaCapsule*>(person->Parent());
-		if(ship)
+		m_CurHits = patient->CurrentHitPoints();
+		m_MaxHits = patient->MaxHitPoints();
+		m_Gender = patient->Gender();
+		m_Name = patient->Name();
+		m_ConditionLock.lockForWrite();
+		m_Conditions.Clear();
+		patient->CloneConditions(m_Conditions);
+		if(m_ConditionLocs.count() != m_Conditions.count())
 		{
-			const DaCreature* patient = ship->FindPatient(*person);
-			if(patient)
-			{
-				// There is a patient in the surgery unit.
-				m_CurHits = patient->CurrentHitPoints();
-				m_MaxHits = patient->MaxHitPoints();
-				m_Gender = patient->Gender();
-				m_Name = patient->Name();
-
-				// Get conditions from patient.
-				m_ConditionLock.lockForWrite();
-				m_Conditions.Clear();
-				patient->CloneConditions(m_Conditions);
-				if(m_ConditionLocs.count() != m_Conditions.count())
-				{
-					// Condition locations don't match. Recalc condition locations.
-					m_ConditionLocs.clear();
-					for(AuConditionList::const_iterator ci = m_Conditions.cbegin(); ci != m_Conditions.cend(); ci++)
-						m_ConditionLocs.append(GenConditionLoc(**ci));
-				}
-				m_ConditionLock.unlock();
-
-				// Must call set modified on the person a lot so their screen updates with changes to the patient.
-				person->SetModified();
-			}
-			else
-			{
-				// There is no patient.
-				m_ConditionLock.lockForWrite();
-				m_Conditions.Clear();
-				m_ConditionIndex = 0xffff;
-				m_ConditionLocs.clear();
-				m_ConditionLock.unlock();
-				m_CurHits = 0;
-				m_Gender = -1;			// "No patient" indicator.
-				m_MaxHits = 0;
-				m_Name = "";
-			}
+			m_ConditionLocs.clear();
+			for(AuConditionList::const_iterator ci = m_Conditions.cbegin(); ci != m_Conditions.cend(); ci++)
+				m_ConditionLocs.append(GenConditionLoc(**ci));
 		}
+		m_ConditionLock.unlock();
+		person->SetModified();
+	}
+	else
+	{
+		m_ConditionLock.lockForWrite();
+		m_Conditions.Clear();
+		m_ConditionIndex = 0xffff;
+		m_ConditionLocs.clear();
+		m_ConditionLock.unlock();
+		m_CurHits = 0;
+		m_Gender = -1;
+		m_MaxHits = 0;
+		m_Name.clear();
 	}
 	return false;
 }
@@ -233,7 +225,14 @@ void DpStationSurgery::AnimateDeviceObjects(AuGLEffects& re, const DaBd& bd, con
 }
 
 // Called between rendering scene frames that contains this object.
-void DpStationSurgery::AnimateDeviceObjects(AuGLEffects& re, const DaCapsule& ship)
+void DpStationSurgery::AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+		const AuPoint& location, const DaCreature& sceneAtom)
+{
+	DpStation::AnimateDeviceObjects(re, city, last, location, sceneAtom);
+	AnimateDeviceObjects(re, city);
+}
+
+void DpStationSurgery::AnimateDeviceObjects(AuGLEffects& re, const DaAtom& ship)
 {
 	// Get the texture because we're going to make several changes to it.
 	QString name;
@@ -576,10 +575,44 @@ void DpStationSurgery::ProcessControlInput(const DiControlInputArray& aActiveCon
 	ProcessControlInput(aActiveControls, sceneAtom, ship, cc);
 }
 
-void DpStationSurgery::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaCapsule& ship,
+void DpStationSurgery::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaLegacyCity& city,
+		CONTROL_CONTEXT cc, const AuPoint& location)
+{
+	Q_UNUSED(location);
+	ProcessControlInput(aActiveControls, sceneAtom, city, cc);
+}
+
+void DpStationSurgery::DoProcedure(int procedure, DaPerson* doctor, DaAtom& parent)
+{
+	if(DaCapsule* ship = dynamic_cast<DaCapsule*>(&parent))
+	{
+		switch(procedure)
+		{
+		case CI_Antidote: DoAntidote(doctor, *ship); break;
+		case CI_Antitoxin: DoAntitoxin(doctor, *ship); break;
+		case CI_Decontaminate: DoDecontaminateOrDouse(doctor, *ship); break;
+		case CI_Defibrillate: DoDefibrillate(doctor, *ship); break;
+		case CI_Heal: DoHeal(doctor, *ship); break;
+		case CI_PhysicalTherapy: DoPhysicalTherapy(doctor, *ship); break;
+		case CI_Surgery: DoSurgery(doctor, *ship); break;
+		}
+	}
+	else if(DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(&parent))
+		if(DaCreature* patient = city->FindPatient(*doctor))
+		{
+			m_ConditionLock.lockForRead();
+			std::unique_ptr<AuCondition> condition(m_ConditionIndex < m_Conditions.size()
+				? m_Conditions[m_ConditionIndex]->Clone() : nullptr);
+			m_ConditionLock.unlock();
+			city->TreatHospitalPatient(*doctor, *patient, procedure, condition.get());
+		}
+}
+
+void DpStationSurgery::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaAtom& ship,
 		CONTROL_CONTEXT cc)
 {
-	if(ship.IsNew())
+	const DaCapsule* capsule = dynamic_cast<const DaCapsule*>(&ship);
+	if(capsule && capsule->IsNew())
 		return;	// This console cannot be used when the ship is "nu".
 
 	for(int ic=0; ic<aActiveControls.count(); ic++)
@@ -590,7 +623,7 @@ void DpStationSurgery::ProcessControlInput(const DiControlInputArray& aActiveCon
 		case CI_Antidote:
 			//qDebug() << "CI_Antidote";
 			if(cc != CONTROL_Client)
-				DoAntidote(sceneAtom, ship);
+				DoProcedure(CI_Antidote, sceneAtom, ship);
 			if(cc != CONTROL_Server)
 			{
 				AuEffect buttonClick(sceneAtom->ButtonSoundLoc(), AuPoint(0,0), AuPoint(0,0), d_Procedure, 1,.96f);
@@ -600,7 +633,7 @@ void DpStationSurgery::ProcessControlInput(const DiControlInputArray& aActiveCon
 		case CI_Antitoxin:
 			//qDebug() << "CI_Antitoxin";
 			if(cc != CONTROL_Client)
-				DoAntitoxin(sceneAtom, ship);
+				DoProcedure(CI_Antitoxin, sceneAtom, ship);
 			if(cc != CONTROL_Server)
 			{
 				AuEffect buttonClick(sceneAtom->ButtonSoundLoc(), AuPoint(0,0), AuPoint(0,0), d_Procedure, 1,.97f);
@@ -610,7 +643,7 @@ void DpStationSurgery::ProcessControlInput(const DiControlInputArray& aActiveCon
 		case CI_Decontaminate:
 			//qDebug() << "CI_Decontaminate";
 			if(cc != CONTROL_Client)
-				DoDecontaminateOrDouse(sceneAtom, ship);
+				DoProcedure(CI_Decontaminate, sceneAtom, ship);
 			if(cc != CONTROL_Server)
 			{
 				AuEffect buttonClick(sceneAtom->ButtonSoundLoc(), AuPoint(0,0), AuPoint(0,0), d_Procedure, 1,.94f);
@@ -620,7 +653,7 @@ void DpStationSurgery::ProcessControlInput(const DiControlInputArray& aActiveCon
 		case CI_Defibrillate:
 			//qDebug() << "CI_Defibrillate";
 			if(cc != CONTROL_Client)
-				DoDefibrillate(sceneAtom, ship);
+				DoProcedure(CI_Defibrillate, sceneAtom, ship);
 			if(cc != CONTROL_Server)
 			{
 				AuEffect buttonClick(sceneAtom->ButtonSoundLoc(), AuPoint(0,0), AuPoint(0,0), d_Procedure, 1,.99f);
@@ -630,7 +663,7 @@ void DpStationSurgery::ProcessControlInput(const DiControlInputArray& aActiveCon
 		case CI_Heal:
 			//qDebug() << "CI_Heal";
 			if(cc != CONTROL_Client)
-				DoHeal(sceneAtom, ship);
+				DoProcedure(CI_Heal, sceneAtom, ship);
 			if(cc != CONTROL_Server)
 			{
 				AuEffect buttonClick(sceneAtom->ButtonSoundLoc(), AuPoint(0,0), AuPoint(0,0), d_Procedure, 1,.98f);
@@ -640,7 +673,7 @@ void DpStationSurgery::ProcessControlInput(const DiControlInputArray& aActiveCon
 		case CI_PhysicalTherapy:
 			//qDebug() << "CI_PhysicalTherapy";
 			if(cc != CONTROL_Client)
-				DoPhysicalTherapy(sceneAtom, ship);
+				DoProcedure(CI_PhysicalTherapy, sceneAtom, ship);
 			if(cc != CONTROL_Server)
 			{
 				AuEffect buttonClick(sceneAtom->ButtonSoundLoc(), AuPoint(0,0), AuPoint(0,0), d_Procedure, 1,.93f);
@@ -650,7 +683,7 @@ void DpStationSurgery::ProcessControlInput(const DiControlInputArray& aActiveCon
 		case CI_Surgery:
 			//qDebug() << "CI_Surgery";
 			if(cc != CONTROL_Client)
-				DoSurgery(sceneAtom, ship);
+				DoProcedure(CI_Surgery, sceneAtom, ship);
 			if(cc != CONTROL_Server)
 			{
 				AuEffect buttonClick(sceneAtom->ButtonSoundLoc(), AuPoint(0,0), AuPoint(0,0), d_Procedure, 1,1);
@@ -877,8 +910,6 @@ void DpStationSurgery::DoAntidote(DaCreature* doctor, DaCreature* patient, DaCap
 	Q_ASSERT(doctor);
 	Q_ASSERT(patient);
 
-	quint8 effectiveQ = antidote.Quality();
-
 	// Do a usage/quality test on the item.
 	QString itemName = antidote.SayName();
 	if(!antidote.TestQuality())
@@ -890,6 +921,14 @@ void DpStationSurgery::DoAntidote(DaCreature* doctor, DaCreature* patient, DaCap
 		AuCommThought msg(text, doctor->Id(), doctor->Name());
 		g_Au.SendAtomChat(msg);
 	}
+	ApplyAntidote(doctor, patient, condition, antidote);
+}
+
+void DpStationSurgery::ApplyAntidote(DaCreature* doctor, DaCreature* patient, const AuCondition* condition,
+		const AuItem& antidote)
+{
+	const quint8 effectiveQ = antidote.Quality();
+	const QString itemName = antidote.SayName();
 
 	// The item functions, even if it fails.
 	if(!condition)
@@ -1095,6 +1134,11 @@ void DpStationSurgery::DoAntitoxin(DaCreature* doctor, DaCreature* patient, DaCa
 		AuCommThought msg(text, doctor->Id(), doctor->Name());
 		g_Au.SendAtomChat(msg);
 	}
+	ApplyAntitoxin(doctor, patient, antitoxin);
+}
+
+void DpStationSurgery::ApplyAntitoxin(DaCreature* doctor, DaCreature* patient, const AuItem& antitoxin)
+{
 
 	// Locate existing immunization, if any.
 	AuConAntitoxin* oldAnti;
@@ -1216,12 +1260,16 @@ void DpStationSurgery::DoDecontaminateOrDouse(DaPerson* doctor, DaCapsule& ship)
 void DpStationSurgery::DoDecontaminate(DaCreature* doctor, DaCreature* patient, DaCapsule& ship, const AuCondition* condition,
 		const AuItem& water)
 {
-	// The effective quality is the smaller of the surgery unit quality or the treatment quality.
-	quint8 effectiveQ = water.Quality();
-
 	// Remove one unit of water from the cargo hold.
-	QString itemName = water.SayName();
 	ship.RemoveCargo(water, 1);
+	ApplyDecontaminate(doctor, patient, condition, water);
+}
+
+void DpStationSurgery::ApplyDecontaminate(DaCreature* doctor, DaCreature* patient, const AuCondition* condition,
+		const AuItem& water)
+{
+	const quint8 effectiveQ = water.Quality();
+	const QString itemName = water.SayName();
 
 	if(!condition)
 	{
@@ -1296,8 +1344,14 @@ void DpStationSurgery::DoExtinguish(DaCreature* doctor, DaCreature* patient, DaC
 		const AuItem& water)
 {
 	// Remove one unit of water from the cargo hold.
-	QString itemName = water.SayName();
 	ship.RemoveCargo(water, 1);
+	ApplyExtinguish(doctor, patient, condition, water);
+}
+
+void DpStationSurgery::ApplyExtinguish(DaCreature* doctor, DaCreature* patient, const AuCondition* condition,
+		const AuItem& water)
+{
+	const QString itemName = water.SayName();
 
 	if(!condition)
 	{
@@ -1358,31 +1412,7 @@ void DpStationSurgery::DoDefibrillate(DaPerson* doctor, DaCapsule& ship)
 		DoDefibrillate(doctor, patient, ship);
 	}
 	else
-	{
-		// Incorrect treatment applied.
-		if(!patient->IsNoncombatant())
-		{
-			AuCombatAttacker attacker(doctor->Id(),
-					QObject::tr("incorrect medical treatment by %1 using defibrillator").arg(doctor->Name()),
-					doctor->EmpireId());
-
-			AuCombatWeapon weapon(WM_Internal);
-			weapon.m_CID = CID_MedicalProcedure;
-			weapon.m_w1.m_Effect = WE_Electric;
-
-			AuCombatResult result;
-			result.m_Damage1 = g_Au.Dice().Roll(1,10);
-
-			patient->CombatApplyDamage(attacker, weapon, AuPoint(0,1), AuPoint(0,0), result);
-		}
-
-		// Notify the doctor and the patient what happened.
-		QString text = QObject::tr("Incorrect medical treatment with defibrillator.");
-		AuCommThought msgDoc(text, doctor->Id(), doctor->Name());
-		g_Au.SendAtomChat(msgDoc);
-		AuCommThought msgPat(text, patient->Id(), patient->Name());
-		g_Au.SendAtomChat(msgPat);
-	}
+		ApplyDefibrillate(doctor, patient, false);
 	patient->SetModified();
 }
 
@@ -1411,6 +1441,34 @@ void DpStationSurgery::DoDefibrillate(DaCreature* doctor, DaCreature* patient, D
 		// Must call SitAtConsole after atom is moved to console location.
 		patient->SitAtConsole(surgeryId, station.Type(), station.OccPos(), station.SeatIndex(), doctor->StationId());
 	}
+	ApplyDefibrillate(doctor, patient);
+}
+
+void DpStationSurgery::ApplyDefibrillate(DaCreature* doctor, DaCreature* patient, bool resuscitate)
+{
+	if(!resuscitate)
+	{
+		if(!patient->IsNoncombatant())
+		{
+			AuCombatAttacker attacker(doctor->Id(),
+				QObject::tr("incorrect medical treatment by %1 using defibrillator").arg(doctor->Name()),
+				doctor->EmpireId());
+			AuCombatWeapon weapon(WM_Internal);
+			weapon.m_CID = CID_MedicalProcedure;
+			weapon.m_w1.m_Effect = WE_Electric;
+			AuCombatResult result;
+			result.m_Damage1 = g_Au.Dice().Roll(1,10);
+			patient->CombatApplyDamage(attacker, weapon, AuPoint(0,1), AuPoint(0,0), result);
+		}
+		const QString text = QObject::tr("Incorrect medical treatment with defibrillator.");
+		AuCommThought msgDoc(text, doctor->Id(), doctor->Name());
+		g_Au.SendAtomChat(msgDoc);
+		AuCommThought msgPat(text, patient->Id(), patient->Name());
+		g_Au.SendAtomChat(msgPat);
+		patient->SetModified();
+		return;
+	}
+	patient->SetHitPoints(1);
 	patient->InvalidateEnvironment();
 	patient->SetModified();
 	patient->Defibrillated(doctor->EmpireId());
@@ -1453,7 +1511,6 @@ void DpStationSurgery::DoHeal(DaPerson* doctor, DaCapsule& ship)
 void DpStationSurgery::DoHeal(DaCreature* doctor, DaCreature* patient, DaCapsule& ship, const AuItem& medicalKit)
 {
 	// Do a usage/quality test on the item.
-	quint8 medQ = medicalKit.Quality();
 	QString itemName = medicalKit.SayName();
 	if(!medicalKit.TestQuality())
 	{
@@ -1464,6 +1521,13 @@ void DpStationSurgery::DoHeal(DaCreature* doctor, DaCreature* patient, DaCapsule
 		AuCommThought msg(text, doctor->Id(), doctor->Name());
 		g_Au.SendAtomChat(msg);
 	}
+	ApplyHeal(doctor, patient, medicalKit);
+}
+
+void DpStationSurgery::ApplyHeal(DaCreature* doctor, DaCreature* patient, const AuItem& medicalKit)
+{
+	const quint8 medQ = medicalKit.Quality();
+	const QString itemName = medicalKit.SayName();
 
 	// The item functions, even if it fails.
 	short int curhp = patient->CurrentHitPoints();

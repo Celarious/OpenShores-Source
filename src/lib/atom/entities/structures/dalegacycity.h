@@ -4,14 +4,18 @@
 #include "daatom.h"
 #include "aulegacycitystate.h"
 #include "aulegacybuildingpaths.h"
+#include "austation.h"
 #include <QHash>
 #include <QMap>
 #include <QScopedPointer>
 
 class AuCityReport;
+class AuCondition;
 class AuCityReportHistory;
 class AuGlobeRock;
 class AuItemHash;
+class AuItem;
+class AuPointArray;
 class AuResKey;
 class DaItem;
 class DaVehicle;
@@ -155,6 +159,24 @@ public:
 	void RemoveInteriorRocks(const DaWorldLL& world, QMap<AuResKey, AuGlobeRock>& rocks) const;
 	void QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& locationWorld,
 		AuQueryEnvironment& result) const;
+	// Authored equipment stays in the world's frame, as in the original city.
+	bool CanEnterConsole(const DaPerson& who, quint16& stationId, AuStation& station, quint16& which) const;
+	bool Station(const DaCreature& who, AuStation& station, AuLegacyCity::Development* development = nullptr,
+		AuMatrix4x4* placement = nullptr, quint16* roomId = nullptr) const;
+	bool StationsPowered() const;
+	int ReserveStationPower(int requested, AuItemHash& reserved);
+	void RefundStationPower(AuItemHash& reserved, int used);
+	bool TransporterPads(const DaCreature& who, AuMatrix4x4& frameWorld,
+		AuPointArray& padsLocal, float& maxRange) const;
+	bool WeaponStation(const DaCreature& who, AuLegacyCity::Development& development,
+		COMMODITYID& module, AuPoint& emitterWorld, float& range) const;
+	AuItem* WeaponAmmunition(COMMODITYID module) const;
+	bool FireStationWeapon(DaPerson& gunner, const AuId& target, int powerSetting);
+	bool HospitalPatient(const DaCreature& patient, quint32& developmentId,
+		AuStation& medic, quint16& medicStationId) const;
+	DaCreature* FindPatient(const DaCreature& doctor) const;
+	void TreatHospitalPatient(DaCreature& doctor, DaCreature& patient, int procedure = -1,
+		const AuCondition* selectedCondition = nullptr);
 	// Route positions are returned in the parent world's frame; source cell and
 	// opening identities remain in the development's original graph.
 	bool Route(quint32 developmentId, const AuPoint& fromWorld, const AuPoint& toWorld,
@@ -189,6 +211,7 @@ private:
 	void Store(QSqlDatabase& db, bool insert) const;
 	bool OperateConstruction(DaPerson* person, quint32 developmentId, bool fetch, bool labor, QString& error, bool* accepted = nullptr);
 	void TockEconomy(qint64 previous, qint64 now);
+	void TockHospitalPatients();
 	void ImportCityGoods(const QVector<AuLegacyCity::CityConnection>& connections);
 	bool ReplaceFinishedDevelopment(const AuLegacyCity::Development& development,
 		quint8 expectedProcess, quint8 expectedLevels, QString& error);

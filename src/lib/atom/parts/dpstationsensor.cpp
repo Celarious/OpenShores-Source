@@ -12,6 +12,7 @@
 #include "auglobal.h"
 #include "ausound.h"
 #include "dabd.h"
+#include "dalegacycity.h"
 #include "daperson.h"
 #include "dasolarsystem.h"
 #include "dgdata.h"
@@ -242,9 +243,9 @@ DpStationSensor::DpStationSensor(const DpStationSensor& c) : DpStation(c)
 	m_ScreenTex = 0;
 }
 
-void DpStationSensor::Rx(QDataStream& in, DaCapsule& capsule)
+void DpStationSensor::Rx(QDataStream& in, DaAtom& parent)
 {
-	DpStation::Rx(in, capsule);
+	DpStation::Rx(in, parent);
 
 	quint16 bits;
 	in >> bits;
@@ -285,30 +286,21 @@ void DpStationSensor::Rx(QDataStream& in, DaCapsule& capsule)
 	//for(AuSensorBlipList::const_iterator pb = m_SensorBlips.cbegin(); pb != m_SensorBlips.cend(); pb++)
 		//qDebug() << **pb;
 
-	if(capsule.SensorsWorking())
+	DaCapsule* capsule = dynamic_cast<DaCapsule*>(&parent);
+	const DaLegacyCity* city = dynamic_cast<const DaLegacyCity*>(&parent);
+	if(capsule ? capsule->SensorsWorking() : city && city->StationsPowered())
 	{
-		DaAtom* envAtom = capsule.FindEnvironmentAtom();
-		if(envAtom)
+		AuSensorBlipList localBlips;
+		ScanOwner(parent, m_SensorRange, capsule ? capsule->MaxBayWeaponRange() : 0, 1, m_idLockedBlip, localBlips);
+		// Append localBlips that did not arrive in m_SensorBlips.
+		for(AuSensorBlipList::const_iterator lbi = localBlips.begin(); lbi != localBlips.end(); lbi++)
 		{
-			AuId scannerWorldId;
-			int scannerDomain = capsule.GunnerDomain(scannerWorldId);
-
-			AuSensorBlipList localBlips;
-			unordered_map<quint32, POLITICAL_STANCE, AuEmpireIdHash> stanceCache;
-			int scanContent = 0x0001;							// b0 = Sensor console blips.
-			envAtom->SensorScan(localBlips, capsule.EnvLocation(), capsule.Id(), capsule.EmpireId(), scannerDomain, scannerWorldId,
-					m_SensorRange, capsule.MaxBayWeaponRange(), scanContent, m_idLockedBlip, stanceCache);
-
-			// Append localBlips that did not arrive in m_SensorBlips.
-			for(AuSensorBlipList::const_iterator lbi = localBlips.begin(); lbi != localBlips.end(); lbi++)
+			// Find the corresponding blip in the m_SensorBlips array.
+			AuSensorBlipList::const_iterator sbi = m_SensorBlips.Find(*lbi);
+			if(sbi == m_SensorBlips.end())
 			{
-				// Find the corresponding blip in the m_SensorBlips array.
-				AuSensorBlipList::const_iterator sbi = m_SensorBlips.Find(*lbi);
-				if(sbi == m_SensorBlips.end())
-				{
-					// The local blip was not found in the sensor scan data sent by the server.
-					m_SensorBlips.Add(*(*lbi));	// Add a clone.
-				}
+				// The local blip was not found in the sensor scan data sent by the server.
+				m_SensorBlips.Add(*(*lbi));	// Add a clone.
 			}
 		}
 	}
@@ -408,7 +400,7 @@ void DpStationSensor::AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship
 {
 	// Base class animates the lower console pane.
 	DpStation::AnimateDeviceObjects(re, ship, last, location, sceneAtom);
-	AnimateDeviceObjects(re, ship, location);
+	AnimateDeviceObjects(re, ship, location, ship.IsSensorOn());
 
 }
 
@@ -417,11 +409,18 @@ void DpStationSensor::AnimateDeviceObjects(AuGLEffects& re, const DaBd& bd, cons
 {
 	// Base class animates the lower console pane.
 	DpStation::AnimateDeviceObjects(re, bd, last, location, sceneAtom);
-	AnimateDeviceObjects(re, bd, location);
+	AnimateDeviceObjects(re, bd, location, bd.IsSensorOn());
+}
+
+void DpStationSensor::AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+		const AuPoint& location, const DaCreature& sceneAtom)
+{
+	DpStation::AnimateDeviceObjects(re, city, last, location, sceneAtom);
+	AnimateDeviceObjects(re, city, city.Transform().UnProject(location), city.StationsPowered());
 }
 
 // Called between rendering scene frames that contains this object.
-void DpStationSensor::AnimateDeviceObjects(AuGLEffects& re, const DaCapsule& ship, const AuPoint& location)
+void DpStationSensor::AnimateDeviceObjects(AuGLEffects& re, const DaAtom& ship, const AuPoint& location, bool sensorsOn)
 {
 	if(!m_FontSize)
 	{
@@ -510,12 +509,12 @@ void DpStationSensor::AnimateDeviceObjects(AuGLEffects& re, const DaCapsule& shi
 		pTex->ReplaceSubImage(re, bmbut, 4,22);
 	}
 
-	if(ship.IsSensorOn() != (bool)m_lLastSensorsOn)
+	if(sensorsOn != (bool)m_lLastSensorsOn)
 	{
-		m_lLastSensorsOn = ship.IsSensorOn();
+		m_lLastSensorsOn = sensorsOn;
 
 		QImage bmbut;
-		if(ship.IsSensorOn())
+		if(sensorsOn)
 			bmbut.load(":data/ec_PowerOn.bmp");
 		else
 			bmbut.load(":data/ec_PowerOff.bmp");
@@ -658,7 +657,7 @@ void DpStationSensor::AnimateDeviceObjects(AuGLEffects& re, const DaCapsule& shi
 
 		// Power status light has to be drawn every time because it overlaps the main display screen.
 		QImage bmlit;
-		if(ship.IsSensorOn())
+		if(sensorsOn)
 			bmlit.load(":data/ec_StatusLightGreen.bmp");
 		else
 			bmlit.load(":data/ec_StatusLightOff.bmp");
@@ -768,13 +767,21 @@ void DpStationSensor::ProcessControlInput(const DiControlInputArray& aActiveCont
 	ProcessControlInput(aActiveControls, sceneAtom, ship, cc);
 }
 
+void DpStationSensor::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaLegacyCity& city,
+		CONTROL_CONTEXT cc, const AuPoint& location)
+{
+	Q_UNUSED(location);
+	ProcessControlInput(aActiveControls, sceneAtom, city, cc);
+}
+
 // This is how all control inputs are passed to an atom.
 // Only control inputs that have been returned by EnumControlInputs will be passed.
 // Only control inputs that have been activated will be passed.
-void DpStationSensor::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaCapsule& ship,
+void DpStationSensor::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaAtom& ship,
 		CONTROL_CONTEXT cc)
 {
-	if(ship.IsNew())
+	DaCapsule* capsule = dynamic_cast<DaCapsule*>(&ship);
+	if(capsule && capsule->IsNew())
 		return;	// This console cannot be used when the ship is "nu".
 
 	//qDebug("DpStationSensor::ProcessControlInput");
@@ -875,16 +882,16 @@ void DpStationSensor::ProcessControlInput(const DiControlInputArray& aActiveCont
 			break;
 
 		case CI_PowerToggle:
-			if(cc != CONTROL_Client)
+			if(cc != CONTROL_Client && capsule)
 			{
-				if(ship.IsSensorOn())
-					ship.TurnSensorsOff();
+				if(capsule->IsSensorOn())
+					capsule->TurnSensorsOff();
 				else
-					ship.TurnSensorsOn();
+					capsule->TurnSensorsOn();
 			}
 			if(cc != CONTROL_Server)
 			{
-				float bp = ship.IsSensorOn() ? .9f : 1;	// button pitch
+				float bp = !capsule || capsule->IsSensorOn() ? .9f : 1;	// button pitch
 				AuEffect buttonClick(sceneAtom->ButtonSoundLoc(), AuPoint(0,0), AuPoint(0,0), d_Power, 1,bp);
 				sceneAtom->AddEffect(buttonClick);
 			}
@@ -898,8 +905,8 @@ void DpStationSensor::ProcessControlInput(const DiControlInputArray& aActiveCont
 					selId = m_SelBlip->AtomId();
 				m_BlipLock.unlock();
 
-				if(!selId.IsNull())
-					ship.LockOn(selId, true);
+				if(capsule && !selId.IsNull())
+					capsule->LockOn(selId, true);
 			}
 			if(cc != CONTROL_Server)
 			{
@@ -910,9 +917,9 @@ void DpStationSensor::ProcessControlInput(const DiControlInputArray& aActiveCont
 		case CI_UnlockAll:			// Removes "Locks on" from all blips.
 			if(cc != CONTROL_Client)
 			{
-				if(!ship.LockedBlip().IsNull())
+				if(capsule && !capsule->LockedBlip().IsNull())
 				{
-					ship.LockOn(AuId(0), true);
+					capsule->LockOn(AuId(0), true);
 					m_BlipLock.lockForWrite();
 					if(m_SelBlip)
 					{
@@ -1438,23 +1445,26 @@ void DpStationSensor::Render(const AuMatrix4x4& projection, const AuMatrix4x4& f
 
 bool DpStationSensor::Tick(const AuElapsedTimer& last, const AuElapsedTimer& now, DaPerson* person)
 {
-	DaCapsule* ship = dynamic_cast<DaCapsule*>(person->Parent());
-	if(ship)
+	DaAtom* ship = person->StationOwner();
+	DaCapsule* capsule = dynamic_cast<DaCapsule*>(ship);
+	DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(ship);
+	if(capsule || city)
 	{
-		if(ship->IsDesignDataCacheValid())
+		if(!capsule || capsule->IsDesignDataCacheValid())
 		{
 			m_SensorRange = ship->SensorRange();
 
 			// The ship provides me with a list of the sensor console blips that are in range.
-			m_idLockedBlip = ship->LockedBlip();
+			m_idLockedBlip = capsule ? capsule->LockedBlip() : AuId();
 			if(!last.SameStartSec(now))
 			{
 				m_BlipLock.lockForWrite();
 				m_SensorBlips.Clear();
-				if(ship->SensorsWorking())
+				if(capsule ? capsule->SensorsWorking() : city->StationsPowered())
 				{
 					AuPoint shipSysLoc = ship->EnvLocation();
-					ship->PerformSensorConsoleScan(m_SensorBlips);
+					if(capsule) capsule->PerformSensorConsoleScan(m_SensorBlips);
+					else ScanOwner(*ship, m_SensorRange, 0, 1, m_idLockedBlip, m_SensorBlips);
 					AuSensorBlipList::iterator sbi = m_SensorBlips.begin();
 					while(sbi != m_SensorBlips.end())
 					{

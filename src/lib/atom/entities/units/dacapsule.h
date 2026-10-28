@@ -222,6 +222,13 @@ public:
 	// -13 blocked by city shields at target
 	int EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit, DaAtom* targAtom, const AuPoint& targLoc,
 			const AuPoint& targZ, quint16 targWhich, AuPointArray& targPads, bool ignoreDestShields, bool targAtBd);
+	// Shared person-pad transport. padFrame maps authored pad coordinates into
+	// source space; a capsule supplies its existing capacitor and cycle state.
+	static int EnergizeTransporterPads(DaAtom& source, quint32 empire, const AuMatrix4x4& padFrame,
+			const AuPointArray& pads, float maxRange, float centerHeight, bool isFrom, int padLimit,
+			DaAtom* targAtom, const AuPoint& targLoc, const AuPoint& targZ, quint16 targWhich,
+			AuPointArray& targPads, bool ignoreDestShields, bool targAtBd,
+			DaCapsule* sourceCapsule = nullptr, quint16 sourceWhich = 0);
 
 	int EnergizeVehicleTransporter(quint16 shipWhich, DaVehicle* vehicle, bool isFrom, DaAtom* targAtom,
 			const AuPoint& targLoc, const AuPoint& targZ, quint16 targWhich, QList<AuMatrix4x4>& targParkingSpots,

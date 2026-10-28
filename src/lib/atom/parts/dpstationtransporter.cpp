@@ -10,9 +10,14 @@
 #include "aucommpacket.h"
 #include "augleffects.h"
 #include "auglobal.h"
+#include "auitem.h"
+#include "aulegacybd.h"
 #include "ausound.h"
+#include "daatomlist.h"
 #include "dabd.h"
+#include "dalegacycity.h"
 #include "daperson.h"
+#include "dateleporter.h"
 #include "daworldringsection.h"
 #include "dicontrolinput.h"
 #include "dipanelcontrol.h"
@@ -31,6 +36,39 @@
 static QImage s_SensorRange;
 #define c_ScreenHeight					96
 #define c_ScreenWidth					196
+
+namespace
+{
+bool TransporterPadsActive(const DaAtom& source, const AuMatrix4x4& padFrame, const AuPointArray& pads)
+{
+	DaAtomList teleporters;
+	source.FindTeleportersRecursive(teleporters);
+	for(const DaAtom* atom : teleporters)
+	{
+		const DaTeleporter* teleporter = dynamic_cast<const DaTeleporter*>(atom);
+		if(!teleporter || teleporter->IsDead()) continue;
+		AuMatrix4x4 transform;
+		if(!teleporter->GetTransformRelativeToParent(transform, &source)) continue;
+		bool active = false;
+		const AuPointArray& locations = teleporter->LockTeleporterLocs();
+		for(const AuPoint& pad : pads)
+		{
+			const AuPoint center = transform.UnProject(padFrame.Project(pad + AuPoint(0, 0, AuLegacyBd::DeckHeight / 2)));
+			// Use the existing person teleporter aperture, for both origin and destination beams.
+			const auto overlaps = [&center](const AuPoint& location) {
+				const AuPoint offset = center - location;
+				return fabs(offset.z) <= 3.9 && offset.Length2_2D() <= 1.3 * 1.3;
+			};
+			if(locations.isEmpty()) active = overlaps(AuPoint());
+			else for(const AuPoint& location : locations) if(overlaps(location)) { active = true; break; }
+			if(active) break;
+		}
+		teleporter->UnlockTeleporterLocs();
+		if(active) return true;
+	}
+	return false;
+}
+}
 
 // Table of control inputs.
 DiControlInputArray s_TransporterConsoleControls;		// Controls that may have bindings modified by the user.
@@ -339,7 +377,7 @@ void DpStationTransporter::Tx(QDataStream& out) const
 	m_BlipLock.unlock();
 }
 
-void DpStationTransporter::Rx(QDataStream& in, DaCapsule& capsule)
+void DpStationTransporter::Rx(QDataStream& in, DaAtom& capsule)
 {
 	DpStation::Rx(in, capsule);
 
@@ -405,32 +443,22 @@ void DpStationTransporter::Rx(QDataStream& in, DaCapsule& capsule)
 	m_SensorBlips.RxMin(in);
 
 	// Scan local data to pick up things that are already in my scene, namely suns, planets and moons.
-	if(capsule.SensorsWorking())
+	const DaCapsule* scanner = dynamic_cast<const DaCapsule*>(&capsule);
+	const DaLegacyCity* city = dynamic_cast<const DaLegacyCity*>(&capsule);
+	if(scanner ? scanner->SensorsWorking() : city && city->StationsPowered())
 	{
-		DaAtom* envAtom = capsule.FindEnvironmentAtom();
-		if(envAtom)
+		AuSensorBlipList localBlips;
+		ScanOwner(capsule, m_MaxRange, scanner ? scanner->MaxBayWeaponRange() : 0,
+			4 | (m_ShowAboard ? 64 : 0), m_idLockedBlip, localBlips);
+		// Append localBlips that did not arrive in m_SensorBlips.
+		for(AuSensorBlipList::const_iterator lbi = localBlips.begin(); lbi != localBlips.end(); lbi++)
 		{
-			AuId scannerWorldId;
-			int scannerDomain = capsule.GunnerDomain(scannerWorldId);
-
-			AuSensorBlipList localBlips;
-			unordered_map<quint32, POLITICAL_STANCE, AuEmpireIdHash> stanceCache;
-			int scanContent = 0x0004;							// b2 = Transporter console blips.
-			if(m_ShowAboard)
-				scanContent |= 0x0040;
-			envAtom->SensorScan(localBlips, capsule.EnvLocation(), capsule.Id(), capsule.EmpireId(), scannerDomain, scannerWorldId,
-					m_MaxRange, capsule.MaxBayWeaponRange(), scanContent, m_idLockedBlip, stanceCache);
-
-			// Append localBlips that did not arrive in m_SensorBlips.
-			for(AuSensorBlipList::const_iterator lbi = localBlips.begin(); lbi != localBlips.end(); lbi++)
+			// Find the corresponding blip in the m_SensorBlips array.
+			AuSensorBlipList::const_iterator sbi = m_SensorBlips.Find(*lbi);
+			if(sbi == m_SensorBlips.end())
 			{
-				// Find the corresponding blip in the m_SensorBlips array.
-				AuSensorBlipList::const_iterator sbi = m_SensorBlips.Find(*lbi);
-				if(sbi == m_SensorBlips.end())
-				{
-					// The local blip was not found in the sensor scan data sent by the server.
-					m_SensorBlips.Add(*(*lbi));	// Add a clone.
-				}
+				// The local blip was not found in the sensor scan data sent by the server.
+				m_SensorBlips.Add(*(*lbi));	// Add a clone.
 			}
 		}
 	}
@@ -478,6 +506,7 @@ void DpStationTransporter::Refresh(const DpStation* pCon, const DaAtom& parent)
 
 bool DpStationTransporter::Tick(const AuElapsedTimer& last, const AuElapsedTimer& now, DaPerson* person)
 {
+	const bool initializePads = m_Mode == Init;
 	if(m_Mode == Init)
 	{
 		// Init to center on the planet's map; the rotation value is the long/lat.
@@ -495,28 +524,39 @@ bool DpStationTransporter::Tick(const AuElapsedTimer& last, const AuElapsedTimer
 		}
 	}
 
-	DaCapsule* ship = dynamic_cast<DaCapsule*>(person->Parent());
-	if(!ship || !ship->IsDesignDataCacheValid())
-		return false;
-
-	if(m_Mode == Init)
+	DaAtom* owner = person->StationOwner();
+	DaCapsule* ship = dynamic_cast<DaCapsule*>(owner);
+	DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(owner);
+	if(!ship)
 	{
-		// Initially activate just one pad in the transporter room.
-		if(ship->TransporterPadsWorking(m_WhichTransporter) >= 1)
-			m_PadsActive = 1;
+		if(!city) return false;
+		AuMatrix4x4 frame; AuPointArray pads;
+		city->TransporterPads(*person, frame, pads, m_MaxRange);
+		if(initializePads && !pads.isEmpty()) m_PadsActive = 1;
+		m_PadsActive = qMin(m_PadsActive, pads.size());
 	}
-	m_MaxRange = ship->TransporterRange(m_WhichTransporter);
+	else
+	{
+		if(!ship->IsDesignDataCacheValid()) return false;
+		if(m_Mode == Init)
+		{
+			// Initially activate just one pad in the transporter room.
+			if(ship->TransporterPadsWorking(m_WhichTransporter) >= 1) m_PadsActive = 1;
+		}
+		m_MaxRange = ship->TransporterRange(m_WhichTransporter);
+	}
 
 	// The ship provides me with a list of the sensor console blips that are in range.
-	m_idLockedBlip = ship->LockedBlip();
+	m_idLockedBlip = ship ? ship->LockedBlip() : AuId();
 	if(!last.SameStartSec(now))
 	{
 		m_BlipLock.lockForWrite();
 		m_SensorBlips.Clear();
-		if(ship->SensorsWorking())
+		if(ship ? ship->SensorsWorking() : city->StationsPowered())
 		{
-			AuPoint shipSysLoc = ship->EnvLocation();
-			ship->PerformTransporterConsoleScan(m_SensorBlips, m_ShowAboard);
+			AuPoint shipSysLoc = owner->EnvLocation();
+			if(ship) ship->PerformTransporterConsoleScan(m_SensorBlips, m_ShowAboard);
+			else ScanOwner(*owner, m_MaxRange, 0, 4 | (m_ShowAboard ? 64 : 0), m_idLockedBlip, m_SensorBlips);
 			AuSensorBlipList::iterator sbi = m_SensorBlips.begin();
 			while(sbi != m_SensorBlips.end())
 			{
@@ -553,8 +593,16 @@ void DpStationTransporter::AnimateDeviceObjects(AuGLEffects& re, const DaBd& bd,
 	AnimateDeviceObjects(re, bd, location);
 }
 
+void DpStationTransporter::AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+		const AuPoint& location, const DaCreature& sceneAtom)
+{
+	Q_UNUSED(last);
+	Q_UNUSED(location);
+	AnimateDeviceObjects(re, city, city.EnvTransform().UnProject(sceneAtom.EnvLocation()));
+}
+
 // Called between rendering scene frames that contains this object.
-void DpStationTransporter::AnimateDeviceObjects(AuGLEffects& re, const DaCapsule& capsule, const AuPoint& location)
+void DpStationTransporter::AnimateDeviceObjects(AuGLEffects& re, const DaAtom& capsule, const AuPoint& location)
 {
 	if(s_SensorRange.isNull())
 		s_SensorRange.load(":data/SensorRange.png");
@@ -566,14 +614,16 @@ void DpStationTransporter::AnimateDeviceObjects(AuGLEffects& re, const DaCapsule
 	if(!pTex)
 		return;
 
-	int troomIndex = capsule.TransporterSystemIndex(m_WhichTransporter);
-	if(troomIndex < 0)
+	const DaCapsule* hardware = dynamic_cast<const DaCapsule*>(&capsule);
+	int troomIndex = hardware ? hardware->TransporterSystemIndex(m_WhichTransporter) : -1;
+	if(hardware && troomIndex < 0)
 		return;
-	if(capsule.IsTransporterSystemOn(troomIndex) != (bool)m_lLastPowerOn ||
-		capsule.IsTransporterSystemActive(troomIndex) != (bool)m_lLastActive)
+	const bool powerOn = hardware ? hardware->IsTransporterSystemOn(troomIndex) : true;
+	const bool active = hardware && hardware->IsTransporterSystemActive(troomIndex);
+	if(powerOn != (bool)m_lLastPowerOn || active != (bool)m_lLastActive)
 	{
-		m_lLastActive = capsule.IsTransporterSystemActive(troomIndex);
-		m_lLastPowerOn = capsule.IsTransporterSystemOn(troomIndex);
+		m_lLastActive = active;
+		m_lLastPowerOn = powerOn;
 
 		QImage bmbut;
 		if(m_lLastPowerOn)
@@ -1176,12 +1226,23 @@ void DpStationTransporter::ProcessControlInput(const DiControlInputArray& aActiv
 	ProcessControlInput(aActiveControls, sceneAtom, bd, cc);
 }
 
+void DpStationTransporter::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaLegacyCity& city,
+		CONTROL_CONTEXT cc, const AuPoint& location)
+{
+	Q_UNUSED(location);
+	ProcessControlInput(aActiveControls, sceneAtom, city, cc);
+}
+
 // This is how all control inputs are passed to an atom.
 // Only control inputs that have been returned by EnumControlInputs will be passed.
 // Only control inputs that have been activated will be passed.
-void DpStationTransporter::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaCapsule& capsule,
+void DpStationTransporter::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaAtom& capsule,
 		CONTROL_CONTEXT cc)
 {
+	DaCapsule* hardware = dynamic_cast<DaCapsule*>(&capsule);
+	DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(&capsule);
+	AuMatrix4x4 padFrame; AuPointArray sourcePads; float sourceRange = 0;
+	if(city) city->TransporterPads(*sceneAtom, padFrame, sourcePads, sourceRange);
 	const double rRotInc = 5.0 * DEG2RAD;	// Rotation increment.
 	for(int ic=0; ic<aActiveControls.count(); ic++)
 	{
@@ -1246,31 +1307,32 @@ void DpStationTransporter::ProcessControlInput(const DiControlInputArray& aActiv
 			break;
 
 		case CI_PowerToggle:
+			if(!hardware) break;
 			if(cc != CONTROL_Client)
 			{
-				int troomIndex = capsule.TransporterSystemIndex(m_WhichTransporter);
+				int troomIndex = hardware->TransporterSystemIndex(m_WhichTransporter);
 				if(troomIndex < 0)
 					break;
-				if(capsule.IsTransporterSystemOn(troomIndex))
+				if(hardware->IsTransporterSystemOn(troomIndex))
 				{
 					// Transporter room is on. Turn it off if it is not active.
-					if(!capsule.IsTransporterSystemActive(troomIndex))
-						capsule.TurnTransporterSystemOff(troomIndex);
+					if(!hardware->IsTransporterSystemActive(troomIndex))
+						hardware->TurnTransporterSystemOff(troomIndex);
 				}
 				else
 				{
 					// Transporter room is off. Turn it on.
-					capsule.TurnTransporterSystemOn(troomIndex);
+					hardware->TurnTransporterSystemOn(troomIndex);
 				}
 			}
 			if(cc != CONTROL_Server)
 			{
-				int troomIndex = capsule.TransporterSystemIndex(m_WhichTransporter);
+				int troomIndex = hardware->TransporterSystemIndex(m_WhichTransporter);
 				if(troomIndex < 0)
 					break;
-				if(capsule.IsTransporterSystemOn(troomIndex))
+				if(hardware->IsTransporterSystemOn(troomIndex))
 				{
-					if(capsule.IsTransporterSystemActive(troomIndex))
+					if(hardware->IsTransporterSystemActive(troomIndex))
 						break;
 					AuEffect buttonClick(sceneAtom->ButtonSoundLoc(), AuPoint(0,0), AuPoint(0,0), d_Power, 1,.9f);
 					sceneAtom->AddEffect(buttonClick);
@@ -1396,8 +1458,27 @@ void DpStationTransporter::ProcessControlInput(const DiControlInputArray& aActiv
 				// As in Star Trek, energize...
 				if(targAtom)
 				{
-					int result = capsule.EnergizeTransporter(m_WhichTransporter, isFrom, targLimit, targAtom, targLoc, targZ,
+					int result = -1;
+					if(hardware)
+						result = hardware->EnergizeTransporter(m_WhichTransporter, isFrom, targLimit, targAtom, targLoc, targZ,
 							targWhich, targPads, ignoreDestShields, true);
+					else if(city && city->Parent() && !sourcePads.isEmpty())
+					{
+						AuItemHash power;
+						if(TransporterPadsActive(*city->Parent(), padFrame, sourcePads)) result = -5;
+						else
+						{
+							const int reserved = city->ReserveStationPower(qMin(targLimit, sourcePads.size()), power);
+							if(!reserved) result = -4;
+							else
+							{
+								result = DaCapsule::EnergizeTransporterPads(*city->Parent(), city->EmpireId(), padFrame,
+									sourcePads, sourceRange, float(AuLegacyBd::DeckHeight / 2), isFrom, reserved,
+									targAtom, targLoc, targZ, targWhich, targPads, ignoreDestShields, true);
+								city->RefundStationPower(power, qMax(0, result));
+							}
+						}
+					}
 
 					// Report the result on the thoughts channel, good or bad.
 					// This reply is coming from the person's own mind as a subconscious thought.
@@ -1445,7 +1526,7 @@ void DpStationTransporter::ProcessControlInput(const DiControlInputArray& aActiv
 					m_PadsActive--;
 				else
 				{
-					m_PadsActive = capsule.TransporterPadsWorking(m_WhichTransporter);
+					m_PadsActive = hardware ? hardware->TransporterPadsWorking(m_WhichTransporter) : sourcePads.size();
 					if(m_PadsActive > 255)
 						m_PadsActive = 255;
 				}
@@ -1461,7 +1542,8 @@ void DpStationTransporter::ProcessControlInput(const DiControlInputArray& aActiv
 			{
 				// Limit pads active to the number of functioning pads in the transporter room.
 				// Roll over to zero on increment beyond max.
-				if(m_PadsActive < capsule.TransporterPadsWorking(m_WhichTransporter) && m_PadsActive < 255)
+				if(m_PadsActive < (hardware ? hardware->TransporterPadsWorking(m_WhichTransporter) : sourcePads.size())
+					&& m_PadsActive < 255)
 					m_PadsActive++;
 				else
 					m_PadsActive = 0;
@@ -2303,7 +2385,7 @@ void DpStationTransporter::InputCoordinate(DaPerson* person)
 
 	case Sensor:
 		{
-			const DaCapsule* capsule = dynamic_cast<const DaCapsule*>(person->Parent());
+			const DaAtom* capsule = person->StationOwner();
 			if(capsule)
 			{
 				bool hasLoc;
@@ -2318,7 +2400,7 @@ void DpStationTransporter::InputCoordinate(DaPerson* person)
 					hasLoc = false;
 				m_BlipLock.unlock();
 
-				AuPoint loc = person->Location();
+				AuPoint loc = capsule->EnvTransform().UnProject(person->EnvLocation());
 				if(hasLoc)
 					loc = capsule->EnvTransform().UnProject(selLoc);	// Relative to the capsule.
 				else if(m_SelCoord)

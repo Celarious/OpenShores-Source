@@ -237,7 +237,19 @@ int DaCapsule::BeamUp(DaPerson* person, int countRequested)
 int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit, DaAtom* targAtom, const AuPoint& targLoc,
 		const AuPoint& targZ, quint16 targWhich, AuPointArray& targPads, bool ignoreDestShields, bool targAtBd)
 {
-	AuEther* ether = Ether();
+	AuPointArray pads;
+	TransporterPadLocations(shipWhich, pads);
+	return EnergizeTransporterPads(*this, EmpireId(), AuMatrix4x4(), pads, TransporterRange(shipWhich), DeckHeight()/2,
+		isFrom, padLimit, targAtom, targLoc, targZ, targWhich, targPads, ignoreDestShields, targAtBd, this, shipWhich);
+}
+
+int DaCapsule::EnergizeTransporterPads(DaAtom& source, quint32 empire, const AuMatrix4x4& padFrame,
+		const AuPointArray& pads, float maxRange, float centerHeight, bool isFrom, int padLimit,
+		DaAtom* targAtom, const AuPoint& targLoc, const AuPoint& targZ, quint16 targWhich,
+		AuPointArray& targPads, bool ignoreDestShields, bool targAtBd,
+		DaCapsule* sourceCapsule, quint16 sourceWhich)
+{
+	AuEther* ether = source.Ether();
 	if(!ether)
 		return 0;
 	//Q_ASSERT(!g_Au.IsSceneClient());	// Scene client does not rx enough m_ssaShipSystems data to do this.
@@ -245,11 +257,13 @@ int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit,
 	if(!targAtom)
 		return -3;
 
-	int troomIndex = TransporterSystemIndex(shipWhich);
-	if(troomIndex < 0)
-		return -1;
-	if(IsTransporterSystemActive(troomIndex))
-		return -5;		// Transporter room is still energized in its cycle. This will complete shortly.
+	if(sourceCapsule)
+	{
+		int troomIndex = sourceCapsule->TransporterSystemIndex(sourceWhich);
+		if(troomIndex < 0) return -1;
+		if(sourceCapsule->IsTransporterSystemActive(troomIndex))
+			return -5;	// Transporter room is still energized in its cycle. This will complete shortly.
+	}
 
 	DaWorldLL* targWorld = dynamic_cast<DaWorldLL*>(targAtom);
 
@@ -261,11 +275,11 @@ int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit,
 			// Prevent beaming aboard a nu ship that does not belong to my empire or a friend's empire.
 			// The transporter console has shown us blips based on our stance toward them.
 			// The stance of the target ship toward me is what matters here, though.
-			POLITICAL_STANCE stance = PoliticalStance(targCap->EmpireId(), EmpireId());
+			POLITICAL_STANCE stance = PoliticalStance(targCap->EmpireId(), empire);
 			if(stance == POL_Enemy || stance == POL_Neutral)
 				return -3;	// New ship's stance toward my empire prevents me from beaming aboard.
 		}
-		else if(!ignoreDestShields && !targCap->Is(Id()) && targPads.isEmpty() && targCap->ShieldsBlockTransportAboard())
+		else if(!ignoreDestShields && !targCap->Is(source.Id()) && targPads.isEmpty() && targCap->ShieldsBlockTransportAboard())
 		{
 			// Prevent beaming aboard a ship with enough shields to block transporters.
 			// The target ship must have its shields down when it is not the beam-up ship and the destination is not an array of
@@ -282,7 +296,7 @@ int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit,
 			AuMatrix4x4 tm;
 			targAtom->GetTransformRelativeToParent(tm, llworld);
 			AuPoint worldLoc = tm.Project(targLoc);
-			if(llworld->SubatomShieldsBlockTransporters(EmpireId(), worldLoc))
+			if(llworld->SubatomShieldsBlockTransporters(empire, worldLoc))
 				return -13;	// Shields of a city block transporters.
 		}
 	}
@@ -303,11 +317,9 @@ int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit,
 	}
 
 	// Create an origin teleporter on every active pad and a corresponding destination teleporter at the destination.
-	AuPointArray pads;
-	TransporterPadLocations(shipWhich, pads);		// Locations of pads on the floor.
 	if(padLimit > pads.count())
 		padLimit = pads.count();	// Limited by number of physical pads.
-	int padsWorking = TransporterPadsWorking(shipWhich);
+	int padsWorking = sourceCapsule ? sourceCapsule->TransporterPadsWorking(sourceWhich) : pads.count();
 	if(padLimit > padsWorking)
 		padLimit = padsWorking;		// Limited by number of functioning pads.
 	bool transporterMode = targPads.isEmpty() ? false:true;	// pads means transporter mode
@@ -323,19 +335,17 @@ int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit,
 		return -1;	// No pads to transport, either here or there.
 
 	// We know how many pads can be fired. Limit it further by the amount of capacitor power available.
-	if(padLimit > (int)CapacitorLevel())
-		padLimit = (int)CapacitorLevel();
+	if(sourceCapsule && padLimit > (int)sourceCapsule->CapacitorLevel())
+		padLimit = (int)sourceCapsule->CapacitorLevel();
 	if(!padLimit)
 		return -4;	// No power to transport. This ship is in trouble.
 
-	DaAtom* system = FindEnvironmentAtom();
+	DaAtom* system = source.FindEnvironmentAtom();
 	if(!system)
 		return -3;	// Not likely.
 
 	DaTeleporter* telDest = 0;
 	DaTeleporter* telOrigin = 0;
-	const float maxRange = TransporterRange(shipWhich);
-	const float centerHeight = DeckHeight()/2;	// Height above ground|floor for center placement of teleporters.
 	int pad = 0;
 	int teleportersCreated = 0;
 	for(AuPointArray::const_iterator pl = pads.cbegin(); pl != pads.cend() && pad < padLimit; pl++, pad++)
@@ -464,11 +474,11 @@ int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit,
 			AuPoint destSysLoc = tdsys.Project(destLoc);
 
 			// Compare the distance between the locations.
-			if(EnvLocation().Distance2(destSysLoc) > maxRange*maxRange)
+			if(source.EnvTransform().Project(padFrame.Translation()).Distance2(destSysLoc) > maxRange*maxRange)
 				return -2;	// out of range
 
 			// Determine position of the teleporter on the pad.
-			AuMatrix4x4 tPad;
+			AuMatrix4x4 tPad(padFrame);
 			tPad.Translate(*pl + AuPoint(0,0,centerHeight));
 
 			// Create a destination teleporter atom that will die in a few seconds.
@@ -479,7 +489,7 @@ int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit,
 			if(isFrom)
 				telDest->SetPosAndOrient(AuAtomPos(targAtom->Id(), tTarget));	// Position the dest teleporter at the target.
 			else
-				telDest->SetPosAndOrient(AuAtomPos(Id(), tPad));				// Position the dest teleporter on the pad.
+				telDest->SetPosAndOrient(AuAtomPos(source.Id(), tPad));		// Position the dest teleporter on the pad.
 			ether->AddAtom(telDest);
 			telDest->SetNormal();	// New atom is ready for normal thread processing.
 
@@ -488,7 +498,7 @@ int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit,
 			telOrigin->ConnectSignals();
 			telOrigin->Create();
 			if(isFrom)
-				telOrigin->SetPosAndOrient(AuAtomPos(Id(), tPad));				// Position the origin teleporter on the pad.
+				telOrigin->SetPosAndOrient(AuAtomPos(source.Id(), tPad));		// Position the origin teleporter on the pad.
 			else
 				telOrigin->SetPosAndOrient(AuAtomPos(targAtom->Id(), tTarget));	// Position the origin teleporter at the target.
 			ether->AddAtom(telOrigin);
@@ -497,7 +507,7 @@ int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit,
 		else
 		{
 			// Subsequent teleporters simply calculate locations, in the space of their respective teleporters.
-			AuPoint padLoc = *pl + AuPoint(0,0,centerHeight);	// Location relative to the ship.
+			AuPoint padLoc = padFrame.Project(*pl + AuPoint(0,0,centerHeight));
 			AuPoint targLoc = tTarget.Translation();			// Location relative to the target atom.
 			if(isFrom)
 			{
@@ -526,8 +536,11 @@ int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit,
 
 		// Deduct the power from the ship's capacitor and 'activate' the transporter room.
 		// It will be deactivated when no more teleporters remain in the room.
-		DischargeCapacitor(teleportersCreated);
-		ActivateTransporterSystem(TransporterSystemIndex(shipWhich));
+		if(sourceCapsule)
+		{
+			sourceCapsule->DischargeCapacitor(teleportersCreated);
+			sourceCapsule->ActivateTransporterSystem(sourceCapsule->TransporterSystemIndex(sourceWhich));
+		}
 		if(transporterMode)
 		{
 			if(targCap)

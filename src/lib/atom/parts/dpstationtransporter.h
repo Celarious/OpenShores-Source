@@ -132,6 +132,8 @@ public:
 
 	virtual void AnimateDeviceObjects(AuGLEffects& re, const DaBd& bd, const AuElapsedTimer& last,
 			const AuPoint& location, const DaCreature& sceneAtom);
+	virtual void AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+			const AuPoint& location, const DaCreature& sceneAtom);
 
 	virtual void EnumControlInputs(DiControlInputArray &aAllControls) const;
 
@@ -153,6 +155,8 @@ public:
 			CONTROL_CONTEXT cc, const AuPoint& location);
 
 	virtual void ProcessControlInput(const DiControlInputArray &aActiveControls, DaPerson* pSceneAtom, DaBd& bd,
+			CONTROL_CONTEXT cc, const AuPoint& location);
+	virtual void ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* pSceneAtom, DaLegacyCity& city,
 			CONTROL_CONTEXT cc, const AuPoint& location);
 
 	virtual void Refresh(const DpStation* pCon, const DaAtom& parent);    // Refresh data from counterpart.
@@ -176,7 +180,7 @@ public:
 
 	virtual bool Tick(const AuElapsedTimer& last, const AuElapsedTimer& now, DaPerson* person);
 
-	virtual void Rx(QDataStream& in, DaCapsule& capsule);
+	virtual void Rx(QDataStream& in, DaAtom& capsule);
 	virtual void RxSettings(QDataStream& in);
 	virtual void Tx(QDataStream& out) const;
 	virtual void TxSettings(QDataStream& out) const;
@@ -186,7 +190,7 @@ public:
 	virtual STATION_TYPE ClientRestoreType() const;
 
 protected:
-	void AnimateDeviceObjects(AuGLEffects& re, const DaCapsule& capsule, const AuPoint& location);
+	void AnimateDeviceObjects(AuGLEffects& re, const DaAtom& capsule, const AuPoint& location);
 
 	static GLuint CreateDisplayTexture(AuGLEffects& re, const AuId& parentId);
 
@@ -197,7 +201,7 @@ protected:
 
 	virtual void PanelDimensions(double& width, double& height) const = 0;
 
-	void ProcessControlInput(const DiControlInputArray &aActiveControls, DaPerson* pSceneAtom, DaCapsule& capsule,
+	void ProcessControlInput(const DiControlInputArray &aActiveControls, DaPerson* pSceneAtom, DaAtom& capsule,
 			CONTROL_CONTEXT cc);
 
 	void ProcessDisplayHit(const QPoint &pxHit, const DaAtom& hostAtom);

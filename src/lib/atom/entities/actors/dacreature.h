@@ -23,6 +23,7 @@ class AuItem;
 class AuOrdnance;
 class AuQuad;
 class DaItem;
+class DaLegacyCity;
 class DaVehicle;
 class DpStation;
 
@@ -1746,6 +1747,11 @@ protected:
 	void StoreClientConsoleSettings() const;
 
 public:
+	// Legacy building stations remain parented to the world.
+	DaLegacyCity* LegacyStationCity(AuStation* station = nullptr) const;
+	DaAtom* StationOwner();
+	const DaAtom* StationOwner() const;
+
 	// 'stationId' is the part id in an AuScDesign.
 	// 'seatIndex' is 0..3 for seating at multi-seat console such as game table.
 	// 'controlId' is the system id of the subsystem controlled by the console.

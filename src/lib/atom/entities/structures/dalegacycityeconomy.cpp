@@ -11,8 +11,10 @@
 #include "aulegacycityvehicles.h"
 #include "aulegacyconstructionmaterials.h"
 #include "aucityreport.h"
+#include "aucommpacket.h"
 #include "audice.h"
 #include "audnabase.h"
+#include "auether.h"
 #include "auglobal.h"
 #include "augear.h"
 #include "auitem.h"
@@ -21,15 +23,245 @@
 #include "auzoneresource.h"
 #include "daatomlist.h"
 #include "daitem.h"
+#include "danpc.h"
 #include "daperson.h"
 #include "dasolarsystem.h"
 #include "daworldll.h"
 #include "dgdata.h"
+#include "dpstationsurgery.h"
+#include <QSet>
 #include <QDateTime>
 #include <algorithm>
 #include <memory>
 
 using namespace AuLegacyCity;
+
+namespace
+{
+bool AtHospitalMedic(const DaCreature& doctor, const AuStation& station, quint16 stationId)
+{
+	if(!doctor.IsNormal() || doctor.IsBodyDyingOrDead() || !doctor.IsMedicStationPose()
+		|| doctor.StationId() != stationId) return false;
+	AuStation expected(station);
+	expected.OffsetOpM(doctor.ConsolePoseOffset(expected.Type(), expected.OccPos(),
+		doctor.CGHeightStanding(), doctor.TorsoThickness(), expected.SeatIndex()));
+	return doctor.Location().Distance2(expected.OpM().Translation()) < 4;
+}
+
+quint16 HospitalCommodity(int procedure)
+{
+	switch(procedure)
+	{
+	case DpStationSurgery::CI_Heal: return 73;
+	case DpStationSurgery::CI_Antidote: return 119;
+	case DpStationSurgery::CI_Antitoxin: return 120;
+	case DpStationSurgery::CI_Decontaminate: return 83;
+	default: return 0;
+	}
+}
+}
+
+void DaLegacyCity::TockHospitalPatients()
+{
+	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker() || IsDead()) return;
+	DaWorldLL* world = dynamic_cast<DaWorldLL*>(Parent());
+	AuEther* ether = Ether();
+	if(!world || !ether) return;
+	const State state = Snapshot();
+	DaAtomList occupants;
+	world->ListNormalSubatoms(occupants);
+	QList<DaNpc*> medics;
+	for(DaAtom* atom : occupants)
+	{
+		DaNpc* npc = dynamic_cast<DaNpc*>(atom);
+		if(npc && npc->IsNpcWorker() && npc->Order() == ORDER_Stay && npc->OrderTarget() == Id()) medics.append(npc);
+	}
+	QSet<DaNpc*> needed;
+	const bool powered = StationsPowered();
+	const DaAtomList patients(occupants);
+	for(DaAtom* atom : patients)
+	{
+		if(!powered) break;
+		DaPerson* patient = dynamic_cast<DaPerson*>(atom);
+		if(!patient || !patient->IsNormal() || !patient->IsOnLine() || !patient->IsPatientStationPose()) continue;
+		quint32 developmentId = 0;
+		quint16 medicStationId = 0;
+		AuStation station;
+		if(!HospitalPatient(*patient, developmentId, station, medicStationId)) continue;
+		DaCreature* doctor = nullptr;
+		for(DaAtom* candidate : occupants)
+		{
+			DaCreature* creature = dynamic_cast<DaCreature*>(candidate);
+			if(creature && AtHospitalMedic(*creature, station, medicStationId))
+			{ doctor = creature; break; }
+		}
+		if(!doctor)
+		{
+			std::unique_ptr<AuDNABase> dna;
+			if(!ReadSpeciesDNA(state.citizenSpecies, dna)) continue;
+			DaNpc* civilian = new DaNpc(ROLE_Worker, *dna,
+				AuDNABase::CHROMATID(g_Au.Dice().Roll(1, 2, -1)),
+				HANDEDNESS(g_Au.Dice().Roll(1, 2, -1)), g_Au.Dice().RandomPersonName());
+			civilian->ConnectSignals();
+			civilian->Create();
+			station.OffsetOpM(civilian->ConsolePoseOffset(station.Type(), station.OccPos(),
+				civilian->CGHeightStanding(), civilian->TorsoThickness(), station.SeatIndex()));
+			civilian->SetPosAndOrient(AuAtomPos(world->Id(), station.OpM()));
+			ether->AddAtom(civilian);
+			civilian->InitTraining();
+			civilian->SetHomeWorld(world);
+			civilian->SetEmpireId(state.controllingEmpire);
+			civilian->ResetHitPoints();
+			civilian->ResetStamina();
+			civilian->ResetHunger();
+			civilian->SitAtConsole(medicStationId, station.Type(), station.OccPos(), station.SeatIndex(), medicStationId);
+			// City tock owns treatment; the worker keeps this station without
+			// requiring a modern building/capsule parent or ship AI orders.
+			civilian->SetOrder(ORDER_Stay, world->Id(), AuPoint());
+			// SetOrder's fallback Stay always targets ParentId. Append the
+			// service order so its city target survives save/load and cleanup.
+			civilian->AmendOrder(ORDER_Stay, Id(), AuPoint(), medicStationId);
+			civilian->InvalidateEnvironment();
+			civilian->SetInScene();
+			g_Au.AtomAdded(civilian->Id());
+			civilian->SetNormal();
+			civilian->TickTock();
+			medics.append(civilian);
+			occupants.append(civilian);
+			doctor = civilian;
+		}
+		DaNpc* civilian = dynamic_cast<DaNpc*>(doctor);
+		if(civilian && medics.contains(civilian))
+		{
+			needed.insert(civilian);
+			TreatHospitalPatient(*civilian, *patient);
+		}
+	}
+	// Includes patients who stood up and stations whose site was demolished.
+	for(DaNpc* civilian : medics)
+		if(!needed.contains(civilian)) civilian->Kill();
+}
+
+DaCreature* DaLegacyCity::FindPatient(const DaCreature& doctor) const
+{
+	DaWorldLL* world = dynamic_cast<DaWorldLL*>(Parent());
+	if(!world || doctor.ParentId() != world->Id() || !doctor.IsMedicStationPose() || !StationsPowered()) return nullptr;
+	DaAtomList occupants;
+	world->ListNormalSubatoms(occupants);
+	for(DaAtom* atom : occupants)
+	{
+		DaCreature* patient = dynamic_cast<DaCreature*>(atom);
+		if(!patient) continue;
+		quint32 developmentId = 0;
+		quint16 medicStationId = 0;
+		AuStation medic;
+		if(HospitalPatient(*patient, developmentId, medic, medicStationId)
+			&& AtHospitalMedic(doctor, medic, medicStationId)) return patient;
+	}
+	return nullptr;
+}
+
+void DaLegacyCity::TreatHospitalPatient(DaCreature& doctor, DaCreature& patient, int procedure,
+	const AuCondition* selectedCondition)
+{
+	// StationsPowered validates the active catalogue and every installed
+	// commodity descriptor before it reads the city inventory.
+	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker() || !AuLegacyItemTechnologyActive() || !StationsPowered()) return;
+	const AuLegacyCityCatalogue* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	if(!catalogue) return;
+	const bool automatic = procedure < 0;
+	AuConditionList conditions;
+	if(automatic) patient.CloneConditions(conditions);
+	std::unique_ptr<AuCondition> condition(selectedCondition ? selectedCondition->Clone() : nullptr);
+	std::unique_ptr<AuItem> treatment;
+	m_CityLock.lockForWrite();
+	State changed = m_City;
+	AuItemHash inventory;
+	QString error;
+	if(!ReadCityInventory(changed.inventory, *catalogue, inventory, error))
+	{ m_CityLock.unlock(); conditions.Clear(); return; }
+	if(automatic)
+	{
+		if(patient.IsBodyDyingOrDead()) procedure = DpStationSurgery::CI_Defibrillate;
+		else if(patient.CurrentHitPoints() < patient.MaxHitPoints() && !conditions.Condition(AuCondition::Bandage)
+			&& inventory.FindBest(COMMODITYID(catalogue->RuntimeCommodityId(
+				CommodityId(HospitalCommodity(DpStationSurgery::CI_Heal))))) != inventory.end())
+			procedure = DpStationSurgery::CI_Heal;
+		for(const AuCondition* candidate : conditions)
+		{
+			if(procedure >= 0) break;
+			int proposed = -1;
+			switch(candidate->CType())
+			{
+			case AuCondition::Poison: proposed = DpStationSurgery::CI_Antidote; break;
+			case AuCondition::Disease: proposed = DpStationSurgery::CI_Antitoxin; break;
+			case AuCondition::Acid: case AuCondition::Fire: proposed = DpStationSurgery::CI_Decontaminate; break;
+			case AuCondition::Paralysis: proposed = DpStationSurgery::CI_PhysicalTherapy; break;
+			case AuCondition::ImplantDNA: case AuCondition::ImplantSpecies: proposed = DpStationSurgery::CI_Surgery; break;
+			default: break;
+			}
+			if(proposed < 0) continue;
+			const quint16 required = HospitalCommodity(proposed);
+			if(required)
+			{
+				const auto available = inventory.FindBest(COMMODITYID(catalogue->RuntimeCommodityId(CommodityId(required))));
+				if(available == inventory.end()) continue;
+				// Immunization handles disease over time; avoid repeated doses.
+				const AuConAntitoxin* immunization = dynamic_cast<const AuConAntitoxin*>(conditions.Condition(AuCondition::Antitoxin));
+				if(required == 120 && immunization && immunization->EffectiveQuality() >= available->second->Quality()) continue;
+			}
+			procedure = proposed;
+			condition.reset(candidate->Clone());
+			break;
+		}
+	}
+	const quint16 commodity = HospitalCommodity(procedure);
+	AuItemHash::iterator item = commodity
+		? inventory.FindBest(COMMODITYID(catalogue->RuntimeCommodityId(CommodityId(commodity)))) : inventory.end();
+	bool consumed = false;
+	if(item != inventory.end())
+	{
+		treatment.reset(item->second->Clone());
+		consumed = commodity == 83 || !treatment->TestQuality();
+		if(consumed)
+		{
+			item->second->Consume(1);
+			if(!item->second->Count()) inventory.Erase(item);
+			if(!WriteCityInventory(inventory, changed.inventory, error))
+			{ m_CityLock.unlock(); conditions.Clear(); return; }
+			m_City = changed;
+			++m_CityRevision;
+		}
+	}
+	m_CityLock.unlock();
+	conditions.Clear();
+	if(consumed) SetModified();
+	if(!automatic && commodity && !treatment)
+		doctor.Thought(tr("Hospital's pharmacy has no %1.")
+			.arg(g_Au.CommodityName(COMMODITYID(catalogue->RuntimeCommodityId(CommodityId(commodity))))));
+	if(consumed)
+	{
+		AuCommThought message(tr("%1 consumed from hospital's pharmacy.").arg(treatment->SayName()),
+			patient.Id(), patient.Name());
+		g_Au.SendAtomChat(message);
+	}
+	if(commodity && !treatment) return;
+	switch(procedure)
+	{
+	case DpStationSurgery::CI_Defibrillate:
+		DpStationSurgery::ApplyDefibrillate(&doctor, &patient, patient.CurrentHitPoints() <= 0); break;
+	case DpStationSurgery::CI_Heal: DpStationSurgery::ApplyHeal(&doctor, &patient, *treatment); break;
+	case DpStationSurgery::CI_Antidote: DpStationSurgery::ApplyAntidote(&doctor, &patient, condition.get(), *treatment); break;
+	case DpStationSurgery::CI_Antitoxin: DpStationSurgery::ApplyAntitoxin(&doctor, &patient, *treatment); break;
+	case DpStationSurgery::CI_Decontaminate:
+		if(condition && condition->CType() == AuCondition::Fire)
+			DpStationSurgery::ApplyExtinguish(&doctor, &patient, condition.get(), *treatment);
+		else DpStationSurgery::ApplyDecontaminate(&doctor, &patient, condition.get(), *treatment);
+		break;
+	case DpStationSurgery::CI_PhysicalTherapy: DpStationSurgery::DoPhysicalTherapy(&doctor, &patient, condition.get()); break;
+	case DpStationSurgery::CI_Surgery: DpStationSurgery::DoSurgery(&doctor, &patient, condition.get()); break;
+	}
+}
 
 namespace
 {

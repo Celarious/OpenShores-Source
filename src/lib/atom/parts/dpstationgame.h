@@ -43,7 +43,7 @@ public:
 
 	void RestoreDefaultControls();
 
-	virtual void Rx(QDataStream& in, DaCapsule& capsule);
+	virtual void Rx(QDataStream& in, DaAtom& capsule);
 
 	void SaveControls() const;
 

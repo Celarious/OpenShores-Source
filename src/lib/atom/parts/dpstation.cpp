@@ -47,6 +47,18 @@ AuId DpStation::DisplayedSystem() const
 	return AuId(0);
 }
 
+void DpStation::ScanOwner(const DaAtom& owner, float sensorRange, float weaponRange, int content,
+		const AuId& locked, AuSensorBlipList& blips)
+{
+	const DaAtom* environment = owner.FindEnvironmentAtom();
+	if(!environment) return;
+	AuId world;
+	const int domain = owner.GunnerDomain(world);
+	unordered_map<quint32, POLITICAL_STANCE, AuEmpireIdHash> stanceCache;
+	environment->SensorScan(blips, owner.EnvLocation(), owner.Id(), owner.EmpireId(), domain, world,
+		sensorRange, weaponRange, content, locked, stanceCache);
+}
+
 void DpStation::Render(const AuMatrix4x4& projection, const AuMatrix4x4& farProjection, const AuMatrix4x4& tModel,
 		const DaPerson& sceneAtom, const DaCreature* seatedCreature, AuAtomRenderInfo& ari)
 {
@@ -95,6 +107,26 @@ void DpStation::AnimateDeviceObjects(AuGLEffects& re, const DaBd& bd, const AuEl
 	Q_UNUSED(sceneAtom);
 }
 
+void DpStation::AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+		const AuPoint& location, const DaCreature& sceneAtom)
+{
+	Q_UNUSED(re);
+	Q_UNUSED(city);
+	Q_UNUSED(last);
+	Q_UNUSED(location);
+	Q_UNUSED(sceneAtom);
+}
+
+void DpStation::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaLegacyCity& city,
+		CONTROL_CONTEXT cc, const AuPoint& location)
+{
+	Q_UNUSED(aActiveControls);
+	Q_UNUSED(sceneAtom);
+	Q_UNUSED(city);
+	Q_UNUSED(cc);
+	Q_UNUSED(location);
+}
+
 void DpStation::DeleteDeviceObjects(AuGLEffects& re)
 {
 	Q_UNUSED(re);
@@ -127,7 +159,7 @@ void DpStation::Tx(QDataStream& out) const
 	Q_UNUSED(out);
 }
 
-void DpStation::Rx(QDataStream& in, DaCapsule& capsule)
+void DpStation::Rx(QDataStream& in, DaAtom& capsule)
 {
 	Q_UNUSED(in);
 	Q_UNUSED(capsule);

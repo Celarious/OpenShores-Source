@@ -207,7 +207,7 @@ void DpConsoleHelm::Refresh(const DpStation* station, const DaAtom& parent)
 	DpStationHelm::Refresh(station, parent);
 }
 
-void DpConsoleHelm::Rx(QDataStream& in, DaCapsule& capsule)
+void DpConsoleHelm::Rx(QDataStream& in, DaAtom& capsule)
 {
 	SetLegacyControls(LegacyShip(capsule));
 	DpStationHelm::Rx(in, capsule);

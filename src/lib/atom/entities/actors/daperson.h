@@ -981,6 +981,7 @@ public:
 	// Returns detail type of the console on success.
 	// Returns AuStation::TYPE_Count if ship->CanEnterConsole fails at my current location.
 	AuStation::TYPE EnterConsole(DaCapsule* ship, CONTROL_CONTEXT cc);
+	AuStation::TYPE EnterLegacyBuildingConsole(CONTROL_CONTEXT cc);
 
 	virtual AuId Father() const
 	{

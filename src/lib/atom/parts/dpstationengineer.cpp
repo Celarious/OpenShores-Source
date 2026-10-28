@@ -183,7 +183,7 @@ DpStationEngineer::DpStationEngineer(const DpStationEngineer& c) : DpStation(c)
 	m_ScreenTex = 0;
 }
 
-void DpStationEngineer::Rx(QDataStream& in, DaCapsule& capsule)
+void DpStationEngineer::Rx(QDataStream& in, DaAtom& capsule)
 {
 	DpStation::Rx(in, capsule);
 	quint8 switches;

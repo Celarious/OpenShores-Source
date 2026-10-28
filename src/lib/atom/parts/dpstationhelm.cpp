@@ -394,7 +394,7 @@ void DpStationHelm::Tx(QDataStream& out) const
 	out << m_WhichFTL;
 }
 
-void DpStationHelm::Rx(QDataStream& in, DaCapsule& capsule)
+void DpStationHelm::Rx(QDataStream& in, DaAtom& capsule)
 {
 	DpStation::Rx(in, capsule);
 

@@ -23,6 +23,7 @@ class AuSensorBlipList;
 class AuElapsedTimer;
 class DaAtom;
 class DaBd;
+class DaLegacyCity;
 class DaCapsule;
 class DaCreature;
 class DaPerson;
@@ -69,6 +70,8 @@ public:
 			const AuPoint& location, const DaCreature& sceneAtom);
 
 	virtual void AnimateDeviceObjects(AuGLEffects& re, const DaBd& bd, const AuElapsedTimer& last,
+			const AuPoint& location, const DaCreature& sceneAtom);
+	virtual void AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
 			const AuPoint& location, const DaCreature& sceneAtom);
 
 	// Consoles that save/restore settings that must be communicated to the server need to override this function and also
@@ -128,6 +131,9 @@ public:
 		Q_UNUSED(location);
 	}
 
+	virtual void ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaLegacyCity& city,
+			CONTROL_CONTEXT cc, const AuPoint& location);
+
 	// Refresh data from counterpart.
 	virtual void Refresh(const DpStation* pCon, const DaAtom& parent);
 
@@ -153,7 +159,7 @@ public:
 	virtual void RenderMini(const AuMatrix4x4& projection, const AuMatrix4x4& tModel, const DaCreature* seatedCreature,
 			AuAtomRenderInfo& ari);
 
-	virtual void Rx(QDataStream& in, DaCapsule& capsule);
+	virtual void Rx(QDataStream& in, DaAtom& capsule);
 
 	// Tx/Rx settings functions must be overridden if you implement LoadClientSettings. They should transfer those same settings.
 	virtual void RxSettings(QDataStream& /*in*/)
@@ -203,6 +209,9 @@ public:
 	}
 
 protected:
+	static void ScanOwner(const DaAtom& owner, float sensorRange, float weaponRange, int content,
+			const AuId& locked, AuSensorBlipList& blips);
+
 	void DrawInfo(const DaAtom* system, QPixmap& pix, const QSize &sz, quint8 fontSize, quint8& scroll,
 			const AuSensorBlip* blip) const;
 

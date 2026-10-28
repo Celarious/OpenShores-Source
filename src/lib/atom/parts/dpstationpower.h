@@ -183,7 +183,7 @@ public:
 		DiControlInputArray &aActiveControls, bool bContinuous);
 	virtual bool Tick(const AuElapsedTimer& last, const AuElapsedTimer& now, DaPerson* person);
 
-	virtual void Rx(QDataStream& in, DaCapsule& capsule);
+	virtual void Rx(QDataStream& in, DaAtom& capsule);
 	virtual void Tx(QDataStream& out) const;
 
 protected:

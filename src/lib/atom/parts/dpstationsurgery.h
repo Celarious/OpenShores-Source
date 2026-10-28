@@ -65,6 +65,8 @@ public:
 
 	virtual void AnimateDeviceObjects(AuGLEffects& re, const DaBd& bd, const AuElapsedTimer& last,
 			const AuPoint& location, const DaCreature& sceneAtom);
+	virtual void AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+			const AuPoint& location, const DaCreature& sceneAtom);
 
 	virtual void EnumControlInputs(DiControlInputArray &aAllControls) const;
 
@@ -90,6 +92,15 @@ public:
 
 	static void DoHeal(DaCreature* doctor, DaCreature* patient, DaCapsule& capsule, const AuItem& medicalKit);
 
+	// Medical effects after the caller has accounted for pharmacy usage.
+	// Legacy city hospitals share these effects with spacecraft surgery units.
+	static void ApplyAntidote(DaCreature* doctor, DaCreature* patient, const AuCondition* condition, const AuItem& antidote);
+	static void ApplyAntitoxin(DaCreature* doctor, DaCreature* patient, const AuItem& antitoxin);
+	static void ApplyDecontaminate(DaCreature* doctor, DaCreature* patient, const AuCondition* condition, const AuItem& water);
+	static void ApplyExtinguish(DaCreature* doctor, DaCreature* patient, const AuCondition* condition, const AuItem& water);
+	static void ApplyHeal(DaCreature* doctor, DaCreature* patient, const AuItem& medicalKit);
+	static void ApplyDefibrillate(DaCreature* doctor, DaCreature* patient, bool resuscitate = true);
+
 	static void DoPhysicalTherapy(DaCreature* doctor, DaCreature* patient, const AuCondition* condition);
 
 	static void DoSurgery(DaCreature* doctor, DaCreature* patient, const AuCondition* condition);
@@ -112,6 +123,8 @@ public:
 
 	virtual void ProcessControlInput(const DiControlInputArray &aActiveControls, DaPerson* pSceneAtom, DaBd& bd,
 			CONTROL_CONTEXT cc, const AuPoint& location);
+	virtual void ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaLegacyCity& city,
+			CONTROL_CONTEXT cc, const AuPoint& location);
 
 	virtual void Refresh(const DpStation* pCon, const DaAtom& parent);    // Refresh data from counterpart.
 
@@ -120,11 +133,11 @@ public:
 
 	virtual bool Tick(const AuElapsedTimer& last, const AuElapsedTimer& now, DaPerson* person);
 
-	virtual void Rx(QDataStream& in, DaCapsule& capsule);
+	virtual void Rx(QDataStream& in, DaAtom& capsule);
 	virtual void Tx(QDataStream& out) const;
 
 protected:
-	void AnimateDeviceObjects(AuGLEffects& re, const DaCapsule& capsule);
+	void AnimateDeviceObjects(AuGLEffects& re, const DaAtom& parent);
 
 	static GLuint CreateDisplayTexture(AuGLEffects& re, const AuId& parentId);
 
@@ -148,8 +161,9 @@ protected:
 
 	virtual void PanelDimensions(double& width, double& height) const = 0;
 
-	void ProcessControlInput(const DiControlInputArray &aActiveControls, DaPerson* pSceneAtom, DaCapsule& capsule,
+	void ProcessControlInput(const DiControlInputArray &aActiveControls, DaPerson* pSceneAtom, DaAtom& parent,
 			CONTROL_CONTEXT cc);
+	void DoProcedure(int procedure, DaPerson* doctor, DaAtom& parent);
 
 	void ProcessDisplayHit(const QPoint& pxHit);
 

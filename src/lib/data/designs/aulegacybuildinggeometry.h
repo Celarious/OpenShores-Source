@@ -31,6 +31,7 @@ struct Batch
 	int deck = 0;
 	bool interior = false;
 	bool twoSided = false;
+	bool equipment = false;
 	bool stairs = false;
 	bool collisionOnly = false;
 	bool depthOnly = false; // Original AuBuildingTri window effect 4: terrain mask.

@@ -4522,6 +4522,21 @@ void DaPerson::ProcessControlInput(const DiControlInputArray& aActiveControls, D
 		}
 	}
 
+	if(!capsule && HasConsole() && IsConsolePose())
+		if(DaLegacyCity* city = LegacyStationCity())
+		{
+			if(city->StationsPowered())
+			{
+				DpStation* console = LockConsoleForRead();
+				if(console)
+				{
+					console->ProcessControlInput(aActiveControls, sceneAtom, *city, cc, Location());
+					m_ControlId = console->SystemWhich();
+				}
+				UnlockConsole();
+			}
+		}
+
 	// When dying, we can process one and only one input. That is E to get off someone's back who is carrying me. Otherwise I can
 	// be taken captive forever.
 	bool exitMountOnly = false;									// true if I am only allowed to exit my mount.
@@ -5708,6 +5723,12 @@ void DaPerson::ProcessControlInput(const DiControlInputArray& aActiveControls, D
 						nuStationId = StationId();
 						nuOccPos = ConsoleOccupantPosition();
 					}
+				}
+				else if(g_Au.IsLegacyGeneration() && EnterLegacyBuildingConsole(cc) != AuStation::TYPE_Count)
+				{
+					nuPose = CurrentGeneralPose();
+					nuStationId = StationId();
+					nuOccPos = ConsoleOccupantPosition();
 				}
 				else if(GrabLadder())
 				{
@@ -9685,6 +9706,17 @@ void DaPerson::AnimateDeviceObjects(AuAtomRenderInfo& ari, const DaPerson* scene
 			}
 		}
 	}
+
+	if(HasConsole() && !IsInCapsule())
+		if(DaLegacyCity* city = LegacyStationCity())
+		{
+			if(city->StationsPowered())
+			{
+				DpStation* console = LockConsoleForRead();
+				if(console) console->AnimateDeviceObjects(*ari.re, *city, lastAnim, Location(), *this);
+				UnlockConsole();
+			}
+		}
 
 	QueryEnvironmentLighting();
 
@@ -15433,6 +15465,30 @@ bool DaPerson::CurrentWeaponIsShotgun(float& range, float& patternAngle) const
 	WeaponAtUsePos(CurrentItemPos(), CurrentItemSub(), weapon, ammoCur, ammoFull);
 	range = weapon.m_Range;
 	return weapon.m_CID == CID_Shotgun;
+}
+
+AuStation::TYPE DaPerson::EnterLegacyBuildingConsole(CONTROL_CONTEXT cc)
+{
+	Q_UNUSED(cc);
+	DaWorldLL* world = dynamic_cast<DaWorldLL*>(Parent());
+	if(!world || !g_Au.IsLegacyGeneration()) return AuStation::TYPE_Count;
+	DaAtomList cities;
+	world->FindLegacyCitiesRecursive(cities);
+	for(DaAtom* atom : cities)
+	{
+		DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(atom);
+		quint16 stationId = 0, which = 0;
+		AuStation station;
+		if(!city || !city->CanEnterConsole(*this, stationId, station, which)) continue;
+		ForcePosStop(AuAtomPos(world->Id(), station.OpM()));
+		const AuPose pose = SitAtConsole(stationId, station.Type(), station.OccPos(), station.SeatIndex(), which);
+		SyncController(AuSyncPose(pose, 0, stationId, station.SeatIndex()));
+		InvalidateEnvironment();
+		SetAtRest();
+		SetModified();
+		return station.Type();
+	}
+	return AuStation::TYPE_Count;
 }
 
 AuStation::TYPE DaPerson::EnterConsole(DaCapsule* capsule, CONTROL_CONTEXT cc)

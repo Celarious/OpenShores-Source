@@ -21,6 +21,8 @@ public:
 public:
 	virtual void AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship, const AuElapsedTimer& last, const AuPoint& location,
 			const DaCreature& sceneAtom);
+	virtual void AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+			const AuPoint& location, const DaCreature& sceneAtom);
 
 	virtual DpStation* Clone() const;
 

@@ -25,6 +25,7 @@
 #include "daanimal.h"
 #include "daatomlist.h"
 #include "dabd.h"
+#include "dalegacycity.h"
 #include "dadesignbase.h"
 #include "dadesigner.h"
 #include "daitem.h"
@@ -36,6 +37,7 @@
 #include "davehicle.h"
 #include "daworldringsection.h"
 #include "dgdata.h"
+#include "dpconsoleempty.h"
 #include "dpconsoleengineer.h"
 #include "dpconsolegame.h"
 #include "dpconsolehelm.h"
@@ -667,7 +669,7 @@ void DaCreature::RxUpdate(QDataStream& fromServer, bool isFirstUpdate)
 		if(m_Console && IsConsolePose() && m_Console->Type() == consoleType)
 		{
 			// Receive console data for the appropriate kind of console.
-			DaCapsule* capsule = FindParentCapsuleInEnv();
+			DaAtom* capsule = StationOwner();
 			if(capsule)
 			{
 				m_Console->Rx(fromServer, *capsule);
@@ -699,7 +701,7 @@ void DaCreature::RxUpdate(QDataStream& fromServer, bool isFirstUpdate)
 		if(!readConsole)
 		{
 			// We must read the bad console data to keep the data stream intact.
-			DaCapsule* ship = FindParentCapsuleInEnv();
+			DaAtom* ship = StationOwner();
 			if(ship)
 			{
 				DpStation* console;
@@ -708,9 +710,12 @@ void DaCreature::RxUpdate(QDataStream& fromServer, bool isFirstUpdate)
 				default:
 					qDebug() << "DaCreature::RxUpdate bad console" << (m_Console?"at console":"not at console")
 						<< "isConPose" << IsConsolePose()
-						<< "conType" << m_Console->Type()
+						<< "conType" << (m_Console ? m_Console->Type() : AuStation::TYPE_Count)
 						<< "rxType" << consoleType;
 					console = 0;
+					break;
+				case AuStation::Console_Command:
+					console = new DpConsoleEmpty();
 					break;
 				case AuStation::Integrated_Command:
 					console = new DpScCommand();
@@ -3450,6 +3455,13 @@ void DaCreature::CreateDeviceObjects(AuAtomRenderInfo& ari)
 			const DaCapsule* cap = dynamic_cast<const DaCapsule*>(Parent());
 			if(cap)
 				m_Console->CreateDeviceObjects(ari, *cap, IsInBd());
+		}
+		else if(g_Au.IsLegacyGeneration() && Parent() && IsLockedPose())
+		{
+			const DaAtom& textureOwner = *StationOwner();
+			m_Console->CreateDeviceObjects(ari, textureOwner, true);
+			if(m_Console->Type() == AuStation::Console_Command)
+				static_cast<DpConsoleEmpty*>(m_Console)->DpConsole::CreateDeviceObjects(ari, textureOwner, true);
 		}
 	}
 }
@@ -9355,9 +9367,39 @@ void DaCreature::Thought(const QString& text) const
 bool DaCreature::Station(AuStation& station) const
 {
 	const DaCapsule* capsule = FindParentCapsuleInEnv();
-	if(!capsule)
-		return false;
-	return capsule->Station(*this, station);
+	if(capsule) return capsule->Station(*this, station);
+	return LegacyStationCity(&station) != nullptr;
+}
+
+DaLegacyCity* DaCreature::LegacyStationCity(AuStation* result) const
+{
+	if(g_Au.IsLegacyGeneration() && Parent() && IsLockedPose())
+	{
+		DaAtomList cities;
+		Parent()->FindLegacyCitiesRecursive(cities);
+		AuStation station;
+		for(DaAtom* atom : cities)
+			if(DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(atom))
+				if(city->Station(*this, station))
+				{
+					if(result) *result = station;
+					return city;
+				}
+	}
+	return nullptr;
+}
+
+const DaAtom* DaCreature::StationOwner() const
+{
+	if(const DaCapsule* capsule = FindParentCapsuleInEnv()) return capsule;
+	if(!g_Au.IsLegacyGeneration()) return nullptr;
+	if(const DaLegacyCity* city = LegacyStationCity()) return city;
+	return Parent();
+}
+
+DaAtom* DaCreature::StationOwner()
+{
+	return const_cast<DaAtom*>(static_cast<const DaCreature*>(this)->StationOwner());
 }
 
 quint64 DaCreature::MemoryUsage() const

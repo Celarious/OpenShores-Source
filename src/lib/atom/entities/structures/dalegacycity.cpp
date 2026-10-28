@@ -7,6 +7,9 @@
 #include "aubox.h"
 #include "auglobal.h"
 #include "aucommstdchannel.h"
+#include "aucombat.h"
+#include "aueffect.h"
+#include "auordnance.h"
 #include "augllight.h"
 #include "aulegacybd.h"
 #include "aulegacybiodome.h"
@@ -35,11 +38,22 @@
 #include "dacreature.h"
 #include "daatomlist.h"
 #include "daperson.h"
+#include "damissile.h"
 #include "dadesigner.h"
 #include "dgdata.h"
 #include "daworldll.h"
 #include "daworldringsection.h"
 #include "daworldsphere.h"
+#include "dpconsoleempty.h"
+#include "dpconsoleengineer.h"
+#include "dpconsolehelm.h"
+#include "dpconsolenav.h"
+#include "dpconsolepower.h"
+#include "dpconsolesensor.h"
+#include "dpconsoleshield.h"
+#include "dpconsolesurgery.h"
+#include "dpconsoletransporter.h"
+#include "dpconsoleweapon.h"
 #include <QDataStream>
 #include <QDateTime>
 #include <QCryptographicHash>
@@ -64,6 +78,118 @@ namespace
 const double RoadBuildingPlacementClearanceFeet = 5.0;
 
 AuPoint Point(const QVector3D& p) { return AuPoint(p.x(), p.y(), p.z()); }
+
+const AuLegacyCityCatalogue* StationCatalogue()
+{
+	const AuLegacyCityCatalogue* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	if(!g_Au.IsLegacyGeneration() || !catalogue || !AuLegacyItemTechnologyActive()) return nullptr;
+	// Deserializing AuItem requires the complete, active legacy descriptors.
+	for(const quint16 commodity : catalogue->RuntimeCommodityIds())
+		if(!g_Au.HasLegacyCommodity(COMMODITYID(commodity))) return nullptr;
+	return catalogue;
+}
+
+quint32 StationElectricity(const QByteArray& bytes, bool* metadataReady = nullptr)
+{
+	if(metadataReady) *metadataReady = false;
+	const AuLegacyCityCatalogue* catalogue = StationCatalogue();
+	if(!catalogue) return 0;
+	if(metadataReady) *metadataReady = true;
+	AuItemHash inventory; QString error;
+	if(!AuLegacyCity::ReadCityInventory(bytes, *catalogue, inventory, error)) return 0;
+	return inventory.RawCount(COMMODITYID(catalogue->RuntimeCommodityId(AuLegacyCity::CommodityId(3))));
+}
+
+struct LegacyBuildingStation
+{
+	quint16 id = 0, room = 0;
+	int detailType = 0, deck = 0;
+	AuPoint floor;
+	AuStation station;
+};
+
+QVector<LegacyBuildingStation> BuildingStations(const AuLegacyBd::Design& design,
+	const AuLegacyCity::Development& development)
+{
+	QVector<LegacyBuildingStation> result;
+	for(int index = 0; index < design.details.size() && index < 65535; ++index)
+	{
+		const AuLegacyShip::Detail& detail = design.details.at(index);
+		if(detail.deck < development.minimumDeck || detail.deck > development.maximumDeck + (detail.detailType == 22 ? 1 : 0)) continue;
+		AuStation::TYPE type = AuStation::TYPE_Count;
+		AuStation::OCCUPANT_POSITION position = AuStation::Occupant_Sit;
+		switch(detail.detailType)
+		{
+		case 1: type = AuStation::Console_Navigation; break;
+		case 4: type = AuStation::Console_Medic; break;
+		case 6: type = AuStation::Console_Engine; break;
+		case 7: type = AuStation::Console_FireControl; break;
+		case 11: type = AuStation::Console_Patient; position = AuStation::Occupant_Stand; break;
+		case 12: type = AuStation::Console_Helm; break;
+		case 13: type = AuStation::Console_Power; break;
+		case 15: type = AuStation::Console_Sensor; break;
+		case 17: type = AuStation::Console_Shield; break;
+		case 19: type = AuStation::Console_Transporter; break;
+		case 21: type = AuStation::Turret_Bottom; position = AuStation::Occupant_SitSwivel3D; break;
+		case 22: type = AuStation::Turret_Top; position = AuStation::Occupant_SitSwivel3D; break;
+		case 73: type = AuStation::Console_Command; break;
+		default:
+			if(detail.detailType == 2 || (detail.detailType >= 25 && detail.detailType <= 31))
+			{ type = AuStation::TYPE(int(AuStation::Berth_1_0) + (detail.detailType == 2 ? 0 : detail.detailType - 24)); position = AuStation::Occupant_Prone; }
+			else if(detail.detailType >= 65 && detail.detailType <= 72)
+			{ type = AuStation::TYPE(int(AuStation::Berth_2_0) + detail.detailType - 65); position = AuStation::Occupant_Prone; }
+			else if(detail.detailType >= 33 && detail.detailType <= 40)
+			{ type = AuStation::TYPE(int(AuStation::Turret_0) + detail.detailType - 33); position = AuStation::Occupant_SitSwivel3D; }
+			break;
+		}
+		if(type == AuStation::TYPE_Count) continue;
+		LegacyBuildingStation item;
+		item.id = quint16(index + 1); item.room = detail.roomId;
+		item.detailType = detail.detailType; item.deck = detail.deck;
+		const QPointF point = AuLegacyShip::DecodePoint(detail.packedXY);
+		item.floor = AuPoint(point.x(), point.y(), detail.deck * AuLegacyBd::DeckHeight);
+		AuMatrix4x4 transform; transform.Translate(item.floor);
+		if(type >= AuStation::Berth_1_0 && type <= AuStation::Berth_2_315)
+		{
+			const int step = type >= AuStation::Berth_2_0 ? type - AuStation::Berth_2_0 : type - AuStation::Berth_1_0;
+			transform.RotateZ(step * PI / 4 + PI / 2);
+			transform.Translate(0, -1.5, 2);
+		}
+		else if(type <= AuStation::Console_Transporter && type != AuStation::Console_Patient)
+			transform.Translate(0, 0, AuStation::SeatHeight());
+		item.station = AuStation(type, transform, position, 0);
+		result.append(item);
+	}
+	return result;
+}
+
+DpStation* BuildingConsole(AuStation::TYPE type, quint16 which)
+{
+	switch(type)
+	{
+	case AuStation::Console_Command: return new DpConsoleEmpty;
+	case AuStation::Console_Navigation: return new DpConsoleNav;
+	case AuStation::Console_Medic: return new DpConsoleSurgery(which);
+	case AuStation::Console_Engine: return new DpConsoleEngineer(which);
+	case AuStation::Console_FireControl: return new DpConsoleWeapon(which);
+	case AuStation::Console_Helm: return new DpConsoleHelm;
+	case AuStation::Console_Power: return new DpConsolePower;
+	case AuStation::Console_Sensor: return new DpConsoleSensor;
+	case AuStation::Console_Shield: return new DpConsoleShield;
+	case AuStation::Console_Transporter: return new DpConsoleTransporter(which);
+	default: return nullptr;
+	}
+}
+
+AuStation WorldBuildingStation(const LegacyBuildingStation& source, const AuMatrix4x4& placement,
+	const DaCreature& who)
+{
+	AuStation station = source.station;
+	if(station.Type() < AuStation::Berth_1_0 || station.Type() > AuStation::Berth_2_315)
+		station.OffsetOpM(who.ConsolePoseOffset(station.Type(), station.OccPos(), who.CGHeightStanding(),
+			who.TorsoThickness(), station.SeatIndex()));
+	return AuStation(station.Type(), placement * station.OpM(), station.OccPos(), station.SeatIndex());
+}
 
 bool ExteriorLightsOn(const DaWorldLL& world, const AuLegacyCity::Development& development,
 	const AuMatrix4x4& placement)
@@ -618,6 +744,7 @@ struct DaLegacyCity::Runtime
 		AuLegacyBd::Geometry::Mesh mesh;
 		QSharedPointer<AuLegacyScGeometry::CollisionWorld> collision;
 		AuLegacyBd::Paths::Graph paths;
+		QVector<LegacyBuildingStation> stations;
 		QSharedPointer<const RenderData> render;
 	};
 	struct Job
@@ -670,6 +797,8 @@ struct DaLegacyCity::Runtime
 		double radius = 16;
 	};
 	QMutex lock;
+	QHash<quint64, QSharedPointer<DpStation>> consoles;
+	QHash<quint32, qint64> weaponLastFired;
 	bool asynchronous = false;
 	quint64 requestedRevision = 0, builtRevision = 0;
 	QSharedPointer<Job> job;
@@ -927,6 +1056,7 @@ struct DaLegacyCity::Runtime
 			if(!design && dev.designId) continue; // Loader rejects unknown authored designs.
 			Building building;
 			building.state = dev;
+			if(design && dev.constructed && !dev.demolished) building.stations = BuildingStations(*design, dev);
 			AuLegacyBd::Geometry::Options options;
 			options.minimumDeck = dev.minimumDeck; options.maximumDeck = dev.maximumDeck;
 			options.materialCommodity = dev.materialId; options.constructed = dev.constructed;
@@ -1040,6 +1170,7 @@ struct DaLegacyCity::Runtime
 				if(batch.stairs && !batch.collisionOnly) continue;
 				AuLegacyShip::Rendering::Batch imported;
 				imported.vertices = batch.vertices;
+				imported.equipment = batch.equipment;
 				imported.material = batch.stairs ? AuLegacyShip::Rendering::Material::StairTread
 					: AuLegacyShip::Rendering::Material::HullWall;
 				collisionMesh.batches.append(imported);
@@ -1052,6 +1183,8 @@ struct DaLegacyCity::Runtime
 
 	void DeleteDraw(AuAtomRenderInfo& ari, const AuId& id)
 	{
+		if(ari.re) for(const auto& console : consoles) console->DeleteDeviceObjects(*ari.re);
+		consoles.clear();
 		for(auto& batch : drawBatches) if(batch.vao.VAO()) batch.vao.DeleteGL();
 		for(auto& upload : uploads) for(auto& batch : upload.draws) if(batch.vao.VAO()) batch.vao.DeleteGL();
 		for(auto& flag : flagDraws) if(flag.vao.VAO()) flag.vao.DeleteGL();
@@ -2023,6 +2156,7 @@ bool DaLegacyCity::DemolishDevelopment(DaPerson& person, quint32 id, bool clear,
 	for(int i=0;i<state.developments.size();++i) if(state.developments[i].id == id)
 	{
 		auto& dev = state.developments[i];
+		const AuLegacyCity::Development removed = dev;
 		if(dev.industryId == 1 && state.developments.size() != 1)
 		{ error = QStringLiteral("Remove all other buildings and roads before the town square."); return false; }
 		if(dev.industryId == 1 || dev.industryId == 10)
@@ -2045,7 +2179,32 @@ bool DaLegacyCity::DemolishDevelopment(DaPerson& person, quint32 id, bool clear,
 		state.lastVisit = qMax(state.lastVisit, m_City.lastVisit);
 		m_City=std::move(state); ++m_CityRevision;
 		lock.unlock(); SetModified();
-		if(world) world->InvalidateEnvironmentRecursive();
+		if(world)
+		{
+			// Building stations live in the world's frame. Only demolition
+			// releases their occupants; rebuilding geometry for an extension
+			// must leave the existing attachment alone.
+			const auto* recipe = ConstructionRecipe(removed.industryId, removed.constructionProcessId);
+			if(recipe)
+			{
+				AuMatrix4x4 placement;
+				world->BuildingConstructionTransform(world->LocOfLL(removed.location, removed.altitudeMSL),
+					removed.facingRadians, nullptr, AuPoint(), placement);
+				const double radius = recipe->buildRadius * FeetPerMeter() + 2.828427;
+				DaAtomList occupants; world->ListSubatoms(occupants);
+				for(auto* atom : occupants)
+				{
+					auto* occupant = dynamic_cast<DaCreature*>(atom);
+					if(!occupant || occupant->Parent() != world || !occupant->IsLockedPose()) continue;
+					const AuPoint local = placement.UnProject(occupant->Location());
+					if(std::abs(local.x) <= radius && std::abs(local.y) <= radius
+						&& local.z >= (removed.minimumDeck - 1) * AuLegacyBd::DeckHeight
+						&& local.z < (removed.maximumDeck + 2) * AuLegacyBd::DeckHeight)
+						occupant->ExitConsole();
+				}
+			}
+			world->InvalidateEnvironmentRecursive();
+		}
 		return true;
 	}
 	error = QStringLiteral("The development no longer exists."); return false;
@@ -2513,6 +2672,7 @@ void DaLegacyCity::Tock(const AuTime& last, const AuTime& now, const AuScripts& 
 	}
 	if(monitorTrade) g_Au.MonitorChannel(AuCommStdChannel::TradeChannelName(), Id());
 	TockEconomy(last.MSecsSinceEpoch(), QDateTime::currentMSecsSinceEpoch());
+	if(last.IsNewPeriod(now, 5000, Id().GetID())) TockHospitalPatients();
 }
 
 void DaLegacyCity::SetName(const QString& name)
@@ -2565,6 +2725,7 @@ void DaLegacyCity::TxUpdate(QDataStream& out, const AuTime& lastUpdate,
 {
 	DaAtom::TxUpdate(out, lastUpdate, lastTx, sceneAtom);
 	auto state = Snapshot();
+	state.capacitor = float(StationElectricity(state.inventory));
 	// Public physical state is replicated. Accounts, inventory and report history
 	// remain on the authority; later report requests must authorize their reader.
 	state.inventory.clear(); state.manufacturing.clear(); state.accounting.clear(); state.reportHistory.clear();
@@ -2975,6 +3136,339 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 	}
 }
 
+bool DaLegacyCity::StationsPowered() const
+{
+	if(!g_Au.IsLegacyGeneration()) return false;
+	const DaAtom* world = Parent();
+	const bool ringworld = world && world->AtomType() == ATOM_WorldRingSection;
+	QReadLocker lock(&m_CityLock);
+	// Inventory is private server data. The existing public capacitor field
+	// carries its current electricity count to the client in TxUpdate.
+	if(g_Au.IsSceneApp()) return ringworld || m_City.capacitor > 0;
+	bool metadataReady = false;
+	const quint32 electricity = StationElectricity(m_City.inventory, &metadataReady);
+	return metadataReady && (ringworld || electricity != 0);
+}
+
+int DaLegacyCity::ReserveStationPower(int requested, AuItemHash& reserved)
+{
+	reserved.Clear();
+	const AuLegacyCityCatalogue* catalogue = StationCatalogue();
+	if(!catalogue || !g_Au.IsSceneWorker() || requested <= 0) return 0;
+	if(Parent() && Parent()->AtomType() == ATOM_WorldRingSection) return requested;
+	QWriteLocker lock(&m_CityLock);
+	AuItemHash inventory; QString error;
+	if(!AuLegacyCity::ReadCityInventory(m_City.inventory, *catalogue, inventory, error)) return 0;
+	const COMMODITYID electricity = COMMODITYID(catalogue->RuntimeCommodityId(AuLegacyCity::CommodityId(3)));
+	int count = 0;
+	for(auto item = inventory.find(electricity); item != inventory.end() && item->first == electricity && count < requested;)
+	{
+		const quint32 take = qMin(item->second->Count(), quint32(requested - count));
+		reserved.AddItemCount(*item->second, take);
+		item->second->Consume(take); count += int(take);
+		if(!item->second->Count()) item = inventory.Erase(item); else ++item;
+	}
+	if(!count) return 0;
+	QByteArray bytes;
+	if(!AuLegacyCity::WriteCityInventory(inventory, bytes, error)) { reserved.Clear(); return 0; }
+	m_City.inventory = bytes; m_City.capacitor = float(inventory.RawCount(electricity)); ++m_CityRevision;
+	lock.unlock(); SetModified();
+	return count;
+}
+
+void DaLegacyCity::RefundStationPower(AuItemHash& reserved, int used)
+{
+	if(reserved.empty()) return;
+	const AuLegacyCityCatalogue* catalogue = StationCatalogue();
+	if(!catalogue || !g_Au.IsSceneWorker()) return;
+	QWriteLocker lock(&m_CityLock);
+	AuItemHash inventory; QString error;
+	if(!AuLegacyCity::ReadCityInventory(m_City.inventory, *catalogue, inventory, error)) return;
+	used = qMax(0, used);
+	bool refunded = false;
+	for(const auto& item : reserved)
+	{
+		const quint32 spent = qMin(item.second->Count(), quint32(used));
+		used -= int(spent);
+		if(spent < item.second->Count())
+		{ inventory.AddItemCount(*item.second, item.second->Count() - spent); refunded = true; }
+	}
+	if(!refunded) { reserved.Clear(); return; }
+	QByteArray bytes;
+	if(!AuLegacyCity::WriteCityInventory(inventory, bytes, error)) return;
+	const COMMODITYID electricity = COMMODITYID(catalogue->RuntimeCommodityId(AuLegacyCity::CommodityId(3)));
+	m_City.inventory = bytes; m_City.capacitor = float(inventory.RawCount(electricity)); ++m_CityRevision;
+	reserved.Clear();
+	lock.unlock(); SetModified();
+}
+
+bool DaLegacyCity::CanEnterConsole(const DaPerson& who, quint16& stationId, AuStation& station, quint16& which) const
+{
+	stationId = which = 0;
+	const DaWorldLL* world = dynamic_cast<const DaWorldLL*>(Parent());
+	if(!world || who.ParentId() != world->Id() || !g_Au.IsLegacyGeneration() || !StationsPowered()) return false;
+	DaAtomList occupants; world->ListNormalSubatoms(occupants);
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
+	for(const auto& building : m_Runtime->buildings)
+	{
+		if(!building.state.constructed || building.state.demolished) continue;
+		AuMatrix4x4 placement;
+		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
+			building.state.facingRadians, nullptr, AuPoint(), placement);
+		const AuPoint local = placement.UnProject(who.Location());
+		for(const auto& item : building.stations)
+		{
+			const bool ceiling = item.station.Type() == AuStation::Turret_Top;
+			if((ceiling && who.CurrentHeadTilt() < PI / 4)
+				|| (item.station.Type() == AuStation::Turret_Bottom && who.CurrentHeadTilt() > -PI / 4)) continue;
+			if(local.Distance2_2D(item.floor) >= 9
+				|| std::floor((local.z - item.floor.z + .05) / AuLegacyBd::DeckHeight) != (ceiling ? -1 : 0)) continue;
+			AuStation candidate = WorldBuildingStation(item, placement, who);
+			bool occupied = false;
+			for(const DaAtom* atom : occupants)
+			{
+				const DaCreature* creature = dynamic_cast<const DaCreature*>(atom);
+				if(creature && creature != &who && creature->IsLockedPose()
+					&& creature->Location().Distance2(candidate.OpM().Translation()) < 1) { occupied = true; break; }
+			}
+			if(occupied) continue;
+			if(item.station.Type() == AuStation::Console_Patient && who.CurrentHitPoints() > 0
+				&& (who.WornArmor() != CID_Invalid || who.WornClothing() != CID_Invalid))
+			{
+				who.Thought(tr("I cannot get into the surgery unit while wearing armor or clothing."));
+				return false;
+			}
+			stationId = which = item.id;
+			station = candidate;
+			if(item.station.Type() <= AuStation::Console_Transporter && item.station.Type() != AuStation::Console_Patient)
+			{
+				AuMatrix4x4 swivel; swivel.Translate(candidate.OpM().Translation()); swivel.Rotate(who.Rotation());
+				station = AuStation(candidate.Type(), swivel, candidate.OccPos(), candidate.SeatIndex());
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+bool DaLegacyCity::Station(const DaCreature& who, AuStation& station, AuLegacyCity::Development* development,
+	AuMatrix4x4* stationPlacement, quint16* roomId) const
+{
+	const DaWorldLL* world = dynamic_cast<const DaWorldLL*>(Parent());
+	if(!world || who.ParentId() != world->Id() || !who.StationId() || !who.IsLockedPose()) return false;
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
+	for(const auto& building : m_Runtime->buildings)
+	{
+		if(!building.state.constructed || building.state.demolished) continue;
+		AuMatrix4x4 placement;
+		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
+			building.state.facingRadians, nullptr, AuPoint(), placement);
+		for(const auto& item : building.stations)
+			if(item.id == who.StationId() && item.station.OpPose() == who.CurrentGeneralPose())
+			{
+				const AuStation candidate = WorldBuildingStation(item, placement, who);
+				if(who.Location().Distance2(candidate.OpM().Translation()) < 4)
+				{
+					station = candidate;
+					if(development) *development = building.state;
+					if(stationPlacement) *stationPlacement = placement;
+					if(roomId) *roomId = item.room;
+					return true;
+				}
+			}
+	}
+	return false;
+}
+
+bool DaLegacyCity::TransporterPads(const DaCreature& who, AuMatrix4x4& frameWorld,
+	AuPointArray& padsLocal, float& maxRange) const
+{
+	padsLocal.clear(); maxRange = 0;
+	AuStation station; AuLegacyCity::Development development; quint16 room = 0;
+	if(!Station(who, station, &development, &frameWorld, &room) || !station.IsTransporter()) return false;
+	const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
+	if(!design) return false;
+	const int deck = design->details.at(int(who.StationId()) - 1).deck;
+	for(const auto& detail : design->details)
+		if(detail.detailType == 20 && detail.roomId == room && detail.deck == deck && detail.deck >= development.minimumDeck
+			&& detail.deck <= development.maximumDeck)
+		{
+			const QPointF point = AuLegacyShip::DecodePoint(detail.packedXY);
+			padsLocal.append(AuPoint(point.x(), point.y(), detail.deck * AuLegacyBd::DeckHeight));
+		}
+	maxRange = 27690.f * (1.f + .05f * development.technology);
+	return !padsLocal.isEmpty();
+}
+
+bool DaLegacyCity::WeaponStation(const DaCreature& who, AuLegacyCity::Development& development,
+	COMMODITYID& module, AuPoint& emitterWorld, float& range) const
+{
+	AuStation station; AuMatrix4x4 placement;
+	if(!Station(who, station, &development, &placement) || !station.IsFireControl() || development.industryId != 11) return false;
+	const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	if(!design || !catalogue) return false;
+	module = COMMODITYID(catalogue->RuntimeCommodityId(AuLegacyCity::CommodityId(design->header.module)));
+	emitterWorld = who.Location();
+	for(const auto& detail : design->details)
+		if(detail.detailType == 99 && detail.deck >= development.minimumDeck && detail.deck <= development.maximumDeck)
+		{
+			const QPointF point = AuLegacyShip::DecodePoint(detail.packedXY);
+			emitterWorld = placement.Project(AuPoint(point.x(), point.y(), detail.deck * AuLegacyBd::DeckHeight + AuLegacyBd::DeckHeight / 2));
+			break;
+		}
+	range = 85000.f * (1.f + .05f * development.technology);
+	return true;
+}
+
+AuItem* DaLegacyCity::WeaponAmmunition(COMMODITYID module) const
+{
+	const auto* catalogue = StationCatalogue();
+	if(!catalogue || !g_Au.IsSceneWorker()) return nullptr;
+	QReadLocker lock(&m_CityLock);
+	AuItemHash inventory; QString error;
+	if(!AuLegacyCity::ReadCityInventory(m_City.inventory, *catalogue, inventory, error)) return nullptr;
+	const AuItem* best = nullptr;
+	for(const auto& entry : inventory)
+		if(entry.second->Count() && DbCommodity::IsAmmunitionForWeapon(module, entry.first)
+			&& (!best || entry.second->IsBetter(*best))) best = entry.second;
+	return best ? best->Clone() : nullptr;
+}
+
+bool DaLegacyCity::FireStationWeapon(DaPerson& gunner, const AuId& targetId, int powerSetting)
+{
+	if(!g_Au.IsSceneWorker() || !Ether() || !Parent() || !StationsPowered() || gunner.InArenaCannotFireWeapons()) return false;
+	AuLegacyCity::Development development; COMMODITYID module = CID_Invalid; AuPoint emitterWorld; float range = 0;
+	if(!WeaponStation(gunner, development, module, emitterWorld, range)) return false;
+	DaAtom* environment = FindEnvironmentAtom();
+	DaAtom* target = environment ? environment->FindIdRecursive(targetId) : nullptr;
+	if(!target || target == this || target == Parent()) return false;
+	QScopedPointer<AuItem> ammo(WeaponAmmunition(module));
+	if(!ammo) return false;
+	const AuPoint muzzleLocation = Transform().UnProject(emitterWorld);
+	const AuPoint targetSystem = target->WeaponLockLocation(EnvTransform().Project(muzzleLocation), module);
+	const AuPoint destination = EnvTransform().UnProject(targetSystem);
+	if(muzzleLocation.Distance2(destination) > double(range) * range) return false;
+	const qint64 now = QDateTime::currentMSecsSinceEpoch();
+	{
+		QMutexLocker lock(&m_Runtime->lock);
+		if(now - m_Runtime->weaponLastFired.value(development.id) < 2000) return false;
+		m_Runtime->weaponLastFired.insert(development.id, now);
+	}
+	struct ShotReservation
+	{
+		Runtime& runtime; quint32 development; qint64 time; bool committed;
+		ShotReservation(Runtime& r, quint32 id, qint64 now) : runtime(r), development(id), time(now), committed(false) {}
+		~ShotReservation()
+		{
+			if(committed) return;
+			QMutexLocker lock(&runtime.lock);
+			if(runtime.weaponLastFired.value(development) == time) runtime.weaponLastFired.remove(development);
+		}
+	} shot(*m_Runtime, development.id, now);
+	const quint32 units = development.completedLevels * 50;
+	const quint32 maximum = module == CID_EnergyWeaponBayModule ? AuDef::BayWeaponProjectors(units)
+		: module == CID_BallisticWeaponBayModule ? AuDef::BayWeaponCannons(units)
+		: module == CID_WeaponDeploymentBayModule ? AuDef::BayWeaponEjectorRacks(units) : AuDef::BayWeaponLaunchers(units);
+	int fired = qMin(int(ammo->Count()), qMax(1, int(maximum) * (qBound(0, powerSetting, 40) + 1) / 41));
+	AuItemHash reserved;
+	if(DbCommodity::IsEnergyWeapon(ammo->CommodityId())) fired = ReserveStationPower(fired, reserved);
+	else
+	{
+		const auto* catalogue = StationCatalogue();
+		if(!catalogue) return false;
+		QWriteLocker lock(&m_CityLock); AuItemHash inventory; QString error;
+		if(!AuLegacyCity::ReadCityInventory(m_City.inventory, *catalogue, inventory, error)) return false;
+		auto stored = inventory.Find(*ammo);
+		if(stored == inventory.end()) return false;
+		fired = qMin(fired, int(stored->second->Count()));
+		stored->second->Consume(fired);
+		if(!stored->second->Count()) inventory.Erase(stored);
+		if(!fired || !AuLegacyCity::WriteCityInventory(inventory, m_City.inventory, error)) return false;
+		++m_CityRevision;
+	}
+	if(fired <= 0) return false;
+	shot.committed = true;
+	if(DbCommodity::IsEnergyWeapon(ammo->CommodityId()))
+	{
+		AuCombatWeapon weapon(ammo.data(), fired); weapon.m_Range = range;
+		AuPoint hit = destination; unsigned int part = 0; bool shield = false;
+		DaAtom* hitAtom = DaAtom::SightTarget(hit, part, shield, muzzleLocation, destination);
+		AuEffect effect(muzzleLocation, AuPoint(), AuPoint(), AuOrdnance::SoundFired(ammo->CommodityId()),
+			1, 1, AuOrdnance::VisualFired(ammo->CommodityId()));
+		effect.SetTargetLoc(hit); effect.SetEnergyBeamEffect(weapon.m_w1.m_Effect); AddEffect(effect);
+		if(hitAtom)
+		{
+			AuCombatAttacker attacker(gunner.Id(), gunner.Name(), gunner.EmpireId()); attacker.m_MuzzleLoc = muzzleLocation;
+			AuCombatDefender defender(hitAtom, hit, shield, muzzleLocation.Distance(hit)); AuCombatResult result;
+			AttackTarget(attacker, defender, weapon, true, result);
+		}
+		RefundStationPower(reserved, fired);
+	}
+	else
+	{
+		DaMissile* missile = new DaMissile(*ammo, fired, gunner.EmpireId(), targetId, target->EnvTransform().UnProject(targetSystem));
+		missile->ConnectSignals(); missile->Create();
+		AuMatrix4x4 transform; transform.Translate(emitterWorld);
+		transform *= AuPoint(0, 0, 1).GetAlignmentTransform(Parent()->EnvTransform().UnProject(targetSystem) - emitterWorld);
+		missile->SetPosAndOrient(AuAtomPos(ParentId(), transform)); Ether()->AddAtom(missile);
+		missile->SetInScene(); missile->SetVector(AuPoint(0, 0, missile->MuzzleExitVelocity())); missile->SetInMotion();
+		const bool cityCredit = gunner.EmpireId() == EmpireId();
+		missile->ArmWeapon(cityCredit ? Id() : gunner.Id(), cityCredit ? Name() : gunner.Name(), gunner.EmpireId());
+		missile->SetOwnerIgnored(true);
+		g_Au.AtomAdded(missile->Id()); missile->SetNormal(); missile->TickTock();
+	}
+	SetModified();
+	return true;
+}
+
+bool DaLegacyCity::HospitalPatient(const DaCreature& patient, quint32& developmentId,
+	AuStation& medic, quint16& medicStationId) const
+{
+	developmentId = 0; medicStationId = 0;
+	const DaWorldLL* world = dynamic_cast<const DaWorldLL*>(Parent());
+	if(!world || patient.ParentId() != world->Id() || !patient.IsPatientStationPose()
+		|| !patient.StationId()) return false;
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
+	for(const auto& building : m_Runtime->buildings)
+	{
+		if(building.state.industryId != 121 || !building.state.constructed || building.state.demolished) continue;
+		AuMatrix4x4 placement;
+		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
+			building.state.facingRadians, nullptr, AuPoint(), placement);
+		for(const auto& item : building.stations)
+		{
+			if(item.id != patient.StationId() || item.station.Type() != AuStation::Console_Patient
+				|| patient.Location().Distance2(WorldBuildingStation(item, placement, patient).OpM().Translation()) >= 4) continue;
+			const LegacyBuildingStation* nearest = nullptr;
+			double best = std::numeric_limits<double>::max();
+			for(const auto& candidate : building.stations)
+				if(candidate.station.Type() == AuStation::Console_Medic && candidate.deck == item.deck)
+				{
+					const double distance = candidate.floor.Distance2(item.floor)
+						+ (candidate.room == item.room ? 0 : 1e12);
+					if(distance < best) { nearest = &candidate; best = distance; }
+				}
+			developmentId = building.state.id;
+			if(nearest)
+			{
+				medicStationId = nearest->id;
+				medic = AuStation(nearest->station.Type(), placement * nearest->station.OpM(), nearest->station.OccPos(), 0);
+			}
+			else
+			{
+				// A custom hospital can have a surgery unit without a separate
+				// doctor's console. Its civilian treats the patient at the bedside.
+				AuMatrix4x4 bedside; bedside.Translate(item.floor + AuPoint(3, 0, AuStation::SeatHeight()));
+				medicStationId = item.id;
+				medic = AuStation(AuStation::Console_Medic, placement * bedside, AuStation::Occupant_Sit, 0);
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
 bool DaLegacyCity::Route(quint32 development, const AuPoint& from, const AuPoint& to,
 	QVector<AuLegacyBd::Paths::RoutePoint>& points, bool useGroundLevelDoors) const
 {
@@ -3104,8 +3598,8 @@ void DaLegacyCity::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtom
 	RENDERPASS pass, DaAtomList& sc, DaAtomList& scFog, DaAtomList& scGlobe,
 	DaAtomList& scGlobeFog, DaAtomList& scRing, DaAtomList& scRingFog)
 {
-	Q_UNUSED(last); Q_UNUSED(sc); Q_UNUSED(scFog); Q_UNUSED(scGlobe);
-	Q_UNUSED(scGlobeFog); Q_UNUSED(scRing); Q_UNUSED(scRingFog);
+	DaAtom::RenderEnvironmentObject(projection, ari, matrices, sceneAtom, last, pass,
+		sc, scFog, scGlobe, scGlobeFog, scRing, scRingFog);
 	if(pass == PASS_Near) RenderCity(projection, ari, matrices, sceneAtom, false);
 }
 
@@ -3122,6 +3616,8 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	const auto model = matrices.constFind(Id());
 	if(!world || model == matrices.cend()) return;
+	DaAtomList stationOccupants;
+	if(beforeTerrain) world->ListNormalSubatoms(stationOccupants);
 	UpdateSiteTerrain(ari);
 	QVector<AuLegacyCity::Flag> flags;
 	bool powered;
@@ -3262,6 +3758,43 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 	if(beforeTerrain)
 	{
 		ari.re->glFrontFace(GLenum(previousFrontFace));
+		if(sceneAtom)
+		{
+			QSet<quint64> activeConsoles;
+			for(const auto& view : buildingViews)
+				for(const auto& item : view.building->stations)
+				{
+					const quint64 key = (quint64(view.building->state.id) << 16) | item.id;
+					QSharedPointer<DpStation> console = m_Runtime->consoles.value(key);
+					if(!console)
+					{
+						console.reset(BuildingConsole(item.station.Type(), item.id));
+						if(!console) continue;
+						m_Runtime->consoles.insert(key, console);
+					}
+					activeConsoles.insert(key);
+					const AuPoint location = view.placement.Project(item.station.OpM().Translation());
+					if(ari.re->FrustumCulling() && !worldFrustum.IntersectsSphere(location, 8)) continue;
+					bool occupied = false;
+					for(const DaAtom* atom : stationOccupants)
+					{
+						const DaCreature* creature = dynamic_cast<const DaCreature*>(atom);
+						if(creature && creature->IsLockedPose() && creature->StationId() == item.id
+							&& creature->Location().Distance2(location) < 4) { occupied = true; break; }
+					}
+					if(occupied) continue; // The seated creature draws its own swivel console.
+					console->CreateDeviceObjects(ari, *this, true);
+					if(item.station.Type() == AuStation::Console_Command)
+						static_cast<DpConsoleEmpty*>(console.data())->DpConsole::CreateDeviceObjects(ari, *this, true);
+					AuMatrix4x4 consoleModel = view.model * item.station.OpM();
+					consoleModel.Translate(0, 0, -AuStation::SeatHeight());
+					console->RenderMini(projection, consoleModel, nullptr, ari);
+				}
+			for(auto it = m_Runtime->consoles.begin(); it != m_Runtime->consoles.end(); )
+				if(!activeConsoles.contains(it.key()))
+				{ (*it)->DeleteDeviceObjects(*ari.re); it = m_Runtime->consoles.erase(it); }
+				else ++it;
+		}
 		return;
 	}
 

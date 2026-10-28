@@ -205,7 +205,7 @@ DpStationPower::DpStationPower(const DpStationPower& c) : DpStation(c)
 	m_ScreenTex = 0;
 }
 
-void DpStationPower::Rx(QDataStream& in, DaCapsule& capsule)
+void DpStationPower::Rx(QDataStream& in, DaAtom& capsule)
 {
 	DpStation::Rx(in, capsule);
 	in >> m_iSystemCount;

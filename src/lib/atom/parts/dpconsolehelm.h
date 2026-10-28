@@ -47,7 +47,7 @@ public:
 
 	virtual void Refresh(const DpStation* station, const DaAtom& parent);
 
-	virtual void Rx(QDataStream& in, DaCapsule& capsule);
+	virtual void Rx(QDataStream& in, DaAtom& capsule);
 
 	virtual void SampleControlPanelInput(qint16 panelId, const AuPoint& panelLoc,
 		DiControlInputArray& controls, bool continuous);

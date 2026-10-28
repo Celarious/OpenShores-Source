@@ -12,6 +12,7 @@
 #include "ausound.h"
 #include "daperson.h"
 #include "dasc.h"
+#include "dalegacycity.h"
 #include "dicontrolinput.h"
 #include "dipanelcontrol.h"
 #include <QPainter>
@@ -245,7 +246,7 @@ DpStationWeapon::DpStationWeapon(const DpStationWeapon& c) : DpStation(c)
 	m_ScreenTex = 0;
 }
 
-void DpStationWeapon::Rx(QDataStream& in, DaCapsule& capsule)
+void DpStationWeapon::Rx(QDataStream& in, DaAtom& capsule)
 {
 	DpStation::Rx(in, capsule);
 
@@ -297,30 +298,21 @@ void DpStationWeapon::Rx(QDataStream& in, DaCapsule& capsule)
 
 	// Scan local data to pick up things that are already in my scene, namely suns, planets and moons.
 	//qDebug() << "DpStationWeapon::Rx blips" << m_SensorBlips.count();
-	if(capsule.SensorsWorking())
+	const DaCapsule* scanner = dynamic_cast<const DaCapsule*>(&capsule);
+	const DaLegacyCity* city = dynamic_cast<const DaLegacyCity*>(&capsule);
+	if(scanner ? scanner->SensorsWorking() : city && city->StationsPowered())
 	{
-		DaAtom* envAtom = capsule.FindEnvironmentAtom();
-		if(envAtom)
+		AuSensorBlipList localBlips;
+		ScanOwner(capsule, m_SensorRange, scanner ? scanner->MaxBayWeaponRange() : m_SensorRange, 2, m_idLockedBlip, localBlips);
+		// Append localBlips that did not arrive in m_SensorBlips.
+		for(AuSensorBlipList::const_iterator lbi = localBlips.begin(); lbi != localBlips.end(); lbi++)
 		{
-			AuId scannerWorldId;
-			int scannerDomain = capsule.GunnerDomain(scannerWorldId);
-
-			AuSensorBlipList localBlips;
-			unordered_map<quint32, POLITICAL_STANCE, AuEmpireIdHash> stanceCache;
-			int scanContent = 0x0002;							// b1 = fire control console blips
-			envAtom->SensorScan(localBlips, capsule.EnvLocation(), capsule.Id(), capsule.EmpireId(), scannerDomain, scannerWorldId,
-					m_SensorRange, capsule.MaxBayWeaponRange(), scanContent, m_idLockedBlip, stanceCache);
-
-			// Append localBlips that did not arrive in m_SensorBlips.
-			for(AuSensorBlipList::const_iterator lbi = localBlips.begin(); lbi != localBlips.end(); lbi++)
+			// Find the corresponding blip in the m_SensorBlips array.
+			AuSensorBlipList::const_iterator sbi = m_SensorBlips.Find(*lbi);
+			if(sbi == m_SensorBlips.end())
 			{
-				// Find the corresponding blip in the m_SensorBlips array.
-				AuSensorBlipList::const_iterator sbi = m_SensorBlips.Find(*lbi);
-				if(sbi == m_SensorBlips.end())
-				{
-					// The local blip was not found in the sensor scan data sent by the server.
-					m_SensorBlips.Add(*(*lbi));	// Add a clone.
-				}
+				// The local blip was not found in the sensor scan data sent by the server.
+				m_SensorBlips.Add(*(*lbi));	// Add a clone.
 			}
 		}
 	}
@@ -423,9 +415,24 @@ void DpStationWeapon::Refresh(const DpStation* pCon, const DaAtom& parent)
 void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship, const AuElapsedTimer& last,
 		const AuPoint& location, const DaCreature& sceneAtom)
 {
-	// Base class animates the lower console pane.
 	DpStation::AnimateDeviceObjects(re, ship, last, location, sceneAtom);
+	AnimateDeviceObjects(re, ship, location, sceneAtom, &ship, ship.SystemModule(SYS_Weapon, m_WhichWeapon),
+		ship.BayWeaponRange(m_WhichWeapon), ship.CapacitorLevel());
+}
 
+void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+		const AuPoint& location, const DaCreature& sceneAtom)
+{
+	AuLegacyCity::Development development; COMMODITYID module = CID_Invalid; AuPoint emitter; float range = 0;
+	if(!city.WeaponStation(sceneAtom, development, module, emitter, range)) return;
+	DpStation::AnimateDeviceObjects(re, city, last, location, sceneAtom);
+	AnimateDeviceObjects(re, city, city.Transform().UnProject(location), sceneAtom, nullptr, module, range,
+		city.Snapshot().capacitor);
+}
+
+void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaAtom& ship, const AuPoint& location,
+		const DaCreature& sceneAtom, const DaVessel* vessel, COMMODITYID module, float range, float capacitor)
+{
 	if(s_SensorRange.isNull())
 		s_SensorRange.load(":data/SensorRange.png");
 
@@ -559,13 +566,13 @@ void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship
 
 		// Display blips that have been detected.
 		// Determine the amount of energy that is expected to hit the target.
-		COMMODITYID bayModule = ship.SystemModule(SYS_Weapon, m_WhichWeapon);
+		COMMODITYID bayModule = module;
 		float targetE = 0;	// E or U on target, depending on targetType.
 		int targetType = 0;	// 0=no target energy, 1=target energy, 2=target harvest units, 3=heavy arms, 4=missiles, 5=rockets
 		AuPoint sysloc = ship.EnvTransform().Project(location);
 		if(m_SelBlip)
 		{
-			float wpnRange = ship.BayWeaponRange(m_WhichWeapon);
+			float wpnRange = range;
 
 			if(bayModule == CID_EnergyWeaponBayModule)
 			{
@@ -585,8 +592,8 @@ void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship
 						targetType = 1;	// E damage on target
 
 						unsigned int maxRounds = ammoSel->Count();
-						if(maxRounds > ship.CapacitorLevel())
-							maxRounds = (int)ship.CapacitorLevel();	// Energy weapon limited to capacitor.
+						if(maxRounds > capacitor)
+							maxRounds = (int)capacitor;	// Energy weapon limited to capacitor.
 						if(unitsFired > maxRounds)
 							targetE = maxRounds;
 						else
@@ -672,7 +679,7 @@ void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship
 					}
 				}
 			}
-			else if(DbCommodity::IsHarvesterModule(bayModule) && m_SelBlip->IsStarOrPlanet())
+			else if(vessel && DbCommodity::IsHarvesterModule(bayModule) && m_SelBlip->IsStarOrPlanet())
 			{
 				AuPoint fLockLoc = m_SelBlip->WeaponLockLocation(system, ship.EnvLocation(), bayModule);
 				double targDist = fLockLoc.Distance(sysloc);
@@ -690,11 +697,11 @@ void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship
 				unsigned int unitsFired = m_WeaponPower;	// Harvesters always fire at full power.
 				if(!unitsFired)
 					unitsFired = 1;
-				float wpnRange = ship.HarvesterBayRange(unitsFired, m_WhichWeapon);
+				float wpnRange = vessel->HarvesterBayRange(unitsFired, m_WhichWeapon);
 				if(wpnRange > 0 && targDist < wpnRange)
 				{
 					float dropOff = 1.f - targDist / wpnRange;
-					float wpnPower = ship.BayWeaponPower(unitsFired, m_WhichWeapon);
+					float wpnPower = vessel->BayWeaponPower(unitsFired, m_WhichWeapon);
 					targetE = round(wpnPower * dropOff);
 
 					// Harvest up to 1 unit for every fixed quantity of energy that hits target.
@@ -705,7 +712,7 @@ void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship
 					targetE = 0;
 				targetType = 2;	// U harvest units
 			}
-			else if(bayModule == CID_TractorBeamBayModule)
+			else if(vessel && bayModule == CID_TractorBeamBayModule)
 			{
 				AuPoint fLockLoc = m_SelBlip->WeaponLockLocation(system, ship.EnvLocation(), bayModule);
 				double targDist = fLockLoc.Distance(sysloc);
@@ -723,7 +730,7 @@ void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship
 				unsigned int unitsFired = m_WeaponPower;	// Tractor beams always fire at full power.
 				if(!unitsFired)
 					unitsFired = 1;
-				float wpnRange = ship.TractorBeamRange(unitsFired, m_WhichWeapon);
+				float wpnRange = vessel->TractorBeamRange(unitsFired, m_WhichWeapon);
 				if(wpnRange > 0 && targDist < wpnRange)
 					targetE = 1;
 				else
@@ -750,7 +757,7 @@ void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship
 		// must be painted every time.
 
 		int powerSetting = m_PowerSetting;		// Harvesters will override this with all available units.
-		if(bayModule == CID_TractorBeamBayModule)
+		if(vessel && bayModule == CID_TractorBeamBayModule)
 		{
 			// Tow button
 			QImage bmfire;
@@ -906,7 +913,7 @@ void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship
 					}
 				}
 				else if(DbCommodity::IsHarvesterModule(bayModule) ||
-						bayModule == CID_TractorBeamBayModule)
+						vessel && bayModule == CID_TractorBeamBayModule)
 				{
 					unsigned int unitsFired = m_WeaponPower * (powerSetting + 1)/41;
 					if(!unitsFired)
@@ -1058,16 +1065,54 @@ void DpStationWeapon::EnumControlInputs(DiControlInputArray& aAllControls) const
 // Only control inputs that have been returned by EnumControlInputs will be passed.
 // Only control inputs that have been activated will be passed.
 void DpStationWeapon::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaVessel& ship,
-		CONTROL_CONTEXT cc, const AuPoint& /*location*/)
+		CONTROL_CONTEXT cc, const AuPoint& location)
+{
+	Q_UNUSED(location);
+	ProcessControlInput(aActiveControls, sceneAtom, ship, &ship, nullptr, cc);
+}
+
+void DpStationWeapon::ProcessControlInput(const DiControlInputArray& controls, DaPerson* person, DaLegacyCity& city,
+		CONTROL_CONTEXT cc, const AuPoint& location)
+{
+	Q_UNUSED(location);
+	ProcessControlInput(controls, person, city, nullptr, &city, cc);
+}
+
+void DpStationWeapon::ProcessControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom, DaAtom& ship,
+		DaVessel* vessel, DaLegacyCity* city, CONTROL_CONTEXT cc)
 {
 	//qDebug("DpStationWeapon::ProcessControlInput");
-	if(ship.IsNew())
+	if(vessel && vessel->IsNew())
 		return;	// This console cannot be used when the ship is "nu".
 	const double rRotInc = 5.0 * DEG2RAD;	// Rotation increment.
-	COMMODITYID module = ship.SystemModule(SYS_Weapon, m_WhichWeapon);
+	COMMODITYID module = CID_Invalid;
+	if(vessel) module = vessel->SystemModule(SYS_Weapon, m_WhichWeapon);
+	else
+	{
+		AuLegacyCity::Development development; AuPoint emitter; float range = 0;
+		if(!city || !city->WeaponStation(*sceneAtom, development, module, emitter, range)) return;
+	}
 	for(int ic=0; ic<aActiveControls.count(); ic++)
 	{
 		const DiControlInput &ci = aActiveControls[ic];
+		if(city && ci.GetId() >= CI_PowerDecrease && ci.GetId() <= CI_PowerSetting40)
+		{
+			if(cc != CONTROL_Client)
+			{
+				const int input = ci.GetId();
+				m_PowerSetting = input == CI_PowerMax ? 40 : input == CI_PowerMin ? 0
+					: input == CI_PowerIncrease ? qMin(40, int(m_PowerSetting) + 1)
+					: input == CI_PowerDecrease ? qMax(0, int(m_PowerSetting) - 1) : input - CI_PowerSetting0;
+				sceneAtom->SetModified();
+			}
+			if(cc != CONTROL_Server)
+			{
+				AuEffect click(sceneAtom->ButtonSoundLoc(), AuPoint(), AuPoint(), d_Power, 1, 1);
+				sceneAtom->AddEffect(click);
+			}
+			continue;
+		}
+		if(city && (ci.GetId() == CI_NextBay || ci.GetId() == CI_PreviousBay)) continue;
 		switch (ci.GetId())
 		{
 		case CI_EmpireToggle:
@@ -1112,7 +1157,16 @@ void DpStationWeapon::ProcessControlInput(const DiControlInputArray& aActiveCont
 			break;
 
 		case CI_Fire:
-			if(cc != CONTROL_Client)
+			if(city)
+			{
+				if(cc != CONTROL_Client)
+				{
+					AuId selected;
+					m_BlipLock.lockForRead(); if(m_SelBlip) selected = m_SelBlip->AtomId(); m_BlipLock.unlock();
+					city->FireStationWeapon(*sceneAtom, selected, m_PowerSetting);
+				}
+			}
+			else if(cc != CONTROL_Client)
 			{
 				// A target must be selected.
 				AuId selId;
@@ -1122,7 +1176,7 @@ void DpStationWeapon::ProcessControlInput(const DiControlInputArray& aActiveCont
 				m_BlipLock.unlock();
 
 				// Determine number of functioning weapon bay units.
-				unsigned int hits = ship.GetPowerConsumption(SYS_Weapon, m_WhichWeapon);
+				unsigned int hits = vessel->GetPowerConsumption(SYS_Weapon, m_WhichWeapon);
 				if(hits)
 				{
 					// Some units are functioning.
@@ -1143,7 +1197,7 @@ void DpStationWeapon::ProcessControlInput(const DiControlInputArray& aActiveCont
 						break;
 
 					case CID_TractorBeamBayModule:
-						ship.FireBayWeapon(*sceneAtom, m_WhichWeapon, hits, 0, selAtom, targetSysLoc);
+						vessel->FireBayWeapon(*sceneAtom, m_WhichWeapon, hits, 0, selAtom, targetSysLoc);
 						break;
 
 					case CID_AtmosphereCondenserBayModule:
@@ -1154,48 +1208,48 @@ void DpStationWeapon::ProcessControlInput(const DiControlInputArray& aActiveCont
 						{
 							// Harvesters always fire all available units.
 							// Harvesters send the selected commodity index. See global Harvest functions in audef.h
-							int harvestIndex = ship.BayWeaponPowerSetting(m_WhichWeapon);
-							ship.FireBayWeapon(*sceneAtom, m_WhichWeapon, hits, harvestIndex, selAtom, targetSysLoc);
+							int harvestIndex = vessel->BayWeaponPowerSetting(m_WhichWeapon);
+							vessel->FireBayWeapon(*sceneAtom, m_WhichWeapon, hits, harvestIndex, selAtom, targetSysLoc);
 						}
 						break;
 
 					case CID_BallisticWeaponBayModule:
 						{
 							unsigned int unitsFired = BayWeaponCannons(hits) *
-								(ship.BayWeaponPowerSetting(m_WhichWeapon) + 1)/41;
+								(vessel->BayWeaponPowerSetting(m_WhichWeapon) + 1)/41;
 							if(!unitsFired)
 								unitsFired = 1;
-							ship.FireBayWeapon(*sceneAtom, m_WhichWeapon, unitsFired, 0, selAtom, targetSysLoc);
+							vessel->FireBayWeapon(*sceneAtom, m_WhichWeapon, unitsFired, 0, selAtom, targetSysLoc);
 						}
 						break;
 
 					case CID_EnergyWeaponBayModule:
 						{
 							unsigned int unitsFired = BayWeaponProjectors(hits) *
-								(ship.BayWeaponPowerSetting(m_WhichWeapon) + 1)/41;
+								(vessel->BayWeaponPowerSetting(m_WhichWeapon) + 1)/41;
 							if(!unitsFired)
 								unitsFired = 1;
-							ship.FireBayWeapon(*sceneAtom, m_WhichWeapon, unitsFired, 0, selAtom, targetSysLoc);
+							vessel->FireBayWeapon(*sceneAtom, m_WhichWeapon, unitsFired, 0, selAtom, targetSysLoc);
 						}
 						break;
 
 					case CID_WeaponDeploymentBayModule:
 						{
 							unsigned int unitsFired = BayWeaponEjectorRacks(hits) *
-								(ship.BayWeaponPowerSetting(m_WhichWeapon) + 1)/41;
+								(vessel->BayWeaponPowerSetting(m_WhichWeapon) + 1)/41;
 							if(!unitsFired)
 								unitsFired = 1;
-							ship.FireBayWeapon(*sceneAtom, m_WhichWeapon, unitsFired, 0, selAtom, targetSysLoc);
+							vessel->FireBayWeapon(*sceneAtom, m_WhichWeapon, unitsFired, 0, selAtom, targetSysLoc);
 						}
 						break;
 
 					case CID_WeaponLauncherBayModule:
 						{
 							unsigned int unitsFired = BayWeaponLaunchers(hits) *
-								(ship.BayWeaponPowerSetting(m_WhichWeapon) + 1)/41;
+								(vessel->BayWeaponPowerSetting(m_WhichWeapon) + 1)/41;
 							if(!unitsFired)
 								unitsFired = 1;
-							ship.FireBayWeapon(*sceneAtom, m_WhichWeapon, unitsFired, 0, selAtom, targetSysLoc);
+							vessel->FireBayWeapon(*sceneAtom, m_WhichWeapon, unitsFired, 0, selAtom, targetSysLoc);
 						}
 						break;
 					}
@@ -1203,7 +1257,7 @@ void DpStationWeapon::ProcessControlInput(const DiControlInputArray& aActiveCont
 					// Player Statistics
 					if(selAtom)
 					{
-						sceneAtom->Stats().ItemUsedAsWeapon(CID_BayWeapon, ship.SystemQuality(SYS_Weapon, m_WhichWeapon));
+						sceneAtom->Stats().ItemUsedAsWeapon(CID_BayWeapon, vessel->SystemQuality(SYS_Weapon, m_WhichWeapon));
 						sceneAtom->IncreaseSkill(AuSkill::SpacecraftCombat, 1);
 					}
 				}
@@ -1229,9 +1283,9 @@ void DpStationWeapon::ProcessControlInput(const DiControlInputArray& aActiveCont
 				}
 				else if(module != CID_TractorBeamBayModule)	// Tractor beam does not respond to power setting changes.
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) != 40)
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) != 40)
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, 40);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, 40);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
@@ -1257,9 +1311,9 @@ void DpStationWeapon::ProcessControlInput(const DiControlInputArray& aActiveCont
 				}
 				else if(module != CID_TractorBeamBayModule)	// Tractor beam does not respond to power setting changes.
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) != 0)
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) != 0)
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, 0);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, 0);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
@@ -1277,80 +1331,80 @@ powerDecrease:
 			{
 				if(module == CID_AtmosphereCondenserBayModule)
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) >= HarvestAtmosphereCount())
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) >= HarvestAtmosphereCount())
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, 0);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, 0);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
-					else if(ship.BayWeaponPowerSetting(m_WhichWeapon) > 0)
+					else if(vessel->BayWeaponPowerSetting(m_WhichWeapon) > 0)
 					{
 						// Decrement by one.
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)-1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)-1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
 				else if(module == CID_ProspectorBayModule)
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) >= HarvestProspectorCount())
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) >= HarvestProspectorCount())
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, 0);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, 0);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
-					else if(ship.BayWeaponPowerSetting(m_WhichWeapon) > 0)
+					else if(vessel->BayWeaponPowerSetting(m_WhichWeapon) > 0)
 					{
 						// Decrement by one.
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)-1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)-1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
 				else if(module == CID_SiphonBayModule)
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) >= HarvestSiphonCount())
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) >= HarvestSiphonCount())
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, 0);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, 0);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
-					else if(ship.BayWeaponPowerSetting(m_WhichWeapon) > 0)
+					else if(vessel->BayWeaponPowerSetting(m_WhichWeapon) > 0)
 					{
 						// Decrement by one.
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)-1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)-1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
 				else if(module == CID_WildcatterBayModule)
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) >= HarvestWildcatterCount())
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) >= HarvestWildcatterCount())
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, 0);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, 0);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
-					else if(ship.BayWeaponPowerSetting(m_WhichWeapon) > 0)
+					else if(vessel->BayWeaponPowerSetting(m_WhichWeapon) > 0)
 					{
 						// Decrement by one.
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)-1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)-1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
 				else if(module == CID_ParticleCollectorBayModule)
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) >= HarvestParticleCount())
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) >= HarvestParticleCount())
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, 0);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, 0);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
-					else if(ship.BayWeaponPowerSetting(m_WhichWeapon) > 0)
+					else if(vessel->BayWeaponPowerSetting(m_WhichWeapon) > 0)
 					{
 						// Decrement by one.
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)-1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)-1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
 				else if(module != CID_TractorBeamBayModule)	// Tractor beam does not respond to power setting changes.
 				{
 					// Minimum power setting is 0.
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) > 0)
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) > 0)
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)-1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)-1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
@@ -1367,80 +1421,80 @@ powerIncrease:
 			{
 				if(module == CID_AtmosphereCondenserBayModule)
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) >= HarvestAtmosphereCount())
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) >= HarvestAtmosphereCount())
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, HarvestAtmosphereCount()-1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, HarvestAtmosphereCount()-1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
-					else if(ship.BayWeaponPowerSetting(m_WhichWeapon) < HarvestAtmosphereCount()-1)
+					else if(vessel->BayWeaponPowerSetting(m_WhichWeapon) < HarvestAtmosphereCount()-1)
 					{
 						// Increment by one.
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)+1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)+1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
 				else if(module == CID_ProspectorBayModule)
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) >= HarvestProspectorCount())
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) >= HarvestProspectorCount())
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, HarvestProspectorCount()-1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, HarvestProspectorCount()-1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
-					else if(ship.BayWeaponPowerSetting(m_WhichWeapon) < HarvestProspectorCount()-1)
+					else if(vessel->BayWeaponPowerSetting(m_WhichWeapon) < HarvestProspectorCount()-1)
 					{
 						// Increment by one.
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)+1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)+1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
 				else if(module == CID_SiphonBayModule)
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) >= HarvestSiphonCount())
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) >= HarvestSiphonCount())
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, HarvestSiphonCount()-1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, HarvestSiphonCount()-1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
-					else if(ship.BayWeaponPowerSetting(m_WhichWeapon) < HarvestSiphonCount()-1)
+					else if(vessel->BayWeaponPowerSetting(m_WhichWeapon) < HarvestSiphonCount()-1)
 					{
 						// Increment by one.
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)+1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)+1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
 				else if(module == CID_WildcatterBayModule)
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) >= HarvestWildcatterCount())
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) >= HarvestWildcatterCount())
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, HarvestWildcatterCount()-1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, HarvestWildcatterCount()-1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
-					else if(ship.BayWeaponPowerSetting(m_WhichWeapon) < HarvestWildcatterCount()-1)
+					else if(vessel->BayWeaponPowerSetting(m_WhichWeapon) < HarvestWildcatterCount()-1)
 					{
 						// Increment by one.
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)+1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)+1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
 				else if(module == CID_ParticleCollectorBayModule)
 				{
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) >= HarvestParticleCount())
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) >= HarvestParticleCount())
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, HarvestParticleCount()-1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, HarvestParticleCount()-1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
-					else if(ship.BayWeaponPowerSetting(m_WhichWeapon) < HarvestParticleCount()-1)
+					else if(vessel->BayWeaponPowerSetting(m_WhichWeapon) < HarvestParticleCount()-1)
 					{
 						// Increment by one.
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)+1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)+1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
 				else if(module != CID_TractorBeamBayModule)	// Tractor beam does not respond to power setting changes.
 				{
 					// Maximum power setting is 40.
-					if(ship.BayWeaponPowerSetting(m_WhichWeapon) < 40)
+					if(vessel->BayWeaponPowerSetting(m_WhichWeapon) < 40)
 					{
-						ship.SetBayWeaponPowerSetting(m_WhichWeapon, ship.BayWeaponPowerSetting(m_WhichWeapon)+1);
+						vessel->SetBayWeaponPowerSetting(m_WhichWeapon, vessel->BayWeaponPowerSetting(m_WhichWeapon)+1);
 						ship.SetModified(DaAtom::NOTIFY_Database);
 					}
 				}
@@ -1520,9 +1574,9 @@ powerIncrease:
 					goto powerIncrease;	// Increment by one.
 
 				// Select a specified power setting in the range 0-40.
-				if(ship.BayWeaponPowerSetting(m_WhichWeapon) != ci.GetId() - CI_PowerSetting0)
+				if(vessel->BayWeaponPowerSetting(m_WhichWeapon) != ci.GetId() - CI_PowerSetting0)
 				{
-					ship.SetBayWeaponPowerSetting(m_WhichWeapon, ci.GetId() - CI_PowerSetting0);
+					vessel->SetBayWeaponPowerSetting(m_WhichWeapon, ci.GetId() - CI_PowerSetting0);
 					ship.SetModified(DaAtom::NOTIFY_Database);
 				}
 			}
@@ -1600,7 +1654,7 @@ powerIncrease:
 		// Bay selector
 		case CI_NextBay:
 			if(cc != CONTROL_Client)
-				SelectNextBay(ship);
+				SelectNextBay(*vessel);
 			if(cc != CONTROL_Server)
 			{
 				AuEffect buttonClick(sceneAtom->ButtonSoundLoc(), AuPoint(0,0), AuPoint(0,0), d_Bay, 1,1.05f);
@@ -1609,7 +1663,7 @@ powerIncrease:
 			break;
 		case CI_PreviousBay:
 			if(cc != CONTROL_Client)
-				SelectPreviousBay(ship);
+				SelectPreviousBay(*vessel);
 			if(cc != CONTROL_Server)
 			{
 				AuEffect buttonClick(sceneAtom->ButtonSoundLoc(), AuPoint(0,0), AuPoint(0,0), d_Bay, 1,.95f);
@@ -1763,9 +1817,9 @@ powerIncrease:
 					nuSelId = m_SelBlip->AtomId();
 				m_BlipLock.unlock();
 
-				if(selId != nuSelId)
+				if(vessel && selId != nuSelId)
 				{
-					ship.SetBayWeaponTarget(m_WhichWeapon, nuSelId);
+					vessel->SetBayWeaponTarget(m_WhichWeapon, nuSelId);
 					ship.SetModified(DaAtom::NOTIFY_Database);
 				}
 			}
@@ -2017,6 +2071,30 @@ void DpStationWeapon::Render(const AuMatrix4x4& projection, const AuMatrix4x4& f
 
 bool DpStationWeapon::Tick(const AuElapsedTimer& last, const AuElapsedTimer& now, DaPerson* person)
 {
+	if(DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(person->StationOwner()))
+	{
+		if(!g_Au.IsSceneWorker()) return false;
+		AuLegacyCity::Development development; COMMODITYID module = CID_Invalid; AuPoint emitter; float range = 0;
+		if(!city->WeaponStation(*person, development, module, emitter, range)) return false;
+		const bool powered = city->StationsPowered();
+		m_Capacitor = powered ? 100 : 0; m_CapacitorTrend = 0;
+		m_CapacitorMax = quint32(city->Snapshot().capacitor);
+		m_WeaponPower = quint16(development.completedLevels * 50); m_SensorRange = range;
+		m_OrdnanceLock.lockForWrite();
+		delete m_Ordnance; m_Ordnance = city->WeaponAmmunition(module);
+		m_OrdnanceLock.unlock();
+		if(!last.SameStartSec(now))
+		{
+			QWriteLocker lock(&m_BlipLock);
+			const AuId selected = m_SelBlip ? m_SelBlip->AtomId() : AuId();
+			m_SensorBlips.Clear();
+			if(powered) ScanOwner(*city, range, range, 2, m_idLockedBlip, m_SensorBlips);
+			delete m_SelBlip; m_SelBlip = nullptr;
+			const auto found = m_SensorBlips.Find(selected);
+			if(found != m_SensorBlips.end()) m_SelBlip = (*found)->Clone();
+		}
+		return true;
+	}
 	DaVessel* ship = dynamic_cast<DaVessel*>(person->Parent());
 	if(ship)
 	{

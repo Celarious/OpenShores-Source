@@ -137,7 +137,7 @@ void DpStationGame::Tx(QDataStream& out) const
 		out << m_WhichTable;
 }
 
-void DpStationGame::Rx(QDataStream& in, DaCapsule& capsule)
+void DpStationGame::Rx(QDataStream& in, DaAtom& capsule)
 {
 	DpStation::Rx(in, capsule);
 	quint8 hasWhat;

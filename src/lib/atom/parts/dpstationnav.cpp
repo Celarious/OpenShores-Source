@@ -13,6 +13,7 @@
 #include "ausound.h"
 #include "daatomlist.h"
 #include "dabd.h"
+#include "dalegacycity.h"
 #include "daperson.h"
 #include "dasector.h"
 #include "dasolarsystem.h"
@@ -157,7 +158,7 @@ DpStationNav::DpStationNav(const DpStationNav &c) : DpStation(c)
 	m_ScreenTex = 0;
 }
 
-void DpStationNav::Rx(QDataStream& in, DaCapsule& capsule)
+void DpStationNav::Rx(QDataStream& in, DaAtom& capsule)
 {
 	DpStation::Rx(in, capsule);
 	quint8 bits;
@@ -343,7 +344,15 @@ void DpStationNav::AnimateDeviceObjects(AuGLEffects& re, const DaBd& bd, const A
 
 }
 
-void DpStationNav::AnimateDeviceObjects(AuGLEffects& re, const DaCapsule& ship, const AuElapsedTimer& last)
+void DpStationNav::AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+		const AuPoint& location, const DaCreature& sceneAtom)
+{
+	Q_UNUSED(location);
+	Q_UNUSED(sceneAtom);
+	AnimateDeviceObjects(re, city, last);
+}
+
+void DpStationNav::AnimateDeviceObjects(AuGLEffects& re, const DaAtom& ship, const AuElapsedTimer& last)
 {
 	// Get the texture because we're going to make several changes to it.
 	QString name;
@@ -1612,6 +1621,20 @@ void DpStationNav::ProcessControlInput(const DiControlInputArray& aActiveControl
 {
 	if(bd.InArena())
 		return;	// No nav in arena.
+	ProcessGroundControlInput(aActiveControls, sceneAtom, bd, cc);
+}
+
+void DpStationNav::ProcessControlInput(const DiControlInputArray& controls, DaPerson* person, DaLegacyCity& city,
+		CONTROL_CONTEXT context, const AuPoint& location)
+{
+	Q_UNUSED(location);
+	ProcessGroundControlInput(controls, person, city, context);
+}
+
+void DpStationNav::ProcessGroundControlInput(const DiControlInputArray& aActiveControls, DaPerson* sceneAtom,
+		DaAtom& bd, CONTROL_CONTEXT cc)
+{
+	DaBd* building = dynamic_cast<DaBd*>(&bd);
 
 	const double rPanDist = FeetPerOrbit() * (1<<m_Zoom) / 4.0;
 	const double rRotInc = 5.0 * DEG2RAD;	// Rotation increment.
@@ -1644,7 +1667,7 @@ void DpStationNav::ProcessControlInput(const DiControlInputArray& aActiveControl
 					m_iNamesVisible++;
 					if(m_iNamesVisible < 0 || m_iNamesVisible > 2)
 						m_iNamesVisible = 0;
-					bd.SetSystemNamesVisible(sceneAtom->BdRoomName(), m_iNamesVisible);
+					if(building) building->SetSystemNamesVisible(sceneAtom->BdRoomName(), m_iNamesVisible);
 				}
 			}
 			if(cc != CONTROL_Server)
@@ -1683,8 +1706,11 @@ void DpStationNav::ProcessControlInput(const DiControlInputArray& aActiveControl
 					m_bMoonRingsVisible = false;
 					m_bRingsVisible = true;
 				}
-				bd.SetMoonOrbitRingsVisible(sceneAtom->BdRoomName(), m_bMoonRingsVisible);
-				bd.SetOrbitRingsVisible(sceneAtom->BdRoomName(), m_bRingsVisible);
+				if(building)
+				{
+					building->SetMoonOrbitRingsVisible(sceneAtom->BdRoomName(), m_bMoonRingsVisible);
+					building->SetOrbitRingsVisible(sceneAtom->BdRoomName(), m_bRingsVisible);
+				}
 			}
 			if(cc != CONTROL_Server)
 			{
@@ -1713,7 +1739,7 @@ void DpStationNav::ProcessControlInput(const DiControlInputArray& aActiveControl
 			if(cc != CONTROL_Client)
 			{
 				m_bWormholesVisible = !m_bWormholesVisible;
-				bd.SetWormholeLinesVisible(sceneAtom->BdRoomName(), m_bWormholesVisible);
+				if(building) building->SetWormholeLinesVisible(sceneAtom->BdRoomName(), m_bWormholesVisible);
 			}
 			if(cc != CONTROL_Server)
 			{
@@ -2066,7 +2092,10 @@ void DpStationNav::ProcessControlInput(const DiControlInputArray& aActiveControl
 			break;
 		case CI_DisplayScreen:
 			if(cc != CONTROL_Client)
-				ProcessDisplayHit(ci.HitLocation(), bd);
+			{
+				SelectNearest(ci.HitLocation(), bd);
+				m_eCurrentCommand = CI_Invalid;
+			}
 			break;
 		}
 	}
