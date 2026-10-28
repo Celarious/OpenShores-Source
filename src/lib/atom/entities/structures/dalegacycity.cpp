@@ -58,6 +58,11 @@
 
 namespace
 {
+// Extra width on each side of roads when checking placement against buildings (feet).
+// 8 matches the road's paving border; increase for more clearance, or use 0
+// to restore the original placement spacing. Shared by server and client preview.
+const double RoadBuildingPlacementClearanceFeet = 5.0;
+
 AuPoint Point(const QVector3D& p) { return AuPoint(p.x(), p.y(), p.z()); }
 
 bool ExteriorLightsOn(const DaWorldLL& world, const AuLegacyCity::Development& development,
@@ -143,10 +148,11 @@ void CreateFlagVAO(AuGLVAO& vao, AuGLEffects& re, float aspectRatio)
 	vao.DeselectGL();
 }
 
-// DpGlobeRoad::Contains, AuAtom13 0x652cf0. The visible pavement's
-// eight-foot border is deliberately absent from the placement footprint.
+// DpGlobeRoad::Contains, AuAtom13 0x652cf0. Building placement adds a
+// configurable width clearance; other callers retain the original footprint.
 bool RoadContains(const DaWorldLL& world, const AuLegacyCity::Development& road,
-	const AuGlobeLLF& start, const AuGlobeLLF& end, const AuGlobeLLF& point, double margin)
+	const AuGlobeLLF& start, const AuGlobeLLF& end, const AuGlobeLLF& point, double margin,
+	double widthClearance = 0)
 {
 	float fraction;
 	const auto closest = point.CoordOnSegment(start, end, &fraction, world.LLShape());
@@ -155,7 +161,7 @@ bool RoadContains(const DaWorldLL& world, const AuLegacyCity::Development& road,
 		: (endAltitude - startAltitude) * fraction + startAltitude;
 	const AuPoint endpoint = world.LocOfLL(fraction <= 0 ? start : fraction >= 1 ? end : closest, altitude);
 	const AuPoint query = world.LocOfLL(point, altitude);
-	const float halfWidth = float(road.roadWidthMeters * FeetPerMeter() / 2);
+	const float halfWidth = float(road.roadWidthMeters * FeetPerMeter() / 2 + widthClearance);
 	if(fraction >= 0 && fraction <= 1)
 	{
 		const float width = float(halfWidth + margin);
@@ -213,14 +219,14 @@ bool BuildingTouchesRoad(const DaWorldLL& world, const AuLegacyCity::Development
 		|| !world.LLOfLoc(end, roadPlacement.Project(AuPoint(0, halfLength, 0)))) return false;
 	// DaCity::DevelopmentContaining 0x28c050: an expanded center query,
 	// then 32 square-boundary samples with no expansion (0x28c354-0x28c3ad).
-	if(RoadContains(world, road, start, end, building.location, radius)) return true;
+	if(RoadContains(world, road, start, end, building.location, radius, RoadBuildingPlacementClearanceFeet)) return true;
 	for(int i = 0; i < 32; ++i)
 	{
 		const float angle = float(i) * 6.2831855f * .03125f;
 		const float x = std::cos(angle), y = std::sin(angle), scale = qMax(std::abs(x), std::abs(y));
 		AuGlobeLLF ll;
 		if(world.LLOfLoc(ll, placement.Project(AuPoint(radius * (x / scale), radius * (y / scale), 0)))
-			&& RoadContains(world, road, start, end, ll, 0)) return true;
+			&& RoadContains(world, road, start, end, ll, 0, RoadBuildingPlacementClearanceFeet)) return true;
 	}
 	return false;
 }
@@ -231,7 +237,11 @@ bool RoadTouchesBuilding(const DaWorldLL& world, const AuLegacyCity::Development
 {
 	// LockTestBuildLocation 0x5264d0 checks center and both edges
 	// every fifteen feet, including the final endpoint, against DpBuilding::Contains.
+	// Keep those samples and also check the widened road edges for placement clearance.
 	const double halfLength = road.roadLengthMeters * FeetPerMeter() / 2;
+	const double halfWidth = road.roadWidthMeters * FeetPerMeter() / 2;
+	const double offsets[] = {0, -halfWidth, halfWidth,
+		-halfWidth - RoadBuildingPlacementClearanceFeet, halfWidth + RoadBuildingPlacementClearanceFeet};
 	AuGlobeLLF startLL, endLL;
 	world.LLOfLoc(startLL, placement.Project(AuPoint(0, -halfLength, 0)));
 	world.LLOfLoc(endLL, placement.Project(AuPoint(0, halfLength, 0)));
@@ -244,10 +254,10 @@ bool RoadTouchesBuilding(const DaWorldLL& world, const AuLegacyCity::Development
 		AuPoint center = start + direction * (along / length);
 		world.ElevateLocMSL(center, road.roadStartAltitudeMSL
 			+ (road.roadEndAltitudeMSL - road.roadStartAltitudeMSL) * along / length);
-		AuPoint side = direction.Cross(-world.GravityDir(center)); side.Unit(road.roadWidthMeters * FeetPerMeter() / 2);
-		for(int edge : {0, -1, 1})
+		AuPoint side = direction.Cross(-world.GravityDir(center)); side.Unit();
+		for(double offset : offsets)
 		{
-			AuGlobeLLF ll; if(!world.LLOfLoc(ll, center + side * edge)) continue;
+			AuGlobeLLF ll; if(!world.LLOfLoc(ll, center + side * offset)) continue;
 			const AuPoint local = inverse.Project(world.LocOfLL(ll, building.altitudeMSL));
 			if(qMax(float(std::abs(local.x)), float(std::abs(local.y))) <= radius) return true;
 		}
