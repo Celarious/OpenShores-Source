@@ -688,22 +688,22 @@ AuLegacyCityLabor::AuLegacyCityLabor(QWidget* parent) : QWidget(parent)
 	m_Manufacture = new AuLegacyCityManufacture(this); m_LaborPages->addWidget(m_Manufacture);
 	m_Bank = new AuLegacyCityBank(this); m_LaborPages->addWidget(m_Bank);
 	m_Studio = new AuLegacyCityDesignStudio(this); m_LaborPages->addWidget(m_Studio);
-	m_Info = new QLabel(tr("<html><p>Use this window to use the buildings and roads in a city.</p>"
+	m_Info = new QLabel(tr("<html>Tips:<br><p>Use this window to use the buildings and roads in a city.</p>"
 		"<p>The contents of this window change based on the building or road site you occupy. "
 		"You do not have to be inside a building; stand anywhere at the site.</p><p><i>Tips</i></p>"
 		"%1 Go to a building or road that is under construction to help build it.<br>"
-		"%1 Go to a building that makes things to change what it makes and make more of them.<br>"
+		"%1 Go to a building that makes things to change what it makes and make more of them.<br><br>"
 		"%1 <b>Airport Terminals</b> have a matter transporter that can beam people to and from the local area and orbiting spacecraft. They also have a sensor station that scans nearby objects.<br>"
 		"%1 <b>Arenas</b> simulate solo or multiplayer spacecraft battles.<br>"
 		"%1 <b>Banks</b> provide loans and other services.<br>"
-		"%1 <b>Brokers</b> buy and sell almost everything.<br>"
+		"%1 <b>Brokers</b> buy and sell almost everything, and allow importing of resources through trade.<br>"
 		"%1 <b>Cantinas</b> buy and sell food and drinks.<br>"
-		"%1 <b>Capitol Buildings</b> control all construction and manufacturing in a city from one place.<br>"
+		"%1 <b>Capitol Buildings</b> allow you to specify the empire or sector capital.<br>"
 		"%1 <b>Design Studios</b> enable creation of new designs of buildings and spacecraft.<br>"
 		"%1 <b>Groceries</b> buy and sell food, drinks, and medical supplies.<br>"
 		"%1 <b>Hangars</b> store spacecraft.<br>"
-		"%1 <b>Observatories</b> have a navigation station to view the worlds in solar systems.<br>"
-		"%1 <b>Retail Stores</b> buy and sell a wide range of things: clothing, tools, weapons, ammunition, construction supplies, spare parts, fuel, and more.<br>"
+		"%1 <b>Observatories</b> have a navigation station to view the worlds in solar systems. They also survey the system every minute.<br>"
+		"%1 <b>Retail Stores</b> buy and sell a wide range of things: clothing, tools, weapons, ammo, construction supplies, spare parts, fuel, etc.<br>"
 		"%1 <b>Spacecraft Factories</b> make and sell spacecraft.<br></html>").arg(g_Au.MiddleDotSymbol()), this);
 	m_Info->setWordWrap(true); m_Info->setAlignment(Qt::AlignTop | Qt::AlignLeft);
 	m_LaborPages->addWidget(m_Info);
