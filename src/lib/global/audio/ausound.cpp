@@ -154,6 +154,7 @@ AuGLSoundInfo s_Sounds[SOUND_Count] =
 	AuGLSoundInfo(SOUND_Helicopter, QObject::tr("Helicopter"), "HelicopterEngine.wav", 3*FeetPerMeter()),
 	AuGLSoundInfo(MUSIC_ShroudOfGlory, QObject::tr("Music, Shroud of Glory"), "ShroudOfGlory.wav"),
 	AuGLSoundInfo(MUSIC_ColderThanIce, QObject::tr("Music, Colder Than Ice"), "ColderThanIce.wav"),
+	AuGLSoundInfo(SOUND_Tank_Idle, QObject::tr("Tank sounds"), "tank_idle.wav"),
 };
 #if !defined(QT_NO_DEBUG)
 const int s_SoundCount = sizeof(s_Sounds) / sizeof(AuGLSoundInfo);

@@ -168,6 +168,10 @@ public:
 	void RefundStationPower(AuItemHash& reserved, int used);
 	bool TransporterPads(const DaCreature& who, AuMatrix4x4& frameWorld,
 		AuPointArray& padsLocal, float& maxRange) const;
+	int BeamUp(DaPerson& person, int countRequested);
+	int EnergizeStationTransporter(const AuMatrix4x4& frameWorld, const AuPointArray& padsLocal, float maxRange,
+		bool isFrom, int padLimit, DaAtom* target, const AuPoint& location, const AuPoint& up,
+		quint16 targetWhich, AuPointArray& targetPads, bool ignoreShields, bool targetAtBuilding);
 	bool WeaponStation(const DaCreature& who, AuLegacyCity::Development& development,
 		COMMODITYID& module, AuPoint& emitterWorld, float& range) const;
 	AuItem* WeaponAmmunition(COMMODITYID module) const;

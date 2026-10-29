@@ -384,6 +384,7 @@ public:
 		case CID_SpaceTransport:
 			fuelMax = 60;
 			break;
+		case CID_Tank:
 		case CID_Submarine:
 			fuelMax = 100;
 			break;
@@ -408,6 +409,7 @@ public:
 		case CID_Submarine:
 		case CID_SUV:
 		case CID_APC:
+		case CID_Tank:
 		case CID_FarmMachinery:
 		case CID_Helicopter:
 			return CID_Gasoline;
@@ -740,6 +742,7 @@ public:
 			return false;	// Unrecognized cid has no controls.
 		case CID_DirtBike:
 		case CID_SUV:
+		case CID_Tank:
 		case CID_APC:
 		case CID_FarmMachinery:
 		case CID_SpaceFighter:
@@ -1113,6 +1116,8 @@ public:
 			return 250;
 		case CID_APC:
 			return 1000;
+		case CID_Tank:
+			return 2500;
 		default:
 			return 0;
 		}
@@ -1309,6 +1314,7 @@ public:
 					return true;
 			break;
 
+		case CID_Tank:
 		case CID_APC:
 			// Can always turn with power.
 			if(IsEngineOn() || fabs(ForwardSpeed()) > 1)
@@ -1369,6 +1375,7 @@ public:
 		case CID_Helicopter:
 		case CID_Submarine:
 		case CID_SUV:
+		case CID_Tank:
 		case CID_APC:
 			return true;
 		default:
@@ -1595,6 +1602,9 @@ public:
 
 		case CID_APC:
 			return 30000.f * (float)PoundsPerKilogram();
+
+		case CID_Tank:
+			return 45000.f * (float)PoundsPerKilogram();
 
 		default:
 			break;

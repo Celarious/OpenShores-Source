@@ -56,182 +56,220 @@ const DaCapsule* DaCapsule::FindParentCapsuleInEnv() const
 	return this;
 }
 
-int DaCapsule::BeamUp(DaPerson* person, int countRequested)
+QString DaCapsule::BeamUpReply(bool vehicle, int requested, int result, const QString& destinationName)
 {
-	// Locate a transporter room aboard this ship. It doesn't have to be on; it will turn on when it is activated.
-	DaVehicle* vehicle = dynamic_cast<DaVehicle*>(person->Parent());
-	quint16 whichT;
+	QString text;
 	if(vehicle)
 	{
-		whichT = VehicleTransporterSystemId(vehicle->ParkingSpotType(), false);
-		if(whichT == 0xffff)
-			return -14;
+		if(result == requested && requested == 1)
+			text = tr("Vehicle transporter energized. Welcome to %1.").arg(destinationName);
+		else if(result == requested)
+			text = tr("Vehicle transporter energized for %1 to beam to the airport terminal. Welcome to %2.")
+				.arg(result)
+				.arg(destinationName);
+		else if(result > 0)
+			text = tr("Vehicle transporter could only be energized for %1 to beam to the airport terminal. Welcome to %2.")
+				.arg(result)
+				.arg(destinationName);
+		else if(result == 0)
+			text = tr("Sorry, vehicle transporter beam was blocked. Would you like me to try again?");
+		else if(result == -1)
+			text = tr("Sorry, vehicle transporters are not available.");
+		else if(result == -2)
+			text = tr("Sorry, you are beyond transporter range.");
+		else if(result == -3)
+			text = tr("Sorry, vehicle transporter cannot lock on at your present location.");
+		else if(result == -4)
+			text = tr("Sorry, insufficient power to energize vehicle transporter.");
+		else if(result == -5)
+			text = tr("Sorry, vehicle transporter has not completed its activation cycle.");
+		else if(result == -6)
+			text = tr("Sorry, vehicle transporter has no empty parking spots for your vehicle.");
+		else if(result == -10)
+			text = tr("Sorry, shields on your ship prevent transport. Turn off the "
+					"shields or enter a transporter room and turn it on.");
+		else if(result == -11)
+			text = tr("Sorry, your vehicle prevents transporter lock on.");
+		else if(result == -12)
+			text = tr("Sorry, vehicle transporter shows ambiguous life form reading, too dangerous to transport.");
+		else if(result == -13)
+			text = tr("Sorry, shields in your area prevent transport. Turn off the "
+					"shield generator or enter a transporter room and turn it on.");
+		else if(result == -14)
+			text = tr("Sorry sir, we are not equipped with a vehicle transporter.");
+		else if(result == -15)
+			text = tr("Sorry sir, we have no vacant parking spots for your vehicle.");
+		else if(result == -16)
+			text = tr("Sorry sir, your ship is not equipped with a vehicle transporter.");
+		else if(result == -20)
+			text = tr("Sorry, we are not equipped with a vehicle transporter.");
+		else
+			text = tr("Sorry, unable to energize vehicle transporter.");
 	}
 	else
 	{
-		whichT = TransporterSystemId(countRequested, false);
-		if(whichT == 0xffff)
-			return -1;
+		if(result == requested && requested == 1)
+			text = tr("Transporter energized. Welcome to %1.").arg(destinationName);
+		else if(result == requested)
+			text = tr("Transporter energized for %1 to beam to the airport terminal. Welcome to %2.")
+				.arg(result)
+				.arg(destinationName);
+		else if(result > 0)
+			text = tr("Transporter could only be energized for %1 to beam to the airport terminal. Welcome to %2.")
+				.arg(result)
+				.arg(destinationName);
+		else if(result == 0)
+			text = tr("Sorry, transporter beam was blocked. Would you like me to try again?");
+		else if(result == -1)
+			text = tr("Sorry, transporters are not available.");
+		else if(result == -2)
+			text = tr("Sorry, you are beyond transporter range.");
+		else if(result == -3)
+			text = tr("Sorry, transporter cannot lock on at your present location.");
+		else if(result == -4)
+			text = tr("Sorry, insufficient power to energize transporter.");
+		else if(result == -5)
+			text = tr("Sorry, transporter has not completed its activation cycle.");
+		else if(result == -10)
+			text = tr("Sorry, shields on your ship prevent transport. Turn off the "
+					"shields or enter a transporter room and turn it on.");
+		else if(result == -11)
+			text = tr("Sorry, your vehicle prevents transporter lock on.");
+		else if(result == -12)
+			text = tr("Sorry, transporter shows ambiguous life form reading, too dangerous to transport.");
+		else if(result == -13)
+			text = tr("Sorry, shields in your area prevent transport. Turn off the "
+					"shield generator or enter a transporter room and turn it on.");
+		else if(result == -20)
+			text = tr("Sorry, we are not equipped with a transporter.");
+		else
+			text = tr("Sorry, unable to energize transporter.");
+	}
+
+	return text;
+}
+
+int DaCapsule::PrepareBeamUpTarget(DaPerson& person, const DaCapsule* receiver, quint16 receiverWhich,
+		DaAtom*& target, AuPoint& location, AuPoint& up, quint16& targetWhich, AuPointArray& pads)
+{
+	DaCreature* subject = dynamic_cast<DaCreature*>(person.Parent());
+	if(!subject) subject = &person;
+	DaCapsule* capsule = subject->IsInsideCapsule() ? subject->Parent()->FindParentCapsuleInEnv() : nullptr;
+	targetWhich = 0; pads.clear();
+	if(capsule)
+	{
+		target = capsule; up = AuPoint(0,0,1);
+		if(capsule->IsTransporterRoom(subject->CapsuleRoomId()))
+		{
+			targetWhich = subject->AtTransporterWhich();
+			if(capsule == receiver && targetWhich == receiverWhich) return -17;
+			const int index = capsule->TransporterSystemIndex(targetWhich);
+			if(!capsule->IsTransporterSystemOn(index) && capsule->PoliticalStanceMakeContact(subject) != POL_Enemy)
+			{
+				DaAtomList crew; capsule->ListNormalSubatoms(crew);
+				for(DaAtom* atom : crew)
+				{
+					DaSentient* operatorPerson = dynamic_cast<DaSentient*>(atom);
+					if(operatorPerson && operatorPerson->IsAIControlled() && operatorPerson->IsTransporterStationPose()
+						&& operatorPerson->StationId() == targetWhich)
+					{ capsule->TurnTransporterSystemOn(index); break; }
+				}
+			}
+			if(capsule->IsTransporterSystemOn(index) && !capsule->IsTransporterSystemActive(index))
+				capsule->TransporterPadLocations(targetWhich, pads);
+		}
+		if(pads.isEmpty())
+			location = subject->Location() - AuPoint(0,0,subject->GroundHeightAboveCG())
+				+ AuPoint(g_Au.Dice().Roll(1,17,-9), g_Au.Dice().Roll(1,17,-9));
+		return 0;
+	}
+	if(subject->IsRider()) return -12;
+	target = subject->Parent();
+	if(!target) return -3;
+	const AuPoint feet = AuPoint(0,0,-subject->GroundHeightAboveCG())
+		+ AuPoint(g_Au.Dice().Roll(1,17,-9), g_Au.Dice().Roll(1,17,-9));
+	location = subject->Transform().Project(feet);
+	up = subject->Transform().ProjectVector(subject->GravityNormal());
+	return 0;
+}
+
+int DaCapsule::BeamUp(DaPerson* person, int countRequested)
+{
+	DaVehicle* vehicle = dynamic_cast<DaVehicle*>(person->Parent());
+	const quint16 whichT = vehicle ? VehicleTransporterSystemId(vehicle->ParkingSpotType(), false)
+		: TransporterSystemId(countRequested, false);
+	if(whichT == 0xffff) return vehicle ? -14 : -1;
+	if(!vehicle)
+	{
+		DaAtom* target = nullptr; AuPoint location, up; quint16 targetWhich = 0; AuPointArray pads;
+		const int result = PrepareBeamUpTarget(*person, this, whichT, target, location, up, targetWhich, pads);
+		if(result < 0) return result;
+		return EnergizeTransporter(whichT, false, countRequested, target, location, up, targetWhich, pads, false,
+			person->IsAtBd());
 	}
 
 	DaCreature* beamWho = dynamic_cast<DaCreature*>(person->Parent());
-	if(!beamWho)
-		beamWho = person;
-
-	// We have functioning pads.
-	// Set up the transfer.
-	DaCapsule* targCap = 0;
-	if(beamWho->IsInsideCapsule())
-		targCap = beamWho->Parent()->FindParentCapsuleInEnv();
-
+	if(!beamWho) beamWho = person;
+	DaCapsule* targCap = beamWho->IsInsideCapsule() ? beamWho->Parent()->FindParentCapsuleInEnv() : nullptr;
 	if(targCap)
 	{
-		// Prepare to beam the subject from aboard a spacecraft to this ship.
-		AuPointArray targPads;
 		quint16 targWhich = 0;
-		if(vehicle)
+		// Determine the 'which' id of the transporter room in which the subject is standing.
+		targWhich = targCap->VehicleTransporterSystemId(vehicle->ParkingSpotType(), false);
+		if(targWhich == 0xffff)
+			return -16;
+
+		// Vehicles can only be transported from vehicle transporter parking spots.
+		AuMatrix4x4 parkPosM;
+		VEHICLE_SPOT_TYPE spotType;
+		if(!targCap->ClosestVehicleParkingSpot(vehicle, parkPosM, spotType))
+			return -11;
+
+		// The transporter room must be on and inactive. The transfer will activate it.
+		int troomIndex = targCap->TransporterSystemIndex(targWhich);
+		if(!targCap->IsTransporterSystemOn(troomIndex))
 		{
-			// Determine the 'which' id of the transporter room in which the subject is standing.
-			targWhich = targCap->VehicleTransporterSystemId(vehicle->ParkingSpotType(), false);
-			if(targWhich == 0xffff)
-				return -16;
-
-			// Vehicles can only be transported from vehicle transporter parking spots.
-			AuMatrix4x4 parkPosM;
-			VEHICLE_SPOT_TYPE spotType;
-			if(!targCap->ClosestVehicleParkingSpot(vehicle, parkPosM, spotType))
-				return -11;
-
-			// The transporter room must be on and inactive. The transfer will activate it.
-			int troomIndex = targCap->TransporterSystemIndex(targWhich);
-			if(!targCap->IsTransporterSystemOn(troomIndex))
+			// The subject ship's transporter is not on. Any non-enemy ship permits people to beam away.
+			POLITICAL_STANCE stanceToSubject = targCap->PoliticalStanceMakeContact(beamWho);
+			if(stanceToSubject != POL_Enemy)
 			{
-				// The subject ship's transporter is not on. Any non-enemy ship permits people to beam away.
-				POLITICAL_STANCE stanceToSubject = targCap->PoliticalStanceMakeContact(beamWho);
-				if(stanceToSubject != POL_Enemy)
-				{
-					// The subject is not an enemy of the ship.
-					// The transporter console in the room is manned by AI; turn it on.
-					targCap->TurnTransporterSystemOn(troomIndex);
-				}
+				// The subject is not an enemy of the ship.
+				// The transporter console in the room is manned by AI; turn it on.
+				targCap->TurnTransporterSystemOn(troomIndex);
 			}
-
-			// Locate vacant vehicle parking spots of the correct type at the destination.
-			QList<AuMatrix4x4> targParkingSpots;
-			targParkingSpots.append(parkPosM);
-
-			// targLoc is only needed when targParkingSpots is empty.
-			AuPoint targLoc;
-			AuPoint targZ = targParkingSpots.first().ProjectVector(0,0,1);
-
-			// In recognition of Star Trek, energize...
-			return EnergizeVehicleTransporter(whichT, vehicle, false, targCap, targLoc, targZ, targWhich, targParkingSpots, false,
-					false);
 		}
-		else
-		{
-			// If the subject is in a transporter room, attempt to initiate a transporter-to-transporter transfer from beam-up ship.
-			if(targCap->IsTransporterRoom(beamWho->CapsuleRoomId()))
-			{
-				// Determine the 'which' id of the transporter room in which the subject is standing.
-				targWhich = beamWho->AtTransporterWhich();
-				if(targCap == this && targWhich == whichT)
-					return -17;
-				int troomIndex = targCap->TransporterSystemIndex(targWhich);
-				if(!targCap->IsTransporterSystemOn(troomIndex))
-				{
-					// The subject ship's transporter is not on. Any non-enemy ship permits people to beam away.
-					POLITICAL_STANCE stanceToSubject = targCap->PoliticalStanceMakeContact(beamWho);
-					if(stanceToSubject != POL_Enemy)
-					{
-						// The subject is not an enemy of the ship.
-						// If the transporter console in the room is manned by AI, turn it on.
-						DaAtomList subs;
-						targCap->ListNormalSubatoms(subs);
-						for(DaAtomList::const_iterator it = subs.cbegin(); it != subs.cend(); it++)
-						{
-							DaSentient* pAtom = dynamic_cast<DaSentient*>(*it);
-							if(!pAtom)
-								continue;
-							if(!pAtom->IsAIControlled())
-								continue;
-							if(pAtom->IsTransporterStationPose() && pAtom->StationId() == targWhich)
-							{
-								targCap->TurnTransporterSystemOn(troomIndex);
-								break;
-							}
-						}
-					}
-				}
 
-				// The transporter room must be on and inactive. The transfer will activate it.
-				if(targCap->IsTransporterSystemOn(troomIndex) && !targCap->IsTransporterSystemActive(troomIndex))
-					targCap->TransporterPadLocations(targWhich, targPads);
-			}
+		// Locate vacant vehicle parking spots of the correct type at the destination.
+		QList<AuMatrix4x4> targParkingSpots;
+		targParkingSpots.append(parkPosM);
 
-			AuPoint targLoc;
-			if(targPads.isEmpty())
-			{
-				// Calculate location subject is standing relative to the ship, which is the target.
-				// targLoc is only needed when targPads is empty.
-				targLoc = beamWho->Location() - AuPoint(0,0,beamWho->GroundHeightAboveCG());
+		// targLoc is only needed when targParkingSpots is empty.
+		AuPoint targLoc;
+		AuPoint targZ = targParkingSpots.first().ProjectVector(0,0,1);
 
-				// Offset randomly from the target location.
-				targLoc += AuPoint(g_Au.Dice().Roll(1,17,-9), g_Au.Dice().Roll(1,17,-9));
-			}
-
-			// In recognition of Star Trek, energize...
-			return EnergizeTransporter(whichT, false, countRequested, targCap, targLoc, AuPoint(0,0,1), targWhich, targPads, false,
-					false);
-		}
+		// In recognition of Star Trek, energize...
+		return EnergizeVehicleTransporter(whichT, vehicle, false, targCap, targLoc, targZ, targWhich, targParkingSpots, false,
+				false);
 	}
-	else
-	{
-		if(beamWho->IsRider())
-			return -12;	// Shouldn't be possible but what the heck.
-		else if(vehicle)
-		{
-			// Beam target from wherever they are, probably standing on a world or floating in space.
-			// They could also be standing on the outside hull of a spacecraft.
-			// Calculate location subject is standing, and up vector, relative to their parent atom, which is the target.
-			DaAtom* targAtom = vehicle->Parent();
-			AuPoint targLoc = AuPoint(0, 0, -vehicle->GroundHeightAboveCG());	// Location at vehicle's feet.
+	if(beamWho->IsRider()) return -12;
+	// Beam target from wherever they are, probably standing on a world or floating in space.
+	// They could also be standing on the outside hull of a spacecraft.
+	// Calculate location subject is standing, and up vector, relative to their parent atom, which is the target.
+	DaAtom* targAtom = vehicle->Parent();
+	AuPoint targLoc = AuPoint(0, 0, -vehicle->GroundHeightAboveCG());	// Location at vehicle's feet.
 
-			// Offset randomly from the target location.
-			targLoc += AuPoint(g_Au.Dice().Roll(1,17,-9), g_Au.Dice().Roll(1,17,-9));
+	// Offset randomly from the target location.
+	targLoc += AuPoint(g_Au.Dice().Roll(1,17,-9), g_Au.Dice().Roll(1,17,-9));
 
-			// Calculate targLoc and targZ relative to the parent of vehicle.
-			AuMatrix4x4 t(vehicle->Transform());
-			targLoc = t.Project(targLoc);										// vehicle's location, relative to their parent.
-			AuPoint targZ = t.ProjectVector(vehicle->GravityNormal());			// vehicle's up vector, relative to their parent.
+	// Calculate targLoc and targZ relative to the parent of vehicle.
+	AuMatrix4x4 t(vehicle->Transform());
+	targLoc = t.Project(targLoc);										// vehicle's location, relative to their parent.
+	AuPoint targZ = t.ProjectVector(vehicle->GravityNormal());			// vehicle's up vector, relative to their parent.
 
-			// As in Star Trek, energize...
-			QList<AuMatrix4x4> targParkingSpots;
-			return EnergizeVehicleTransporter(whichT, vehicle, false, targAtom, targLoc, targZ, 0, targParkingSpots, false,
-					person->IsAtBd());
-		}
-		else
-		{
-			// Beam target from wherever they are, probably standing on a world or floating in space.
-			// They could also be standing on the outside hull of a spacecraft.
-			// Calculate location subject is standing, and up vector, relative to their parent atom, which is the target.
-			DaAtom* targAtom = beamWho->Parent();
-			AuPoint targLoc = AuPoint(0, 0, -beamWho->GroundHeightAboveCG());	// Location at beamWho's feet.
-
-			// Offset randomly from the target location.
-			targLoc += AuPoint(g_Au.Dice().Roll(1,17,-9), g_Au.Dice().Roll(1,17,-9));
-
-			// Calculate targLoc and targZ relative to the parent of beamWho.
-			AuMatrix4x4 t(beamWho->Transform());
-			targLoc = t.Project(targLoc);										// beamWho's location, relative to their parent.
-			AuPoint targZ = t.ProjectVector(beamWho->GravityNormal());			// beamWho's up vector, relative to their parent.
-
-			// As in Star Trek, energize...
-			AuPointArray targPads;
-			return EnergizeTransporter(whichT, false, countRequested, targAtom, targLoc, targZ, 0, targPads, false,
-					person->IsAtBd());
-		}
-	}
+	// As in Star Trek, energize...
+	QList<AuMatrix4x4> targParkingSpots;
+	return EnergizeVehicleTransporter(whichT, vehicle, false, targAtom, targLoc, targZ, 0, targParkingSpots, false,
+		person->IsAtBd());
 }
 
 int DaCapsule::EnergizeTransporter(quint16 shipWhich, bool isFrom, int padLimit, DaAtom* targAtom, const AuPoint& targLoc,

@@ -1055,6 +1055,9 @@ QList<COMMODITYID> AuGlobal::ActiveCommodityIds() const
 		if(m_LegacyCommodityDescriptorsReady.load(std::memory_order_acquire))
 			for(auto it = m_LegacyCommodityDescriptors.cbegin(); it != m_LegacyCommodityDescriptors.cend(); ++it)
 				ids.append(COMMODITYID(it.key()));
+		for(const DbCommodity& descriptor : m_CommodityArray)
+			if((descriptor.IsNaturalResource() || descriptor.IsEnvironmentalFactor()) && !HasLegacyCommodity(descriptor.m_id))
+				ids.append(descriptor.m_id);
 	}
 	else
 		for(const DbCommodity& descriptor : m_CommodityArray)

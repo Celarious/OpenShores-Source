@@ -492,9 +492,10 @@ public:
 	}
 	bool IsCommodityAvailable(COMMODITYID cid) const
 	{
-		if(IsLegacyGeneration()) return HasLegacyCommodity(cid);
+		if(IsLegacyGeneration() && HasLegacyCommodity(cid)) return true;
 		return cid >= CID_Invalid && cid < m_CommodityArray.count()
-			&& m_CommodityArray[int(cid)].m_id == cid;
+			&& m_CommodityArray[int(cid)].m_id == cid
+			&& (!IsLegacyGeneration() || DbCommodity::IsNaturalResource(cid) || DbCommodity::IsEnvironmentalFactor(cid));
 	}
 	QList<COMMODITYID> ActiveCommodityIds() const;
 
@@ -1165,6 +1166,9 @@ public:
 				const auto found = m_LegacyCommodityDescriptors.constFind(quint16(cid));
 				if(found != m_LegacyCommodityDescriptors.cend()) return found.value();
 			}
+			// World generation also supplies resources outside the historical
+			// city catalogue. Keep their existing identities and metadata.
+			if(IsCommodityAvailable(cid)) return m_CommodityArray[int(cid)];
 			// Bootstrap rejects missing metadata before loading items. Invalid
 			// external IDs still need a safe descriptor rather than an array read.
 			static const DbCommodity invalid;

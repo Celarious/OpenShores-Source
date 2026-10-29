@@ -79,7 +79,7 @@ bool IsSpawnedProductionVehicle(quint16 commodity)
 	switch(commodity)
 	{
 	case 6: case 7: case 8: case 9: case 28: case 77:
-	case 82: case 104: case 132: case 133: case 231: return true;
+	case 82: case 103: case 104: case 132: case 133: case 231: return true;
 	default: return false;
 	}
 }

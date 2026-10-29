@@ -168,7 +168,9 @@ enum SOUND_EFFECT
 	SOUND_Helicopter,
 	MUSIC_ShroudOfGlory,
 	MUSIC_ColderThanIce,
-	SOUND_Count			//NOTE: Last item in enum
+	SOUND_Tank_Idle,
+	SOUND_Count
+	//NOTE: Last item in enum
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|

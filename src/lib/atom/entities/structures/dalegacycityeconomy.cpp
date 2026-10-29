@@ -588,11 +588,11 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 			[](const Development& dev) { return (dev.industryId == 111 || dev.industryId == 11 || dev.industryId == 12)
 				&& dev.completedLevels && !dev.demolished; });
 		auto* system = FindParentSolarSystem();
-		if(observatory && radar && system && !system->IsScannedBy(before.controllingEmpire))
+		if(observatory && radar && system && (!system->IsScannedBy(before.controllingEmpire)
+			|| !system->IsExploredBy(before.controllingEmpire)) && StationsPowered())
 		{
-			AuItemHash stock; QString error;
-			const auto electricity = COMMODITYID(catalogue->RuntimeCommodityId(CommodityId(3)));
-			if(ringworld || (ReadCityInventory(before.inventory, *catalogue, stock, error) && stock.RawCount(electricity)))
+			system->ExploredBy(before.controllingEmpire);
+			if(!system->IsScannedBy(before.controllingEmpire))
 				system->ScannedBy(before.controllingEmpire, system->GenHab(), system->GenSeed());
 		}
 	}

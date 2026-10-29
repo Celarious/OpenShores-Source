@@ -80,6 +80,10 @@ public:
 	// -16 person's ship is not equipped with a vehicle transporter
 	// -17 already in my transporter room
 	int BeamUp(DaPerson* person, int countRequested);
+	static QString BeamUpReply(bool vehicle, int requested, int result, const QString& destinationName);
+	// Prepare the existing personal beam-up target independently of the receiving design.
+	static int PrepareBeamUpTarget(DaPerson& person, const DaCapsule* receiver, quint16 receiverWhich,
+			DaAtom*& target, AuPoint& location, AuPoint& up, quint16& targetWhich, AuPointArray& pads);
 
 	// Returns the berth detail location occupied by 'id'.
 	// Returns a random location if the person is occupying the CaptianSlot.

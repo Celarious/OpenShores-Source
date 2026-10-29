@@ -12,6 +12,7 @@
 #include "auqueryenvironment.h"
 #include "auspecies.h"
 #include "daperson.h"
+#include "dacapsule.h"
 #include "dasector.h"
 #include "daworldll.h"
 #include "dgdata.h"
@@ -113,7 +114,8 @@ void DaLegacyCity::RxChatMessage(const AuCommPacket* message, quint32&, bool)
 	COMMODITYFILTER filter = FILTER_All;
 	const bool solicit = SalesFilter(message->Type(), filter);
 	const auto* bid = dynamic_cast<const AuCommBid*>(message);
-	if(!solicit && !bid) return;
+	const auto* beam = dynamic_cast<const AuCommBeamOver*>(message);
+	if(!solicit && !bid && !beam) return;
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
 	auto* world = dynamic_cast<DaWorldLL*>(Parent());
 	const auto* sector = FindParentSector();
@@ -122,8 +124,26 @@ void DaLegacyCity::RxChatMessage(const AuCommPacket* message, quint32&, bool)
 	// an inventory stream can create its first item, including Legacy aliases.
 	for(const quint16 commodity : catalogue->RuntimeCommodityIds())
 		if(!g_Au.HasLegacyCommodity(COMMODITYID(commodity))) return;
-	auto* person = dynamic_cast<DaPerson*>(world->FindIdRecursive(message->FromId()));
-	if(!person || person->IsDead() || person->IsInsideSpacecraft() || person->FindParentPlanetInEnv() != world) return;
+	DaAtom* system = world->FindEnvironmentAtom();
+	auto* person = system ? dynamic_cast<DaPerson*>(system->FindIdRecursive(message->FromId())) : nullptr;
+	if(!person || person->IsDead()) return;
+	if(beam)
+	{
+		if(!EmpireId() || person->EmpireId() != EmpireId()) return;
+		int result = -1;
+		for(int attempt = 0; attempt < 100; ++attempt)
+		{
+			result = BeamUp(*person, int(beam->Count()));
+			if(result != 0) break;
+		}
+		if(result == -1) return; // No authored airport pads within range.
+		const QString text = DaCapsule::BeamUpReply(person->IsAboardVehicle(), int(beam->Count()), result, Name());
+		AuCommCityChat response(text, message->ChannelName(), Id(), Name(), sector->Id(), Galaxy(),
+			AuCommStdChannel::Hail, message->Scope());
+		g_Au.SendAtomChat(response);
+		return;
+	}
+	if(person->IsInsideSpacecraft() || person->FindParentPlanetInEnv() != world) return;
 	AuLegacyFinanceTransfer transfer(person);
 	const auto* environment = person->LockEnvironmentQuery();
 	const bool inCity = environment->LegacyCityId() == Id();

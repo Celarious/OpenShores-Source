@@ -17,7 +17,6 @@
 #include "dabd.h"
 #include "dalegacycity.h"
 #include "daperson.h"
-#include "dateleporter.h"
 #include "daworldringsection.h"
 #include "dicontrolinput.h"
 #include "dipanelcontrol.h"
@@ -36,39 +35,6 @@
 static QImage s_SensorRange;
 #define c_ScreenHeight					96
 #define c_ScreenWidth					196
-
-namespace
-{
-bool TransporterPadsActive(const DaAtom& source, const AuMatrix4x4& padFrame, const AuPointArray& pads)
-{
-	DaAtomList teleporters;
-	source.FindTeleportersRecursive(teleporters);
-	for(const DaAtom* atom : teleporters)
-	{
-		const DaTeleporter* teleporter = dynamic_cast<const DaTeleporter*>(atom);
-		if(!teleporter || teleporter->IsDead()) continue;
-		AuMatrix4x4 transform;
-		if(!teleporter->GetTransformRelativeToParent(transform, &source)) continue;
-		bool active = false;
-		const AuPointArray& locations = teleporter->LockTeleporterLocs();
-		for(const AuPoint& pad : pads)
-		{
-			const AuPoint center = transform.UnProject(padFrame.Project(pad + AuPoint(0, 0, AuLegacyBd::DeckHeight / 2)));
-			// Use the existing person teleporter aperture, for both origin and destination beams.
-			const auto overlaps = [&center](const AuPoint& location) {
-				const AuPoint offset = center - location;
-				return fabs(offset.z) <= 3.9 && offset.Length2_2D() <= 1.3 * 1.3;
-			};
-			if(locations.isEmpty()) active = overlaps(AuPoint());
-			else for(const AuPoint& location : locations) if(overlaps(location)) { active = true; break; }
-			if(active) break;
-		}
-		teleporter->UnlockTeleporterLocs();
-		if(active) return true;
-	}
-	return false;
-}
-}
 
 // Table of control inputs.
 DiControlInputArray s_TransporterConsoleControls;		// Controls that may have bindings modified by the user.
@@ -1463,22 +1429,8 @@ void DpStationTransporter::ProcessControlInput(const DiControlInputArray& aActiv
 						result = hardware->EnergizeTransporter(m_WhichTransporter, isFrom, targLimit, targAtom, targLoc, targZ,
 							targWhich, targPads, ignoreDestShields, true);
 					else if(city && city->Parent() && !sourcePads.isEmpty())
-					{
-						AuItemHash power;
-						if(TransporterPadsActive(*city->Parent(), padFrame, sourcePads)) result = -5;
-						else
-						{
-							const int reserved = city->ReserveStationPower(qMin(targLimit, sourcePads.size()), power);
-							if(!reserved) result = -4;
-							else
-							{
-								result = DaCapsule::EnergizeTransporterPads(*city->Parent(), city->EmpireId(), padFrame,
-									sourcePads, sourceRange, float(AuLegacyBd::DeckHeight / 2), isFrom, reserved,
-									targAtom, targLoc, targZ, targWhich, targPads, ignoreDestShields, true);
-								city->RefundStationPower(power, qMax(0, result));
-							}
-						}
-					}
+						result = city->EnergizeStationTransporter(padFrame, sourcePads, sourceRange, isFrom, targLimit,
+							targAtom, targLoc, targZ, targWhich, targPads, ignoreDestShields, true);
 
 					// Report the result on the thoughts channel, good or bad.
 					// This reply is coming from the person's own mind as a subconscious thought.

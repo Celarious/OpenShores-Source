@@ -36,9 +36,11 @@
 #include "daanimal.h"
 #include "dabd.h"
 #include "dacreature.h"
+#include "dacapsule.h"
 #include "daatomlist.h"
 #include "daperson.h"
 #include "damissile.h"
+#include "dateleporter.h"
 #include "dadesigner.h"
 #include "dgdata.h"
 #include "daworldll.h"
@@ -72,6 +74,36 @@
 
 namespace
 {
+bool TransporterPadsActive(const DaAtom& source, const AuMatrix4x4& padFrame, const AuPointArray& pads)
+{
+	DaAtomList teleporters;
+	source.FindTeleportersRecursive(teleporters);
+	for(const DaAtom* atom : teleporters)
+	{
+		const DaTeleporter* teleporter = dynamic_cast<const DaTeleporter*>(atom);
+		if(!teleporter || teleporter->IsDead()) continue;
+		AuMatrix4x4 transform;
+		if(!teleporter->GetTransformRelativeToParent(transform, &source)) continue;
+		bool active = false;
+		const AuPointArray& locations = teleporter->LockTeleporterLocs();
+		for(const AuPoint& pad : pads)
+		{
+			const AuPoint center = transform.UnProject(padFrame.Project(pad + AuPoint(0, 0, AuLegacyBd::DeckHeight / 2)));
+			// Use the existing person teleporter aperture, for both origin and destination beams.
+			const auto overlaps = [&center](const AuPoint& location) {
+				const AuPoint offset = center - location;
+				return fabs(offset.z) <= 3.9 && offset.Length2_2D() <= 1.3 * 1.3;
+			};
+			if(locations.isEmpty()) active = overlaps(AuPoint());
+			else for(const AuPoint& location : locations) if(overlaps(location)) { active = true; break; }
+			if(active) break;
+		}
+		teleporter->UnlockTeleporterLocs();
+		if(active) return true;
+	}
+	return false;
+}
+
 // Extra width on each side of roads when checking placement against buildings (feet).
 // 8 matches the road's paving border; increase for more clearance, or use 0
 // to restore the original placement spacing. Shared by server and client preview.
@@ -2670,7 +2702,11 @@ void DaLegacyCity::Tock(const AuTime& last, const AuTime& now, const AuScripts& 
 		if(!m_TradeMonitored || last.IsNewPeriod(now, 15 * d_MSecPerMin, Id().GetID()))
 		{ m_TradeMonitored = true; monitorTrade = true; }
 	}
-	if(monitorTrade) g_Au.MonitorChannel(AuCommStdChannel::TradeChannelName(), Id());
+	if(monitorTrade)
+	{
+		g_Au.MonitorChannel(AuCommStdChannel::TradeChannelName(), Id());
+		g_Au.MonitorChannel(AuCommStdChannel::HailChannelName(), Id());
+	}
 	TockEconomy(last.MSecsSinceEpoch(), QDateTime::currentMSecsSinceEpoch());
 	if(last.IsNewPeriod(now, 5000, Id().GetID())) TockHospitalPatients();
 }
@@ -3280,16 +3316,13 @@ bool DaLegacyCity::Station(const DaCreature& who, AuStation& station, AuLegacyCi
 	return false;
 }
 
-bool DaLegacyCity::TransporterPads(const DaCreature& who, AuMatrix4x4& frameWorld,
-	AuPointArray& padsLocal, float& maxRange) const
+namespace
 {
-	padsLocal.clear(); maxRange = 0;
-	AuStation station; AuLegacyCity::Development development; quint16 room = 0;
-	if(!Station(who, station, &development, &frameWorld, &room) || !station.IsTransporter()) return false;
-	const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
-	if(!design) return false;
-	const int deck = design->details.at(int(who.StationId()) - 1).deck;
-	for(const auto& detail : design->details)
+bool BuildingTransporterPads(const AuLegacyBd::Design& design, const AuLegacyCity::Development& development,
+	quint16 room, int deck, AuPointArray& padsLocal, float& maxRange)
+{
+	padsLocal.clear();
+	for(const auto& detail : design.details)
 		if(detail.detailType == 20 && detail.roomId == room && detail.deck == deck && detail.deck >= development.minimumDeck
 			&& detail.deck <= development.maximumDeck)
 		{
@@ -3298,6 +3331,74 @@ bool DaLegacyCity::TransporterPads(const DaCreature& who, AuMatrix4x4& frameWorl
 		}
 	maxRange = 27690.f * (1.f + .05f * development.technology);
 	return !padsLocal.isEmpty();
+}
+}
+
+bool DaLegacyCity::TransporterPads(const DaCreature& who, AuMatrix4x4& frameWorld,
+	AuPointArray& padsLocal, float& maxRange) const
+{
+	padsLocal.clear(); maxRange = 0;
+	AuStation station; AuLegacyCity::Development development; quint16 room = 0;
+	if(!Station(who, station, &development, &frameWorld, &room) || !station.IsTransporter()) return false;
+	const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
+	return design && BuildingTransporterPads(*design, development, room,
+		design->details.at(int(who.StationId()) - 1).deck, padsLocal, maxRange);
+}
+
+int DaLegacyCity::EnergizeStationTransporter(const AuMatrix4x4& frameWorld, const AuPointArray& padsLocal,
+	float maxRange, bool isFrom, int padLimit, DaAtom* target, const AuPoint& location, const AuPoint& up,
+	quint16 targetWhich, AuPointArray& targetPads, bool ignoreShields, bool targetAtBuilding)
+{
+	if(!Parent() || padsLocal.isEmpty()) return -1;
+	if(!g_Au.IsSceneWorker() || !StationsPowered()) return -4;
+	if(TransporterPadsActive(*Parent(), frameWorld, padsLocal)) return -5;
+	AuItemHash power;
+	const int reserved = ReserveStationPower(qMin(padLimit, padsLocal.size()), power);
+	if(!reserved) return -4;
+	const int result = DaCapsule::EnergizeTransporterPads(*Parent(), EmpireId(), frameWorld, padsLocal, maxRange,
+		float(AuLegacyBd::DeckHeight / 2), isFrom, reserved, target, location, up, targetWhich, targetPads,
+		ignoreShields, targetAtBuilding);
+	RefundStationPower(power, qMax(0, result));
+	return result;
+}
+
+int DaLegacyCity::BeamUp(DaPerson& person, int countRequested)
+{
+	DaWorldLL* world = dynamic_cast<DaWorldLL*>(Parent());
+	if(!world || !EmpireId() || person.EmpireId() != EmpireId() || person.IsDead()) return -3;
+	AuMatrix4x4 frame; AuPointArray pads; float range = 0;
+	double closest = std::numeric_limits<double>::max();
+	const AuPoint subjectLocation = person.EnvLocation();
+	{
+		QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
+		for(const auto& building : m_Runtime->buildings)
+		{
+			const auto& development = building.state;
+			if(development.industryId != 111 || !development.constructed || development.demolished) continue;
+			const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
+			if(!design) continue;
+			AuMatrix4x4 placement;
+			world->BuildingConstructionTransform(world->LocOfLL(development.location, development.altitudeMSL),
+				development.facingRadians, nullptr, AuPoint(), placement);
+			for(const auto& station : building.stations)
+			{
+				if(!station.station.IsTransporter()) continue;
+				AuPointArray candidate; float candidateRange = 0;
+				if(!BuildingTransporterPads(*design, development, station.room,
+					design->details.at(int(station.id) - 1).deck, candidate, candidateRange)) continue;
+				const double distance = world->EnvTransform().Project(placement.Translation()).Distance2(subjectLocation);
+				if(distance > double(candidateRange) * candidateRange || distance >= closest) continue;
+				closest = distance; frame = placement; pads = candidate; range = candidateRange;
+			}
+		}
+	}
+	if(pads.isEmpty()) return -1;
+	if(person.IsAboardVehicle()) return -14;
+	DaAtom* target = nullptr; AuPoint location, up; quint16 targetWhich = 0; AuPointArray targetPads;
+	const int prepared = DaCapsule::PrepareBeamUpTarget(person, nullptr, 0, target, location, up, targetWhich, targetPads);
+	if(prepared < 0) return prepared;
+	return EnergizeStationTransporter(frame, pads, range, false, countRequested, target, location, up,
+		targetWhich, targetPads, false, person.IsAtBd() || person.IsAtLegacyCityFloor());
 }
 
 bool DaLegacyCity::WeaponStation(const DaCreature& who, AuLegacyCity::Development& development,

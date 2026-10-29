@@ -3105,6 +3105,33 @@ bool DaCreature::IsCameraAtEyes(const AuAtomRenderInfo& ari) const
 	return false;
 }
 
+bool DaCreature::ThirdPersonDriverCamera(AuMatrix4x4& camera) const
+{
+    const DaVehicle* vehicle = dynamic_cast<const DaVehicle*>(Parent());
+
+    if(!g_Au.IsLegacyGeneration() || !vehicle || vehicle->CommodityId() != CID_Tank || VehicleSeatIndex() != 0 || IsBodyDyingOrDead() || RemoteCameraId()) return false;
+
+	double pitch = CurrentHeadTilt() - 15.0 * DEG2RAD;
+	if(pitch < -75.0 * DEG2RAD)
+		pitch = -75.0 * DEG2RAD;
+	if(pitch > 45.0 * DEG2RAD)
+		pitch = 45.0 * DEG2RAD;
+	
+	AuMatrix4x4 vehicleCamera;
+	vehicleCamera.LoadIdentity();
+	
+	// Orbit around a point six feet above the Tank origin.
+	vehicleCamera.Translate(0, 0, 6);
+	vehicleCamera.RotateZ(Rotation().z);
+	vehicleCamera.RotateX(pitch);
+	
+	vehicleCamera.Translate(0, -25, 0);
+	vehicleCamera.RotateX(PI / 2.0);
+	
+	camera = Transform().Inverse() * vehicleCamera;
+	return true;
+}
+
 // Sets up camera when this atom is going to render the scene.
 void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rFarClip, AuAtomRenderInfo& ari) const
 {
@@ -3135,6 +3162,12 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 			tCamera = Transform().Inverse() * mRemoteCam;
 			return;
 		}
+	}
+
+	if(!ari.IsViewTopDown() && ThirdPersonDriverCamera(tCamera))
+	{
+		rNearClip = 1.;
+		return;
 	}
 
 	// If near clip is too small, distant objects merge too much. Too large and the canopy braces of the space
@@ -7695,6 +7728,11 @@ bool DaCreature::DismountVehicle()
 		offloc = vehicle->OffLoc(VehicleSeatIndex());		// Offload location for my seat, relative to vehicle.
 	}
 
+	if(g_Au.IsLegacyGeneration() &&	vehicle->CommodityId() == CID_Tank)
+ 		{
+			offloc = vehicle->OffLoc(VehicleSeatIndex());
+ 		}
+
 	// I must reparent to the parent of the vehicle for CheckCollision.
 	AuAtomPos posSave(Pos());								// Save my transform so I can restore it if I can't get out.
 	ChangePosAndOrient(vehicle->Pos());						// Put me where the vehicle is.
@@ -9264,6 +9302,9 @@ bool DaCreature::ConsoleScreenQuad(AuQuad& screen) const
 
 AuPoint DaCreature::SceneCameraLocation() const
 {
+	AuMatrix4x4 vehicleCamera;
+	if(ThirdPersonDriverCamera(vehicleCamera))
+    return vehicleCamera.Translation();
 	const DaSc* legacyShip = dynamic_cast<const DaSc*>(Parent());
 	const AuPose pose = CurrentGeneralPose();
 	if(pose.IsTurret() && !pose.IsTurretIntegrated()
