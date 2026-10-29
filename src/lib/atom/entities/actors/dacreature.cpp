@@ -3111,11 +3111,7 @@ bool DaCreature::ThirdPersonDriverCamera(AuMatrix4x4& camera) const
 
     if(!g_Au.IsLegacyGeneration() || !vehicle || vehicle->CommodityId() != CID_Tank || VehicleSeatIndex() != 0 || IsBodyDyingOrDead() || RemoteCameraId()) return false;
 
-	double pitch = CurrentHeadTilt() - 15.0 * DEG2RAD;
-	if(pitch < -75.0 * DEG2RAD)
-		pitch = -75.0 * DEG2RAD;
-	if(pitch > 45.0 * DEG2RAD)
-		pitch = 45.0 * DEG2RAD;
+	const double pitch = DaVehicle::TankCameraPitch(CurrentHeadTilt());
 	
 	AuMatrix4x4 vehicleCamera;
 	vehicleCamera.LoadIdentity();

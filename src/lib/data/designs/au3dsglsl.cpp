@@ -1216,6 +1216,7 @@ float Au3dsGLSLObject::Transparency(const Au3dsGLSLMaterialArray& materials, MOD
 void Au3dsGLSLObject::CreateDeviceObject(AuOpenGLFunctions& GLf, Au3dsGLSLVAO& model,
 		const Au3dsGLSLMaterialArray& materials, bool lightsOn, MODEL_TYPE modelType, GLuint destBlendFunc)
 {
+	model.m_ObjectName = m_Name;
 	// Calculate normals to each face so we can do smoothing calculations as
 	// we go.  Only needed for the old models exported from Symmetrica
 	AuPointArray faceNormals;
@@ -1314,6 +1315,7 @@ void Au3dsGLSLObject::CreateBodyDeviceObject(AuOpenGLFunctions& GLf, Au3dsGLSLVA
 void Au3dsGLSLObject::LoadModel(Au3dsGLSLTriTexList& smdl, const Au3dsGLSLMaterialArray& materials, bool lightsOn,
 		MODEL_TYPE modelType, GLuint destBlendFunc)
 {
+	smdl.m_ObjectName = m_Name;
 	//qDebug() << "Au3dsGLSLObject::LoadModel" << m_Name << m_Faces.size() << HasPrecalculatedNormals(modelType);
 	// Calculate normals to each face so we can do smoothing calculations as
 	// we go.  Only needed for the old models exported from Symmetrica
@@ -4282,6 +4284,7 @@ bool Au3dsGLSLModelInstance::GLModel(AuGLEffects& re)
 	for(QList<Au3dsGLSLTriTexList>::const_iterator mi = m_IntModels.constBegin(); mi != m_IntModels.constEnd(); mi++)
 	{
 		Au3dsGLSLVAO model((*mi).m_DestBlendFunc, (*mi).m_GlowColor);
+		model.m_ObjectName = (*mi).m_ObjectName;
 		model.CreateForModelTexFog(re, *mi, GL_STATIC_DRAW);
 		m_Models.append(model);
 	}
@@ -4295,6 +4298,7 @@ bool Au3dsGLSLModelInstance::GLModel(AuGLEffects& re)
 		for(QList<Au3dsGLSLTriTexList>::const_iterator mi = m_IntModelsLit.constBegin(); mi != m_IntModelsLit.constEnd(); mi++)
 		{
 			Au3dsGLSLVAO model((*mi).m_DestBlendFunc, (*mi).m_GlowColor);
+			model.m_ObjectName = (*mi).m_ObjectName;
 			model.CreateForModelTexFog(re, *mi, GL_STATIC_DRAW);
 			m_ModelsLit.append(model);
 		}
@@ -4995,292 +4999,150 @@ void Au3dsGLSLModelInstance::CacheVisualBounds()
 	m_VisualBoundsValid = UploadedBounds(m_VisualMinimum, m_VisualMaximum);
 }
 
-bool Au3dsGLSLModelInstance::RenderGeometryInFrustum(const AuMatrix4x4& projection, const AuMatrix4x4& model,
-	const AuGLEffects& re) const
+bool Au3dsGLSLModelInstance::ObjectOrigin(const QString& name, AuPoint& origin) const
 {
+	for(const Au3dsGLSLObject& object : m_Objects)
+		if(object.Name() == name)
+		{
+			origin = object.Origin() * m_GeometryScale;
+			return true;
+		}
+	return false;
+}
+
+bool Au3dsGLSLModelInstance::RenderGeometryInFrustum(const AuMatrix4x4& projection, const AuMatrix4x4& model,
+	const AuGLEffects& re, const Au3dsGLSLObjectTransforms* objectTransforms) const
+{
+	if(!re.FrustumCulling()) return true;
+	if(objectTransforms && !objectTransforms->isEmpty())
+	{
+		// Test posed parts, since the barrels can extend beyond the rest-pose bounds.
+		for(const Au3dsGLSLVAO& object : m_Models)
+		{
+			if(!object.VAO()) continue;
+			AuPoint minimum, maximum;
+			if(!object.GetBounds(minimum, maximum)) return true;
+			AuMatrix4x4 posed(model);
+			Au3dsGLSLObjectTransforms::const_iterator transform = objectTransforms->constFind(object.m_ObjectName);
+			if(transform != objectTransforms->constEnd()) posed *= transform.value();
+			if(AuViewFrustum(projection * posed).IntersectsBox(minimum, maximum)) return true;
+		}
+		return false;
+	}
 	// Animated body models are culled using their posed anatomy by DaCreature.
-	return !re.FrustumCulling() || !m_VisualBoundsValid
+	return !m_VisualBoundsValid
 		|| AuViewFrustum(projection * model).IntersectsBox(m_VisualMinimum, m_VisualMaximum);
+}
+
+namespace
+{
+template<class Shader>
+void RenderModelObjects(const QList<Au3dsGLSLVAO>& objects, const AuMatrix4x4& model, AuGLEffects& re,
+	const Shader& shader, float alpha, bool useModelBlending, const Au3dsGLSLObjectTransforms* objectTransforms)
+{
+	QColor glowAlpha;
+	bool glowAlphaSet = false;
+	for(const Au3dsGLSLVAO& object : objects)
+	{
+		if(!object.VAO()) continue;
+		AuMatrix4x4 posed(model);
+		if(objectTransforms)
+		{
+			Au3dsGLSLObjectTransforms::const_iterator transform = objectTransforms->constFind(object.m_ObjectName);
+			if(transform != objectTransforms->constEnd()) posed *= transform.value();
+		}
+		shader.SetModelView(posed);
+		if(!glowAlphaSet || glowAlpha != object.m_GlowColor)
+		{
+			glowAlpha = object.m_GlowColor;
+			glowAlphaSet = true;
+			shader.SetGlowAlpha(glowAlpha.redF(), glowAlpha.greenF(), glowAlpha.blueF(), glowAlpha.alphaF() * alpha);
+		}
+		object.SelectGL();
+		if(useModelBlending) object.DrawGLBlend(re);
+		else object.DrawGL();
+		object.DeselectGL();
+	}
+	shader.SetModelView(model);
+}
 }
 
 void Au3dsGLSLModelInstance::RenderGLSLModelTex(const AuMatrix4x4& projection, const AuMatrix4x4& mv, AuGLEffects& re,
 		float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp, bool lightOn,
-		float alpha, bool useModelBlending) const
+		float alpha, bool useModelBlending, const Au3dsGLSLObjectTransforms* objectTransforms) const
 {
-	if(!RenderGeometryInFrustum(projection, mv, re)) return;
+	if(!RenderGeometryInFrustum(projection, mv, re, objectTransforms)) return;
 	re.GLSL().ModelTexShader().Select(projection, re);
 	re.GLSL().ModelTexShader().SetAmbientLight(ambientLightR, ambientLightG, ambientLightB);
 	re.GLSL().ModelTexShader().SetTexture(Texture());
-
-	RenderGLSLModelTexShader(mv, re, ambientLightUp, lightOn, alpha, useModelBlending);
-
+	RenderGLSLModelTexShader(mv, re, ambientLightUp, lightOn, alpha, useModelBlending, objectTransforms);
 	re.GLSL().ModelTexShader().Deselect();
 }
 
 void Au3dsGLSLModelInstance::RenderGLSLModelTexShader(const AuMatrix4x4& mv, AuGLEffects& re, const AuPoint& ambientLightUp,
-		bool lightOn, float alpha, bool useModelBlending) const
+		bool lightOn, float alpha, bool useModelBlending, const Au3dsGLSLObjectTransforms* objectTransforms) const
 {
-	re.GLSL().ModelTexShader().SetModelView(mv);
 	re.GLSL().ModelTexShader().SetAmbientLightUp(ambientLightUp.x, ambientLightUp.y, ambientLightUp.z);
-
-	// Render the model.
-	if(lightOn)
-	{
-		if(!m_ModelsLit.isEmpty())
-		{
-			QColor glowAlpha;
-			bool glowAlphaSet = false;
-			for(QList<Au3dsGLSLVAO>::const_iterator vi = m_ModelsLit.constBegin(); vi != m_ModelsLit.constEnd(); vi++)
-				if((*vi).VAO())
-				{
-					if(!glowAlphaSet || glowAlpha != (*vi).m_GlowColor)
-					{
-						glowAlpha = (*vi).m_GlowColor;
-						glowAlphaSet = true;
-						re.GLSL().ModelTexShader().SetGlowAlpha(glowAlpha.redF(), glowAlpha.greenF(), glowAlpha.blueF(),
-								glowAlpha.alphaF()*alpha);
-					}
-
-					(*vi).SelectGL();
-					if(useModelBlending)
-						(*vi).DrawGLBlend(re);
-					else
-						(*vi).DrawGL();
-					(*vi).DeselectGL();
-				}
-		}
-		else
-			if(s_ShowErrors)
-			qWarning() << "Au3dsGLSLModelInstance::RenderGLSL Expected lit version of model" << m_FileName;
-	}
-	else
-	{
-		QColor glowAlpha;
-		bool glowAlphaSet = false;
-		for(QList<Au3dsGLSLVAO>::const_iterator vi = m_Models.constBegin(); vi != m_Models.constEnd(); vi++)
-			if((*vi).VAO())
-			{
-				if(!glowAlphaSet || glowAlpha != (*vi).m_GlowColor)
-				{
-					glowAlpha = (*vi).m_GlowColor;
-					glowAlphaSet = true;
-					re.GLSL().ModelTexShader().SetGlowAlpha(glowAlpha.redF(), glowAlpha.greenF(), glowAlpha.blueF(),
-							glowAlpha.alphaF()*alpha);
-				}
-
-				(*vi).SelectGL();
-				if(useModelBlending)
-					(*vi).DrawGLBlend(re);
-				else
-					(*vi).DrawGL();
-				(*vi).DeselectGL();
-			}
-	}
+	if(lightOn && m_ModelsLit.isEmpty() && s_ShowErrors)
+		qWarning() << "Au3dsGLSLModelInstance::RenderGLSL Expected lit version of model" << m_FileName;
+	RenderModelObjects(lightOn ? m_ModelsLit : m_Models, mv, re, re.GLSL().ModelTexShader(),
+		alpha, useModelBlending, objectTransforms);
 }
 
 void Au3dsGLSLModelInstance::RenderGLSLModelTexFog(const AuMatrix4x4& projection, const AuMatrix4x4& mv, AuGLEffects& re,
 		float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp,
-		bool lightOn, float fogDensity, float fogR, float fogG, float fogB, float alpha, bool useModelBlending) const
+		bool lightOn, float fogDensity, float fogR, float fogG, float fogB, float alpha, bool useModelBlending,
+		const Au3dsGLSLObjectTransforms* objectTransforms) const
 {
-	if(!RenderGeometryInFrustum(projection, mv, re)) return;
+	if(!RenderGeometryInFrustum(projection, mv, re, objectTransforms)) return;
 	re.GLSL().ModelTexFogShader().Select(projection, re);
-	re.GLSL().ModelTexFogShader().SetModelView(mv);
 	re.GLSL().ModelTexFogShader().SetTexture(Texture());
 	re.GLSL().ModelTexFogShader().SetFog(fogDensity, fogR, fogG, fogB);
-
-	// Ambient light
 	re.GLSL().ModelTexFogShader().SetAmbientLight(ambientLightR, ambientLightG, ambientLightB);
 	re.GLSL().ModelTexFogShader().SetAmbientLightUp(ambientLightUp.x, ambientLightUp.y, ambientLightUp.z);
-
-	// Render the model.
-	if(lightOn)
-	{
-		if(!m_ModelsLit.isEmpty())
-		{
-			QColor glowAlpha;
-			bool glowAlphaSet = false;
-			for(QList<Au3dsGLSLVAO>::const_iterator vi = m_ModelsLit.constBegin(); vi != m_ModelsLit.constEnd(); vi++)
-				if((*vi).VAO())
-				{
-					if(!glowAlphaSet || glowAlpha != (*vi).m_GlowColor)
-					{
-						glowAlpha = (*vi).m_GlowColor;
-						glowAlphaSet = true;
-						re.GLSL().ModelTexFogShader().SetGlowAlpha(glowAlpha.redF(), glowAlpha.greenF(), glowAlpha.blueF(),
-								glowAlpha.alphaF()*alpha);
-					}
-
-					(*vi).SelectGL();
-					if(useModelBlending)
-						(*vi).DrawGLBlend(re);
-					else
-						(*vi).DrawGL();
-					(*vi).DeselectGL();
-				}
-		}
-		else
-			if(s_ShowErrors)
-			qWarning() << "Au3dsGLSLModelInstance::RenderGLSLModelTexFog Expected lit version of model" << m_FileName;
-	}
-	else
-	{
-		QColor glowAlpha;
-		bool glowAlphaSet = false;
-		for(QList<Au3dsGLSLVAO>::const_iterator vi = m_Models.constBegin(); vi != m_Models.constEnd(); vi++)
-			if((*vi).VAO())
-			{
-				if(!glowAlphaSet || glowAlpha != (*vi).m_GlowColor)
-				{
-					glowAlpha = (*vi).m_GlowColor;
-					glowAlphaSet = true;
-					re.GLSL().ModelTexFogShader().SetGlowAlpha(glowAlpha.redF(), glowAlpha.greenF(), glowAlpha.blueF(),
-							glowAlpha.alphaF()*alpha);
-				}
-
-				(*vi).SelectGL();
-				if(useModelBlending)
-					(*vi).DrawGLBlend(re);
-				else
-					(*vi).DrawGL();
-				(*vi).DeselectGL();
-			}
-	}
-
+	if(lightOn && m_ModelsLit.isEmpty() && s_ShowErrors)
+		qWarning() << "Au3dsGLSLModelInstance::RenderGLSLModelTexFog Expected lit version of model" << m_FileName;
+	RenderModelObjects(lightOn ? m_ModelsLit : m_Models, mv, re, re.GLSL().ModelTexFogShader(),
+		alpha, useModelBlending, objectTransforms);
 	re.GLSL().ModelTexFogShader().Deselect();
 }
 
 void Au3dsGLSLModelInstance::RenderGLSLModelTexFogGlobe(const AuMatrix4x4& projection, const AuMatrix4x4& mv, AuGLEffects& re,
 		const AuPoint& globeP, float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp,
-		bool lightOn, float fogDensity, float fogR, float fogG, float fogB, float alpha) const
+		bool lightOn, float fogDensity, float fogR, float fogG, float fogB, float alpha,
+		const Au3dsGLSLObjectTransforms* objectTransforms) const
 {
-	if(!RenderGeometryInFrustum(projection, mv, re)) return;
+	if(!RenderGeometryInFrustum(projection, mv, re, objectTransforms)) return;
 	re.GLSL().ModelTexFogGlobeShader().Select(projection, re);
-	re.GLSL().ModelTexFogGlobeShader().SetModelView(mv);
 	re.GLSL().ModelTexFogGlobeShader().SetTexture(Texture());
 	re.GLSL().ModelTexFogGlobeShader().SetGlobeLocation(globeP.x, globeP.y, globeP.z);
 	re.GLSL().ModelTexFogGlobeShader().SetFog(fogDensity, fogR, fogG, fogB);
-
-	// Ambient light
 	re.GLSL().ModelTexFogGlobeShader().SetAmbientLight(ambientLightR, ambientLightG, ambientLightB);
 	re.GLSL().ModelTexFogGlobeShader().SetAmbientLightUp(ambientLightUp.x, ambientLightUp.y, ambientLightUp.z);
-
-	// Render the model.
-	if(lightOn)
-	{
-		if(!m_ModelsLit.isEmpty())
-		{
-			QColor glowAlpha;
-			bool glowAlphaSet = false;
-			for(QList<Au3dsGLSLVAO>::const_iterator vi = m_ModelsLit.constBegin(); vi != m_ModelsLit.constEnd(); vi++)
-				if((*vi).VAO())
-				{
-					if(!glowAlphaSet || glowAlpha != (*vi).m_GlowColor)
-					{
-						glowAlpha = (*vi).m_GlowColor;
-						glowAlphaSet = true;
-						re.GLSL().ModelTexFogGlobeShader().SetGlowAlpha(glowAlpha.redF(), glowAlpha.greenF(), glowAlpha.blueF(),
-								glowAlpha.alphaF()*alpha);
-					}
-
-					(*vi).SelectGL();
-					(*vi).DrawGLBlend(re);
-					(*vi).DeselectGL();
-				}
-		}
-		else
-			if(s_ShowErrors)
-			qWarning() << "Au3dsGLSLModelInstance::RenderGLSLModelTexFog Expected lit version of model" << m_FileName;
-	}
-	else
-	{
-		QColor glowAlpha;
-		bool glowAlphaSet = false;
-		for(QList<Au3dsGLSLVAO>::const_iterator vi = m_Models.constBegin(); vi != m_Models.constEnd(); vi++)
-			if((*vi).VAO())
-			{
-				if(!glowAlphaSet || glowAlpha != (*vi).m_GlowColor)
-				{
-					glowAlpha = (*vi).m_GlowColor;
-					glowAlphaSet = true;
-					re.GLSL().ModelTexFogGlobeShader().SetGlowAlpha(glowAlpha.redF(), glowAlpha.greenF(), glowAlpha.blueF(),
-							glowAlpha.alphaF()*alpha);
-				}
-
-				(*vi).SelectGL();
-				(*vi).DrawGLBlend(re);
-				(*vi).DeselectGL();
-			}
-	}
-
+	if(lightOn && m_ModelsLit.isEmpty() && s_ShowErrors)
+		qWarning() << "Au3dsGLSLModelInstance::RenderGLSLModelTexFogGlobe Expected lit version of model" << m_FileName;
+	RenderModelObjects(lightOn ? m_ModelsLit : m_Models, mv, re, re.GLSL().ModelTexFogGlobeShader(),
+		alpha, true, objectTransforms);
 	re.GLSL().ModelTexFogGlobeShader().Deselect();
 }
 
 void Au3dsGLSLModelInstance::RenderGLSLModelTexFogRingworld(const AuMatrix4x4& projection, const AuMatrix4x4& mv, AuGLEffects& re,
 		float shadowPanelSunAngles[MAX_SUNS], float ambientLightR, float ambientLightG, float ambientLightB,
-		const AuPoint& ambientLightUp, bool lightOn, float fogDensity, float fogR, float fogG, float fogB, float alpha) const
+		const AuPoint& ambientLightUp, bool lightOn, float fogDensity, float fogR, float fogG, float fogB, float alpha,
+		const Au3dsGLSLObjectTransforms* objectTransforms) const
 {
-	if(!RenderGeometryInFrustum(projection, mv, re)) return;
+	if(!RenderGeometryInFrustum(projection, mv, re, objectTransforms)) return;
 	re.GLSL().ModelTexFogRingworldShader().Select(projection, re);
-	re.GLSL().ModelTexFogRingworldShader().SetModelView(mv);
 	re.GLSL().ModelTexFogRingworldShader().SetTexture(Texture());
 	re.GLSL().ModelTexFogRingworldShader().SetFog(fogDensity, fogR, fogG, fogB);
-
-	// Ambient light
 	re.GLSL().ModelTexFogRingworldShader().SetAmbientLight(ambientLightR, ambientLightG, ambientLightB);
 	re.GLSL().ModelTexFogRingworldShader().SetAmbientLightUp(ambientLightUp.x, ambientLightUp.y, ambientLightUp.z);
-
-	// Suns
 	for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
 		re.GLSL().ModelTexFogRingworldShader().SetSunShadowAngle(sunIndex, shadowPanelSunAngles[sunIndex]);
-
-	// Render the model.
-	if(lightOn)
-	{
-		if(!m_ModelsLit.isEmpty())
-		{
-			QColor glowAlpha;
-			bool glowAlphaSet = false;
-			for(QList<Au3dsGLSLVAO>::const_iterator vi = m_ModelsLit.constBegin(); vi != m_ModelsLit.constEnd(); vi++)
-				if((*vi).VAO())
-				{
-					if(!glowAlphaSet || glowAlpha != (*vi).m_GlowColor)
-					{
-						glowAlpha = (*vi).m_GlowColor;
-						glowAlphaSet = true;
-						re.GLSL().ModelTexFogRingworldShader().SetGlowAlpha(glowAlpha.redF(), glowAlpha.greenF(), glowAlpha.blueF(),
-								glowAlpha.alphaF()*alpha);
-					}
-
-					(*vi).SelectGL();
-					(*vi).DrawGLBlend(re);
-					(*vi).DeselectGL();
-				}
-		}
-		else
-			if(s_ShowErrors)
-			qWarning() << "Au3dsGLSLModelInstance::RenderGLSLModelTexFogRingworld Expected lit version of model" << m_FileName;
-	}
-	else
-	{
-		QColor glowAlpha;
-		bool glowAlphaSet = false;
-		for(QList<Au3dsGLSLVAO>::const_iterator vi = m_Models.constBegin(); vi != m_Models.constEnd(); vi++)
-			if((*vi).VAO())
-			{
-				if(!glowAlphaSet || glowAlpha != (*vi).m_GlowColor)
-				{
-					glowAlpha = (*vi).m_GlowColor;
-					glowAlphaSet = true;
-					re.GLSL().ModelTexFogRingworldShader().SetGlowAlpha(glowAlpha.redF(), glowAlpha.greenF(), glowAlpha.blueF(),
-							glowAlpha.alphaF()*alpha);
-				}
-
-				(*vi).SelectGL();
-				(*vi).DrawGLBlend(re);
-				(*vi).DeselectGL();
-			}
-	}
-
+	if(lightOn && m_ModelsLit.isEmpty() && s_ShowErrors)
+		qWarning() << "Au3dsGLSLModelInstance::RenderGLSLModelTexFogRingworld Expected lit version of model" << m_FileName;
+	RenderModelObjects(lightOn ? m_ModelsLit : m_Models, mv, re, re.GLSL().ModelTexFogRingworldShader(),
+		alpha, true, objectTransforms);
 	re.GLSL().ModelTexFogRingworldShader().Deselect();
 }
 

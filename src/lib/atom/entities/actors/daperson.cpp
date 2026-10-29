@@ -9628,6 +9628,10 @@ void DaPerson::ApplyMovement(unsigned int msElapsed)
 	// Orient to the terrain under my feet.
 	Orient(Location(), Transform().ProjectVector(TerrainNormal()));
 
+	// Predict Tank articulation with the same look angles sent in position reports.
+	DaVehicle* tank = dynamic_cast<DaVehicle*>(Parent());
+	if(tank) tank->PositionTankTurret(*this);
+
 	if(IsTurretIntegratedPose())
 	{
 		// Update parent vessel with my turret's new position.

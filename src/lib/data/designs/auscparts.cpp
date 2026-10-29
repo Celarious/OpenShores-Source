@@ -20483,10 +20483,26 @@ GLuint AuScTurret::OwnTexture(AuGLEffects& re) const
 
 void AuScTurret::TurretBaseMatrix(float baseRot, AuMatrix4x4& m) const
 {
+	BaseRotationMatrix(m_BasePivot, m_BaseAxis, baseRot, m);
+}
+
+void AuScTurret::BaseRotationMatrix(const AuPoint& pivot, const AuPoint& axis, float rotation, AuMatrix4x4& m)
+{
 	m.LoadIdentity();
-	m.Translate(m_BasePivot);
-	m.RotateAxis(baseRot, m_BaseAxis);
-	m.Translate(-m_BasePivot);
+	m.Translate(pivot);
+	m.RotateAxis(rotation, axis);
+	m.Translate(-pivot);
+}
+
+void AuScTurret::GunRotationMatrix(const AuPoint& basePivot, const AuPoint& baseAxis, float baseRotation,
+	const AuPoint& gunPivot, const AuPoint& gunAxis, float gunRotation, AuMatrix4x4& m)
+{
+	m.LoadIdentity();
+	m.Translate(basePivot);
+	m.RotateAxis(baseRotation, baseAxis);
+	m.Translate(gunPivot - basePivot);
+	m.RotateAxis(gunRotation, gunAxis);
+	m.Translate(-gunPivot);
 }
 
 void AuScTurret::TurretGunMatrix(float baseRot, float gunRot, AuMatrix4x4& m) const
@@ -20512,12 +20528,7 @@ void AuScTurret::TurretGunMatrix(float baseRot, float gunRot, AuMatrix4x4& m) co
 		m.Translate(-m_GunPivot);
 		return;
 	}
-	m.LoadIdentity();
-	m.Translate(m_BasePivot);
-	m.RotateAxis(baseRot, m_BaseAxis);
-	m.Translate(m_GunPivot - m_BasePivot);
-	m.RotateAxis(gunRot, m_GunAxis);
-	m.Translate(-m_GunPivot);
+	GunRotationMatrix(m_BasePivot, m_BaseAxis, baseRot, m_GunPivot, m_GunAxis, gunRot, m);
 }
 
 void AuScTurret::TurretSightMatrix(float baseRot, float gunRot, AuMatrix4x4& m) const

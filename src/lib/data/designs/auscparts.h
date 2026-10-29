@@ -9946,6 +9946,11 @@ public:	// Methods
 
 	virtual void TurretBaseMatrix(float baseRot, AuMatrix4x4& m) const;
 
+	// Shared by integrated spacecraft turrets and articulated vehicle models.
+	static void BaseRotationMatrix(const AuPoint& pivot, const AuPoint& axis, float rotation, AuMatrix4x4& m);
+	static void GunRotationMatrix(const AuPoint& basePivot, const AuPoint& baseAxis, float baseRotation,
+		const AuPoint& gunPivot, const AuPoint& gunAxis, float gunRotation, AuMatrix4x4& m);
+
 	virtual void TurretSightMatrix(float baseRot, float gunRot, AuMatrix4x4& m) const;
 
 	virtual void TurretGunMatrix(float baseRot, float gunRot, AuMatrix4x4& m) const;

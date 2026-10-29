@@ -18,6 +18,10 @@
 #define Au3dsGLSL_H
 
 #include "auglmodel.h"
+#include <QHash>
+
+// Supplied per draw; cached model geometry is never changed by animation.
+typedef QHash<QString, AuMatrix4x4> Au3dsGLSLObjectTransforms;
 
 class Au3dsGLSLModelLoader;
 class AuGLEffects;
@@ -252,6 +256,7 @@ enum VERT_GROUP
 class Au3dsGLSLVAO : public AuGLVAO
 {
 public:
+	QString m_ObjectName;
 	GLuint								m_DestBlendFunc;		// Destination blend function used when transparent.
 	QColor								m_GlowColor;			// Alpha is transparency alpha for this object.
 
@@ -299,6 +304,7 @@ public:
 class Au3dsGLSLTriTexList : public QList<AuTriTexNS>
 {
 public:
+	QString m_ObjectName; // Preserve mesh identity through worker loading and GPU upload.
 	GLuint								m_DestBlendFunc;		// Destination blend function used when transparent.
 	QColor								m_GlowColor;			// Alpha is transparency alpha for this object.
 
@@ -1599,6 +1605,8 @@ public:
 
 	bool TestForExtents(MODEL_TYPE modelType) const;								// based on name
 
+	inline AuPoint Origin() const { return m_Matrix.Translation(); }
+
 	bool TestForScreens(Au3dsGLSLScreen& screen1, Au3dsGLSLScreen& screen2) const;	// 'screen' is output if return is true
 
 	bool TestForStation(Au3dsGLSLStation& station, MODEL_TYPE modelType) const;			// 'station' is output if return is true
@@ -2440,11 +2448,13 @@ public:
 	// 'ambientLightUp' is in eye space.
 	void RenderGLSLModelTex(const AuMatrix4x4& projection, const AuMatrix4x4& mv, AuGLEffects& re,
 			float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp, bool lightOn,
-			float alpha=1.f, bool useModelBlending=true) const;
+			float alpha=1.f, bool useModelBlending=true,
+			const Au3dsGLSLObjectTransforms* objectTransforms=nullptr) const;
 
 	// ModelTexShader must already be selected and configured for this one.
 	void RenderGLSLModelTexShader(const AuMatrix4x4& mv, AuGLEffects& re, const AuPoint& ambientLightUp, bool lightOn,
-			float alpha=1.f, bool useModelBlending=true) const;
+			float alpha=1.f, bool useModelBlending=true,
+			const Au3dsGLSLObjectTransforms* objectTransforms=nullptr) const;
 
 	// Renders this model using the GLSL shader ModelTexFog. Gets current ambient light and fog from re.
 	// 'ambientLightUp' is in eye space.
@@ -2455,7 +2465,8 @@ public:
 	// 'ambientLightUp' is in eye space.
 	void RenderGLSLModelTexFog(const AuMatrix4x4& projection, const AuMatrix4x4& mv, AuGLEffects& re,
 			float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp, bool lightOn,
-			float fogDensity, float fogR, float fogG, float fogB, float alpha=1.f, bool useModelBlending=true) const;
+			float fogDensity, float fogR, float fogG, float fogB, float alpha=1.f, bool useModelBlending=true,
+			const Au3dsGLSLObjectTransforms* objectTransforms=nullptr) const;
 
 	// Renders this model using the GLSL shader ModelTexFogGlobe, using current render states in re.
 	// 'globeP' is used for sun over the horizon effect.
@@ -2468,7 +2479,8 @@ public:
 	// 'globeP' and 'ambientLightUp' are in eye space.
 	void RenderGLSLModelTexFogGlobe(const AuMatrix4x4& projection, const AuMatrix4x4& mv, AuGLEffects& re, const AuPoint& globeP,
 			float ambientLightR, float ambientLightG, float ambientLightB, const AuPoint& ambientLightUp, bool lightOn,
-			float fogDensity, float fogR, float fogG, float fogB, float alpha=1.f) const;
+			float fogDensity, float fogR, float fogG, float fogB, float alpha=1.f,
+			const Au3dsGLSLObjectTransforms* objectTransforms=nullptr) const;
 
 	// Renders this model using the GLSL shader ModelTexFogRingworld, using current render states in re.
 	void RenderGLSLModelTexFogRingworld(const AuMatrix4x4& projection, const AuMatrix4x4& mv, AuGLEffects& re,
@@ -2478,7 +2490,9 @@ public:
 	void RenderGLSLModelTexFogRingworld(const AuMatrix4x4& projection, const AuMatrix4x4& mv, AuGLEffects& re,
 			float shadowPanelSunAngles[MAX_SUNS], float ambientLightR, float ambientLightG, float ambientLightB,
 			const AuPoint& ambientLightUp, bool lightOn, float fogDensity, float fogR, float fogG, float fogB,
-			float alpha=1.f) const;
+			float alpha=1.f, const Au3dsGLSLObjectTransforms* objectTransforms=nullptr) const;
+
+	bool ObjectOrigin(const QString& name, AuPoint& origin) const;
 
 	virtual double RoughRadius() const
 	{
@@ -2614,7 +2628,8 @@ public:
 
 	virtual void ResourceReport(QDataStream& out) const;
 
-	bool RenderGeometryInFrustum(const AuMatrix4x4& projection, const AuMatrix4x4& model, const AuGLEffects& re) const;
+	bool RenderGeometryInFrustum(const AuMatrix4x4& projection, const AuMatrix4x4& model, const AuGLEffects& re,
+		const Au3dsGLSLObjectTransforms* objectTransforms=nullptr) const;
 	bool UploadedBounds(AuPoint& minimum, AuPoint& maximum) const;
 
 private:

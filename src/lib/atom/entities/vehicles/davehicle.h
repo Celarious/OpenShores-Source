@@ -10,6 +10,7 @@
 #include "augleffects.h"
 #include "auordnance.h"
 #include "aupose.h"
+#include "auschelpers.h"
 #include "auskill.h"
 #include "daunit.h"
 #include <QMutex>
@@ -145,6 +146,9 @@ private:
 	quint16								m_Hits;					// current hit points
 	AuElapsedTimer						m_tmHitsChanged;
 
+	AuTurretState m_TankTurret;
+	AuElapsedTimer m_TankTurretChanged;
+
 	// Ammunition
 	AuOrdnance							m_Gun;
 	AuOrdnance							m_Ord[2];
@@ -165,6 +169,7 @@ private:
 
 	// OpenGL
 	mutable Au3dsGLSLModelInstance*		m_Model;
+	void TankTurretTransforms(QHash<QString, AuMatrix4x4>& transforms) const;
 	PsEngineTrail*						m_pEngineTrail[MAX_VEHICLE_CONTRAILS];
 	AuGLVAO								m_WeaponVAO;			// Guns/Weapons icon.
 
@@ -216,6 +221,10 @@ public:
 	virtual DaAtom *Clone() const;
 
 	int ColonistsAboard() const;
+
+	// Seat zero aims the Legacy Tank until a dedicated gunner seat is enabled.
+	void PositionTankTurret(const DaCreature& occupant);
+	static float TankCameraPitch(float headTilt);
 
 	// 'attacker' is the atom that is causing the damage. The attacker id should be NULL when the attacker is not a DaUnit, like
 	//   when it is the environment or a sun or something.
@@ -1352,6 +1361,7 @@ public:
 		case CID_Helicopter:
 		case CID_Submarine:
 		case CID_SUV:
+		case CID_Tank:
 		case CID_APC:
 		case CID_FarmMachinery:
 			return true;

@@ -15,6 +15,7 @@
 #include "augleffects.h"
 #include "ausensorblip.h"
 #include "ausound.h"
+#include "auscparts.h"
 #include "daatomlist.h"
 #include "dabd.h"
 #include "dalegacycity.h"
@@ -35,6 +36,7 @@
 #include <QMutexLocker>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <cmath>
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
@@ -1272,6 +1274,8 @@ DaVehicle::DaVehicle(const DaVehicle &rhs) : DaUnit(rhs)
 	m_OrdSelect = rhs.m_OrdSelect;
 	m_tmFuelChanged = rhs.m_tmFuelChanged;
 	m_tmHitsChanged = rhs.m_tmHitsChanged;
+	m_TankTurret = rhs.m_TankTurret;
+	m_TankTurretChanged = rhs.m_TankTurretChanged;
 	m_tmLastBrake = rhs.m_tmLastBrake;
 	m_tmLastBrakeLV = rhs.m_tmLastBrakeLV;
 	m_tmLastPitchControl = rhs.m_tmLastPitchControl;
@@ -1316,6 +1320,7 @@ void DaVehicle::TxUpdate(QDataStream& toClient, const AuTime& tmLastUpdate, cons
 
 	// Start hasWhat with switches.
 	quint16 hasWhat = 0;
+	AuTurretState tankTurret;
 	if(lastTx.IsNull())
 		hasWhat |= 0x0001;	// One time only stuff.
 	if(m_Throttle || m_ThrustLateral || m_ThrustLong || m_ThrustVertical)
@@ -1336,6 +1341,12 @@ void DaVehicle::TxUpdate(QDataStream& toClient, const AuTime& tmLastUpdate, cons
 		hasWhat |= 0x0080;
 	if(lastTx.IsNull() || m_MotherShipChg >= lastTx)
 		hasWhat |= 0x0100;
+	if(m_cid == CID_Tank && g_Au.IsLegacyGeneration() &&
+		(lastTx.IsNull() || m_TankTurretChanged >= lastTx))
+	{
+		hasWhat |= 0x0800;
+		tankTurret = m_TankTurret;
+	}
 	m_VehicleLock.unlock();
 
 	if(m_OrdSelect)
@@ -1433,6 +1444,8 @@ void DaVehicle::TxUpdate(QDataStream& toClient, const AuTime& tmLastUpdate, cons
 		toClient << m_LaunchSpeed;
 		m_LaunchLock.unlock();
 	}
+	if(hasWhat & 0x0800)
+		toClient << tankTurret;
 }
 
 // Receive updates to this atom from a server.
@@ -1550,6 +1563,11 @@ void DaVehicle::RxUpdate(QDataStream& fromServer, bool isFirstUpdate)
 		fromServer >> m_LauncherShip;
 		fromServer >> m_LaunchSpeed;
 	}
+	if(hasWhat & 0x0800)
+	{
+		QWriteLocker lock(&m_VehicleLock);
+		fromServer >> m_TankTurret;
+	}
 }
 
 // Refresh data from valid counterpart.
@@ -1577,6 +1595,7 @@ bool DaVehicle::Refresh(DaAtom* pAtom, AuAtomRenderInfo* ari)
 	m_OrdSelect = pA->m_OrdSelect;
 	m_MotherShip = pA->m_MotherShip;
 	m_MotherShipName = pA->m_MotherShipName;
+	m_TankTurret = pA->m_TankTurret;
 
 	// Only the brake bits are sent to the client, for braking sound effects.
 	m_wActions &= ~ACT_BrakeMask;					// Turn off all brake bits.
@@ -2900,6 +2919,72 @@ bool DaVehicle::Orient(const AuPoint& atLoc, const AuPoint& terNormal)
 	return true;
 }
 
+float DaVehicle::TankCameraPitch(float headTilt)
+{
+	return qBound(-75.f * DEG2RADf, headTilt - 15.f * DEG2RADf, 45.f * DEG2RADf);
+}
+
+void DaVehicle::PositionTankTurret(const DaCreature& occupant)
+{
+	if(!g_Au.IsLegacyGeneration() || m_cid != CID_Tank ||
+		occupant.Parent() != this || occupant.VehicleSeatIndex() != 0 ||
+		!occupant.IsNormal() || occupant.IsBodyDyingOrDead() || occupant.RemoteCameraId())
+		return;
+
+	float yaw = occupant.Rotation().z;
+	const float headTilt = occupant.CurrentHeadTilt();
+	if(!std::isfinite(yaw) || !std::isfinite(headTilt)) return;
+	yaw = std::fmod(yaw, 2.f * PIf);
+	if(yaw > PIf) yaw -= 2.f * PIf;
+	if(yaw < -PIf) yaw += 2.f * PIf;
+
+	AuTurretState aim;
+	aim.SetBaseRotation(yaw);
+	// The chase camera's downward framing bias is not weapon elevation.
+	// Applying it here pins the barrels at their depression limit near neutral look.
+	aim.SetGunRotation(qBound(-10.f * DEG2RADf, headTilt, 60.f * DEG2RADf));
+	bool changed = false;
+	{
+		QWriteLocker lock(&m_VehicleLock);
+		// AuTurretState::operator!= returns equality in the legacy helper.
+		// Match DaSc::PositionTurret's explicit angle comparison instead.
+		if(m_TankTurret.BaseRotation() != aim.BaseRotation() ||
+			m_TankTurret.GunRotation() != aim.GunRotation())
+		{
+			m_TankTurret = aim;
+			m_TankTurretChanged.Set();
+			changed = true;
+		}
+	}
+	if(changed) SetModified();
+}
+
+void DaVehicle::TankTurretTransforms(QHash<QString, AuMatrix4x4>& transforms) const
+{
+	if(!g_Au.IsLegacyGeneration() || m_cid != CID_Tank || !m_Model) return;
+	AuPoint basePivot, gunPivot;
+	if(!m_Model->ObjectOrigin(QStringLiteral("Swivel"), basePivot) ||
+		!m_Model->ObjectOrigin(QStringLiteral("Barrels"), gunPivot))
+		return;
+
+	// This export has zero object origins. These attachment points are measured
+	// in its exported feet: the round swivel center and the barrel mounting collars.
+	// Future exports can provide the pivots directly through the object origins.
+	if(basePivot.IsFuzzyZero()) basePivot = AuPoint(0, -.20625, 5.62178);
+	if(gunPivot.IsFuzzyZero()) gunPivot = AuPoint(0, 3.81071, 5.62178);
+	AuTurretState aim;
+	{
+		QReadLocker lock(&m_VehicleLock);
+		aim = m_TankTurret;
+	}
+	AuMatrix4x4 base, gun;
+	AuScTurret::BaseRotationMatrix(basePivot, AuPoint(0, 0, 1), aim.BaseRotation(), base);
+	AuScTurret::GunRotationMatrix(basePivot, AuPoint(0, 0, 1), aim.BaseRotation(),
+		gunPivot, AuPoint(1, 0, 0), aim.GunRotation(), gun);
+	transforms.insert(QStringLiteral("Swivel"), base);
+	transforms.insert(QStringLiteral("Barrels"), gun);
+}
+
 void DaVehicle::CreateDeviceObjects(AuAtomRenderInfo& ari)
 {
 	DaUnit::CreateDeviceObjects(ari);
@@ -3090,6 +3175,9 @@ void DaVehicle::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRen
 		ari.re->DisableSuns(sunsDisabled);
 
 	// Render the 'lit' version of the model, if there is one. It tends to look more interesting.
+	Au3dsGLSLObjectTransforms objectTransforms;
+	TankTurretTransforms(objectTransforms);
+	const Au3dsGLSLObjectTransforms* posedObjects = objectTransforms.isEmpty() ? nullptr : &objectTransforms;
 	if(IsInAtmosphere())
 	{
 		const DaWorld* world = FindParentPlanetInEnv();
@@ -3106,7 +3194,7 @@ void DaVehicle::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRen
 					shadowPanelSunAngles[sunIndex] = rsworld->ShadowPanelSunAngle(sun.m_ShadowAngle);
 				}
 				m_Model->RenderGLSLModelTexFogRingworld(projection, model, *ari.re, shadowPanelSunAngles, ambientR, ambientG,
-						ambientB, ambientUp, IsLightOn(), fogDensity, fogR, fogG, fogB);
+						ambientB, ambientUp, IsLightOn(), fogDensity, fogR, fogG, fogB, 1.f, posedObjects);
 			}
 			else
 			{
@@ -3117,14 +3205,15 @@ void DaVehicle::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRen
 				AuPoint globeP = m.UnProject(0,0,0);		// Globe's position relative to me.
 				globeP = model.Project(globeP);				// Globe's position in eye space.
 				m_Model->RenderGLSLModelTexFogGlobe(projection, model, *ari.re, globeP, ambientR, ambientG, ambientB,
-						ambientUp, IsLightOn(), fogDensity, fogR, fogG, fogB);
+						ambientUp, IsLightOn(), fogDensity, fogR, fogG, fogB, 1.f, posedObjects);
 			}
 		}
 	}
 	else
 	{
 		// Not inside atmosphere range of a world.
-		m_Model->RenderGLSLModelTex(projection, model, *ari.re, ambientR, ambientG, ambientB, ambientUp, IsLightOn());
+		m_Model->RenderGLSLModelTex(projection, model, *ari.re, ambientR, ambientG, ambientB, ambientUp,
+			IsLightOn(), 1.f, true, posedObjects);
 	}
 
 	// Restore suns that I disabled.
@@ -7457,6 +7546,10 @@ void DaVehicle::GetRenderLightsRecursive(const DaPerson& person, const AuMatrix4
 		case CID_FarmMachinery:
 			lpos = model.Project(0, max.y, 2);
 			break;
+		case CID_Tank:
+			// Centered just ahead of the hull, three feet above its base.
+			lpos = model.Project(0, 10.75, 3.0);
+			break;
 		}
 
 // Attenuation range of lights.
@@ -7503,6 +7596,7 @@ void DaVehicle::GetRenderLightsRecursive(const DaPerson& person, const AuMatrix4
 			cosOuterCone = 0.0f;			// 90 degrees
 			break;
 		case CID_SUV:
+		case CID_Tank:
 		case CID_APC:
 		case CID_FarmMachinery:
 			lvec = model.ProjectVector(AuPoint(0,1,0));
