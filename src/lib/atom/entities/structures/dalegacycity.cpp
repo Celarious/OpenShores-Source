@@ -1673,12 +1673,24 @@ double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altit
 			continue;
 		}
 		const AuPoint p = site.inverse.Project(worldLocation);
-		// DpBuilding::AdjustAltMSL 0x597380/0x5976a0 keeps the submerged
-		// part of a coastal hydroelectric site three meters below sea level.
+		// DpBuilding::AdjustAltMSL 0x597380/0x5976a0 keeps submerged parts
+		// of coastal wharves/shipyards, water treatment and hydroelectric sites
+		// ten, two and three meters below sea level, respectively.
 		// IsUnderSea 0x5a2bb0 exempts buildings placed on the sea bottom.
 		const bool underSea = world.Hydrographics() && dev.altitudeMSL <= -32;
-		const double siteAltitude = dev.industryId == 62 && altitudeMSL < 0 && !underSea
-			? double(-9.84252f) : dev.altitudeMSL;
+		double siteAltitude = dev.altitudeMSL;
+		if(altitudeMSL < 0 && !underSea)
+			switch(dev.industryId)
+			{
+			case 34: // Wharf.
+			case 85: // Shipyard.
+				siteAltitude = double(-32.8084f); break;
+			case 89: // Water treatment plant.
+				siteAltitude = double(-6.56168f); break;
+			case 62: // Hydroelectric power plant.
+				siteAltitude = double(-9.84252f); break;
+			default: break;
+			}
 		const float margin = std::max(float(std::abs(p.x))-site.halfWidth, float(std::abs(p.y))-site.halfLength);
 		if(margin >= 32.8084f) continue;
 		if(margin > 0)
