@@ -5370,7 +5370,14 @@ void AuAtomInterface::OrdnanceLoad(int rack, const AuItem& ord)
 			}
 			// Only certain locations can provide ordnance.
 			INDUSTRYID iid = vehicle->InIndustry();
-			if(DbIndustry::CanSupplyOrdnance(iid))
+			if(DaLegacyCity* city = vehicle->OrdnanceCity())
+			{
+				if(vehicle->LoadCityOrdnance(*city, ord))
+					resultMsg = tr("%1 loaded into tank guns from %2.").arg(ord.SayName()).arg(city->Name());
+				else
+					resultMsg = tr("The selected ammunition is no longer available from %1.").arg(city->Name());
+			}
+			else if(DbIndustry::CanSupplyOrdnance(iid))
 			{
 				const DaWorld* world = vehicle->FindParentPlanetInEnv();
 				if(world)
@@ -11055,7 +11062,12 @@ void AuAtomInterface::OrdnanceList(AuId& loaderId, AuItemHash& ordnance)
 		{
 			// Only certain locations can provide ordnance.
 			INDUSTRYID iid = vehicle->InIndustry();
-			if(DbIndustry::CanSupplyOrdnance(iid))
+			if(const DaLegacyCity* city = vehicle->OrdnanceCity())
+			{
+				loaderId = city->Id();
+				city->ListVehicleOrdnance(*vehicle, ordnance);
+			}
+			else if(DbIndustry::CanSupplyOrdnance(iid))
 			{
 				const DaWorld* world = vehicle->FindParentPlanetInEnv();
 				if(world)

@@ -15,6 +15,7 @@ class AuCityReportHistory;
 class AuGlobeRock;
 class AuItemHash;
 class AuItem;
+class AuOrdnance;
 class AuPointArray;
 class AuResKey;
 class DaItem;
@@ -96,6 +97,11 @@ public:
 	bool OperateBank(DaPerson& person, const AuLegacyCityProtocol::Request& request,
 		AuLegacyCityProtocol::Reply& reply);
 	void ServiceVehicle(DaVehicle& vehicle, DaPerson& person);
+	bool CanSupplyVehicleOrdnance(const DaVehicle& vehicle) const;
+	void ListVehicleOrdnance(const DaVehicle& vehicle, AuItemHash& ordnance) const;
+	// Caller holds the vehicle's ammunition lock; commits the stock exchange
+	// before returning one owned ammunition item for the vehicle to load.
+	AuItem* ExchangeVehicleOrdnance(const DaVehicle& vehicle, const AuItem& requested, const AuOrdnance& previous);
 	void ReceiveTaxLevy(double amount);
 	void ApplyWealthLevy(const AuLegacyCity::WealthLevyOrder& order);
 	bool Revolt(const QString& reason);

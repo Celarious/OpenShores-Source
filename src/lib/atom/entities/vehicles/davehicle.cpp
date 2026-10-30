@@ -34,6 +34,7 @@
 #include "dicontrolinput.h"
 #include "psfiresmoketrail.h"
 #include <QMutexLocker>
+#include <QScopedPointer>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <cmath>
@@ -3025,6 +3026,25 @@ AuPoint DaVehicle::TankMuzzle(int barrel)
 	return AuPoint((barrel & 1) ? 1.807912 : -1.807912, 20.388109, 6.854069);
 }
 
+const DaAtom* DaVehicle::TankMissileTarget(const DaCreature& gunner, AuPoint& targetSystemLocation) const
+{
+	if(gunner.Parent() != this || !IsTankGunnerSeat(gunner.VehicleSeatIndex()) || gunner.IsBodyDyingOrDead()) return nullptr;
+	{
+		QReadLocker lock(&m_VehicleLock);
+		if(!m_Gun.IsMissile()) return nullptr;
+	}
+	const DaAtom* system = FindEnvironmentAtom();
+	AuMatrix4x4 sight;
+	if(!system || !TankTurretSightMatrix(gunner.Rotation().z, gunner.CurrentHeadTilt(), sight)) return nullptr;
+	AuId worldId;
+	const int domain = GunnerDomain(worldId);
+	double distance = FeetPerOrbit();
+	// Same neutral/enemy and domain rules as the existing vehicle/turret locks.
+	// Both the HUD and paired launch use this selector and camera location.
+	return system->FindClosestMissileTarget(Id(), domain, worldId, EmpireId(),
+		EnvTransform().Project(sight.Translation()), nullptr, targetSystemLocation, distance);
+}
+
 void DaVehicle::TankTurretTransforms(QHash<QString, AuMatrix4x4>& transforms) const
 {
 	if(!g_Au.IsLegacyGeneration() || m_cid != CID_Tank) return;
@@ -5800,7 +5820,7 @@ void DaVehicle::RenderAudioSources(const DaPerson* sceneAtom, const AuMatrix4x4&
 			if(!IsEngineOn())
 				break;
 			engineSnd = SOUND_Tank_Idle;
-			gain *= 2;
+			gain *= 4;
 			if(!IsFuzzyZero(vec.y))
 			{
 				// Lots of transmission choices for this guy from 4 to 6 speeds.
@@ -8511,7 +8531,9 @@ void DaVehicle::RenderBodyStats(float left, float bottom, float wid, float ht, b
 	}
 
 	// Locked-on Blip
-	if(!IsInSpacecraft() && (IsEngineOn() || IsLightOn()))
+	const bool tankGunnerHud = sceneAtom && sceneAtom->Parent() == this && IsTankGunnerSeat(sceneAtom->VehicleSeatIndex())
+		&& !sceneAtom->IsBodyDyingOrDead() && !sceneAtom->RemoteCameraId() && !ari.IsViewTopDown();
+	if(tankGunnerHud || (!IsInSpacecraft() && (IsEngineOn() || IsLightOn())))
 	{
 		// HUD is visible.
 		// HUD reticle colors
@@ -8523,7 +8545,7 @@ void DaVehicle::RenderBodyStats(float left, float bottom, float wid, float ht, b
 		float a = (float)hudIntensity / 10.f;
 
 		DaAtom* system = FindEnvironmentAtom();
-		if(m_Ord[m_OrdSelect].IsMissile())
+		if(system && (tankGunnerHud ? WeaponLoad(RACK_Gun).IsMissile() : m_Ord[m_OrdSelect].IsMissile()))
 		{
 			// Current ordnance is guided.
 			AuId gunnerWorldId;
@@ -8531,8 +8553,8 @@ void DaVehicle::RenderBodyStats(float left, float bottom, float wid, float ht, b
 
 			AuPoint targSysLoc;
 			double dist = FeetPerOrbit();
-			const DaAtom* target = system->FindClosestMissileTarget(Id(), gunnerDomain, gunnerWorldId, EmpireId(), EnvLocation(), 0,
-					targSysLoc, dist);
+			const DaAtom* target = tankGunnerHud ? TankMissileTarget(*sceneAtom, targSysLoc)
+				: system->FindClosestMissileTarget(Id(), gunnerDomain, gunnerWorldId, EmpireId(), EnvLocation(), 0, targSysLoc, dist);
 			if(target)
 			{
 				// Get the target blip location in the scene atom's eye space.
@@ -8557,7 +8579,7 @@ void DaVehicle::RenderBodyStats(float left, float bottom, float wid, float ht, b
 		}
 
 		AuId motherShipId(MotherShip());
-		if(!motherShipId.IsNull())
+		if(system && !motherShipId.IsNull())
 		{
 			// Show a reticle on my mother ship.
 			const DaVessel* motherShip = dynamic_cast<DaVessel*>(system->FindIdRecursive(motherShipId));
@@ -9756,98 +9778,134 @@ bool DaVehicle::FireGun(const DaCreature* gunner)
 	else
 		emitDir = AuPoint(0,1,0);
 
-	if(m_Gun.IsEnergyWeapon())
+	const AuOrdnance rounds(m_Gun);
+	const int shots = tankVolley ? 2 : 1;
+	const SOUND_EFFECT sound = (SOUND_EFFECT)rounds.SoundFired();
+	const VISUAL_EFFECT visual = rounds.VisualFired();
+	m_VehicleLock.unlock();
+
+	AuPoint volleyTarget, missileTargetSystemLocation;
+	const DaAtom* missileTarget = nullptr;
+	if(tankVolley)
 	{
-		// Determine appropriate weapon effects.
-		AuCombatWeapon weapon(m_Gun.Ammo(), 1);
-		weapon.m_CID = m_cid;
-		SOUND_EFFECT sound = (SOUND_EFFECT)m_Gun.SoundFired();
-		VISUAL_EFFECT visual = m_Gun.VisualFired();
-		m_VehicleLock.unlock();
-
-		// Select target(s) in the firing direction of the vehicle.
-		// Initialize sight dist for target search at max range.
-		AuPoint sightedLoc = emitLoc + emitDir * weapon.m_Range;
-
-		// Get reverse transformation back up to the parent solar system
-		const AuMatrix4x4& mesys = EnvTransform();
-		AuMatrix4x4 tModel = mesys.Inverse();
-
-		// Ask the solar system to find the nearest solid atom that is in front of the weapon.
 		unsigned int sightedPart = 0;
 		bool sightedShield = false;
-		DaAtom* sightedAtom = system->SightTarget(this, emitLoc, tModel, 0, sightedLoc, sightedPart, sightedShield, 0);
-		if(sightedAtom && !sightedAtom->IsNoncombatant())
+		TankSightTarget(gunner->Rotation().z, gunner->CurrentHeadTilt(), volleyTarget, sightedPart, sightedShield);
+		if(rounds.IsMissile())
 		{
-			// Target found and it is not protected from attack.
-			// Add weapon fire effect to weapon.
-			if(sound != SOUND_None || visual != VISUAL_None)
-			{
-				AuEffect effect(emitLoc, AuPoint(0,0), AuPoint(0,0), sound, 1, 1, visual);
-				effect.SetTargetLoc(sightedLoc);
-				effect.SetEnergyBeamEffect(weapon.m_w1.m_Effect);
-				AddEffect(effect);
-			}
-
-			double targDist = emitLoc.Distance(sightedLoc);
-			/*
-			if(targDist < weapon.m_Range && weapon.m_Range > 0)
-			{
-				// Calculate damage of energy weapons due to distance dropoff to target hit location.
-				// Energy weapons must know the actual distance to the target to calculate damage amount.
-				float dropOff = 1.f - targDist / weapon.m_Range;
-				const float weaponPower = TurretPower(m_Quality);
-				float targetE = round(weaponPower * dropOff);
-				weapon.m_w1.m_Damage = (int)ceilf(targetE/2.f);
-				weapon.m_w1.m_DamageMod = (int)round(targetE) - weapon.m_w1.m_Damage;
-			}
-			else
-			{
-				// Weapon is out of range.
-				weapon.m_w1.m_Damage = 0;
-				weapon.m_w1.m_DamageMod = 0;
-				weapon.m_w1.m_AP = 0;
-				weapon.m_w1.m_ST = 0;
-				weapon.m_w2.m_Damage = 0;
-				weapon.m_w2.m_DamageMod = 0;
-				weapon.m_w2.m_AP = 0;
-				weapon.m_w2.m_ST = 0;
-			}
-			*/
-
-			QString n;
-			if(IsEnclosed())
-				n = tr("%1 in %2").arg(gunner->Name()).arg(Name());
-			else
-				n = tr("%1 on %2").arg(gunner->Name()).arg(Name());
-			AuCombatAttacker attacker(gunner->Id(), n, gunner->EmpireId());
-			attacker.m_MuzzleLoc = emitLoc;
-
-			AuCombatDefender defender(sightedAtom, sightedLoc, sightedShield, targDist);
-
-			AuCombatResult result;
-
-			AttackTarget(attacker, defender, weapon, true, result);
+			missileTarget = TankMissileTarget(*gunner, missileTargetSystemLocation);
+			if(missileTarget) volleyTarget = EnvTransform().UnProject(missileTargetSystemLocation);
 		}
-		else
+		const AuPoint barrelForward = tankGun.ProjectVector(AuPoint(0, 1, 0));
+		for(int barrel = 0; barrel < shots; ++barrel)
+			if((volleyTarget - tankGun.Project(TankMuzzle(barrel))).Dot(barrelForward) <= 0)
+				return false;
+
+		// Reserve both rounds/charges together before either barrel fires.
+		QWriteLocker lock(&m_VehicleLock);
+		if(!m_Gun.CanFire() || m_Gun.RoundsCount() < shots || !m_Gun.Ammo()->IsItem(*rounds.Ammo()))
+			return false;
+		for(int shot = 0; shot < shots; ++shot) m_Gun.Fired();
+	}
+
+	if(rounds.IsEnergyWeapon())
+	{
+		// Determine appropriate weapon effects.
+		AuCombatWeapon weapon(rounds.Ammo(), 1);
+		weapon.m_CID = m_cid;
+
+		for(int shot = 0; shot < shots; ++shot)
 		{
-			// Add weapon fire effect to weapon.
-			if(sound != SOUND_None || visual != VISUAL_None)
+			if(tankVolley)
 			{
-				AuEffect effect(emitLoc, AuPoint(0,0), AuPoint(0,0), sound, 1, 1, visual);
-				effect.SetTargetLoc(sightedLoc);
-				effect.SetEnergyBeamEffect(weapon.m_w1.m_Effect);
-				AddEffect(effect);
+				emitLoc = tankGun.Project(TankMuzzle(shot));
+				emitDir = volleyTarget - emitLoc;
+				emitDir.Unit();
+			}
+			// Select target(s) in the firing direction of the vehicle.
+			// Initialize sight dist for target search at max range.
+			AuPoint sightedLoc = emitLoc + emitDir * weapon.m_Range;
+
+			// Get reverse transformation back up to the parent solar system
+			const AuMatrix4x4& mesys = EnvTransform();
+			AuMatrix4x4 tModel = mesys.Inverse();
+
+			// Ask the solar system to find the nearest solid atom that is in front of the weapon.
+			unsigned int sightedPart = 0;
+			bool sightedShield = false;
+			DaAtom* sightedAtom = system->SightTarget(this, emitLoc, tModel, 0, sightedLoc, sightedPart, sightedShield, 0);
+			if(sightedAtom && !sightedAtom->IsNoncombatant())
+			{
+				// Target found and it is not protected from attack.
+				// Add weapon fire effect to weapon.
+				if(sound != SOUND_None || visual != VISUAL_None)
+				{
+					AuEffect effect(emitLoc, AuPoint(0,0), AuPoint(0,0), sound, 1, 1, visual);
+					effect.SetTargetLoc(sightedLoc);
+					effect.SetEnergyBeamEffect(weapon.m_w1.m_Effect);
+					AddEffect(effect);
+				}
+
+				double targDist = emitLoc.Distance(sightedLoc);
+				/*
+				if(targDist < weapon.m_Range && weapon.m_Range > 0)
+				{
+					// Calculate damage of energy weapons due to distance dropoff to target hit location.
+					// Energy weapons must know the actual distance to the target to calculate damage amount.
+					float dropOff = 1.f - targDist / weapon.m_Range;
+					const float weaponPower = TurretPower(m_Quality);
+					float targetE = round(weaponPower * dropOff);
+					weapon.m_w1.m_Damage = (int)ceilf(targetE/2.f);
+					weapon.m_w1.m_DamageMod = (int)round(targetE) - weapon.m_w1.m_Damage;
+				}
+				else
+				{
+					// Weapon is out of range.
+					weapon.m_w1.m_Damage = 0;
+					weapon.m_w1.m_DamageMod = 0;
+					weapon.m_w1.m_AP = 0;
+					weapon.m_w1.m_ST = 0;
+					weapon.m_w2.m_Damage = 0;
+					weapon.m_w2.m_DamageMod = 0;
+					weapon.m_w2.m_AP = 0;
+					weapon.m_w2.m_ST = 0;
+				}
+				*/
+
+				QString n;
+				if(IsEnclosed())
+					n = tr("%1 in %2").arg(gunner->Name()).arg(Name());
+				else
+					n = tr("%1 on %2").arg(gunner->Name()).arg(Name());
+				AuCombatAttacker attacker(gunner->Id(), n, gunner->EmpireId());
+				attacker.m_MuzzleLoc = emitLoc;
+
+				AuCombatDefender defender(sightedAtom, sightedLoc, sightedShield, targDist);
+
+				AuCombatResult result;
+
+				AttackTarget(attacker, defender, weapon, true, result);
+			}
+			else
+			{
+				// Add weapon fire effect to weapon.
+				if(sound != SOUND_None || visual != VISUAL_None)
+				{
+					AuEffect effect(emitLoc, AuPoint(0,0), AuPoint(0,0), sound, 1, 1, visual);
+					effect.SetTargetLoc(sightedLoc);
+					effect.SetEnergyBeamEffect(weapon.m_w1.m_Effect);
+					AddEffect(effect);
+				}
 			}
 		}
 
 		// Gun fired.
 		// Expend ammo and update fire time and sequencer.
 		m_VehicleLock.lockForWrite();
-		m_Gun.Fired();
+		if(!tankVolley) m_Gun.Fired();
 
 		// Energy weapon automatically reloads using one unit of fuel.
-		if(!m_Gun.RoundsCount() && m_Fuel > 1)
+		if(!m_Gun.RoundsCount() && m_Gun.IsEnergyWeapon() && m_Fuel > 1)
 		{
 			m_Gun.Reload(MaxWeaponRounds(m_Gun.CommodityId()));
 			m_Fuel--;
@@ -9858,33 +9916,6 @@ bool DaVehicle::FireGun(const DaCreature* gunner)
 	else
 	{
 		// Gun fires a bullet if it's not an energy weapon.
-		const AuOrdnance rounds(m_Gun);
-		const int shots = tankVolley ? 2 : 1;
-		const SOUND_EFFECT sound = (SOUND_EFFECT)rounds.SoundFired();
-		const VISUAL_EFFECT visual = rounds.VisualFired();
-		m_VehicleLock.unlock();
-
-		AuPoint volleyTarget;
-		if(tankVolley)
-		{
-			unsigned int sightedPart = 0;
-			bool sightedShield = false;
-			// Query once through the gunner's crosshair, ignoring this tank and
-			// its occupants. Both muzzle rays converge on the same hit/end point.
-			TankSightTarget(gunner->Rotation().z, gunner->CurrentHeadTilt(), volleyTarget, sightedPart, sightedShield);
-			const AuPoint barrelForward = tankGun.ProjectVector(AuPoint(0, 1, 0));
-			for(int barrel = 0; barrel < shots; ++barrel)
-				if((volleyTarget - tankGun.Project(TankMuzzle(barrel))).Dot(barrelForward) <= 0)
-					return false; // A sight obstruction behind the muzzles cannot be fired at.
-
-			// Reserve the complete pair before creating either projectile.
-			QWriteLocker lock(&m_VehicleLock);
-			if(!m_Gun.CanFire() || m_Gun.RoundsCount() < shots || m_Gun.CommodityId() != rounds.CommodityId())
-				return false;
-			for(int shot = 0; shot < shots; ++shot)
-				m_Gun.Fired();
-		}
-
 		for(int shot = 0; shot < shots; ++shot)
 		{
 			if(tankVolley)
@@ -9893,7 +9924,10 @@ bool DaVehicle::FireGun(const DaCreature* gunner)
 				emitDir = volleyTarget - emitLoc;
 				emitDir.Unit();
 			}
-			DaMissile* bullet = new DaMissile(*rounds.Ammo(), 1, EmpireId());
+			DaMissile* bullet = missileTarget
+				? new DaMissile(*rounds.Ammo(), 1, EmpireId(), missileTarget->Id(),
+					missileTarget->EnvTransform().UnProject(missileTargetSystemLocation))
+				: new DaMissile(*rounds.Ammo(), 1, EmpireId());
 			bullet->ConnectSignals();
 			bullet->Create();
 
@@ -10188,6 +10222,28 @@ int DaVehicle::LegacyTankGunRounds(COMMODITYID ordCID)
 	case CID_HeavyArmsAmmoPiRa:
 	case CID_HeavyArmsAmmoPiBl:
 	case CID_HeavyArmsAmmoPiAc:
+	case CID_StasisBeam:
+	case CID_NeutronBeam:
+	case CID_ElectronBeam:
+	case CID_ErgRay:
+	case CID_FreezeRay:
+	case CID_CompressorBeam:
+	case CID_DisruptorBeam:
+	case CID_HeatRay:
+	case CID_ProtonBeam:
+	case CID_DisintegratorRay:
+	case CID_LargeMissileBl:
+	case CID_LargeMissileBlBu:
+	case CID_LargeMissileSlPo:
+	case CID_LargeRocketBl:
+	case CID_LargeRocketBlBu:
+	case CID_LargeRocketBuDi:
+	case CID_SmallMissileBl:
+	case CID_SmallMissileBlBu:
+	case CID_SmallMissileCrFr:
+	case CID_SmallRocketBl:
+	case CID_SmallRocketBlBu:
+	case CID_SmallRocketSlPi:
 		return MaxWeaponRounds(CID_APC, ordCID);
 	default:
 		return 0;
@@ -10196,8 +10252,13 @@ int DaVehicle::LegacyTankGunRounds(COMMODITYID ordCID)
 
 DaVehicle::WEAPON_RACK DaVehicle::CanLoadAmmunition(const AuItem& item) const
 {
-	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank && !LegacyTankGunRounds(item.CommodityId()))
-		return RACK_None;
+	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank)
+	{
+		if(!LegacyTankGunRounds(item.CommodityId())) return RACK_None;
+		QReadLocker lock(&m_VehicleLock);
+		return m_Gun.RoundsCount() < MaxWeaponRounds(m_Gun.CommodityId()) || !m_Gun.RoundsCount()
+			? RACK_Gun : RACK_None;
+	}
 	// Only certain vehicles can load ordnance.
 	WEAPON_RACK loadRack = RACK_None;
 	switch(item.CommodityId())
@@ -10256,6 +10317,31 @@ DaVehicle::WEAPON_RACK DaVehicle::CanLoadAmmunition(const AuItem& item) const
 		break;
 	}
 	return loadRack;
+}
+
+DaLegacyCity* DaVehicle::OrdnanceCity() const
+{
+	if(!g_Au.IsLegacyGeneration() || m_cid != CID_Tank || IsInSpacecraft()) return nullptr;
+	const AuId cityId = LockEnvironmentQuery()->LegacyCityId();
+	UnlockEnvironmentQuery();
+	const DaWorld* world = FindParentPlanetInEnv();
+	DaLegacyCity* city = world ? dynamic_cast<DaLegacyCity*>(world->FindSubatomId(cityId)) : nullptr;
+	return city && city->CanSupplyVehicleOrdnance(*this) ? city : nullptr;
+}
+
+bool DaVehicle::LoadCityOrdnance(DaLegacyCity& city, const AuItem& item)
+{
+	if(!g_Au.IsLegacyGeneration() || m_cid != CID_Tank || !LegacyTankGunRounds(item.CommodityId())) return false;
+	QMutexLocker serviceLock(&m_LegacyServiceLock);
+	{
+		// Serialize stock exchange and replacement with firing and other loaders.
+		QWriteLocker lock(&m_VehicleLock);
+		QScopedPointer<AuItem> selected(city.ExchangeVehicleOrdnance(*this, item, m_Gun));
+		if(!selected) return false;
+		m_Gun.Load(*selected, MaxWeaponRounds(selected->CommodityId()));
+	}
+	SetModified();
+	return true;
 }
 
 void DaVehicle::LoadAmmunition(const AuItem& item, WEAPON_RACK rack)

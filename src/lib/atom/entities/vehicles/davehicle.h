@@ -21,6 +21,7 @@ class Au3dsModelInstance;
 class AuItem;
 class AuSensorBlipList;
 class DaCreature;
+class DaLegacyCity;
 class DaNpc;
 class PsEngineTrail;
 
@@ -204,6 +205,8 @@ public:
 	bool CanBdFetch(VEHICLE_SPOT_TYPE spotType, const DaBd* fetcher) const;
 
 	WEAPON_RACK CanLoadAmmunition(const AuItem& item) const;
+	bool LoadCityOrdnance(DaLegacyCity& city, const AuItem& item);
+	DaLegacyCity* OrdnanceCity() const;
 
 	// Returns true if any changes are made.
 	inline bool ClearMotherShip()
@@ -747,6 +750,7 @@ public:
 	void PositionTankTurret(const DaCreature& gunner);
 	bool TankTurretSightMatrix(float baseRotation, float gunRotation, AuMatrix4x4& sight) const;
 	DaAtom* TankSightTarget(float baseRotation, float gunRotation, AuPoint& target, unsigned int& part, bool& shield) const;
+	const DaAtom* TankMissileTarget(const DaCreature& gunner, AuPoint& targetSystemLocation) const;
 
 	bool IsControlSeat(int seatIndex) const
 	{

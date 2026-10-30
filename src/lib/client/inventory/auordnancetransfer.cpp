@@ -10,6 +10,7 @@
 #include "auframe.h"
 #include "auview.h"
 #include "dabd.h"
+#include "dalegacycity.h"
 #include "daperson.h"
 #include "davessel.h"
 #include "davehicle.h"
@@ -287,6 +288,7 @@ void AuOrdnanceTransfer::UpdateContents()
 				if(g_Au.IsLegacyGeneration())
 				{
 					m_MyPic->setPixmap(QPixmap(":data/c_Tank.png"));
+					m_GunPic->setPixmap(QPixmap(":data/c_Tank.png"));
 					m_WeaponCID = vehicle->CommodityId();
 				}
 				break;
@@ -311,7 +313,13 @@ void AuOrdnanceTransfer::UpdateContents()
 
 			// Only certain locations can provide ordnance.
 			INDUSTRYID iid = vehicle->InIndustry();
-			if(DbIndustry::CanSupplyOrdnance(iid))
+			if(const DaLegacyCity* city = vehicle->OrdnanceCity())
+			{
+				m_OtherPic->setPixmap(QPixmap(":data/c_Tank.png"));
+				m_OtherDesc->setText(city->Name());
+				loaderId = city->Id();
+			}
+			else if(DbIndustry::CanSupplyOrdnance(iid))
 			{
 				const DaWorld* world = vehicle->FindParentPlanetInEnv();
 				if(world)
@@ -441,6 +449,11 @@ void AuOrdnanceTransfer::UpdateContents()
 	m_Ord1Pic->setVisible(ordOk);
 
 	bool locationOk = !loaderId.IsNull();
+	if(tankGunsOnly && !locationOk)
+	{
+		m_LoaderId = AuId();
+		m_OrdnanceTable->setRowCount(0);
+	}
 	m_OtherDesc->setVisible(locationOk);
 	m_OtherPic->setVisible(locationOk);
 	m_OrdnanceTable->setVisible(locationOk);
@@ -581,6 +594,23 @@ void AuOrdnanceTransfer::OrdnanceReceived(const QByteArray& ba)
 			rounds = QString("%L1e").arg(roundsCount);
 			break;
 
+		case CID_Tank:
+			if(g_Au.IsLegacyGeneration())
+			{
+				rack = ":data/c_Tank.png";
+				tip = tr("Loads into both tank barrels.");
+				roundsCount = DaVehicle::MaxWeaponRounds(CID_Tank, (*ii).second->CommodityId());
+				rtip = tr("%L1 rounds when loaded; each paired shot uses two rounds.").arg(roundsCount);
+				rounds = QString("%L1").arg(roundsCount);
+				if(DbCommodity::IsEnergyWeapon((*ii).second->CommodityId()))
+				{
+					rtip = tr("%L1 energy charges when loaded; each paired shot uses two charges. Recharge uses vehicle fuel.").arg(roundsCount);
+					rounds = QString("%L1e").arg(roundsCount);
+				}
+				break;
+			}
+			// Modern tanks do not use this Legacy gun slot.
+			break;
 		default:
 			// Vehicle has guns and weapon racks.
 			switch(DaVehicle::WeaponRack((*ii).second->CommodityId()))

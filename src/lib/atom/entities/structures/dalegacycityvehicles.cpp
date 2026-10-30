@@ -10,13 +10,18 @@
 #include "aulegacycityinventory.h"
 #include "aulegacycityproduction.h"
 #include "aulegacycitystate.h"
+#include "auordnance.h"
 #include "auqueryenvironment.h"
 #include "dalegacycity.h"
 #include "daperson.h"
+#include "dbindustry.h"
 #include "davehicle.h"
 #include "daworldll.h"
 #include "dgdata.h"
 #include <QWriteLocker>
+#include <QReadLocker>
+#include <QScopedPointer>
+#include <QSet>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -287,17 +292,107 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 }
 }
 
+namespace
+{
+const AuLegacyCityCatalogue* VehicleInventoryCatalogue()
+{
+	const AuLegacyCityCatalogue* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	if(!g_Au.IsLegacyGeneration() || !AuLegacyItemTechnologyActive() || !catalogue) return nullptr;
+	// AuItem deserialization requires every Legacy descriptor to be active.
+	for(const quint16 commodity : catalogue->RuntimeCommodityIds())
+		if(!g_Au.HasLegacyCommodity(COMMODITYID(commodity))) return nullptr;
+	return catalogue;
+}
+}
+
+bool DaLegacyCity::CanSupplyVehicleOrdnance(const DaVehicle& vehicle) const
+{
+	const AuLegacyCityCatalogue* catalogue = VehicleInventoryCatalogue();
+	if(!catalogue || IsDead() || vehicle.CommodityId() != CID_Tank || vehicle.IsDead()
+		|| vehicle.IsLaunching() || vehicle.IsInSpacecraft() || vehicle.Speed() >= FeetPerMeter()
+		|| vehicle.FindParentPlanetInEnv() != Parent()) return false;
+	const AuQueryEnvironment* environment = vehicle.LockEnvironmentQuery();
+	const bool inCity = environment->LegacyCityId() == Id();
+	const quint32 developmentId = environment->LegacyDevelopmentId();
+	vehicle.UnlockEnvironmentQuery();
+	if(!inCity || !developmentId || PoliticalStance(EmpireId(), vehicle.EmpireId()) == POL_Enemy) return false;
+	QReadLocker lock(&m_CityLock);
+	for(const AuLegacyCity::Development& development : m_City.developments)
+		if(development.id == developmentId && development.completedLevels && !development.demolished)
+			return (development.industryId == 2 && development.roadSlab) ||
+				DbIndustry::CanSupplyOrdnance(INDUSTRYID(catalogue->RuntimeIndustryId(
+					AuLegacyCity::IndustryId(development.industryId))));
+	return false;
+}
+
+void DaLegacyCity::ListVehicleOrdnance(const DaVehicle& vehicle, AuItemHash& ordnance) const
+{
+	ordnance.Clear();
+	const AuLegacyCityCatalogue* catalogue = VehicleInventoryCatalogue();
+	if(!catalogue || !g_Au.IsSceneWorker() || !CanSupplyVehicleOrdnance(vehicle)) return;
+	const quint32 empire = EmpireId();
+	QSet<quint16> restricted;
+	const POLITICAL_STANCE stance = PoliticalStance(empire, vehicle.EmpireId());
+	const DgData& data = g_Au.LockDataForRead();
+	for(const quint16 commodity : catalogue->RuntimeCommodityIds())
+		if(data.EmpireCommerceRestricted(empire, COMMODITYID(commodity), stance)) restricted.insert(commodity);
+	g_Au.UnlockData();
+	QReadLocker lock(&m_CityLock);
+	if(m_City.controllingEmpire != empire) return;
+	AuItemHash inventory; QString error;
+	if(!AuLegacyCity::ReadCityInventory(m_City.inventory, *catalogue, inventory, error)) return;
+	for(const auto& entry : inventory)
+		if(entry.second->Count() && vehicle.MaxWeaponRounds(entry.first) > 0 && !restricted.contains(quint16(entry.first)))
+			ordnance.AddItem(*entry.second);
+}
+
+AuItem* DaLegacyCity::ExchangeVehicleOrdnance(const DaVehicle& vehicle, const AuItem& requested,
+	const AuOrdnance& previous)
+{
+	const AuLegacyCityCatalogue* catalogue = VehicleInventoryCatalogue();
+	if(!catalogue || !g_Au.IsSceneWorker() || !requested.IsValid() || !requested.Count()
+		|| !vehicle.MaxWeaponRounds(requested.CommodityId()) || !CanSupplyVehicleOrdnance(vehicle)) return nullptr;
+	const quint32 empire = EmpireId();
+	const POLITICAL_STANCE stance = PoliticalStance(empire, vehicle.EmpireId());
+	const DgData& data = g_Au.LockDataForRead();
+	const bool restricted = data.EmpireCommerceRestricted(empire, requested.CommodityId(), stance);
+	g_Au.UnlockData();
+	if(restricted) return nullptr;
+	QWriteLocker lock(&m_CityLock);
+	if(m_City.controllingEmpire != empire) return nullptr;
+	AuItemHash inventory; QString error;
+	if(!AuLegacyCity::ReadCityInventory(m_City.inventory, *catalogue, inventory, error)) return nullptr;
+	AuItemHash::iterator stored = inventory.Find(requested);
+	if(stored == inventory.end() || !stored->second->Count()) return nullptr;
+	QScopedPointer<AuItem> selected(stored->second->Clone());
+	selected->SetCount(1);
+	stored->second->Consume(1);
+	if(!stored->second->Count()) inventory.Erase(stored);
+	// Match ship ordnance exchange: lenses and completely unused ammunition
+	// return one item; a partly used physical load is discarded.
+	if(previous.Ammo() && (previous.IsEnergyWeapon() ||
+		previous.RoundsCount() == vehicle.MaxWeaponRounds(previous.CommodityId())))
+	{
+		QScopedPointer<AuItem> returned(previous.Ammo()->Clone());
+		returned->SetCount(1);
+		inventory.AddItem(*returned);
+	}
+	QByteArray encoded;
+	if(!AuLegacyCity::WriteCityInventory(inventory, encoded, error)) return nullptr;
+	m_City.inventory = encoded;
+	++m_CityRevision;
+	lock.unlock();
+	SetModified();
+	return selected.take();
+}
+
 void DaLegacyCity::ServiceVehicle(DaVehicle& vehicle, DaPerson& person)
 {
 	using namespace AuLegacyCity;
-	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
-	if(!g_Au.IsLegacyGeneration() || !AuLegacyItemTechnologyActive() || !catalogue || IsDead()
+	const auto* catalogue = VehicleInventoryCatalogue();
+	if(!catalogue || IsDead()
 		|| vehicle.IsDead() || vehicle.IsLaunching() || vehicle.Speed() >= FeetPerMeter()
 		|| person.Parent() != &vehicle || vehicle.FindParentPlanetInEnv() != Parent()) return;
-	// Inventory streams need the complete activated Legacy descriptor set,
-	// including retained tools whose runtime IDs differ from the GD IDs.
-	for(const quint16 commodity : catalogue->RuntimeCommodityIds())
-		if(!g_Au.HasLegacyCommodity(COMMODITYID(commodity))) return;
 	const auto* environment = vehicle.LockEnvironmentQuery();
 	const bool inCity = environment->LegacyCityId() == Id();
 	const quint32 developmentId = environment->LegacyDevelopmentId();
