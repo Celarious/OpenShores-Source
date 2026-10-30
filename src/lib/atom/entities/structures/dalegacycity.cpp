@@ -1229,7 +1229,7 @@ struct DaLegacyCity::Runtime
 			{
 				// Original building doorways and hatches are always open. Their
 				// textured frame quads must never become solid collision panels.
-				if(batch.doorId || batch.empireFlag || batch.depthOnly || batch.surfaceOverlay) continue;
+				if(batch.doorId || batch.empireFlag || batch.depthOnly || batch.surfaceOverlay || batch.noCollision) continue;
 				// Match legacy spacecraft: collide with the smooth walking
 				// supports, leaving individual rendered risers/treads visual only.
 				if(batch.stairs && !batch.collisionOnly) continue;
@@ -3063,7 +3063,7 @@ bool DaLegacyCity::IsPathBlocked(const AuPoint& from, const AuPoint& to, AuPoint
 	return blocked;
 }
 
-bool DaLegacyCity::FilterDestination(const DaAtom& actor, const AuPoint& from, AuPoint& to, const AuBox& anatomy) const
+bool DaLegacyCity::FilterDestination(DaAtom& actor, const AuPoint& from, AuPoint& to, const AuBox& anatomy) const
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!world || !g_Au.IsLegacyGeneration()) return false;
@@ -3080,6 +3080,9 @@ bool DaLegacyCity::FilterDestination(const DaAtom& actor, const AuPoint& from, A
 	// These environment reads can rebuild the query and re-enter this city's
 	// QueryLegacyEnvironment, so resolve them before taking the runtime lock.
 	const AuPoint gravityUp = actor.GravityNormal();
+	const bool inGravity = actor.IsInGravity();
+	const AuMatrix4x4 cityToWorld = Transform();
+	QVector<AuLegacyScGeometry::CollisionWorld::MovementContact> responses;
 	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
 	bool changed = false;
 	for(const auto& building : m_Runtime->buildings)
@@ -3094,10 +3097,25 @@ bool DaLegacyCity::FilterDestination(const DaAtom& actor, const AuPoint& from, A
 		if(creature) body = AuLegacyScGeometry::MovementBodyOffsets(body, up);
 		else for(auto& corner : body.m_fCorners) corner = bodyTransform.ProjectVector(corner);
 		AuPoint normal;
+		QVector<AuLegacyScGeometry::CollisionWorld::MovementContact> contacts;
 		const auto result = building.collision->ResolveDestination(transform.UnProject(from), transform.UnProject(to),
-			body, up, standingHeight, followGround, normal, false, nullptr, false, nullptr, true);
+			body, up, standingHeight, followGround, normal, false, nullptr, false, &contacts, true);
 		const auto destination = transform.Project(result);
 		if(destination.Distance2(to) > 1e-16) { changed = true; to = destination; }
+		for(const auto& contact : contacts)
+			responses.append({cityToWorld.UnProject(transform.Project(contact.location)),
+				bodyTransform.UnProjectVector(contact.normal)});
+	}
+	// Impact damage and environment queries can re-enter the city's runtime.
+	// All mesh references must be released before applying contact responses.
+	lock.unlock();
+	AuPoint localUp = gravityUp; localUp.Unit();
+	for(const auto& contact : responses)
+	{
+		if(!actor.IsNormal()) break;
+		AuPoint normal = contact.normal; normal.Unit();
+		actor.ApplyLegacyMovementContact(const_cast<DaLegacyCity*>(this), contact.location, normal,
+			inGravity && normal.Dot(localUp) >= .55);
 	}
 	return changed;
 }

@@ -676,6 +676,11 @@ void DaAtom::TickMovement(const AuElapsedTimer& last)
 			movementParent->ListNormalSubatoms(peers);
 			for(const DaAtom* peer : peers)
 			{
+				if(g_Au.IsLegacyGeneration() && dynamic_cast<const DaLegacyCity*>(peer))
+				{
+					legacyBodyMovement = true;
+					break;
+				}
 				ship = dynamic_cast<const DaSc*>(peer);
 				if(ship && ship->IsLegacyDebug() && ship->IsObstacle(this))
 				{
@@ -4448,6 +4453,42 @@ void DaAtom::ListStars(DaAtomList &al) const	// List stars subordinate to this a
 	}
 }
 
+void DaAtom::ApplyLegacyMovementContact(DaAtom* hit, const AuPoint& hitLoc, const AuPoint& hitNormal,
+	bool support, bool preserveTangent)
+{
+	AuPoint normal = hitNormal;
+	if(normal.IsZero()) return;
+	normal.Unit();
+	const AuPoint velocity = Vector();
+	const double inward = velocity.Dot(normal);
+	if(inward >= 0) return;
+	if(support)
+	{
+		SetVector(velocity - normal * inward);
+		return;
+	}
+	// Keep native momentum/reflection and its client/server impact reporting.
+	// The 15 m/s threshold in MovementBlocked gates damage after reflection.
+	MovementBlocked(hit, hitLoc, normal, false);
+	AuPoint reflected = Vector();
+	// At a head-on impact the native axis-angle reflection has no cross
+	// product axis. Retain its rebound speed, directed away from the wall.
+	const double reflectedNormal = reflected.Dot(normal);
+	if(reflectedNormal < 0 && velocity.Cross(normal).Length2() <= velocity.Length2() * 1e-18)
+		reflected -= normal * (2 * reflectedNormal);
+	if(preserveTangent)
+	{
+		const double outward = qMax(0.0, reflected.Dot(normal));
+		SetVector(velocity - normal * inward + normal * outward);
+	}
+	else
+	{
+		const double residualInward = reflected.Dot(normal);
+		if(residualInward < 0) reflected -= normal * residualInward;
+		SetVector(reflected);
+	}
+}
+
 // Returns the undampened bounce vector. The length is the speed in feet per second that this atom was moving when the hit
 // occurred. It is simply the reflected movement vector when the hit occurred.
 AuPoint DaAtom::MovementBlocked(DaAtom* hit, const AuPoint& hitLoc, const AuPoint& hitNormal, bool hitShield)
@@ -4593,7 +4634,10 @@ void DaAtom::Collide(const AuPoint& myChange, const AuPoint& myHitLoc, DaAtom* h
 		const bool legacyShipVictim = victimShip && victimShip->IsLegacyDebug();
 		const bool legacyVehicleVictim = dynamic_cast<const DaVehicle*>(victim)
 			&& colliderShip && colliderShip->IsLegacyDebug();
-		if(!legacyShipVictim && !legacyVehicleVictim) return false;
+		const bool legacyBuildingImpact = g_Au.IsLegacyGeneration()
+			&& dynamic_cast<const DaLegacyCity*>(collider)
+			&& (dynamic_cast<const DaCreature*>(victim) || dynamic_cast<const DaVehicle*>(victim));
+		if(!legacyShipVictim && !legacyVehicleVictim && !legacyBuildingImpact) return false;
 		// DaAtom::Collide, AuAtom13:180203da0: damage is floor(K / 50000),
 		// capped at 0x3fffffff, applied directly with no armor/hit roll.
 		// Both damage locations are the contact point. Distinct locations let

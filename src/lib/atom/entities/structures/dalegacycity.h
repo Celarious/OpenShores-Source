@@ -46,6 +46,9 @@ public:
 	ATOM_TYPE AtomType() const override { return ATOM_LegacyCity; }
 	bool IsEthereal() const override { return false; }
 	bool CanSetInMotion() const override { return false; }
+	// DaCity::Mass, AuAtom13:1802a3250. Building impacts exchange momentum
+	// with the city, while the development remains fixed in the world's frame.
+	float Mass() const override { return 100000.f; }
 	// Surface rendering dispatches only atmosphere members. Static cities still
 	// need an environment query to establish that membership on globes and rings.
 	bool DoesQueryEnvironment() const override { return true; }
@@ -186,7 +189,7 @@ public:
 	bool IsPathBlocked(const AuPoint& fromWorld, const AuPoint& toWorld) const;
 	bool IsPathBlocked(const AuPoint& fromWorld, const AuPoint& toWorld,
 		AuPoint& hitLocation, AuPoint& hitNormal, const DaAtom* actor) override;
-	bool FilterDestination(const DaAtom& actor, const AuPoint& fromWorld,
+	bool FilterDestination(DaAtom& actor, const AuPoint& fromWorld,
 		AuPoint& toWorld, const AuBox& body) const;
 	bool TestRoadConnection(const DaLegacyCity& other) const;
 	// Original square site and its ten-meter terrain blend margin. Both height

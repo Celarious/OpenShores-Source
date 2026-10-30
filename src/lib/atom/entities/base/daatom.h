@@ -1544,6 +1544,10 @@ public:
 	// Returns the undampened bounce vector. The length is the speed in feet per second that this atom was moving when the hit
 	// occurred. It is simply the reflected movement vector when the hit occurred.
 	virtual AuPoint MovementBlocked(DaAtom* hit, const AuPoint& hitLoc, const AuPoint& hitNormal, bool hitShield);
+	// Shared Legacy swept-body response. Hit location is relative to the
+	// collider; normal is relative to this body. Gravity support absorbs falls.
+	void ApplyLegacyMovementContact(DaAtom* hit, const AuPoint& hitLoc, const AuPoint& hitNormal,
+		bool support, bool preserveTangent = true);
 
 	// Tests for presense of another identical meat pile that is too close to loc.
 	bool OkToDropMeat(const AuPoint& loc, COMMODITYID cidMeat, const AuDNABase* dna) const;
