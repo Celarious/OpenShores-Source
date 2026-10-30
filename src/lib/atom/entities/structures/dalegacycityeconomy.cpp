@@ -25,6 +25,7 @@
 #include "daitem.h"
 #include "danpc.h"
 #include "daperson.h"
+#include "dasector.h"
 #include "dasolarsystem.h"
 #include "daworldll.h"
 #include "dgdata.h"
@@ -260,6 +261,32 @@ void DaLegacyCity::TreatHospitalPatient(DaCreature& doctor, DaCreature& patient,
 		break;
 	case DpStationSurgery::CI_PhysicalTherapy: DpStationSurgery::DoPhysicalTherapy(&doctor, &patient, condition.get()); break;
 	case DpStationSurgery::CI_Surgery: DpStationSurgery::DoSurgery(&doctor, &patient, condition.get()); break;
+	}
+	DaNpc* civilian = automatic ? dynamic_cast<DaNpc*>(&doctor) : nullptr;
+	DaSector* sector = doctor.FindParentSector();
+	if(civilian && sector)
+	{
+		QString text;
+		if(treatment)
+			text = tr("%1, I treated you using %2.").arg(patient.Name()).arg(treatment->SayName());
+		else if(procedure == DpStationSurgery::CI_Defibrillate)
+			text = tr("%1, I used the defibrillator to resuscitate you.").arg(patient.Name());
+		else if(procedure == DpStationSurgery::CI_PhysicalTherapy)
+			text = tr("%1, I performed physical therapy for your %2.").arg(patient.Name()).arg(condition->Name());
+		else if(procedure == DpStationSurgery::CI_Surgery)
+			text = tr("%1, I performed surgery for your %2.").arg(patient.Name()).arg(condition->Name());
+		else if(!patient.HasTreatableConditions() && patient.HasCondition(AuCondition::Bandage))
+			text = tr("%1, your bandages will dissolve when you are fully healed. No further treatment is needed.")
+				.arg(patient.Name());
+		else if(!patient.HasTreatableConditions() && patient.CurrentHitPoints() >= patient.MaxHitPoints())
+			text = tr("%1, you appear healthy. There is nothing that needs treatment.").arg(patient.Name());
+		else
+			text = tr("%1, there is no further treatment I can give you right now.").arg(patient.Name());
+		AuCommChat message(text, AuCommStdChannel::VoiceChannelName(), doctor.Id(), doctor.Name(),
+			sector->Id(), doctor.Galaxy(), AuCommStdChannel::Close, AuCommStdChannel::Audible);
+		// The city checks every five seconds; do not repeat the same diagnosis
+		// until treatment or the patient's condition changes the response.
+		civilian->SayNoRepeat(message, AuVisage::Closed, patient.Id());
 	}
 }
 

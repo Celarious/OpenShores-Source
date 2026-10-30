@@ -47,6 +47,17 @@ bool CanConfigureIndustry(quint32 cityId)
 	view->UnlockSceneAtom();
 	return authorized;
 }
+
+// TEMPORARY ARCHITECT MANUFACTURING TEST: remove after testing.
+bool CanSkipIndustryWaitForTesting()
+{
+	auto* view = auApp->Frame() ? auApp->Frame()->View() : nullptr;
+	if(!view) return false;
+	DaPerson* person = nullptr; view->LockSceneAtom(&person);
+	const bool authorized = person && person->HasArchitectPower();
+	view->UnlockSceneAtom();
+	return authorized;
+}
 }
 
 class AuLegacyManufacturePanel : public QWidget
@@ -54,6 +65,7 @@ class AuLegacyManufacturePanel : public QWidget
 	QComboBox *m_Recipe, *m_Technology;
 	QCheckBox* m_Employ;
 	QPushButton *m_Fetch, *m_Run;
+	QPushButton* m_TestFinish; // TEMPORARY ARCHITECT MANUFACTURING TEST
 	QListWidget* m_Materials;
 	QTableWidget* m_Modifiers;
 	QLabel *m_StatusIcon, *m_Status, *m_LastOutput;
@@ -75,6 +87,9 @@ class AuLegacyManufacturePanel : public QWidget
 	{
 		if((action == AuLegacyCityProtocol::RunIndustryProcess
 			|| action == AuLegacyCityProtocol::FetchIndustryMaterials) && m_Process.completeAt) return;
+		// TEMPORARY ARCHITECT MANUFACTURING TEST: stale controls cannot submit an idle process.
+		if(action == AuLegacyCityProtocol::TestingFinishIndustryProcess
+			&& (!m_Process.completeAt || !CanSkipIndustryWaitForTesting())) return;
 		AuLegacyCityProtocol::Request request;
 		request.action = action; request.cityId = m_CityId; request.developmentId = m_DevelopmentId;
 		request.processSlot = m_Process.slot;
@@ -108,6 +123,11 @@ public:
 		m_Employ = new QCheckBox(tr("Employ Citizen"), this);
 		m_Fetch = new QPushButton(tr("Fetch"), this);
 		m_Run = new QPushButton(tr("Run"), this);
+		// TEMPORARY ARCHITECT MANUFACTURING TEST: remove button, tooltip and layout/connection below.
+		m_TestFinish = new QPushButton(tr("Finish (Test)"), this);
+		m_TestFinish->setToolTip(tr("Skip the remaining manufacturing wait for testing. "
+			"Completes on the next server tick using the normal output rules. Requires architect powers."));
+		m_TestFinish->hide();
 		m_StatusIcon = new QLabel(this); m_Status = new QLabel(this); m_LastOutput = new QLabel(this);
 		m_LastOutput->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 		m_LastOutput->setToolTip(tr("<html>Shows quality and amount of commodities made in the last run of the process. "
@@ -156,12 +176,15 @@ public:
 		grid->addWidget(m_Employ, 1, 0, 1, 3); grid->addWidget(m_Technology, 1, 3, 1, 2);
 		grid->addWidget(m_StatusIcon, 2, 0); grid->addWidget(m_Status, 2, 1); grid->addWidget(m_LastOutput, 2, 2, 1, 3);
 		grid->setRowStretch(3, 1); grid->addWidget(m_Materials, 0, 5, 4, 1); grid->addWidget(m_Modifiers, 0, 6, 4, 1);
+		grid->addWidget(m_TestFinish, 3, 3, 1, 2, Qt::AlignRight); // TEMPORARY ARCHITECT MANUFACTURING TEST
 		grid->setColumnStretch(1, 3); grid->setColumnStretch(5, 2); grid->setSpacing(2); grid->setMargin(2);
 		connect(m_Recipe, QOverload<int>::of(&QComboBox::activated), this, [this](int) { Send(AuLegacyCityProtocol::SetIndustryProcess, true); });
 		connect(m_Technology, QOverload<int>::of(&QComboBox::activated), this, [this](int) { Send(AuLegacyCityProtocol::SetIndustryProcess, false, true); });
 		connect(m_Employ, &QCheckBox::toggled, this, [this](bool) { Send(AuLegacyCityProtocol::SetIndustryProcess); });
 		connect(m_Fetch, &QPushButton::clicked, this, [this]() { Send(AuLegacyCityProtocol::FetchIndustryMaterials); });
 		connect(m_Run, &QPushButton::clicked, this, [this]() { Send(AuLegacyCityProtocol::RunIndustryProcess); });
+		// TEMPORARY ARCHITECT MANUFACTURING TEST
+		connect(m_TestFinish, &QPushButton::clicked, this, [this]() { Send(AuLegacyCityProtocol::TestingFinishIndustryProcess); });
 	}
 
 	void Update(const AuLegacyCityCatalogue& catalogue, quint32 cityId, quint32 developmentId,
@@ -290,6 +313,10 @@ public:
 		// available until the server reports that the countdown has begun.
 		m_Fetch->setEnabled(!running && technologyAllowed);
 		m_Run->setEnabled(!running && technologyAllowed);
+		// TEMPORARY ARCHITECT MANUFACTURING TEST: refresh when powers change while F10 is open.
+		const bool canSkipWait = CanSkipIndustryWaitForTesting();
+		m_TestFinish->setVisible(canSkipWait);
+		m_TestFinish->setEnabled(canSkipWait && running && process.completeAt > now);
 	}
 };
 

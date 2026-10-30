@@ -100,6 +100,13 @@ void EconomyRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityPr
 	using namespace AuLegacyCityProtocol;
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
 	if(!catalogue) { reply.message = QObject::tr("The legacy economy catalogue is unavailable."); return; }
+	// Production snapshots include a tool inventory. Require the complete,
+	// active descriptors before either the operation or the reply decodes it.
+	if(!g_Au.IsLegacyGeneration() || !catalogue->IsValid())
+	{ reply.message = QObject::tr("Legacy commodity metadata is not ready."); return; }
+	for(const quint16 commodity : catalogue->RuntimeCommodityIds())
+		if(!g_Au.HasLegacyCommodity(COMMODITYID(commodity)))
+		{ reply.message = QObject::tr("Legacy commodity metadata is not ready."); return; }
 	quint32 cityId = request.cityId, developmentId = request.developmentId;
 	if(request.action == EconomyList && !cityId && !developmentId)
 	{
@@ -128,6 +135,9 @@ void EconomyRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityPr
 	else if(request.action == FetchIndustryMaterials || request.action == RunIndustryProcess)
 		reply.accepted = city->OperateIndustryProcess(person, developmentId, request.processSlot, true,
 			request.action == RunIndustryProcess, reply.message);
+	// TEMPORARY ARCHITECT MANUFACTURING TEST: the city method rechecks active architect powers.
+	else if(request.action == TestingFinishIndustryProcess)
+		reply.accepted = city->SkipIndustryProcessWaitForTesting(person, developmentId, request.processSlot, reply.message);
 	else reply.accepted = true;
 	state = city->Snapshot();
 	AuLegacyCity::ProductionState production, visible;

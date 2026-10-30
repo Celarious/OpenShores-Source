@@ -2468,37 +2468,10 @@ void DaItem::DetonateTerminate()
 
 void DaItem::MakeCrater(const AuPoint& loc, const AuCombatWeapon& weapon)
 {
-	if(!IsInAtmosphere())
-		return;
-	if(IsInSpacecraft())
-		return;
-	if(IsInVehicle())
-		return;
-	float craterRadius = weapon.CraterRadius();
-	if(craterRadius < FeetPerMeter()*2)
-		return;
-
-	float agl = AltitudeAGL();
-	if(agl > craterRadius)
-		return;
-
-	// Create a bomb crater on the world.
-	DaWorldLL* world = dynamic_cast<DaWorldLL*>(Parent());
-	if(!world)
-		return;
-
-	float debrisHeight = craterRadius / 5;
-	if(agl > 0)
-	{
-		// Reduce crater radius due to altitude.
-		float frac = agl / craterRadius;						// 0=ground level, 1=crater radius
-		float ang = acosf(frac);								// 0=PI, 1=0
-		float sf = sinf(ang);
-		craterRadius *= sf;
-		debrisHeight *= sf;
-	}
-	float bottomMSL = AltitudeMSL() - craterRadius * .66f;		// Bottom of the crater.
-	world->AddBombCrater(Transform().Project(loc), bottomMSL, craterRadius, debrisHeight);
+	// Weapon-induced terrain craters are disabled for both item detonations and missiles.
+	// Their combat damage and explosion effects are handled separately by the callers.
+	Q_UNUSED(loc);
+	Q_UNUSED(weapon);
 }
 
 DaAtom* DaItem::SightTarget(const DaAtom* sightingAtom, const AuPoint& eyeLoc, const AuMatrix4x4 &tModel, DaAtom* pBest,

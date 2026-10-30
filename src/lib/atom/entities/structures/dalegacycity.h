@@ -94,6 +94,8 @@ public:
 		quint16 processId, quint8 minimumTechnology, bool enabled, QString& error);
 	bool OperateIndustryProcess(DaPerson& person, quint32 developmentId, quint16 processSlot,
 		bool fetch, bool run, QString& error);
+	// TEMPORARY ARCHITECT MANUFACTURING TEST: remove after testing.
+	bool SkipIndustryProcessWaitForTesting(DaPerson& person, quint32 developmentId, quint16 processSlot, QString& error);
 	bool OperateBank(DaPerson& person, const AuLegacyCityProtocol::Request& request,
 		AuLegacyCityProtocol::Reply& reply);
 	void ServiceVehicle(DaVehicle& vehicle, DaPerson& person);

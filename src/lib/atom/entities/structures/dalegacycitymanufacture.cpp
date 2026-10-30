@@ -152,3 +152,59 @@ bool DaLegacyCity::OperateIndustryProcess(DaPerson& person, quint32 developmentI
 	// A valid Fetch is accepted even when no additional materials are found.
 	return fetch || changed || started;
 }
+
+// TEMPORARY ARCHITECT MANUFACTURING TEST: remove this function after testing.
+// Change only the deadline. The ordinary city tick completes the output using
+// the existing cargo, livestock, vehicle, research and component rules.
+bool DaLegacyCity::SkipIndustryProcessWaitForTesting(DaPerson& person, quint32 developmentId,
+	quint16 processSlot, QString& error)
+{
+	error.clear();
+	if(!person.HasArchitectPower())
+	{ error = QStringLiteral("Enable architect powers to skip manufacturing wait time for testing."); return false; }
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	auto* world = dynamic_cast<DaWorldLL*>(Parent());
+	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker() || !catalogue || !world
+		|| person.IsDead() || person.FindParentPlanetInEnv() != world)
+	{ error = QStringLiteral("Move onto this Legacy city's world to operate its industry."); return false; }
+	// DecodeProductionState also deserializes its tool inventory. Match the
+	// station readiness check before any AuItem reads, even for a timer edit.
+	if(!catalogue->IsValid() || !AuLegacyItemTechnologyActive())
+	{ error = QStringLiteral("Legacy commodity metadata is not ready."); return false; }
+	for(const quint16 commodity : catalogue->RuntimeCommodityIds())
+		if(!g_Au.HasLegacyCommodity(COMMODITYID(commodity)))
+		{ error = QStringLiteral("Legacy commodity metadata is not ready."); return false; }
+	const auto* environment = person.LockEnvironmentQuery();
+	const bool atSite = environment->LegacyCityId() == Id()
+		&& environment->LegacyDevelopmentId() == developmentId;
+	person.UnlockEnvironmentQuery();
+	if(!atSite) { error = QStringLiteral("Stand at this industry to operate it."); return false; }
+	const quint32 actorEmpire = person.EmpireId();
+	const qint64 now = QDateTime::currentMSecsSinceEpoch();
+	QWriteLocker lock(&m_CityLock);
+	State state = m_City;
+	const auto development = std::find_if(state.developments.cbegin(), state.developments.cend(),
+		[developmentId](const Development& item) { return item.id == developmentId; });
+	if(development == state.developments.cend() || development->demolished || !development->completedLevels
+		|| processSlot >= ManufacturingSlots(development->industryId, development->completedLevels))
+	{ error = QStringLiteral("There is no completed industry process here."); return false; }
+	ProductionState production;
+	if(!DecodeProductionState(*catalogue, state.manufacturing, production, error)) return false;
+	const auto process = std::find_if(production.processes.begin(), production.processes.end(),
+		[developmentId, processSlot](const ProductionProcess& item) {
+			return item.developmentId == developmentId && item.slot == processSlot;
+		});
+	if(process == production.processes.end() || !process->completeAt)
+	{ error = QStringLiteral("Start this manufacturing process before skipping its wait time."); return false; }
+	if(!process->enabled && actorEmpire != state.controllingEmpire)
+	{ error = QStringLiteral("Only the city's empire may operate a process disabled for citizen work."); return false; }
+	if(process->completeAt <= now) return true;
+	process->completeAt = now;
+	if(!EncodeProductionState(*catalogue, production, state.manufacturing, error)) return false;
+	QByteArray checked;
+	if(!EncodeState(state, checked, error)) return false;
+	m_City = state; ++m_CityRevision;
+	lock.unlock();
+	SetModified();
+	return true;
+}
