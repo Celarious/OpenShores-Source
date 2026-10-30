@@ -1931,6 +1931,10 @@ void DaPerson::RenderScene(const AuMatrix4x4& projection, const AuMatrix4x4& far
 	// Parent atom sometimes wants to render health. e.g. creature, vehicle. It is usually two bars tall.
 	// Allow space for my three bars: health, stamina, and hunger, plus a taller jump bar, with a spacing between, and a margin.
 	DaAtom* parent = Parent();
+	DaVehicle* vehicle = dynamic_cast<DaVehicle*>(parent);
+	const bool tankDriverHud = g_Au.IsLegacyGeneration() && vehicle &&
+			vehicle->CommodityId() == CID_Tank && VehicleSeatIndex() == 0 &&
+			!IsBodyDyingOrDead() && !RemoteCameraId();
 	if(parent)
 	{
 		float gap = 0;	//barSpacing * 2;
@@ -2066,11 +2070,12 @@ void DaPerson::RenderScene(const AuMatrix4x4& projection, const AuMatrix4x4& far
 			//DHH Cannot shoot out of an enclosed vehicle.
 			//DHH This should eventually be smarter so people can shoot through the
 			//DHH windows or doors of an enclosed vehicle.
-			if(!IsInVehicle())
+			// Keep the Tank driver's crosshair visible inside the enclosed vehicle.
+			if(!IsInVehicle() || tankDriverHud)
 			{
 				// Calculate cross-hair Y offset based on targetted atom. Camera positioning behind/above the head induces this.
 				float yoff = 0;
-				if(targetAtom && !targetLoc.IsZero())
+				if(!tankDriverHud && targetAtom && !targetLoc.IsZero())
 				{
 					// No Y offset adjustment is needed in first person view when the view angle is zero, which is the normal first
 					// person view angle.
@@ -2855,14 +2860,13 @@ void DaPerson::RenderScene(const AuMatrix4x4& projection, const AuMatrix4x4& far
 	}
 
 	// Vehicle Status
-	DaVehicle* vehicle = dynamic_cast<DaVehicle*>(parent);
 	if(vehicle)
 	{
 		if(vehicle->IsControlSeat(VehicleSeatIndex()))
 		{
-			if(ari.IsViewTopDown())
+			if(ari.IsViewTopDown() || tankDriverHud)
 			{
-				// In top-down alt view, render the hud at the center of the screen.
+				// Top-down and Tank driver HUDs use a fixed screen-space anchor.
 				vehicle->RenderHud(0,0, hudIntensity, ari);
 			}
 			else
@@ -9627,10 +9631,6 @@ void DaPerson::ApplyMovement(unsigned int msElapsed)
 
 	// Orient to the terrain under my feet.
 	Orient(Location(), Transform().ProjectVector(TerrainNormal()));
-
-	// Predict Tank articulation with the same look angles sent in position reports.
-	DaVehicle* tank = dynamic_cast<DaVehicle*>(Parent());
-	if(tank) tank->PositionTankTurret(*this);
 
 	if(IsTurretIntegratedPose())
 	{

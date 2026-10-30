@@ -222,10 +222,6 @@ public:
 
 	int ColonistsAboard() const;
 
-	// Seat zero aims the Legacy Tank until a dedicated gunner seat is enabled.
-	void PositionTankTurret(const DaCreature& occupant);
-	static float TankCameraPitch(float headTilt);
-
 	// 'attacker' is the atom that is causing the damage. The attacker id should be NULL when the attacker is not a DaUnit, like
 	//   when it is the environment or a sun or something.
 	// 'weapon' describes the weapon that was used to inflict the damage.

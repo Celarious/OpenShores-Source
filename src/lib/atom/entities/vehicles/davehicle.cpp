@@ -2919,46 +2919,6 @@ bool DaVehicle::Orient(const AuPoint& atLoc, const AuPoint& terNormal)
 	return true;
 }
 
-float DaVehicle::TankCameraPitch(float headTilt)
-{
-	return qBound(-75.f * DEG2RADf, headTilt - 15.f * DEG2RADf, 45.f * DEG2RADf);
-}
-
-void DaVehicle::PositionTankTurret(const DaCreature& occupant)
-{
-	if(!g_Au.IsLegacyGeneration() || m_cid != CID_Tank ||
-		occupant.Parent() != this || occupant.VehicleSeatIndex() != 0 ||
-		!occupant.IsNormal() || occupant.IsBodyDyingOrDead() || occupant.RemoteCameraId())
-		return;
-
-	float yaw = occupant.Rotation().z;
-	const float headTilt = occupant.CurrentHeadTilt();
-	if(!std::isfinite(yaw) || !std::isfinite(headTilt)) return;
-	yaw = std::fmod(yaw, 2.f * PIf);
-	if(yaw > PIf) yaw -= 2.f * PIf;
-	if(yaw < -PIf) yaw += 2.f * PIf;
-
-	AuTurretState aim;
-	aim.SetBaseRotation(yaw);
-	// The chase camera's downward framing bias is not weapon elevation.
-	// Applying it here pins the barrels at their depression limit near neutral look.
-	aim.SetGunRotation(qBound(-10.f * DEG2RADf, headTilt, 60.f * DEG2RADf));
-	bool changed = false;
-	{
-		QWriteLocker lock(&m_VehicleLock);
-		// AuTurretState::operator!= returns equality in the legacy helper.
-		// Match DaSc::PositionTurret's explicit angle comparison instead.
-		if(m_TankTurret.BaseRotation() != aim.BaseRotation() ||
-			m_TankTurret.GunRotation() != aim.GunRotation())
-		{
-			m_TankTurret = aim;
-			m_TankTurretChanged.Set();
-			changed = true;
-		}
-	}
-	if(changed) SetModified();
-}
-
 void DaVehicle::TankTurretTransforms(QHash<QString, AuMatrix4x4>& transforms) const
 {
 	if(!g_Au.IsLegacyGeneration() || m_cid != CID_Tank || !m_Model) return;
@@ -5739,6 +5699,7 @@ void DaVehicle::RenderAudioSources(const DaPerson* sceneAtom, const AuMatrix4x4&
 			if(!IsEngineOn())
 				break;
 			engineSnd = SOUND_Tank_Idle;
+			gain *= 2;
 			if(!IsFuzzyZero(vec.y))
 			{
 				// Lots of transmission choices for this guy from 4 to 6 speeds.

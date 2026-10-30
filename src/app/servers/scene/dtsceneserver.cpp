@@ -3465,10 +3465,6 @@ void DtSceneServer::ClientPositionUpdate(bool atRest, float headTilt, AuAtomPos&
 							vehicle->SetControlled(AuId());		// Release client control of vehicle.
 					}
 				}
-				// Use the accepted parent, seat, yaw and head tilt, including reports
-				// that change only head tilt. The vehicle validates the aiming seat.
-				DaVehicle* tank = dynamic_cast<DaVehicle*>(person->Parent());
-				if(tank) tank->PositionTankTurret(*person);
 				if(personChanged)
 					person->SetModified();
 

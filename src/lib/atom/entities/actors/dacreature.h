@@ -1746,8 +1746,6 @@ protected:
 
 	void StoreClientConsoleSettings() const;
 
-	bool ThirdPersonDriverCamera(AuMatrix4x4& camera) const;
-
 public:
 	// Legacy building stations remain parented to the world.
 	DaLegacyCity* LegacyStationCity(AuStation* station = nullptr) const;
