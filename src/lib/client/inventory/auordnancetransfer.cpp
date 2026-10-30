@@ -283,6 +283,13 @@ void AuOrdnanceTransfer::UpdateContents()
 				m_MyPic->setPixmap(QPixmap(":data/APCPic.png"));
 				m_WeaponCID = vehicle->CommodityId();
 				break;
+			case CID_Tank:
+				if(g_Au.IsLegacyGeneration())
+				{
+					m_MyPic->setPixmap(QPixmap(":data/c_Tank.png"));
+					m_WeaponCID = vehicle->CommodityId();
+				}
+				break;
 			default:
 				break;
 			}
@@ -416,7 +423,9 @@ void AuOrdnanceTransfer::UpdateContents()
 	bool showDesc = true;	// True to show generic tips. Set false if we display anything useful.
 
 	bool vehicleOk = m_WeaponCID != CID_Invalid;
-	bool ordOk = vehicleOk && !DbCommodity::IsTurretModule(m_WeaponCID) && !DbCommodity::IsBayWeaponModule(m_WeaponCID);
+	const bool tankGunsOnly = g_Au.IsLegacyGeneration() && m_WeaponCID == CID_Tank;
+	bool ordOk = vehicleOk && !tankGunsOnly && !DbCommodity::IsTurretModule(m_WeaponCID) &&
+		!DbCommodity::IsBayWeaponModule(m_WeaponCID);
 	if(vehicleOk || ordOk)
 		showDesc = false;
 	m_GunPic->setVisible(vehicleOk);
@@ -495,6 +504,9 @@ void AuOrdnanceTransfer::OrdnanceReceived(const QByteArray& ba)
 	{
 		// Filter ammo that cannot be loaded by the player's current weapon.
 		if(!DbCommodity::IsAmmunitionForWeapon(m_WeaponCID, (*ii).second->CommodityId()))
+			continue;
+		if(g_Au.IsLegacyGeneration() && m_WeaponCID == CID_Tank &&
+			!DaVehicle::MaxWeaponRounds(CID_Tank, (*ii).second->CommodityId()))
 			continue;
 
 		m_OrdnanceTable->insertRow(0);
@@ -640,7 +652,14 @@ void AuOrdnanceTransfer::OrdnanceSelected()
 			m_OrdnancePic->hide();
 		}
 
-		if(DbCommodity::IsTurretModule(m_WeaponCID))
+		if(g_Au.IsLegacyGeneration() && m_WeaponCID == CID_Tank)
+		{
+			m_LoadGun->setVisible(item && DaVehicle::MaxWeaponRounds(CID_Tank, item->CommodityId()) > 0);
+			m_SelectAmmo->hide();
+			m_LoadOrd0->hide();
+			m_LoadOrd1->hide();
+		}
+		else if(DbCommodity::IsTurretModule(m_WeaponCID))
 		{
 			m_LoadGun->show();
 			m_SelectAmmo->hide();
@@ -709,6 +728,12 @@ void AuOrdnanceTransfer::LoadSelectedOrdnance(DaVehicle::WEAPON_RACK rack)
 	AuItem* item = AuItem::Unpack(selitems.first()->data(Qt::UserRole).toByteArray());
 	if(!item)
 		return;
+	if(g_Au.IsLegacyGeneration() && m_WeaponCID == CID_Tank &&
+		(rack != DaVehicle::RACK_Gun || !DaVehicle::MaxWeaponRounds(CID_Tank, item->CommodityId())))
+	{
+		delete item;
+		return;
+	}
 
 	auApp->OrdnanceLoad(rack, *item);
 	delete item;

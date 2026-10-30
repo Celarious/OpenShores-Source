@@ -169,6 +169,9 @@ private:
 
 	// OpenGL
 	mutable Au3dsGLSLModelInstance*		m_Model;
+	bool TankTurretMatrices(float baseRotation, float gunRotation, AuMatrix4x4& base, AuMatrix4x4& gun) const;
+	static AuPoint TankMuzzle(int barrel);
+	static int LegacyTankGunRounds(COMMODITYID ordCID);
 	void TankTurretTransforms(QHash<QString, AuMatrix4x4>& transforms) const;
 	PsEngineTrail*						m_pEngineTrail[MAX_VEHICLE_CONTRAILS];
 	AuGLVAO								m_WeaponVAO;			// Guns/Weapons icon.
@@ -737,6 +740,14 @@ public:
 	// Returns index of empty seat that is found. -1 if no seats are empty.
 	int FindEmptySeat(AuPoint& seatLoc, AuPose& pose) const;
 
+	bool IsTankGunnerSeat(int seatIndex) const;
+	bool IsWeaponSeat(int seatIndex) const;
+	AuTurretState TankTurretAim() const;
+	static float TankGunElevation(float angle);
+	void PositionTankTurret(const DaCreature& gunner);
+	bool TankTurretSightMatrix(float baseRotation, float gunRotation, AuMatrix4x4& sight) const;
+	DaAtom* TankSightTarget(float baseRotation, float gunRotation, AuPoint& target, unsigned int& part, bool& shield) const;
+
 	bool IsControlSeat(int seatIndex) const
 	{
 		if(seatIndex < 0)
@@ -902,6 +913,8 @@ public:
 		{
 		default:
 			break;
+		case CID_Tank:
+			return LegacyTankGunRounds(ordCID);
 		case CID_SpaceFighter:
 			switch(ordCID)
 			{

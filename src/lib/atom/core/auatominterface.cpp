@@ -5361,6 +5361,13 @@ void AuAtomInterface::OrdnanceLoad(int rack, const AuItem& ord)
 		DaVessel* ship = dynamic_cast<DaVessel*>(person->Parent());
 		if(vehicle)
 		{
+			// Reject unsupported tank loads before a supplier removes stock.
+			if(g_Au.IsLegacyGeneration() && vehicle->CommodityId() == CID_Tank &&
+				(rack != DaVehicle::RACK_Gun || !vehicle->MaxWeaponRounds(ord.CommodityId())))
+			{
+				UnlockAvatar();
+				return;
+			}
 			// Only certain locations can provide ordnance.
 			INDUSTRYID iid = vehicle->InIndustry();
 			if(DbIndustry::CanSupplyOrdnance(iid))

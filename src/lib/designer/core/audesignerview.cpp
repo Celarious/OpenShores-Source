@@ -7030,7 +7030,10 @@ void AuDesignerView::UpdateTarget(DaPerson* sceneAtom, bool descAlso)
 		// Not in top-down view so spot the target at the crosshair location.
 		//qDebug() << "AuDesignerView::UpdateTarget sighting...";
 		float shotgunRange, spreadAngle;
-		if(sceneAtom->CurrentWeaponIsShotgun(shotgunRange, spreadAngle))
+		const DaVehicle* vehicle = dynamic_cast<const DaVehicle*>(sceneAtom->Parent());
+		if(vehicle && vehicle->IsTankGunnerSeat(sceneAtom->VehicleSeatIndex()))
+			sightedAtom = sceneAtom->SightTargetInSight(sightedLoc, sightedPart, sightedShield);
+		else if(sceneAtom->CurrentWeaponIsShotgun(shotgunRange, spreadAngle))
 			sightedAtom = sceneAtom->SightShotgunTarget(sightedLoc, sightedPart, sightedShield, shotgunRange, spreadAngle);
 		else
 			sightedAtom = sceneAtom->SightTargetInSight(sightedLoc, sightedPart, sightedShield);

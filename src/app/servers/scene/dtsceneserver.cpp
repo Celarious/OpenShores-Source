@@ -3465,6 +3465,11 @@ void DtSceneServer::ClientPositionUpdate(bool atRest, float headTilt, AuAtomPos&
 							vehicle->SetControlled(AuId());		// Release client control of vehicle.
 					}
 				}
+				// Apply tank aim after the frame's rotation, head tilt and seat index
+				// are all current. This never grants the gunner control of the hull.
+				DaVehicle* tank = dynamic_cast<DaVehicle*>(person->Parent());
+				if(tank)
+					tank->PositionTankTurret(*person);
 				if(personChanged)
 					person->SetModified();
 

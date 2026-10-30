@@ -1935,6 +1935,8 @@ void DaPerson::RenderScene(const AuMatrix4x4& projection, const AuMatrix4x4& far
 	const bool tankDriverHud = g_Au.IsLegacyGeneration() && vehicle &&
 			vehicle->CommodityId() == CID_Tank && VehicleSeatIndex() == 0 &&
 			!IsBodyDyingOrDead() && !RemoteCameraId();
+	const bool tankGunnerHud = vehicle && vehicle->IsTankGunnerSeat(VehicleSeatIndex()) &&
+			!IsBodyDyingOrDead() && !RemoteCameraId();
 	if(parent)
 	{
 		float gap = 0;	//barSpacing * 2;
@@ -2070,12 +2072,12 @@ void DaPerson::RenderScene(const AuMatrix4x4& projection, const AuMatrix4x4& far
 			//DHH Cannot shoot out of an enclosed vehicle.
 			//DHH This should eventually be smarter so people can shoot through the
 			//DHH windows or doors of an enclosed vehicle.
-			// Keep the Tank driver's crosshair visible inside the enclosed vehicle.
-			if(!IsInVehicle() || tankDriverHud)
+			// The second Tank seat aims through the barrel-mounted sight.
+			if(!IsInVehicle() || tankGunnerHud)
 			{
 				// Calculate cross-hair Y offset based on targetted atom. Camera positioning behind/above the head induces this.
 				float yoff = 0;
-				if(!tankDriverHud && targetAtom && !targetLoc.IsZero())
+				if(!tankGunnerHud && targetAtom && !targetLoc.IsZero())
 				{
 					// No Y offset adjustment is needed in first person view when the view angle is zero, which is the normal first
 					// person view angle.
@@ -4083,7 +4085,7 @@ void DaPerson::EnumViewControls(QList<AuControlButton>& controls, AuAtomRenderIn
 		{
 			if(!vehicle->IsLaunching() && !vehicle->IsParalyzed() && vehicle->Fuel() > 0)
 				controls.append(AuControlButton(tr("Engine"), Id(), 0, DaVehicle::CI_EngineOnOff, texV));
-			if(vehicle->HasWeapon())
+			if(vehicle->HasWeapon() && vehicle->IsWeaponSeat(VehicleSeatIndex()))
 				controls.append(AuControlButton(tr("Weapon"), Id(), 0, DaVehicle::CI_SelectWeapon, texV));
 			if(vehicle->HasLight())
 				controls.append(AuControlButton(tr("Headlight"), Id(), 0, DaVehicle::CI_LightOnOff, texV));
@@ -4112,6 +4114,8 @@ void DaPerson::EnumViewControls(QList<AuControlButton>& controls, AuAtomRenderIn
 			if(!vehicle->MotherShip().IsNull() && !vehicle->MotherShipName().isEmpty())
 				controls.append(AuControlButton(tr("Deassign"), Id(), 0, DaVehicle::CI_ReleaseMotherShip, texV));
 		}
+		if(vehicle->IsTankGunnerSeat(VehicleSeatIndex()))
+			controls.append(AuControlButton(tr("Fire Guns"), Id(), 0, DaVehicle::CI_FireGun, texV));
 		controls.append(AuControlButton(tr("Service"), Id(), 0, DaVehicle::CI_Service, texV));
 		if(vehicle->EmptySeats())
 		{
@@ -9639,6 +9643,9 @@ void DaPerson::ApplyMovement(unsigned int msElapsed)
 		if(vessel)
 			vessel->PositionTurret(*this);
 	}
+	DaVehicle* vehicle = dynamic_cast<DaVehicle*>(Parent());
+	if(vehicle)
+		vehicle->PositionTankTurret(*this);
 }
 
 void DaPerson::AnimateDeviceObjects(AuAtomRenderInfo& ari, const DaPerson* sceneAtom, const AuElapsedTimer& lastAnim)

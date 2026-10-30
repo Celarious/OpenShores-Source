@@ -198,7 +198,7 @@ const DiControlInput s_SUVDefaults[] =
 				Qt::NoModifier, DiControlInput::JT_None,
 				0,100,true),
 
-	DiControlInput(QObject::tr("Fire Guns"), QObject::tr("APC Only"),
+	DiControlInput(QObject::tr("Fire Guns"), QObject::tr("APC or Tank Gunner"),
 				DaVehicle::CI_FireGun, Qt::Key_F, Qt::NoModifier,
 				DiControlInput::MT_ButtonLeft, Qt::NoModifier,
 				DiControlInput::JT_Button, 0, 100, true, false),
@@ -2919,28 +2919,118 @@ bool DaVehicle::Orient(const AuPoint& atLoc, const AuPoint& terNormal)
 	return true;
 }
 
-void DaVehicle::TankTurretTransforms(QHash<QString, AuMatrix4x4>& transforms) const
+bool DaVehicle::IsTankGunnerSeat(int seatIndex) const
 {
-	if(!g_Au.IsLegacyGeneration() || m_cid != CID_Tank || !m_Model) return;
+	return g_Au.IsLegacyGeneration() && m_cid == CID_Tank && seatIndex == 1;
+}
+
+bool DaVehicle::IsWeaponSeat(int seatIndex) const
+{
+	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank)
+		return IsTankGunnerSeat(seatIndex);
+	return IsControlSeat(seatIndex);
+}
+
+float DaVehicle::TankGunElevation(float angle)
+{
+	return qBound(-10.f * DEG2RADf, angle, 60.f * DEG2RADf);
+}
+
+void DaVehicle::PositionTankTurret(const DaCreature& gunner)
+{
+	if(gunner.Parent() != this || !IsTankGunnerSeat(gunner.VehicleSeatIndex()) || gunner.IsBodyDyingOrDead())
+		return;
+	const float baseRotation = gunner.Rotation().z;
+	const float gunRotation = TankGunElevation(gunner.CurrentHeadTilt());
+	QWriteLocker lock(&m_VehicleLock);
+	if(m_TankTurret.BaseRotation() != baseRotation || m_TankTurret.GunRotation() != gunRotation)
+	{
+		m_TankTurret.SetBaseRotation(baseRotation);
+		m_TankTurret.SetGunRotation(gunRotation);
+		m_TankTurretChanged.Set();
+		SetModified();
+	}
+}
+
+AuTurretState DaVehicle::TankTurretAim() const
+{
+	// Use the occupant's current pose on the client so server refreshes cannot
+	// pull the local gunner's visible barrels behind their camera movement.
+	if(g_Au.IsSceneApp())
+	{
+		DaAtomList occupants;
+		ListNormalSubatoms(occupants);
+		for(DaAtomList::const_iterator it = occupants.cbegin(); it != occupants.cend(); ++it)
+		{
+			const DaPerson* gunner = dynamic_cast<const DaPerson*>(*it);
+			if(gunner && IsTankGunnerSeat(gunner->VehicleSeatIndex()) &&
+				!gunner->IsInvisibleOffLine() && !gunner->IsBodyDyingOrDead())
+			{
+				AuTurretState aim;
+				aim.SetBaseRotation(gunner->Rotation().z);
+				aim.SetGunRotation(TankGunElevation(gunner->CurrentHeadTilt()));
+				return aim;
+			}
+		}
+	}
+	QReadLocker lock(&m_VehicleLock);
+	return m_TankTurret;
+}
+
+bool DaVehicle::TankTurretMatrices(float baseRotation, float gunRotation, AuMatrix4x4& base, AuMatrix4x4& gun) const
+{
+	if(!g_Au.IsLegacyGeneration() || m_cid != CID_Tank || !m_Model) return false;
 	AuPoint basePivot, gunPivot;
 	if(!m_Model->ObjectOrigin(QStringLiteral("Swivel"), basePivot) ||
 		!m_Model->ObjectOrigin(QStringLiteral("Barrels"), gunPivot))
-		return;
+		return false;
 
 	// This export has zero object origins. These attachment points are measured
 	// in its exported feet: the round swivel center and the barrel mounting collars.
 	// Future exports can provide the pivots directly through the object origins.
-	if(basePivot.IsFuzzyZero()) basePivot = AuPoint(0, -.20625, 5.62178);
-	if(gunPivot.IsFuzzyZero()) gunPivot = AuPoint(0, 3.81071, 5.62178);
-	AuTurretState aim;
-	{
-		QReadLocker lock(&m_VehicleLock);
-		aim = m_TankTurret;
-	}
+	if(basePivot.IsFuzzyZero()) basePivot = AuPoint(0, -.25149, 6.854069);
+	if(gunPivot.IsFuzzyZero()) gunPivot = AuPoint(0, 3.085438, 6.854069);
+	AuScTurret::BaseRotationMatrix(basePivot, AuPoint(0, 0, 1), baseRotation, base);
+	AuScTurret::GunRotationMatrix(basePivot, AuPoint(0, 0, 1), baseRotation,
+		gunPivot, AuPoint(1, 0, 0), TankGunElevation(gunRotation), gun);
+	return true;
+}
+
+bool DaVehicle::TankTurretSightMatrix(float baseRotation, float gunRotation, AuMatrix4x4& sight) const
+{
 	AuMatrix4x4 base, gun;
-	AuScTurret::BaseRotationMatrix(basePivot, AuPoint(0, 0, 1), aim.BaseRotation(), base);
-	AuScTurret::GunRotationMatrix(basePivot, AuPoint(0, 0, 1), aim.BaseRotation(),
-		gunPivot, AuPoint(1, 0, 0), aim.GunRotation(), gun);
+	if(!TankTurretMatrices(baseRotation, gunRotation, base, gun)) return false;
+	// Just over the barrels, about a quarter of their length from the collars.
+	sight = gun;
+	sight.Translate(0, 8, 8.5);
+	sight.RotateX(PI / 2);
+	return true;
+}
+
+DaAtom* DaVehicle::TankSightTarget(float baseRotation, float gunRotation, AuPoint& target, unsigned int& part,
+	bool& shield) const
+{
+	AuMatrix4x4 sight;
+	if(!TankTurretSightMatrix(baseRotation, gunRotation, sight)) return 0;
+	const AuPoint sightLoc = sight.Translation();
+	const AuPoint sightDir = sight.ProjectVector(AuPoint(0, 0, -1));
+	// Query from the actual sight, ignoring the tank and all of its occupants.
+	return DaAtom::SightTarget(target, part, shield, sightLoc, sightLoc + sightDir * c_CreatureSightRange);
+}
+
+AuPoint DaVehicle::TankMuzzle(int barrel)
+{
+	// The current export has no weapon triangles. These are its two muzzle
+	// centers in feet, kept separate from the gunner's authored seat triangle.
+	return AuPoint((barrel & 1) ? 1.807912 : -1.807912, 20.388109, 6.854069);
+}
+
+void DaVehicle::TankTurretTransforms(QHash<QString, AuMatrix4x4>& transforms) const
+{
+	if(!g_Au.IsLegacyGeneration() || m_cid != CID_Tank) return;
+	const AuTurretState aim = TankTurretAim();
+	AuMatrix4x4 base, gun;
+	if(!TankTurretMatrices(aim.BaseRotation(), aim.GunRotation(), base, gun)) return;
 	transforms.insert(QStringLiteral("Swivel"), base);
 	transforms.insert(QStringLiteral("Barrels"), gun);
 }
@@ -4586,6 +4676,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 	DaPerson* person = (DaPerson*)pSceneAtom;
 	int seat = person->VehicleSeatIndex();
 	bool controlSeat = IsControlSeat(seat);
+	const bool weaponSeat = IsWeaponSeat(seat);
 	bool tt = false;	// true to call TickTock
 	//qDebug() << "DaVehicle::ProcessControlInput seat" << seat << "controlSeat" << controlSeat;
 	for(int ic=0; ic<aActiveControls.count(); ic++)
@@ -4612,7 +4703,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				RemoteDoorSwitch(pSceneAtom);
 			break;
 		case CI_FireGun:
-			if(cc != CONTROL_Client && controlSeat && !IsParalyzed())
+			if(cc != CONTROL_Client && weaponSeat && !IsParalyzed())
 			{
 				if(FireGun(pSceneAtom))
 				{
@@ -4622,7 +4713,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 			}
 			break;
 		case CI_FireWeapon:
-			if(cc != CONTROL_Client && controlSeat && !IsParalyzed())
+			if(cc != CONTROL_Client && weaponSeat && !IsTankGunnerSeat(seat) && !IsParalyzed())
 			{
 				if(FireWeapon(pSceneAtom))
 				{
@@ -4632,7 +4723,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 			}
 			break;
 		case CI_SelectWeapon:
-			if(cc != CONTROL_Client && controlSeat)
+			if(cc != CONTROL_Client && weaponSeat && !IsTankGunnerSeat(seat))
 			{
 				if(m_OrdSelect)
 					m_OrdSelect = 0;
@@ -5571,10 +5662,20 @@ void DaVehicle::ChangeSeats(DaPerson* occupant, int fromSeat, int toSeat)
 
 	AuPoint fromSeatLoc = m_Model->SeatLoc(fromSeat);
 	AuPoint toSeatLoc = m_Model->SeatLoc(toSeat);
+	if(IsTankGunnerSeat(fromSeat))
+		PositionTankTurret(*occupant);
 	AuPoint moveVec = toSeatLoc - fromSeatLoc;
 	AuMatrix4x4 t;
 	t.Translate(moveVec);
 	t *= occupant->Transform();
+	if(IsTankGunnerSeat(toSeat))
+	{
+		const AuTurretState aim = TankTurretAim();
+		t.LoadIdentity();
+		t.Translate(occupant->Location() + moveVec);
+		t.RotateZ(aim.BaseRotation());
+		occupant->TiltHeadTo(aim.GunRotation());
+	}
 	occupant->SetVehicleSeatIndex(toSeat);
 	occupant->ChangePosAndOrient(AuAtomPos(Id(), t));
 	occupant->InvalidateEnvironment();
@@ -7570,6 +7671,23 @@ void DaVehicle::GetRenderLightsRecursive(const DaPerson& person, const AuMatrix4
 			lights.append(AuGLLight(Id(), lightRole, kL,kQ, colLight, lpos, cosOuterCone, cosInnerCone, lvec));
 		else
 			lights.append(AuGLLight(Id(), lightRole, kL,kQ, colLight, lpos));
+
+		if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank && m_Model->SeatCount())
+		{
+			// The forward-facing headlights cannot illuminate the enclosed cabin.
+			// Place a small cabin lamp above the center of the authored seats,
+			// controlled by the same light switch as the headlights.
+			AuPoint cabinLoc;
+			const unsigned int seats = m_Model->SeatCount();
+			for(unsigned int seat = 0; seat < seats; ++seat)
+				cabinLoc += m_Model->SeatLoc(seat);
+			cabinLoc /= double(seats);
+			// Keep the lamp below the inner ceiling rather than in the roof.
+			cabinLoc.z += 1.25;
+			const float cabinRadius = 12.f;
+			lights.append(AuGLLight(Id(), lightRole, .075f, 1.f / (cabinRadius * cabinRadius),
+				AuGLLight::ColorHalogen(), model.Project(cabinLoc)));
+		}
 	}
 
 	// Make lights for subordinate atoms.
@@ -8692,6 +8810,8 @@ void DaVehicle::CombatArmorEffectiveness(WEAPONMODE mode, WEAPONEFFECT effect, b
 
 int DaVehicle::WeaponCount() const
 {
+	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank)
+		return m_Model ? 2 : 0;
 	if(m_Model)
 		return m_Model->WeaponCount();
 	return 0;
@@ -8699,6 +8819,15 @@ int DaVehicle::WeaponCount() const
 
 AuPoint DaVehicle::WeaponLocation(int weaponIndex) const
 {
+	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank)
+	{
+		if(weaponIndex < 0 || weaponIndex >= 2) return AuPoint(0,0);
+		const AuTurretState aim = TankTurretAim();
+		AuMatrix4x4 base, gun;
+		if(TankTurretMatrices(aim.BaseRotation(), aim.GunRotation(), base, gun))
+			return gun.Project(TankMuzzle(weaponIndex));
+		return AuPoint(0,0);
+	}
 	if(m_Model)
 		return m_Model->WeaponLocation(weaponIndex);
 	return AuPoint(0,0);
@@ -8706,6 +8835,15 @@ AuPoint DaVehicle::WeaponLocation(int weaponIndex) const
 
 AuPoint DaVehicle::WeaponDirection(int weaponIndex) const
 {
+	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank)
+	{
+		if(weaponIndex < 0 || weaponIndex >= 2) return AuPoint(0,0);
+		const AuTurretState aim = TankTurretAim();
+		AuMatrix4x4 base, gun;
+		if(TankTurretMatrices(aim.BaseRotation(), aim.GunRotation(), base, gun))
+			return gun.ProjectVector(AuPoint(0,1,0));
+		return AuPoint(0,0);
+	}
 	if(m_Model)
 		return m_Model->WeaponDirection(weaponIndex);
 	return AuPoint(0,0);
@@ -8717,7 +8855,7 @@ AuPoint DaVehicle::WeaponRotation(int weaponIndex) const
 	{
 		// Determine rotation required to point forward vector (0,1,0) to
 		// weapon firing direction.
-		AuPoint dir = m_Model->WeaponDirection(weaponIndex);
+		AuPoint dir = WeaponDirection(weaponIndex);
 		AuMatrix4x4 trot = AuPoint(0,1,0).GetAlignmentTransform(dir);
 		return trot.GetRotation();
 	}
@@ -9566,6 +9704,16 @@ void DaVehicle::FindClosestShipTurretTargetRecursive(const AuId& shipId, int gun
 
 bool DaVehicle::FireGun(const DaCreature* gunner)
 {
+	const bool tankVolley = g_Au.IsLegacyGeneration() && m_cid == CID_Tank;
+	AuMatrix4x4 tankBase, tankGun;
+	if(tankVolley)
+	{
+		if(!gunner || gunner->Parent() != this || !IsTankGunnerSeat(gunner->VehicleSeatIndex()) ||
+			gunner->IsBodyDyingOrDead() || IsParalyzed() ||
+			!TankTurretMatrices(gunner->Rotation().z, gunner->CurrentHeadTilt(), tankBase, tankGun))
+			return false;
+		PositionTankTurret(*gunner);
+	}
 	AuEther* ether = Ether();
 	if(!ether)
 		return false;
@@ -9584,14 +9732,15 @@ bool DaVehicle::FireGun(const DaCreature* gunner)
 
 	// Fire gun if it has ammo and we're not exceeding its rate of fire.
 	m_VehicleLock.lockForRead();
-	if(!m_Gun.CanFire())
+	if(!m_Gun.CanFire() || (tankVolley &&
+		(m_Gun.RoundsCount() < 2 || !LegacyTankGunRounds(m_Gun.CommodityId()))))
 	{
 		m_VehicleLock.unlock();
 		return false;
 	}
 
 	// Determine weapon location and firing direction.
-	AuPoint emitLoc = GunEmitLoc(m_Gun.FireSequence());
+	AuPoint emitLoc = tankVolley ? tankGun.Project(TankMuzzle(0)) : GunEmitLoc(m_Gun.FireSequence());
 	AuPoint emitDir;
 	if(CommodityId() == CID_APC)
 	{
@@ -9709,51 +9858,81 @@ bool DaVehicle::FireGun(const DaCreature* gunner)
 	else
 	{
 		// Gun fires a bullet if it's not an energy weapon.
-		// Shoot gun at target. It does not lock on to targets.
-		DaMissile* bullet = new DaMissile(*m_Gun.Ammo(), 1, EmpireId());
-		bullet->ConnectSignals();
-		bullet->Create();
-
-		SOUND_EFFECT sound = (SOUND_EFFECT)m_Gun.SoundFired();
-		VISUAL_EFFECT visual = m_Gun.VisualFired();
-
+		const AuOrdnance rounds(m_Gun);
+		const int shots = tankVolley ? 2 : 1;
+		const SOUND_EFFECT sound = (SOUND_EFFECT)rounds.SoundFired();
+		const VISUAL_EFFECT visual = rounds.VisualFired();
 		m_VehicleLock.unlock();
 
-		// Create a transform to position the bullet at the gun muzzle location, pointing in the gun fire direction.
-		AuMatrix4x4 aim = AuPoint(0,0,1).GetAlignmentTransform(emitDir);
-		AuMatrix4x4 t(Transform());
-		t.Translate(emitLoc);
-		t *= aim;
-		bullet->SetPosAndOrient(AuAtomPos(ParentId(), t));
-		ether->AddAtom(bullet);
-
-		bullet->SetInScene();							// Don't decay too fast right away.
-		bullet->SetVector(aim.UnProject(Vector()) + AuPoint(0,0,bullet->MuzzleExitVelocity()));	// Muzzle velocity plus my vec.
-		bullet->SetInMotion();
-		const DaCreature* person = Driver();
-		if(person)
-			bullet->ArmWeapon(Id(), tr("%1 in a %2").arg(person->Name()).arg(Name()), EmpireId());
-		else
-			bullet->ArmWeapon(Id(), Name(), EmpireId());
-		bullet->SetOwnerIgnored(true);	// Do not hit my owner/armedBy atom.
-
-		g_Au.AtomAdded(bullet->Id());
-		bullet->SetNormal();	// New atom is ready for normal thread processing.
-		bullet->TickTock();		// Immediately start tick processing.
-
-		// Add weapon fire effect to weapon.
-		if(sound != SOUND_None || visual != VISUAL_None)
+		AuPoint volleyTarget;
+		if(tankVolley)
 		{
-			AuEffect effect(emitLoc, AuPoint(0,0), AuPoint(0,0), sound, 1, 1, visual);
-			effect.SetTargetLoc(AuPoint(0, 1000, 0));
-			AddEffect(effect);
+			unsigned int sightedPart = 0;
+			bool sightedShield = false;
+			// Query once through the gunner's crosshair, ignoring this tank and
+			// its occupants. Both muzzle rays converge on the same hit/end point.
+			TankSightTarget(gunner->Rotation().z, gunner->CurrentHeadTilt(), volleyTarget, sightedPart, sightedShield);
+			const AuPoint barrelForward = tankGun.ProjectVector(AuPoint(0, 1, 0));
+			for(int barrel = 0; barrel < shots; ++barrel)
+				if((volleyTarget - tankGun.Project(TankMuzzle(barrel))).Dot(barrelForward) <= 0)
+					return false; // A sight obstruction behind the muzzles cannot be fired at.
+
+			// Reserve the complete pair before creating either projectile.
+			QWriteLocker lock(&m_VehicleLock);
+			if(!m_Gun.CanFire() || m_Gun.RoundsCount() < shots || m_Gun.CommodityId() != rounds.CommodityId())
+				return false;
+			for(int shot = 0; shot < shots; ++shot)
+				m_Gun.Fired();
 		}
 
-		// Gun fired.
-		// Expend ammo and update fire time and sequencer.
-		m_VehicleLock.lockForWrite();
-		m_Gun.Fired();
-		m_VehicleLock.unlock();
+		for(int shot = 0; shot < shots; ++shot)
+		{
+			if(tankVolley)
+			{
+				emitLoc = tankGun.Project(TankMuzzle(shot));
+				emitDir = volleyTarget - emitLoc;
+				emitDir.Unit();
+			}
+			DaMissile* bullet = new DaMissile(*rounds.Ammo(), 1, EmpireId());
+			bullet->ConnectSignals();
+			bullet->Create();
+
+			// The tank shares the existing projectile setup; only its two
+			// muzzle locations and converging launch directions differ.
+			AuMatrix4x4 aim = AuPoint(0,0,1).GetAlignmentTransform(emitDir);
+			AuMatrix4x4 t(Transform());
+			t.Translate(emitLoc);
+			t *= aim;
+			bullet->SetPosAndOrient(AuAtomPos(ParentId(), t));
+			ether->AddAtom(bullet);
+
+			bullet->SetInScene();
+			bullet->SetVector(aim.UnProject(Vector()) + AuPoint(0,0,bullet->MuzzleExitVelocity()));
+			bullet->SetInMotion();
+			const DaCreature* person = tankVolley ? gunner : Driver();
+			if(person)
+				bullet->ArmWeapon(Id(), tr("%1 in a %2").arg(person->Name()).arg(Name()), EmpireId());
+			else
+				bullet->ArmWeapon(Id(), Name(), EmpireId());
+			bullet->SetOwnerIgnored(true);
+
+			g_Au.AtomAdded(bullet->Id());
+			bullet->SetNormal();
+			bullet->TickTock();
+
+			if(sound != SOUND_None || visual != VISUAL_None)
+			{
+				AuEffect effect(emitLoc, AuPoint(0,0), AuPoint(0,0), sound, 1, 1, visual);
+				effect.SetTargetLoc(tankVolley ? volleyTarget : AuPoint(0, 1000, 0));
+				AddEffect(effect);
+			}
+		}
+		if(!tankVolley)
+		{
+			m_VehicleLock.lockForWrite();
+			m_Gun.Fired();
+			m_VehicleLock.unlock();
+		}
 	}
 	SetModified();
 
@@ -9879,6 +10058,8 @@ bool DaVehicle::FireWeapon(const DaCreature* gunner)
 
 AuPoint DaVehicle::GunEmitLoc(int fireSeq) const
 {
+	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank)
+		return WeaponLocation(fireSeq & 1);
 	if(!m_Model)
 		return AuPoint(0,0);
 
@@ -9998,8 +10179,25 @@ AuPoint DaVehicle::WeaponEmitLoc(int fireSeq) const
 	return emitLoc;
 }
 
+int DaVehicle::LegacyTankGunRounds(COMMODITYID ordCID)
+{
+	if(!g_Au.IsLegacyGeneration()) return 0;
+	switch(ordCID)
+	{
+	case CID_HeavyArmsAmmoPi:
+	case CID_HeavyArmsAmmoPiRa:
+	case CID_HeavyArmsAmmoPiBl:
+	case CID_HeavyArmsAmmoPiAc:
+		return MaxWeaponRounds(CID_APC, ordCID);
+	default:
+		return 0;
+	}
+}
+
 DaVehicle::WEAPON_RACK DaVehicle::CanLoadAmmunition(const AuItem& item) const
 {
+	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank && !LegacyTankGunRounds(item.CommodityId()))
+		return RACK_None;
 	// Only certain vehicles can load ordnance.
 	WEAPON_RACK loadRack = RACK_None;
 	switch(item.CommodityId())
@@ -10062,6 +10260,9 @@ DaVehicle::WEAPON_RACK DaVehicle::CanLoadAmmunition(const AuItem& item) const
 
 void DaVehicle::LoadAmmunition(const AuItem& item, WEAPON_RACK rack)
 {
+	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank &&
+		(rack != RACK_Gun || !LegacyTankGunRounds(item.CommodityId())))
+		return;
 	switch(rack)
 	{
 	case RACK_None:
@@ -10809,6 +11010,8 @@ void DaVehicle::FindClosestShipThreatRecursive(const AuId& shipId, int shipDomai
 
 bool DaVehicle::HasWeapon() const
 {
+	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank)
+		return true;
 	switch(m_cid)
 	{
 	case CID_DirtBike:

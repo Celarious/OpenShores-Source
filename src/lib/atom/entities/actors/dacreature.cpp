@@ -3115,6 +3115,15 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 	// Far clip must allow for the largest object that gets rendered in the near pass, which is a ringworld arc section plus both
 	// of its neighboring sections, ugh.
 	rFarClip = DaWorldRingSection::MinimumSectionLength() * 2;
+	const DaVehicle* vehicle = dynamic_cast<const DaVehicle*>(parent);
+	AuMatrix4x4 tankSight;
+	if(vehicle && vehicle->IsTankGunnerSeat(VehicleSeatIndex()) && !IsBodyDyingOrDead() && !RemoteCameraId() &&
+		vehicle->TankTurretSightMatrix(Rotation().z, CurrentHeadTilt(), tankSight))
+	{
+		rNearClip = .25;
+		tCamera = Transform().Inverse() * tankSight;
+		return;
+	}
 
 	quint16 remoteCameraId = RemoteCameraId();
 	if(remoteCameraId)
@@ -3687,6 +3696,13 @@ bool DaCreature::IsMonitoringDifferentSystem(const AuId& idSolarSystem) const
 
 DaAtom* DaCreature::SightTargetInSight(AuPoint& sightedLoc, unsigned int& sightedPart, bool& sightedShield) const
 {
+	const DaVehicle* vehicle = dynamic_cast<const DaVehicle*>(Parent());
+	if(vehicle && vehicle->IsTankGunnerSeat(VehicleSeatIndex()) && !IsBodyDyingOrDead() && !RemoteCameraId())
+	{
+		DaAtom* target = vehicle->TankSightTarget(Rotation().z, CurrentHeadTilt(), sightedLoc, sightedPart, sightedShield);
+		sightedLoc = Transform().UnProject(sightedLoc);
+		return target;
+	}
 	if(IsTurretIntegratedPose())
 	{
 		const DaSc* sc = dynamic_cast<const DaSc*>(Parent());
@@ -7554,10 +7570,18 @@ int DaCreature::MountVehicle(DaVehicle* vehicle)
 	m_BodyLock.unlock();
 	AuMatrix4x4 t;											// Identity matrix.
 	t.Translate(seatLoc);
+	AuTurretState tankAim;
+	if(vehicle->IsTankGunnerSeat(seatIndex))
+	{
+		tankAim = vehicle->TankTurretAim();
+		t.RotateZ(tankAim.BaseRotation());
+	}
 
 	// Position my body.
 	ChangePosAndOrient(AuAtomPos(vehicle->Id(), t));
 	SetVehicleSeatIndex((quint8)seatIndex);					// Remember my current vehicle seat index.
+	if(vehicle->IsTankGunnerSeat(seatIndex))
+		TiltHeadTo(tankAim.GunRotation());
 	vehicle->SetUsed();										// Enable the vehicle to decay.
 	vehicle->SetModified();									// Signal the vehicle atom as modified.
 
@@ -7596,11 +7620,19 @@ int DaCreature::ForceMountVehicle(DaVehicle* vehicle)
 	m_BodyLock.unlock();
 	AuMatrix4x4 t;											// Identity matrix.
 	t.Translate(seatLoc);
+	AuTurretState tankAim;
+	if(vehicle->IsTankGunnerSeat(seatIndex))
+	{
+		tankAim = vehicle->TankTurretAim();
+		t.RotateZ(tankAim.BaseRotation());
+	}
 
 	// Position my body.
 	ForcePosStop(AuAtomPos(vehicle->Id(), t));
 	SetVehicleSeatIndex((quint8)seatIndex);					// Remember my current vehicle seat index.
-	SyncController(AuSyncPose(seatPose, 0, 0, seatIndex));
+	if(vehicle->IsTankGunnerSeat(seatIndex))
+		TiltHeadTo(tankAim.GunRotation());
+	SyncController(AuSyncPose(seatPose, vehicle->IsTankGunnerSeat(seatIndex) ? tankAim.GunRotation() : 0, 0, seatIndex));
 	vehicle->SetUsed();										// Enable the vehicle to decay.
 	vehicle->SetModified();									// Signal the vehicle atom as modified.
 
@@ -8846,6 +8878,9 @@ void DaCreature::BodyPoseAdjustTransform(AuMatrix4x4& tBody) const
 
 bool DaCreature::TiltHeadTo(float angle)
 {
+	const DaVehicle* vehicle = dynamic_cast<const DaVehicle*>(Parent());
+	if(vehicle && vehicle->IsTankGunnerSeat(VehicleSeatIndex()))
+		angle = DaVehicle::TankGunElevation(angle);
 	// Constrain head tilt when in a top or bottom turret.
 	if(CurrentGeneralPose() == AuPose::ConsoleTurretBottom)
 	{
@@ -9269,6 +9304,11 @@ bool DaCreature::ConsoleScreenQuad(AuQuad& screen) const
 
 AuPoint DaCreature::SceneCameraLocation() const
 {
+	const DaVehicle* vehicle = dynamic_cast<const DaVehicle*>(Parent());
+	AuMatrix4x4 tankSight;
+	if(vehicle && vehicle->IsTankGunnerSeat(VehicleSeatIndex()) && !IsBodyDyingOrDead() && !RemoteCameraId() &&
+		vehicle->TankTurretSightMatrix(Rotation().z, CurrentHeadTilt(), tankSight))
+		return Transform().UnProject(tankSight.Translation());
 	const DaSc* legacyShip = dynamic_cast<const DaSc*>(Parent());
 	const AuPose pose = CurrentGeneralPose();
 	if(pose.IsTurret() && !pose.IsTurretIntegrated()
