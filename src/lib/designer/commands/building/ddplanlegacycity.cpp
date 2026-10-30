@@ -189,8 +189,7 @@ void ClearOutline(const DaWorldLL& world, const ClearTarget& hit,
 		const AuPoint start = world.LocOfLL(startLL, dev.roadStartAltitudeMSL);
 		const AuPoint end = world.LocOfLL(endLL, dev.roadEndAltitudeMSL), direction = end - start;
 		const double length = direction.Length(); if(length <= 0) return;
-		const bool landscape = dev.constructionProcessId == 5 || dev.constructionProcessId == 74
-			|| dev.constructionProcessId == 80 || dev.constructionProcessId == 81;
+		const bool landscape = dev.IsLandscaper();
 		AuPoint previousLeft, previousRight, previousCenter, firstLeft, firstRight;
 		for(double along = 0;; along = qMin(length, along + 15))
 		{
@@ -506,8 +505,7 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 			for(const auto& existing : state.developments)
 			{
 				if(existing.demolished) continue;
-				if(existing.industryId == 2 && (existing.constructionProcessId == 5 || existing.constructionProcessId == 74
-					|| existing.constructionProcessId == 80 || existing.constructionProcessId == 81)) continue;
+				if(existing.IsLandscaper()) continue;
 				AuMatrix4x4 otherPlacement;
 				world.BuildingConstructionTransform(world.LocOfLL(existing.location, existing.altitudeMSL),
 					existing.facingRadians, nullptr, AuPoint(), otherPlacement);

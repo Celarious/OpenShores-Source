@@ -55,6 +55,12 @@ struct Development
 	double roadStartAltitudeMSL = 0, roadEndAltitudeMSL = 0;
 	float biodomeRadiusMeters = 100;
 	bool demolished = false;
+	// Original FIND_SkipLandscapers excludes grades and vegetation work.
+	bool IsLandscaper() const
+	{
+		return industryId == 2 && (constructionProcessId == 5 || constructionProcessId == 74
+			|| constructionProcessId == 80 || constructionProcessId == 81);
+	}
 };
 
 struct Flag

@@ -578,5 +578,6 @@
 	<file>data/wl_Mouth.png</file>
 	<file>data/wl_Tail.png</file>
 	<file>data/wl_Torso.png</file>
+	<file>data/HudSpeedometer.png</file>
 </qresource>
 </RCC>

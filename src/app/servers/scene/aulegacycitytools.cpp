@@ -546,9 +546,10 @@ void DtChatChannel::ProcessLegacyConstructionRequest(const AuLegacyCityProtocol:
 	{
 		// Clicking an existing building requests an extension. Its stored design,
 		// material, orientation and recipe remain authoritative.
+		// Match placement's FIND_SkipLandscapers filter; clearing can still select them.
 		developmentId = 0;
 		for(const auto& dev : state.developments)
-			if(ContainsSite(*world, dev, site))
+			if((request.action != Build || !dev.IsLandscaper()) && ContainsSite(*world, dev, site))
 			{
 				if(request.action == Build && (request.industryId == 2 || founding)) continue;
 				if(request.action == Build && (request.industryId == 129 || dev.industryId == 129)) continue;

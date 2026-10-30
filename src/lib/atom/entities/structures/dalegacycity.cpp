@@ -1976,8 +1976,7 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 			for(const auto& existing : otherCity.developments)
 			{
 				if(existing.demolished) continue;
-				const bool landscapingRoad = existing.industryId == 2 && (existing.constructionProcessId == 5
-					|| existing.constructionProcessId == 74 || existing.constructionProcessId == 80 || existing.constructionProcessId == 81);
+				const bool landscapingRoad = existing.IsLandscaper();
 				if(landscapingRoad && industry != 129) continue; // Original FIND_SkipLandscapers.
 				const auto* otherRecipe = ConstructionRecipe(existing.industryId, existing.constructionProcessId);
 				if(!otherRecipe) continue;

@@ -3044,9 +3044,11 @@ void AuGLEffects::RenderSail(const QRect& clientRect, float xpos, float ypos, fl
 void AuGLEffects::RenderSpeedometer(const QRect& clientRect, float xpos, float ypos, float size, float speedMph,
 		float r, float g, float b, float a)
 {
-	// Create texture.
+	// The gauge face uses its own texture; the needle remains in the HUD atlas.
+	GLuint texGauge = CreateTextureFromBitmap(STATIC_TEXTURE_ID, "HudSpeedometer", ":data/HudSpeedometer.png",
+			GL_LINEAR, GL_LINEAR, false, 1);
 	GLuint texHudItems = HUDItemsTexture();
-	if(!texHudItems)
+	if(!texGauge || !texHudItems)
 		return;
 
 	// Variables used for calculating texture coordinates in texHudItems.
@@ -3059,11 +3061,11 @@ void AuGLEffects::RenderSpeedometer(const QRect& clientRect, float xpos, float y
 
 	if(!m_SpeedoGaugeVAO.VAO())
 	{
-		// Texture coordinates of gauge in s_texHudItems.
-		float s = 704.5f / himaxx;
-		float t = .5f / himaxy;
-		float u = 767.5 / himaxx;
-		float v = 63.5f / himaxy;
+		// The gauge face fills the standalone texture.
+		float s = 0.f;
+		float t = 0.f;
+		float u = 1.f;
+		float v = 1.f;
 
 		AuTriTex tri0;
 		tri0.m_V0 = AuPointTex(-wid2,0,0, s,t);
@@ -3114,9 +3116,9 @@ void AuGLEffects::RenderSpeedometer(const QRect& clientRect, float xpos, float y
 	// Configure shader.
 	GLSL().TextureShader().Select();
 	GLSL().TextureShader().SetColor(r,g,b,a);
-	GLSL().TextureShader().SetTexture(texHudItems);
 
 	// Gauge face
+	GLSL().TextureShader().SetTexture(texGauge);
 	AuMatrix4x4 mvbase;
 	mvbase.Translate(xpos, ypos, 0);
 	GLSL().TextureShader().SetProjectionModelView(projection * mvbase);
@@ -3126,6 +3128,7 @@ void AuGLEffects::RenderSpeedometer(const QRect& clientRect, float xpos, float y
 	m_SpeedoGaugeVAO.DeselectGL();
 
 	// Needle
+	GLSL().TextureShader().SetTexture(texHudItems);
 	// Calculate needle rotation based on speed.
 	speedMph = fabs(speedMph);
 	if(speedMph < 5)
