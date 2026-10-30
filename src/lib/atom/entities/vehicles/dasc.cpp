@@ -15,6 +15,8 @@
 #include "aulegacyscgeometry.h"
 #include "aulegacysccollision.h"
 #include "aulegacyship.h"
+#include "aulegacyshipperformance.h"
+#include "aulegacyscstats.h"
 #include "aulegacyshipmesh.h"
 #include "aulegacyshipedit.h"
 #include "aulegacyshippaths.h"
@@ -18188,6 +18190,31 @@ bool DaSc::RoomOrderLoc(const QString& roomName, AuPoint& orderLoc) const
 
 AuTime DaSc::StasisReadyTime() const
 {
+	if(g_Au.IsLegacyGeneration() && IsLegacyDebug())
+	{
+		const quint8 technology = LegacyMinimumRepairTechnology();
+		AuLegacyShip::Design source;
+		const AuScDesign* design = LockDesign();
+		const bool valid = design && design->LegacyDeckPlan() && design->LegacyStats();
+		if(valid)
+		{
+			source = design->LegacyDeckPlan()->SourceDesign();
+			source.header = design->LegacyStats()->Header();
+		}
+		UnlockDesign();
+		quint64 labor = 20;
+		if(valid)
+		{
+			const AuLegacyShip::Manufacturing bill = AuLegacyShip::CalculateManufacturing(source, technology);
+			if(bill.valid)
+				for(const AuLegacyShip::MaterialRequirement& material : bill.materials) labor += material.quantity;
+		}
+		// Retain the existing stasis delay conversion, now based on the
+		// recovered room/detail bill rather than modern module manufacture.
+		const quint32 delay = quint32(qMin(quint64(0xffffffffu), qMax(quint64(10), ((labor + 3) / 4) / 24)));
+		QReadLocker lock(&m_DamageLock);
+		return m_tmDamageChange.AddSecs(delay);
+	}
 	// This ship must stay in stasis for 1/2 the number of seconds it would take to build it.
 	DeManufacturingProcess mfgproc;
 	mfgproc.InitSc(DesignId(), QualityMade());

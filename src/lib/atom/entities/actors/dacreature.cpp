@@ -7142,15 +7142,27 @@ void DaCreature::StoreClientConsoleSettings() const
 	m_Console->StoreClientSettings(planetId);
 }
 
-bool DaCreature::LegacyShipBlocksAttack(const DaAtom& target) const
+const DaAtom* DaCreature::LegacyAttackObstacle(const DaAtom& target) const
 {
 	const AuPoint targetLoc = EnvTransform().UnProject(target.EnvTransform().Project(target.TargetLocation()));
 	AuPoint sightedLoc;
 	unsigned int sightedPart = 0;
 	bool sightedShield = false;
-	const DaSc* obstacle = dynamic_cast<const DaSc*>(DaAtom::SightTarget(sightedLoc, sightedPart, sightedShield,
-		CameraOffset(), targetLoc));
-	return obstacle && obstacle != &target && obstacle->IsLegacyDebug();
+	const DaAtom* obstacle = DaAtom::SightTarget(sightedLoc, sightedPart, sightedShield, CameraOffset(), targetLoc);
+	if(!obstacle || obstacle == &target)
+		return nullptr;
+	if(g_Au.IsLegacyGeneration() && dynamic_cast<const DaLegacyCity*>(obstacle))
+		return obstacle;
+	const DaSc* ship = dynamic_cast<const DaSc*>(obstacle);
+	return ship && ship->IsLegacyDebug() ? obstacle : nullptr;
+}
+
+bool DaCreature::LegacyBuildingBlocksAttack(const DaAtom& target) const
+{
+	if(!g_Au.IsLegacyGeneration())
+		return false;
+	const DaAtom* obstacle = LegacyAttackObstacle(target);
+	return obstacle && obstacle->AtomType() == ATOM_LegacyCity;
 }
 
 DaAtom* DaCreature::SightShotgunTarget(AuPoint& sightedLoc, unsigned int& sightedPart, bool& sightedShield, float shotgunRange,

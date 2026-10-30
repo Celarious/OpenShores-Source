@@ -15198,6 +15198,10 @@ void AuApp::SpacecraftStasisRecover(AuId shipId, AuId personId, quint8 personGal
     DaVessel* ship = dynamic_cast<DaVessel*>(ether.FindDormantAtom(shipId));
     if(ship && !ship->IsMoored())
     {
+		if(g_Au.IsLegacyGeneration() && !agentRecover && (!ship->IsPrivatelyOwned()
+			|| quint8(ship->Galaxy()) != personGalaxy
+			|| (ship->OwnerId() != personId && !AuRosterEntry::IsOfficer(ship->BerthTypeOccupied(personId)))))
+		{ g_Au.UnlockEtheriumDelete(); return; }
         // The dormant unmoored ship was found here.
         // A moored dormant ship is a ship stored in a hanger; that cannot be summoned here.
         // Ships in stasis cannot be restored immediately.
@@ -15249,7 +15253,8 @@ void AuApp::SummonDormantShip(const AuId& shipId, const AuId& crewId, GALAXY toG
 		{
 			// The destination atom is in my local data.
 			GALAXY moveGalaxy = moveShip->Galaxy();
-			if(toGalaxy == GALAXY_Count || moveGalaxy == GALAXY_Count)
+			if(toGalaxy == GALAXY_Count || moveGalaxy == GALAXY_Count
+				|| (g_Au.IsLegacyGeneration() && toGalaxy == moveGalaxy))
 			{
 				DaSolarSystem* system = destAtom->FindParentSolarSystem();
 				if(system)

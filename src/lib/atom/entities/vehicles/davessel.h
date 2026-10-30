@@ -2441,6 +2441,12 @@ public:	// Methods
 	const DaAtom* MissionDestAttackFollow(const AuMissionOrder& order) const;
 
 	const DaVessel* MissionDestGoToBestStation() const;
+	const DaAtom* MissionDestLegacyCity(bool closest, bool patrol = false) const;
+	const DaAtom* MissionDestLegacyStationOrCity(bool closest, bool allowCities = true) const;
+	enum LegacyCityService { LegacyReachable, LegacyRepair, LegacyTrade, LegacyCrew,
+		LegacyTroops, LegacyPassengersLoad, LegacyPassengersUnload };
+	void FindLegacyServiceCities(DaAtomList& cities, LegacyCityService service,
+		COMMODITYID commodity = CID_Invalid) const;
 
 	const DaBd* MissionDestGoToCity(const AuMissionOrder& order) const;
 
@@ -3512,6 +3518,9 @@ public:	// Methods
 	// 'repairQ' is the minimum quality of parts to use.
 	void RepairAllPossible(DaBd* bd, quint8 repairQ);
 	void RepairAllPossible(DaBd* bd, const AuSysId& sysId, quint8 repairQ);
+	// City services withdraw real parts before applying this common damage work.
+	void ApplyServiceRepairs(const AuRepairParts& supplied, const AuSysId* system = nullptr);
+	quint8 LegacyMinimumRepairTechnology() const;
 
 	void RepairAndResupplyStation();
 
@@ -4659,6 +4668,8 @@ public:	// Methods
 	}
 
 	void TransferTroops(DaVessel* fromShip, int howMany);
+	// Caller validates the berth and releases any previous berth first.
+	void MoveBerthOccupantAboard(DaNpc& npc);
 
 	virtual COMMODITYID TransporterModule(quint16 which) const
 	{

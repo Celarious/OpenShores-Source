@@ -9,7 +9,7 @@
 
 namespace AuLegacyCity
 {
-constexpr quint8 StateVersion = 3;
+constexpr quint8 StateVersion = 4;
 inline bool SupportedStateVersion(quint32 version) { return version >= 1 && version <= StateVersion; }
 constexpr int MaximumStateBytes = 8 * 1024 * 1024;
 constexpr int MaximumDevelopments = 32768;
@@ -78,6 +78,7 @@ struct State
 	quint32 allegianceEmpire = 0;
 	quint32 loyalPopulation = 0;
 	qint32 population = 0;
+	quint16 garrisonTroops = 0;
 	qint8 satisfaction = 1;
 	float capacitor = 0;
 	qint64 lastVisit = 0;

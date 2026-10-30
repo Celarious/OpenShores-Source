@@ -34,6 +34,7 @@ struct Batch
 	bool equipment = false;
 	bool stairs = false;
 	bool collisionOnly = false;
+	bool noCollision = false; // Streetlights remain visible without blocking movement.
 	bool depthOnly = false; // Original AuBuildingTri window effect 4: terrain mask.
 	bool surfaceOverlay = false; // Road paint/pavement follows terrain; visual only.
 	bool empireFlag = false;

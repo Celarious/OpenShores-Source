@@ -5,6 +5,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "danpc.h"
+#include "dalegacycity.h"
 #include "aulegacyfinancetransfer.h"
 //
 #include "auatomchat.h"
@@ -6028,6 +6029,16 @@ void DaNpc::UpgradeEquipmentFromBd()
 	case ROLE_Passenger:
 	case ROLE_Crew:
 	case ROLE_Officer:
+		if(g_Au.m_EnableTroopResupply && g_Au.IsLegacyGeneration() && !IsInsideSpacecraft())
+		{
+			const auto* query = LockEnvironmentQuery();
+			const AuId cityId = query->LegacyCityId();
+			UnlockEnvironmentQuery();
+			auto* world = FindParentPlanetInEnv();
+			auto* city = world ? dynamic_cast<DaLegacyCity*>(world->FindSubatomId(cityId)) : nullptr;
+			if(city && city->EmpireId() == EmpireId()) city->EquipSpacecraftPersonnel(*this);
+			break;
+		}
 		if(g_Au.m_EnableTroopResupply && IsAtBd())
 		{
 			// Citizens at a building will try to upgrade their equipment once per hour from the local supplies. Otherwise they

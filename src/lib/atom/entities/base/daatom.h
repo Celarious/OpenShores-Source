@@ -4224,6 +4224,7 @@ protected:
 
 signals:
 	// WARNING! High frequency signals can overrun the signal/slot queue. Don't use signals here that will be emitted frequently.
+	void LegacySpacecraftRecovery(AuId shipId, AuId personId, quint8 galaxy, bool agentRecover);
 	void AddCitizenToEmpire(quint32 oldEmpireId, quint32 nuEmpireId, AuId personId, QString personName, quint8 personGender);
 
 	void ArenaReady(AuArenaReady arena);

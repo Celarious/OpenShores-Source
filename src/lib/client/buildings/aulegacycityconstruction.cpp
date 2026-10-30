@@ -6,6 +6,7 @@
 #include "auapp.h"
 #include "aubldconstruct.h"
 #include "aublddesignstudio.h"
+#include "aubldhangar.h"
 #include "deconstructionprocess.h"
 #include "audialog.h"
 #include "auframe.h"
@@ -686,8 +687,10 @@ AuLegacyCityLabor::AuLegacyCityLabor(QWidget* parent) : QWidget(parent)
 	m_LaborPages = new QStackedWidget(this); layout->addWidget(m_LaborPages, 1, 0);
 	m_Labor = new AuBldConstruct(this, true); m_LaborPages->addWidget(m_Labor);
 	m_Manufacture = new AuLegacyCityManufacture(this); m_LaborPages->addWidget(m_Manufacture);
+	m_LaborPages->addWidget(m_Manufacture->SpacecraftPage());
 	m_Bank = new AuLegacyCityBank(this); m_LaborPages->addWidget(m_Bank);
 	m_Studio = new AuLegacyCityDesignStudio(this); m_LaborPages->addWidget(m_Studio);
+	m_Hangar = new AuBldHangar(this); m_LaborPages->addWidget(m_Hangar);
 	m_Info = new QLabel(tr("<html>Tips:<br><p>Use this window to use the buildings and roads in a city.</p>"
 		"<p>The contents of this window change based on the building or road site you occupy. "
 		"You do not have to be inside a building; stand anywhere at the site.</p><p><i>Tips</i></p>"
@@ -944,10 +947,13 @@ void AuLegacyCityLabor::UpdateControls()
 		const auto addPage = [this](QWidget* page, const QString& title) {
 			const int tab = m_LaborTabs->addTab(title); m_LaborTabs->setTabData(tab, m_LaborPages->indexOf(page));
 		};
+		if(online && m_Manufacture->HasSpacecraftFactory())
+			addPage(m_Manufacture->SpacecraftPage(), tr("Spacecraft Manufacturing"));
 		if(online && unfinished) addPage(m_Labor, tr("Construction"));
 		if(manufacturing) addPage(m_Manufacture, tr("Manufacture"));
 		if(banking) addPage(m_Bank, entry->industryId == 123 ? tr("Government") : tr("Bank"));
 		if(designStudio) addPage(m_Studio, tr("Design Studio"));
+		if(online && entry && entry->completedLevels && entry->industryId == 126) addPage(m_Hangar, tr("Hangar"));
 		for(int tab = 0; tab < m_LaborTabs->count(); ++tab)
 			if(m_LaborTabs->tabData(tab).toInt() == previousPage) m_LaborTabs->setCurrentIndex(tab);
 	}

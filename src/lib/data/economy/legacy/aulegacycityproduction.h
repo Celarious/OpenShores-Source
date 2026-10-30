@@ -8,6 +8,7 @@
 #include <functional>
 
 class AuZoneResource;
+namespace AuLegacyShip { struct Design; }
 
 namespace AuLegacyCity
 {
@@ -34,6 +35,13 @@ struct ProductionProcess
 	QVector<ProductionComponent> components;
 	AuSpecies species;
 	bool sentient = false;
+	// A factory design uses the recovered room/detail bill instead of GD's
+	// research recipe. The runtime blueprint is the identity carried on media.
+	quint32 spacecraftDesign = 0;
+	quint8 spacecraftMinimumTechnology = 0;
+	QString spacecraftName;
+	float spacecraftEstimatedCost = 0;
+	qint64 spacecraftRetryAt = 0;
 };
 
 struct ProductionState
@@ -46,6 +54,7 @@ struct ProductionState
 
 struct ProductionOutput
 {
+	quint32 spacecraftDesign = 0;
 	quint16 commodityId = 0;
 	quint32 quantity = 0;
 	quint8 quality = 0, technology = 0;
@@ -89,6 +98,9 @@ AUDATA_DLL QVector<ProductionOutput> RefundProductionMaterials(const AuLegacyCit
 	const ProductionProcess& process, quint32& researchMoney);
 AUDATA_DLL bool InitializeProductionProcess(const AuLegacyCityCatalogue& catalogue, ProductionProcess& process,
 	quint16 recipe, quint8 buildingTechnology, bool bulkManufacturing = true);
+AUDATA_DLL bool InitializeSpacecraftProduction(const AuLegacyCityCatalogue& catalogue, ProductionProcess& process,
+	quint32 designId, const AuLegacyShip::Design& design, quint8 minimumTechnology, quint8 buildingTechnology);
+AUDATA_DLL float ActualProductionCost(const AuLegacyCityCatalogue& catalogue, const ProductionProcess& process);
 AUDATA_DLL void SetProductionTechnology(const AuLegacyCityCatalogue& catalogue, ProductionProcess& process,
 	quint8 technology);
 // DaCity::TechLevelChanged also resets funded non-research work, with the

@@ -5011,6 +5011,7 @@ quint8 AuScReport::MaxCapacitorFTLSetting(quint16 whichFTL) const
 
 bool AuScReport::MustBeBuiltInSpace() const
 {
+	if(m_LegacyStats) return m_LegacyStats->Performance().mustBeBuiltInSpace;
 	if(IsSpaceStation())
 		return true;
 
@@ -5026,6 +5027,9 @@ bool AuScReport::MustBeBuiltInSpace() const
 
 bool AuScReport::CanBeManufactured() const
 {
+	// The generated modern-mesh recipe is not the manufacturing authority for
+	// Legacy designs. City intake separately checks the persisted final state.
+	if(m_LegacyStats) return (g_Au.IsLegacyGeneration() || g_Au.IsSceneSolo()) && m_DesignId && m_LegacyStats->IsValid();
 	return m_MfgProc.ManufacturingProcessId();
 }
 

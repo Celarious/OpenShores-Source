@@ -16,7 +16,7 @@
 #include <QLabel>
 #include <QPushButton>
 
-AuDefaultSpacecraft::AuDefaultSpacecraft(QWidget* parent) : AuDialog(parent)
+AuDefaultSpacecraft::AuDefaultSpacecraft(QWidget* parent, Purpose purpose) : AuDialog(parent), m_Purpose(purpose)
 {
 	m_DesignId = 0;
 	m_DesignQ = 1;
@@ -80,6 +80,27 @@ AuDefaultSpacecraft::AuDefaultSpacecraft(QWidget* parent) : AuDialog(parent)
 				"The blueprint will be made regularly until the process is changed. "
 				"</html>"));
 	connect(pbmakeit, SIGNAL(clicked(bool)), SLOT(MakeOne()));
+	if(purpose != ModernProduction)
+	{
+		const bool purchase = purpose == LegacyPurchase;
+		setAuDlgTitle(purchase ? tr("Buy Spacecraft") : tr("Spacecraft Factory Production"));
+		lbmake->setText(purchase
+			? tr("<html><p>Choose an accessible spacecraft blueprint from your gear or this empire's published designs.</p>"
+				"<p>The city must have every required material and tool, and this factory's technology must support the design. "
+				"The actual price and quality depend on the local materials used. "
+				"Insufficient materials, funds or orbital space leave your funds and the city's stock unchanged.</p>"
+				"<p>Your privately owned spacecraft appears in orbit with you aboard and a charged capacitor. "
+				"Construction time must pass before departure. Available city hydrogen fills its fuel cells.</p></html>")
+			: tr("<html><p>Select an accessible spacecraft blueprint for this factory to manufacture regularly. "
+				"Governing authority is required. Technology research is selected on the Manufacture tab.</p>"
+				"<p>Small ships use completed spacecraft slabs beside the factory. Large ships are built beside a friendly "
+				"station in orbit; stations are built in orbit. Blocked production retains its materials and retries.</p>"
+				"<p>Changing the process returns its applied materials to the city where storage permits.</p></html>"));
+		pbmakeit->setText(purchase ? tr("Buy Spacecraft") : tr("Select Spacecraft"));
+		pbmakeit->setToolTip(purchase ? tr("Buy the selected spacecraft using personal funds and city materials.")
+			: tr("Configure this factory to manufacture the selected blueprint."));
+		m_MakeWhat->setToolTip(tr("Choose a spacecraft blueprint."));
+	}
 
 	QHBoxLayout* blay = new QHBoxLayout();
 	blay->addStretch();
@@ -149,6 +170,7 @@ void AuDefaultSpacecraft::MakeOne()
 
 	// Design id is negative item data value.
 	m_DesignId = m_MakeWhat->itemData(m_MakeWhat->currentIndex()).toUInt();
+	if(m_Purpose != ModernProduction && !m_DesignId) return;
 	m_DesignName = m_MakeWhat->itemData(m_MakeWhat->currentIndex(), Qt::UserRole+1).toString();
 	m_DesignQ = m_MakeWhat->itemData(m_MakeWhat->currentIndex(), Qt::UserRole+3).toUInt();
 	if(!m_DesignQ)
@@ -175,8 +197,9 @@ void AuDefaultSpacecraft::ListDesigns()
 	{
 		QSet<int> designsListed;	// So we list each one only once. All positive, rnd or otherwise.
 
-		// Add "none" entry.
-		m_MakeWhat->addItem(QIcon(":data/ScHide.png"), tr("None"), 0);
+		// Legacy research is configured on F10's separate Manufacture tab.
+		if(m_Purpose == ModernProduction)
+			m_MakeWhat->addItem(QIcon(":data/ScHide.png"), tr("None"), 0);
 		designsListed.insert(0);
 
 		// Spacecraft factories are restricted to the designs available.
@@ -244,6 +267,16 @@ void AuDefaultSpacecraft::ListDesigns()
 			}
 		}
 		sceneAtom->UnlockGear();
+		for(const auto& design : m_AdditionalDesigns)
+			if(design.first && !designsListed.contains(design.first))
+			{
+				designsListed.insert(design.first);
+				m_MakeWhat->addItem(QIcon(g_Au.CommodityBitmapName(CID_ScDesignDisk)),
+					tr("%1 %2").arg(design.first).arg(design.second), design.first);
+				const int index = m_MakeWhat->count() - 1;
+				m_MakeWhat->setItemData(index, design.second, Qt::UserRole+1);
+				m_MakeWhat->setItemData(index, 1, Qt::UserRole+3);
+			}
 	}
 	view->UnlockSceneAtom();
 

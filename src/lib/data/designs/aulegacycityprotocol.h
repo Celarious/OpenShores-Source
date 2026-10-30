@@ -33,14 +33,15 @@ enum Action : quint8
 	SetEmpireCapital = 26, BankClaimReward = 27,
 	StudioState = 28, EnterSpacecraftStudio = 29,
 	// TEMPORARY ARCHITECT MANUFACTURING TEST: remove after testing; reserve 30 afterwards.
-	TestingFinishIndustryProcess = 30
+	TestingFinishIndustryProcess = 30,
+	BuySpacecraft = 31
 };
 inline bool IsEconomy(Action action) { return (action >= EconomyList && action <= RunIndustryProcess)
-	|| action == TestingFinishIndustryProcess; } // TEMPORARY ARCHITECT MANUFACTURING TEST
+	|| action == BuySpacecraft || action == TestingFinishIndustryProcess; } // TEMPORARY ARCHITECT MANUFACTURING TEST
 inline bool IsBank(Action action) { return action >= BankState && action <= BankClaimReward; }
 inline bool IsStudio(Action action) { return action >= StudioState && action <= EnterSpacecraftStudio; }
 inline bool IsGameplay(Action action) { return (action >= ConstructionList && action <= EnterSpacecraftStudio)
-	|| action == TestingFinishIndustryProcess; } // TEMPORARY ARCHITECT MANUFACTURING TEST
+	|| action == BuySpacecraft || action == TestingFinishIndustryProcess; } // TEMPORARY ARCHITECT MANUFACTURING TEST
 struct Request
 {
 	Action action = List;

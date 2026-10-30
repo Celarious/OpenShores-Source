@@ -1,5 +1,6 @@
 #include "aulegacycityproduction.h"
 #include "aulegacycityinventory.h"
+#include "aulegacyshipperformance.h"
 #include "aupowerproduction.h"
 #include "audice.h"
 #include "auglobal.h"
@@ -30,6 +31,7 @@ bool Bulk(const AuLegacyCityCatalogue& catalogue, const ManufacturingProcessReco
 quint32 BaseLabor(const AuLegacyCityCatalogue& catalogue, const ProductionProcess& process)
 {
 	const auto* recipe = catalogue.ManufacturingProcess(ManufacturingProcessId(process.processId));
+	if(process.spacecraftDesign) return 20; // InitSpacecraft 0x126fb0, before fetched-material labor.
 	return recipe ? recipe->labor * (process.bulkManufacturing && Bulk(catalogue, *recipe) ? 10U : 1U) : 0;
 }
 
@@ -160,18 +162,36 @@ bool Valid(const AuLegacyCityCatalogue& catalogue, const ProductionState& state,
 		identities.insert(identity);
 		ProductionProcess expected;
 		InitializeProductionProcess(catalogue, expected, process.processId, process.buildingTechnology, process.bulkManufacturing);
-		if(expected.components.size() != process.components.size())
+		if(process.spacecraftDesign)
+		{
+			if(process.processId != 373 || process.slot || process.spacecraftName.size() > 128
+				|| process.components.isEmpty()
+				|| process.spacecraftMinimumTechnology > process.minimumTechnology
+				|| !std::isfinite(process.spacecraftEstimatedCost) || process.spacecraftEstimatedCost < 0
+				|| process.spacecraftRetryAt < 0 || (process.spacecraftRetryAt && process.completeAt))
+			{ error = QStringLiteral("Invalid legacy spacecraft manufacturing state."); return false; }
+		}
+		else if(process.spacecraftRetryAt || process.spacecraftMinimumTechnology
+			|| !process.spacecraftName.isEmpty() || process.spacecraftEstimatedCost)
+		{ error = QStringLiteral("Unexpected legacy spacecraft manufacturing state."); return false; }
+		if(!process.spacecraftDesign && expected.components.size() != process.components.size())
 		{ error = QStringLiteral("Legacy production component count disagrees with GD."); return false; }
 		for(int i = 0; i < process.components.size(); ++i)
 		{
 			const auto& component = process.components[i];
-			const auto& original = expected.components[i];
+			const auto& original = process.spacecraftDesign ? component : expected.components[i];
 			const quint32 maximumApplied = component.commodityId == 157 && IsProductionTechnology(recipe->commodity.value)
 				? 32000U : qMax(1U, component.required);
-			if(component.commodityId != original.commodityId || component.effect != original.effect
+			if(!catalogue.Commodity(CommodityId(component.commodityId))
+				|| (process.spacecraftDesign && (component.effect != 5 || component.required > 1000000000U))
+				|| component.commodityId != original.commodityId || component.effect != original.effect
 				|| component.required != original.required || component.technology > 31
 				|| component.applied > maximumApplied)
 			{ error = QStringLiteral("Invalid legacy production component."); return false; }
+			if(process.spacecraftDesign)
+				for(int previous = 0; previous < i; ++previous)
+					if(process.components[previous].commodityId == component.commodityId)
+					{ error = QStringLiteral("Duplicate legacy spacecraft material."); return false; }
 		}
 		if(process.completeAt)
 		{
@@ -411,12 +431,56 @@ bool InitializeProductionProcess(const AuLegacyCityCatalogue& catalogue, Product
 	return true;
 }
 
+bool InitializeSpacecraftProduction(const AuLegacyCityCatalogue& catalogue, ProductionProcess& process,
+	quint32 designId, const AuLegacyShip::Design& design, quint8 minimumTechnology, quint8 buildingTechnology)
+{
+	if(!designId || minimumTechnology > 31 || buildingTechnology > 31 || process.slot) return false;
+	// The design's armor/mass/equipment floor also constrains production; a
+	// materials-only floor can otherwise admit a hull too advanced for TL32.
+	const auto performance = AuLegacyShip::CalculatePerformance(design, AuLegacyShip::CalculateStats(design), 0);
+	const auto bill = AuLegacyShip::CalculateManufacturing(design, qMax(int(minimumTechnology), performance.minimumTechLevel));
+	if(!bill.valid || bill.techLevel > 31 || bill.materials.isEmpty()) return false;
+	ProductionProcess replacement;
+	replacement.developmentId = process.developmentId; replacement.slot = process.slot;
+	replacement.enabled = process.enabled; replacement.lastWorked = process.lastWorked;
+	replacement.processId = 373; replacement.bulkManufacturing = false;
+	replacement.spacecraftDesign = designId; replacement.spacecraftName = design.header.name.left(128);
+	replacement.spacecraftMinimumTechnology = quint8(performance.minimumTechLevel);
+	replacement.spacecraftEstimatedCost = bill.estimatedCost;
+	replacement.minimumTechnology = quint8(bill.techLevel); replacement.buildingTechnology = buildingTechnology;
+	replacement.laborNeeded = 20;
+	for(const auto& material : bill.materials)
+	{
+		if(material.quantity > 1000000000U || !catalogue.Commodity(CommodityId(material.commodity))) return false;
+		ProductionComponent component;
+		component.commodityId = material.commodity; component.effect = 5;
+		component.required = quint32(material.quantity); replacement.components.append(component);
+	}
+	process = replacement;
+	return true;
+}
+
+float ActualProductionCost(const AuLegacyCityCatalogue& catalogue, const ProductionProcess& process)
+{
+	// DeManufacturingProcess::ActualCost 0x125ba0 prices the applied inputs,
+	// including their actual quality/TL, then rounds to the nearest thousand.
+	float cost = 0;
+	for(const auto& component : process.components)
+		if(component.required && component.applied)
+		{
+			const auto runtime = COMMODITYID(catalogue.RuntimeCommodityId(CommodityId(component.commodityId)));
+			const float unit = g_Au.CommodityQualityCost(runtime, component.quality, component.technology);
+			cost += (unit + 1.f) * component.applied;
+		}
+	return std::round(cost / 1000.f) * 1000.f;
+}
+
 void SetProductionTechnology(const AuLegacyCityCatalogue& catalogue, ProductionProcess& process, quint8 technology)
 {
 	if(technology > 31) return;
 	process.buildingTechnology = technology;
 	const auto* recipe = catalogue.ManufacturingProcess(ManufacturingProcessId(process.processId));
-	if(recipe && IsProductionTechnology(recipe->commodity.value))
+	if(recipe && !process.spacecraftDesign && IsProductionTechnology(recipe->commodity.value))
 		for(auto& component : process.components)
 			if(component.commodityId == 157) { component.required = (quint32(technology) + 1) * 1000; break; }
 }
@@ -509,6 +573,7 @@ bool FetchMaterials(const AuLegacyCityCatalogue& catalogue, ProductionProcess& p
 	quint32& moneyTaken, bool ringworld, quint8 electricityForSunlight, quint8 bottledWater, ProcurementContext context)
 {
 	moneyTaken = 0;
+	if(process.spacecraftRetryAt) return false;
 	bool changed = false;
 	bool ringworldSupplied = false;
 	for(auto& component : process.components)
@@ -612,7 +677,8 @@ bool FetchConstructionMaterials(const AuLegacyCityCatalogue& catalogue, Producti
 
 bool CanRunProduction(const ProductionProcess& process)
 {
-	if(!process.processId || process.completeAt || process.minimumTechnology > process.buildingTechnology) return false;
+	if(!process.processId || process.completeAt || process.spacecraftRetryAt
+		|| process.minimumTechnology > process.buildingTechnology) return false;
 	for(const auto& component : process.components)
 		if(component.effect == 5 && !component.IsSatisfied()) return false;
 	return true;
@@ -639,13 +705,22 @@ bool FinishProduction(const AuLegacyCityCatalogue& catalogue, ProductionProcess&
 	const AuZoneResource& resources, qint64 now, ProductionOutput& output)
 {
 	const auto* recipe = catalogue.ManufacturingProcess(ManufacturingProcessId(process.processId));
-	if(!recipe || !process.completeAt || now < process.completeAt) return false;
+	if(!recipe) return false;
+	if(process.spacecraftRetryAt)
+	{
+		if(now < process.spacecraftRetryAt) return false;
+		output = ProductionOutput(); output.spacecraftDesign = process.spacecraftDesign;
+		output.unit = true; output.quantity = 1; output.quality = process.lastQuality; output.technology = process.lastTechnology;
+		return true;
+	}
+	if(!process.completeAt || now < process.completeAt) return false;
 	process.completeAt = 0;
 	process.laborNeeded = BaseLabor(catalogue, process);
 	ProductionOutput result;
-	result.commodityId = recipe->commodity.value;
+	result.spacecraftDesign = process.spacecraftDesign;
+	result.commodityId = process.spacecraftDesign ? 0 : recipe->commodity.value;
 	result.research = IsProductionTechnology(result.commodityId);
-	result.unit = IsProductionUnit(result.commodityId);
+	result.unit = process.spacecraftDesign || IsProductionUnit(result.commodityId);
 	result.species = process.species;
 	result.sentient = process.sentient;
 	result.viableDNA = ProductionDNAIsViable(result.commodityId, process.species);
@@ -668,7 +743,7 @@ bool FinishProduction(const AuLegacyCityCatalogue& catalogue, ProductionProcess&
 		result.quality = quint8(qMax(quint64(1), qualitySum));
 		if(result.research && result.technology < 31 && g_Au.Dice().Roll(1, 100) == 1) ++result.technology;
 	}
-	result.quantity = recipe->quantity * (process.bulkManufacturing && Bulk(catalogue, *recipe) ? 10U : 1U);
+	result.quantity = process.spacecraftDesign ? 1 : recipe->quantity * (process.bulkManufacturing && Bulk(catalogue, *recipe) ? 10U : 1U);
 	if(process.productionBoost > 0)
 		result.quantity += qMax(quint32(process.productionBoost), result.quantity * quint32(process.productionBoost) / 10);
 	process.lastQuantity = qint32(result.quantity);
@@ -680,6 +755,7 @@ bool FinishProduction(const AuLegacyCityCatalogue& catalogue, ProductionProcess&
 
 void ConsumeProductionComponents(ProductionProcess& process)
 {
+	process.spacecraftRetryAt = 0;
 	for(auto& component : process.components) { component.applied = 0; component.technology = 31; }
 }
 
@@ -712,7 +788,7 @@ bool EncodeProductionState(const AuLegacyCityCatalogue& catalogue, const Product
 	QByteArray encoded;
 	QDataStream out(&encoded, QIODevice::WriteOnly);
 	out.setVersion(QDataStream::Qt_4_1);
-	out << quint16(0x4c50) << quint8(1) << quint32(state.processes.size());
+	out << quint16(0x4c50) << quint8(2) << quint32(state.processes.size());
 	for(const auto& process : state.processes)
 	{
 		out << process.developmentId << process.slot << process.processId << process.enabled << process.bulkManufacturing
@@ -722,6 +798,8 @@ bool EncodeProductionState(const AuLegacyCityCatalogue& catalogue, const Product
 		for(const auto& component : process.components)
 			out << component.commodityId << component.effect << component.quality << component.technology
 				<< component.required << component.applied;
+		out << process.spacecraftDesign << process.spacecraftMinimumTechnology << process.spacecraftName
+			<< process.spacecraftEstimatedCost << process.spacecraftRetryAt;
 	}
 	QByteArray tools;
 	if(!WriteCityInventory(state.tools, tools, error)) return false;
@@ -744,7 +822,7 @@ bool DecodeProductionState(const AuLegacyCityCatalogue& catalogue, const QByteAr
 	in.setVersion(QDataStream::Qt_4_1);
 	quint16 magic = 0; quint8 version = 0; quint32 count = 0;
 	in >> magic >> version >> count;
-	if(in.status() != QDataStream::Ok || magic != 0x4c50 || version != 1 || count > MaximumProcesses
+	if(in.status() != QDataStream::Ok || magic != 0x4c50 || (version != 1 && version != 2) || count > MaximumProcesses
 		|| quint64(count) * 44 > quint64(in.device()->bytesAvailable()))
 	{ error = QStringLiteral("Invalid legacy production header."); return false; }
 	ProductionState decoded;
@@ -772,6 +850,9 @@ bool DecodeProductionState(const AuLegacyCityCatalogue& catalogue, const QByteAr
 				>> component.required >> component.applied;
 			process.components.append(component);
 		}
+		if(version >= 2)
+			in >> process.spacecraftDesign >> process.spacecraftMinimumTechnology >> process.spacecraftName
+				>> process.spacecraftEstimatedCost >> process.spacecraftRetryAt;
 		decoded.processes.append(process);
 	}
 	QByteArray tools;

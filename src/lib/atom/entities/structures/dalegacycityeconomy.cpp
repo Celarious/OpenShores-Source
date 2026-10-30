@@ -9,6 +9,11 @@
 #include "aulegacycitysupply.h"
 #include "aulegacycityfarm.h"
 #include "aulegacycityvehicles.h"
+#include "aulegacycityspacecraft.h"
+#include "aulegacyfinancetransfer.h"
+#include "aulegacyscdeckplan.h"
+#include "aulegacyscstats.h"
+#include "auscdesign.h"
 #include "aulegacyconstructionmaterials.h"
 #include "aucityreport.h"
 #include "aucommpacket.h"
@@ -427,6 +432,7 @@ bool EconomyChanged(const State& before, const State& after)
 	if(before.inventory != after.inventory || before.manufacturing != after.manufacturing
 		|| before.accounting != after.accounting || before.reportHistory != after.reportHistory
 		|| before.population != after.population || before.satisfaction != after.satisfaction
+		|| before.garrisonTroops != after.garrisonTroops
 		|| before.loyalPopulation != after.loyalPopulation || before.capacitor != after.capacitor
 		|| before.lastEmployment != after.lastEmployment || before.lastPopulationCycle != after.lastPopulationCycle
 		|| before.citizenSpecies != after.citizenSpecies || before.developments.size() != after.developments.size()) return true;
@@ -472,6 +478,7 @@ bool DaLegacyCity::SetIndustryProcess(DaPerson& person, quint32 developmentId, q
 	const auto zone = quint8(world->OrbitZone());
 	const bool openAir = world->HasBreathableAtmosphere()
 		&& !(world->Hydrographics() && world->AltitudeMSL(Location()) <= -32);
+	const bool factoryAuthorized = CanConfigureSpacecraftFactory(person, *this);
 	QWriteLocker lock(&m_CityLock);
 	State state = m_City;
 	if(person.EmpireId() != state.controllingEmpire)
@@ -483,6 +490,8 @@ bool DaLegacyCity::SetIndustryProcess(DaPerson& person, quint32 developmentId, q
 		|| processSlot >= ManufacturingSlots(dev->industryId, dev->completedLevels)
 		|| minimumTechnology < recipe->minimumTechnology || minimumTechnology > 31)
 	{ error = QStringLiteral("Invalid legacy industry, recipe, process slot or technology level."); return false; }
+	if(dev->industryId == 87 && !factoryAuthorized)
+	{ error = QStringLiteral("Governing authority is required to configure this spacecraft factory."); return false; }
 	AuItemHash inventory; ProductionState production; AccountingState accounting;
 	if(!ReadEconomy(*catalogue, state, inventory, production, accounting, error)) return false;
 	const auto taxes = accounting.taxes;
@@ -493,7 +502,7 @@ bool DaLegacyCity::SetIndustryProcess(DaPerson& person, quint32 developmentId, q
 		ProductionProcess added; added.developmentId = developmentId; added.slot = processSlot;
 		production.processes.append(added); process = production.processes.end() - 1;
 	}
-	const bool replace = process->processId != processId
+	const bool replace = process->spacecraftDesign || process->processId != processId
 		|| (process->minimumTechnology != minimumTechnology && !IsProductionTechnology(recipe->commodity.value));
 	if(replace)
 	{
@@ -509,6 +518,152 @@ bool DaLegacyCity::SetIndustryProcess(DaPerson& person, quint32 developmentId, q
 	state.lastVisit = qMax(state.lastVisit, m_City.lastVisit);
 	m_City = state; ++m_CityRevision;
 	lock.unlock(); SetModified();
+	return true;
+}
+
+bool DaLegacyCity::SetSpacecraftProcess(DaPerson& person, quint32 developmentId, quint16 processSlot,
+	quint32 designId, quint8 minimumTechnology, bool enabled, QString& error)
+{
+	error.clear();
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	auto* world = dynamic_cast<DaWorldLL*>(Parent());
+	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker() || !catalogue || !catalogue->IsValid()
+		|| !AuLegacyItemTechnologyActive() || !world || !designId || processSlot || minimumTechnology > 31
+		|| person.IsDead() || !person.EmpireId() || person.EmpireId() != EmpireId())
+	{ error = QStringLiteral("Only the city's empire may select a spacecraft at this factory."); return false; }
+	for(const quint16 commodity : catalogue->RuntimeCommodityIds())
+		if(!g_Au.HasLegacyCommodity(COMMODITYID(commodity)))
+		{ error = QStringLiteral("Legacy commodity metadata is not ready."); return false; }
+	const auto* environment = person.LockEnvironmentQuery();
+	const bool atSite = environment->LegacyCityId() == Id()
+		&& environment->LegacyDevelopmentId() == developmentId;
+	person.UnlockEnvironmentQuery();
+	if(!atSite) { error = QStringLiteral("Stand at this spacecraft factory to configure it."); return false; }
+	if(!CanConfigureSpacecraftFactory(person, *this))
+	{ error = QStringLiteral("Governing authority is required to configure this spacecraft factory."); return false; }
+	const bool hasBlueprint = AvailableSpacecraftBlueprint(person, EmpireId(), designId);
+	AuScDesign runtime;
+	const DgData& data = g_Au.LockScDesignsForRead();
+	const bool loaded = data.ScDesign(designId, runtime);
+	g_Au.UnlockScDesigns();
+	if(!loaded || runtime.State() != AuDesign::Final || !runtime.LegacyStats() || !runtime.LegacyStats()->IsValid()
+		|| !runtime.LegacyDeckPlan() || !runtime.LegacyDeckPlan()->IsValid())
+	{ error = QStringLiteral("The legacy spacecraft blueprint is still loading. Try again shortly."); return false; }
+	AuLegacyShip::Design source = runtime.LegacyDeckPlan()->SourceDesign();
+	source.header = runtime.LegacyStats()->Header();
+	source.header.name = runtime.Name();
+	const auto zone = quint8(world->OrbitZone());
+	const bool openAir = world->HasBreathableAtmosphere()
+		&& !(world->Hydrographics() && world->AltitudeMSL(Location()) <= -32);
+	QWriteLocker lock(&m_CityLock);
+	State state = m_City;
+	const auto development = std::find_if(state.developments.cbegin(), state.developments.cend(),
+		[developmentId](const Development& value) { return value.id == developmentId; });
+	if(state.controllingEmpire != person.EmpireId() || development == state.developments.cend()
+		|| development->demolished || !development->completedLevels || development->industryId != 87)
+	{ error = QStringLiteral("There is no completed spacecraft factory here."); return false; }
+	AuItemHash inventory; ProductionState production; AccountingState accounting;
+	if(!ReadEconomy(*catalogue, state, inventory, production, accounting, error)) return false;
+	auto process = std::find_if(production.processes.begin(), production.processes.end(),
+		[developmentId](const ProductionProcess& value) { return value.developmentId == developmentId && !value.slot; });
+	if(process == production.processes.end())
+	{ error = QStringLiteral("This factory is still being initialized."); return false; }
+	if(process->spacecraftDesign != designId && !hasBlueprint)
+	{ error = QStringLiteral("Carry an accessible, reusable spacecraft blueprint to select it for production."); return false; }
+	if(process->spacecraftDesign != designId || process->minimumTechnology != minimumTechnology)
+	{
+		ProductionProcess replacement = *process;
+		if(!InitializeSpacecraftProduction(*catalogue, replacement, designId, source, minimumTechnology, development->technology))
+		{ error = QStringLiteral("The spacecraft bill of materials is invalid."); return false; }
+		RefundProcess(*catalogue, *process, state, inventory, accounting, accounting.taxes, zone, openAir);
+		*process = replacement;
+	}
+	process->enabled = enabled; state.lastEmployment = 0;
+	if(!WriteEconomy(*catalogue, state, inventory, production, accounting, error)) return false;
+	state.lastVisit = qMax(state.lastVisit, m_City.lastVisit); m_City = state; ++m_CityRevision;
+	lock.unlock(); SetModified(); return true;
+}
+
+bool DaLegacyCity::BuySpacecraft(DaPerson& person, quint32 developmentId, quint32 designId, QString& error)
+{
+	AuLegacyFinanceTransfer funds(&person);
+	error.clear();
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	auto* world = dynamic_cast<DaWorldLL*>(Parent());
+	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker() || !catalogue || !catalogue->IsValid()
+		|| !AuLegacyItemTechnologyActive() || !world || person.IsDead() || !designId)
+	{ error = QStringLiteral("Spacecraft purchase is unavailable here."); return false; }
+	for(const quint16 commodity : catalogue->RuntimeCommodityIds())
+		if(!g_Au.HasLegacyCommodity(COMMODITYID(commodity)))
+		{ error = QStringLiteral("Legacy commodity metadata is not ready."); return false; }
+	const auto* environment = person.LockEnvironmentQuery();
+	const bool atSite = environment->LegacyCityId() == Id() && environment->LegacyDevelopmentId() == developmentId;
+	person.UnlockEnvironmentQuery();
+	if(!atSite || !AvailableSpacecraftBlueprint(person, EmpireId(), designId))
+	{ error = QStringLiteral("Stand at this factory with an accessible spacecraft blueprint."); return false; }
+	State before; quint64 revision;
+	{ QReadLocker lock(&m_CityLock); before = m_City; revision = m_CityRevision; }
+	const auto development = std::find_if(before.developments.cbegin(), before.developments.cend(),
+		[developmentId](const Development& value) { return value.id == developmentId; });
+	if(development == before.developments.cend() || development->demolished || !development->completedLevels || development->industryId != 87)
+	{ error = QStringLiteral("There is no completed spacecraft factory here."); return false; }
+	AuScDesign runtime;
+	const POLITICAL_STANCE stance = PoliticalStance(before.controllingEmpire, person.EmpireId());
+	const DgData& policy = g_Au.LockDataForRead();
+	// BuySpacecraft0x4b42d0 uses the historical selector0x94.
+	const bool restricted = policy.EmpireCommerceRestricted(before.controllingEmpire,
+		COMMODITYID(catalogue->RuntimeCommodityId(CommodityId(148))), stance);
+	g_Au.UnlockData();
+	const DgData& data = g_Au.LockScDesignsForRead();
+	const bool loaded = data.ScDesign(designId, runtime);
+	g_Au.UnlockScDesigns();
+	if(restricted) { error = QStringLiteral("The city's commerce policy does not permit this spacecraft purchase."); return false; }
+	if(!loaded || runtime.State() != AuDesign::Final || !runtime.LegacyStats() || !runtime.LegacyStats()->IsValid()
+		|| !runtime.LegacyDeckPlan() || !runtime.LegacyDeckPlan()->IsValid())
+	{ error = QStringLiteral("The spacecraft blueprint is still loading. Try again shortly."); return false; }
+	const int designTechnology = runtime.LegacyStats()->Performance().minimumTechLevel;
+	if(designTechnology > development->technology)
+	{ error = QStringLiteral("The spacecraft design exceeds this factory's technology level."); return false; }
+	State state = before; AuItemHash inventory; ProductionState production; AccountingState accounting;
+	if(!ReadEconomy(*catalogue, state, inventory, production, accounting, error)) return false;
+	AuLegacyShip::Design source = runtime.LegacyDeckPlan()->SourceDesign();
+	source.header = runtime.LegacyStats()->Header(); source.header.name = runtime.Name();
+	ProductionProcess purchase; purchase.developmentId = developmentId;
+	if(!InitializeSpacecraftProduction(*catalogue, purchase, designId, source, quint8(designTechnology), development->technology))
+	{ error = QStringLiteral("The spacecraft bill of materials is invalid."); return false; }
+	AuZoneResource natural; quint32 money = 0;
+	FetchProductionMaterials(*catalogue, purchase, inventory, production, natural, 0, money, OnRingworld());
+	if(!CanRunProduction(purchase))
+	{
+		for(const auto& component : purchase.components)
+			if(component.effect == 5 && !component.IsSatisfied())
+			{
+				const auto* commodity = catalogue->Commodity(CommodityId(component.commodityId));
+				error = QStringLiteral("The city needs %1 to manufacture this spacecraft.")
+					.arg(commodity ? commodity->descriptor.m_name : QString::number(component.commodityId)); break;
+			}
+		return false;
+	}
+	const float cost = ActualProductionCost(*catalogue, purchase);
+	if(person.AccountBalance() < cost)
+	{ error = QStringLiteral("The spacecraft costs %1%2; my account has insufficient funds.").arg(cost, 0, 'f', 0).arg(g_Au.CurrencySymbol()); return false; }
+	const qint64 now = QDateTime::currentMSecsSinceEpoch(); purchase.completeAt = now;
+	ProductionState prepared; prepared.processes.append(purchase);
+	QHash<quint32, AuZoneResource> resources; resources.insert(developmentId, natural);
+	SpacecraftProductionBatch ships;
+	if(!PrepareSpacecraftProduction(*this, *world, before, prepared, resources, now, ships, error, &person)) return false;
+	ProductionOutput output;
+	if(!FinishProduction(*catalogue, purchase, natural, now, output)) return false;
+	if(ships.Apply(purchase, output, state, inventory, accounting) <= 0)
+	{ error = QStringLiteral("No clear orbital position is available for the purchased spacecraft."); return false; }
+	if(!WriteEconomy(*catalogue, state, inventory, production, accounting, error)) return false;
+	QWriteLocker lock(&m_CityLock);
+	if(revision != m_CityRevision)
+	{ error = QStringLiteral("The city's inventory changed during this purchase. Try again."); return false; }
+	state.lastVisit = qMax(state.lastVisit, m_City.lastVisit); m_City = state; ++m_CityRevision;
+	lock.unlock();
+	person.DebitAccount(cost); SetModified(); ships.Publish();
+	error = QStringLiteral("Purchased %1 for %2%3.").arg(runtime.Name()).arg(cost, 0, 'f', 0).arg(g_Au.CurrencySymbol());
 	return true;
 }
 
@@ -699,6 +854,9 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 	VehicleProductionBatch vehicleProduction;
 	if(!PrepareVehicleProduction(*this, *world, before, existing, vehicleResources, now, vehicleProduction, existingError))
 	{ qWarning() << "Legacy city vehicles:" << Id() << existingError; return; }
+	SpacecraftProductionBatch spacecraftProduction;
+	if(!PrepareSpacecraftProduction(*this, *world, before, existing, vehicleResources, now, spacecraftProduction, existingError))
+	{ qWarning() << "Legacy city spacecraft:" << Id() << existingError; return; }
 	AuLegacyConstructionMaterials::Batch constructionMaterials;
 	bool constructionChanged = false, physicalChanged = false;
 	PowerImportBatch powerImports(*this);
@@ -889,6 +1047,14 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 				{
 					// The single produced unit became livestock; no cargo remains.
 				}
+				else if(output.spacecraftDesign)
+				{
+					process.lastQuantity = spacecraftProduction.Apply(process, output, state, inventory, accounting);
+					if(process.lastQuantity > 0) ConsumeProductionComponents(process);
+					else if(process.lastQuantity == -4)
+						InitializeProductionProcess(*catalogue, process, 373, dev.technology);
+					else process.spacecraftRetryAt = now + 121000; // DpBldSpacecraftFactory::Tick 0x5948d0.
+				}
 				else if(output.unit)
 				{
 					if(IsSpawnedProductionVehicle(output.commodityId))
@@ -1011,6 +1177,7 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 	if(changed) SetModified();
 	farmProduction.Publish(state.controllingEmpire);
 	vehicleProduction.Publish(state.controllingEmpire);
+	spacecraftProduction.Publish();
 	constructionMaterials.Finalize();
 	if(before.population != state.population) world->WorldPopulationChanged();
 	if(physicalChanged) world->InvalidateEnvironmentRecursive();

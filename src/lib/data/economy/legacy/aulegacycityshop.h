@@ -3,16 +3,26 @@
 
 #include "aulegacycitycatalogue.h"
 #include "auitem.h"
+#include "aucommpacket.h"
+
+class AuGear;
 
 namespace AuLegacyCity
 {
 struct State;
 struct ProductionState;
+AUDATA_DLL bool SalesFilter(AuCommPacket::TYPE type, COMMODITYFILTER& filter);
+// Pack a private gear transaction without actor/environment callbacks.
+AUDATA_DLL bool PackPersonalItem(AuGear& gear, const AuItem& item);
+AUDATA_DLL quint32 SaleStock(const AuItem& item, const AuLegacyCityCatalogue& catalogue,
+	const State& state, bool fauna, bool flora);
 
 // Original on-world city pricing. The caller owns the twenty-minute offer
 // cache and verifies Legacy metadata activation before reading inventories.
 AUDATA_DLL quint32 ShopUnitPrice(const AuLegacyCityCatalogue& catalogue, const State& city,
 	const AuItemHash& inventory, const ProductionState& production, const AuItem& item, quint8 industry);
+AUDATA_DLL quint32 ShopDemandCost(const AuLegacyCityCatalogue& catalogue, const State& city,
+	const AuItemHash& inventory, const ProductionState& production, const AuItem& item);
 
 inline bool HasShop(const AuLegacyCityCatalogue& catalogue, quint8 industry)
 {

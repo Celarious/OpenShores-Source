@@ -17,6 +17,7 @@
 #include "daatomlist.h"
 #include "dabd.h"
 #include "dagalaxy.h"
+#include "dalegacycity.h"
 #include "daperson.h"
 #include "dasector.h"
 #include "dasolarsystem.h"
@@ -58,6 +59,30 @@ struct CityEntry
 	QString				m_Name;
 	POLITICAL_STANCE	m_Stance;
 };
+
+static void AddLegacyMissionCities(const DaSolarSystem& system, const DaPerson& person,
+	QHash<AuId, CityEntry>& cities, bool airportOnly)
+{
+	if(!g_Au.IsLegacyGeneration()) return;
+	DaAtomList atoms;
+	system.FindLegacyCitiesRecursive(atoms);
+	AuPoint observer;
+	person.GetLocationRelativeToParent(observer, &system);
+	for(const auto* atom : atoms)
+	{
+		const auto* city = dynamic_cast<const DaLegacyCity*>(atom);
+		const auto* world = city ? city->FindParentPlanetInEnv() : nullptr;
+		if(!city || !world || (airportOnly && !city->HasSpacecraftService(111))) continue;
+		AuPoint location;
+		city->GetLocationRelativeToParent(location, &system);
+		CityEntry entry;
+		entry.m_Name = city->Name();
+		entry.m_Info = QObject::tr("City on %1").arg(world->Name());
+		entry.m_Stance = PoliticalStance(person.EmpireId(), city->EmpireId());
+		entry.m_Distance = location.Distance(observer);
+		cities.insert(city->Id(), entry);
+	}
+}
 
 // Helper class used for the planets list.
 struct PlanetOrStarEntry
@@ -2344,8 +2369,11 @@ AuMissionOrderWidget::AuMissionOrderWidget(const AuId& authorization, const AuId
 		AuMissionOrderGoToCity oGoToCity;
 		oGoToCity.AddListWidgetEntry(m_Orders, m_Order == AuMissionOrder::GoToCity);
 
-		//AuMissionOrderGoToBestCity oGoToBestCity;
-		//oGoToBestCity.AddListWidgetEntry(m_Orders, m_Order == AuMissionOrder::GoToBestCity);
+		if(g_Au.IsLegacyGeneration())
+		{
+			AuMissionOrderGoToBestCity oGoToBestCity;
+			oGoToBestCity.AddListWidgetEntry(m_Orders, m_Order == AuMissionOrder::GoToBestCity);
+		}
 
 		AuMissionOrderGoToClosestCity oGoToClosestCity;
 		oGoToClosestCity.AddListWidgetEntry(m_Orders, m_Order == AuMissionOrder::GoToClosestCity);
@@ -2365,8 +2393,11 @@ AuMissionOrderWidget::AuMissionOrderWidget(const AuId& authorization, const AuId
 		//AuMissionOrderGoToBestStation oGoToBestStation;
 		//oGoToBestStation.AddListWidgetEntry(m_Orders, m_Order == AuMissionOrder::GoToBestStation);
 
-		//AuMissionOrderGoToBestStationOrCity oGoToBestStationOrCity;
-		//oGoToBestStationOrCity.AddListWidgetEntry(m_Orders, m_Order == AuMissionOrder::GoToBestStationOrCity);
+		if(g_Au.IsLegacyGeneration())
+		{
+			AuMissionOrderGoToBestStationOrCity oGoToBestStationOrCity;
+			oGoToBestStationOrCity.AddListWidgetEntry(m_Orders, m_Order == AuMissionOrder::GoToBestStationOrCity);
+		}
 
 		AuMissionOrderGoToClosestStation oGoToClosestStation;
 		oGoToClosestStation.AddListWidgetEntry(m_Orders, m_Order == AuMissionOrder::GoToClosestStation);
@@ -6689,6 +6720,7 @@ void AuMissionOrderWidget::OrderSelected()
 						AuPoint personSysLoc;
 						person->GetLocationRelativeToParent(personSysLoc, system);
 
+						AddLegacyMissionCities(*system, *person, cities, true);
 						// List neutral or better cities in the solar system.
 						DaAtomList atoms;
 						system->ListNormalSubatomsRecursive(atoms);
@@ -6890,6 +6922,7 @@ void AuMissionOrderWidget::OrderSelected()
 						AuPoint personSysLoc;
 						person->GetLocationRelativeToParent(personSysLoc, system);
 
+						AddLegacyMissionCities(*system, *person, cities, false);
 						// List neutral or better cities in the solar system.
 						DaAtomList atoms;
 						system->ListNormalSubatomsRecursive(atoms);

@@ -41,6 +41,30 @@
 // This id is traced by various pathing functions. It can be used to follow an individual citizen's pathing decisions.
 static AuId 							s_PathTrace(1);
 
+namespace
+{
+bool PreboardingGroundCity(DaVessel& ship, QString& name)
+{
+	if(!ship.IsOnGround()) return false;
+	auto* world = ship.FindParentPlanetInEnv();
+	if(!world) return false;
+	if(g_Au.IsLegacyGeneration())
+	{
+		const auto* query = ship.LockEnvironmentQuery();
+		const AuId cityId = query->LegacyCityId();
+		ship.UnlockEnvironmentQuery();
+		const auto* city = dynamic_cast<const DaLegacyCity*>(world->FindSubatomId(cityId));
+		if(!city || !city->CanAccessSpacecraft(ship)) return false;
+		name = city->Name();
+		return true;
+	}
+	const auto* building = world->FindBd(ship.InBdCity());
+	if(!building) return false;
+	name = building->CityOrBuildingName();
+	return true;
+}
+}
+
 #define MOVE_NEAR					12	// Feet distance from target to stop within.
 #define MOVE_CLOSE					7	// Feet distance from target to stop within that is closer than MOVE_NEAR.
 //#define MOVE_EXACT					2.5	// Feet distance from target to stop within for precise movements.
@@ -342,6 +366,12 @@ void AuSDShipBoardTroops::Execute(DaSentient* sent, int msElapsed)
 		// Load troops into the ship.
 		for(DaAtomList::const_iterator bi = troopBds.begin(); bi != troopBds.end(); bi++)
 		{
+			if(auto* city = dynamic_cast<DaLegacyCity*>(*bi))
+			{
+				troopBerths -= city->BoardSpacecraftPersonnel(*ship, ROLE_Troop, troopBerths, nullptr, sent);
+				if(!troopBerths) break;
+				continue;
+			}
 			DaBd* troopBd = (DaBd*)*bi;
 			// Take troops from the building to fill my empty berths.
 			int troops = troopBd->RemoveTravellers(troopBerths);
@@ -571,6 +601,12 @@ void AuSDShipBoardCrew::Execute(DaSentient* sent, int msElapsed)
 		// Load crew into the ship.
 		for(DaAtomList::const_iterator bi = crewBds.begin(); bi != crewBds.end(); bi++)
 		{
+			if(auto* city = dynamic_cast<DaLegacyCity*>(*bi))
+			{
+				crewBerths -= city->BoardSpacecraftPersonnel(*ship, ROLE_Crew, crewBerths, nullptr, sent);
+				if(!crewBerths) break;
+				continue;
+			}
 			DaBd* crewBd = (DaBd*)*bi;
 			// Take crew from the building to fill my empty berths.
 			int crew = crewBd->RemoveTravellers(crewBerths);
@@ -609,6 +645,7 @@ void AuSDShipBoardCrew::Execute(DaSentient* sent, int msElapsed)
 void AuSDShipBoardCryo::Execute(DaSentient* sent, int msElapsed)
 {
 	Q_UNUSED(msElapsed);
+	if(g_Au.IsLegacyGeneration()) return;
 	DaVessel* ship = dynamic_cast<DaVessel*>(sent->FindParentVesselInEnv());
 	if(!ship)
 		return;
@@ -682,6 +719,12 @@ void AuSDShipBoardPassengers::Execute(DaSentient* sent, int msElapsed)
 		// Load passengers into the ship.
 		for(DaAtomList::const_iterator bi = passBds.begin(); bi != passBds.end(); bi++)
 		{
+			if(auto* city = dynamic_cast<DaLegacyCity*>(*bi))
+			{
+				passBerths -= city->BoardSpacecraftPersonnel(*ship, ROLE_Passenger, passBerths);
+				if(!passBerths) break;
+				continue;
+			}
 			DaBd* passBd = (DaBd*)*bi;
 			if(passBd->IsMilitary())
 				continue;	// Cannot load passengers from military buildings.
@@ -726,6 +769,7 @@ void AuSDShipBoardPassengers::Execute(DaSentient* sent, int msElapsed)
 void AuSDShipDebarkCryo::Execute(DaSentient* sent, int msElapsed)
 {
 	Q_UNUSED(msElapsed);
+	if(g_Au.IsLegacyGeneration()) return;
 
 	DaVessel* ship = dynamic_cast<DaVessel*>(sent->FindParentVesselInEnv());
 	if(!ship)
@@ -774,6 +818,21 @@ void AuSDShipDebarkPassengers::Execute(DaSentient* sent, int msElapsed)
 	DaVessel* ship = dynamic_cast<DaVessel*>(sent->FindParentVesselInEnv());
 	if(!ship)
 		return;
+	if(g_Au.IsLegacyGeneration())
+	{
+		DaAtomList cities;
+		ship->FindPassengerUnloadBds(cities);
+		// Original 0x380080 first fills spare housing, then accepts remaining
+		// passengers even when every reachable city is full.
+		for(int pass = 0; pass < 2 && m_Passengers; ++pass)
+			for(auto* atom : cities)
+				if(auto* city = dynamic_cast<DaLegacyCity*>(atom))
+				{
+					m_Passengers -= city->DebarkSpacecraftPassengers(*ship, m_Passengers, nullptr, pass == 0);
+					if(!m_Passengers) break;
+				}
+		return;
+	}
 
 	// Determine transport rates based on trip length.
 	int longTripRate = 300;						// Travel to another solar system.
@@ -10547,7 +10606,15 @@ void DaSentient::DoAttackTarget()
 		return;
 	}
 
-	const bool legacyObstructed = LegacyShipBlocksAttack(*target);
+	const DaAtom* legacyObstacle = LegacyAttackObstacle(*target);
+	if(legacyObstacle && legacyObstacle->AtomType() == ATOM_LegacyCity)
+	{
+		// Ignore targets hidden by city geometry until building pursuit can route around it.
+		StayIdle();
+		RequestOrder();
+		return;
+	}
+	const bool legacyObstructed = legacyObstacle != nullptr;
 	float moveWithinRange = legacyObstructed ? 0 : MOVE_NEAR;
 	if(!legacyObstructed && elapsed < 2000+Rank()*500)
 	{
@@ -12417,6 +12484,10 @@ void DaSentient::LookAtSubatoms(const DaAtom* parent, const DaAtom* commonParent
 				}
 			}
 
+			if((isThreat || (pAtom->Is(OrderTarget()) && Order() == ORDER_AttackTarget))
+				&& LegacyBuildingBlocksAttack(*creature))
+				continue;	// Ignore hidden enemies without changing friendly follow/rescue orders.
+
 			// The atom might be a comrade.
 			if(isComrade)
 			{
@@ -12563,9 +12634,10 @@ void DaSentient::LookAtSubatoms(const DaAtom* parent, const DaAtom* commonParent
 					hearIt = true;
 				if(!seeIt && !smellIt && !hearIt)
 					continue;	// Out of range to see, smell or hear.
+				const bool hiddenByBuilding = LegacyBuildingBlocksAttack(*vehicle);
 
 				// Is the vehicle a threat.
-				if(vehicle->EmpireId() != EmpireId() && vehicle->IsOccupied())
+				if(!hiddenByBuilding && vehicle->EmpireId() != EmpireId() && vehicle->IsOccupied())
 				{
 					// An occupied vehicle of a different empire. Is the vehicle a threat?
 					POLITICAL_STANCE stance = PoliticalStanceMakeContact(vehicle);
@@ -12585,7 +12657,7 @@ void DaSentient::LookAtSubatoms(const DaAtom* parent, const DaAtom* commonParent
 				}
 
 				// The vehicle might be the target of my orders.
-				if(pAtom->Is(OrderTarget()))
+				if(pAtom->Is(OrderTarget()) && (Order() != ORDER_AttackTarget || !hiddenByBuilding))
 				{
 					// The creature is the target atom.
 					targetAtom = pAtom;
@@ -16790,6 +16862,8 @@ void DaSentient::OperatePilotConsole(DaVessel* ship)
 								const DaBd* destBd = dynamic_cast<const DaBd*>(destAtom);
 								if(destBd)
 									PilotToBd(ship, destBd, planet);
+								else if(g_Au.IsLegacyGeneration() && dynamic_cast<const DaLegacyCity*>(destAtom))
+									PilotToLegacyCity(ship, static_cast<const DaLegacyCity*>(destAtom), planet);
 								else
 									PilotHoldPosition(ship);
 							}
@@ -17825,6 +17899,18 @@ void DaSentient::BodyHasDied(COMMODITYID /*weaponCID*/, quint8 /*weaponQ*/, WEAP
 // Returns the amount actually loaded.
 int DaSentient::BuyCargo(DaVessel* ship, COMMODITYID cargoCID, int cargoCount, DaAtomList& tradeCities)
 {
+	if(g_Au.IsLegacyGeneration())
+	{
+		int loaded = 0;
+		for(DaAtom* atom : tradeCities)
+			if(DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(atom))
+			{
+				const int quantity = city->TransferSpacecraftCargo(*ship, cargoCID, cargoCount - loaded, true);
+				loaded += quantity;
+				if(loaded >= cargoCount) break;
+			}
+		return loaded;
+	}
 	//if(Is(1066326070))
 		//qDebug() << "DaSentient::BuyCargo" << Id() << Name() << "cid" << cargoCID << "count" << cargoCount;
 	int cargoLoaded = 0;
@@ -17934,6 +18020,21 @@ int DaSentient::BuyCargo(DaVessel* ship, COMMODITYID cargoCID, int cargoCount, D
 
 void DaSentient::SellCargo(DaVessel* ship, COMMODITYID cargoCID, int cargoCount, DaAtomList& tradeCities)
 {
+	if(g_Au.IsLegacyGeneration())
+	{
+		for(DaAtom* atom : tradeCities)
+			if(DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(atom))
+			{
+				while(cargoCount > 0)
+				{
+					const int delivered = city->TransferSpacecraftCargo(*ship, cargoCID, cargoCount, false);
+					if(!delivered) break;
+					cargoCount -= delivered;
+				}
+				if(cargoCount <= 0) break;
+			}
+		return;
+	}
 	//qDebug("%s SellCargo cid %d %s cargoCount %d cities %d", (const char*)Name().toAscii(), cargoCID,
 			//(const char*)g_Au.CommodityName(cargoCID).toAscii(), cargoCount, tradeCities.count());
 	if(cargoCID == CID_Hydrogen)
@@ -18656,6 +18757,11 @@ void DaSentient::CommandShip(DaVessel* ship)
 						if(bd->CapitolId() == ship->InBdCity())
 							orderComplete = true;	// Ship is in the destination city.
 					}
+					else if(g_Au.IsLegacyGeneration())
+					{
+						const auto* city = dynamic_cast<const DaLegacyCity*>(destAtom);
+						orderComplete = city && city->IsSpacecraftOnSlab(*ship);
+					}
 				}
 			}
 			else
@@ -18725,6 +18831,11 @@ void DaSentient::CommandShip(DaVessel* ship)
 						const DaBd* bd = dynamic_cast<const DaBd*>(destAtom);
 						if(bd && bd->CapitolId() == ship->InBdCity())
 							orderComplete = true;	// Ship is in the destination city.
+						else if(g_Au.IsLegacyGeneration())
+						{
+							const auto* city = dynamic_cast<const DaLegacyCity*>(destAtom);
+							orderComplete = city && city->IsSpacecraftOnSlab(*ship);
+						}
 					}
 				}
 			}
@@ -20187,14 +20298,12 @@ bool DaSentient::MissionOrderChanged(DaVessel* ship, const AuMissionOrder& prevO
 				if(ship->IsInAtmosphere())
 				{
 					// Ship is in an atmosphere. Locate the city the ship is in.
-					if(ship->IsOnGround() && !ship->InBdCity().IsNull())
+					if(ship->IsOnGround())
 					{
 						DaWorld* planet = ship->FindParentPlanetInEnv();
-						DaBd* bd = planet ? planet->FindBd(ship->InBdCity()) : 0;
-						if(bd)
+						if(PreboardingGroundCity(*ship, locName))
 						{
 							locType = 0;
-							locName = bd->CityOrBuildingName();
 
 							AuPoint shipLoc;
 							ship->GetLocationRelativeToParent(shipLoc, planet);
@@ -20309,14 +20418,12 @@ bool DaSentient::MissionOrderChanged(DaVessel* ship, const AuMissionOrder& prevO
 				if(ship->IsInAtmosphere())
 				{
 					// Ship is in an atmosphere. Locate the city the ship is in.
-					if(ship->IsOnGround() && !ship->InBdCity().IsNull())
+					if(ship->IsOnGround())
 					{
 						DaWorld* planet = ship->FindParentPlanetInEnv();
-						DaBd* bd = planet ? planet->FindBd(ship->InBdCity()) : 0;
-						if(bd)
+						if(PreboardingGroundCity(*ship, locName))
 						{
 							locType = 0;
-							locName = bd->CityOrBuildingName();
 
 							AuPoint shipLoc;
 							ship->GetLocationRelativeToParent(shipLoc, planet);
@@ -20430,14 +20537,12 @@ bool DaSentient::MissionOrderChanged(DaVessel* ship, const AuMissionOrder& prevO
 				if(ship->IsInAtmosphere())
 				{
 					// Ship is in an atmosphere. Locate the city the ship is in.
-					if(ship->IsOnGround() && !ship->InBdCity().IsNull())
+					if(ship->IsOnGround())
 					{
 						DaWorld* planet = ship->FindParentPlanetInEnv();
-						DaBd* bd = planet ? planet->FindBd(ship->InBdCity()) : 0;
-						if(bd)
+						if(PreboardingGroundCity(*ship, locName))
 						{
 							locType = 0;
-							locName = bd->CityOrBuildingName();
 
 							AuPoint shipLoc;
 							ship->GetLocationRelativeToParent(shipLoc, planet);
@@ -26114,6 +26219,32 @@ int DaSentient::RepairShip(DaVessel* ship)
 		// Repair the ship.
 		for(DaAtomList::const_iterator bi = repairBds.begin(); bi != repairBds.end() && !completedRepairs; bi++)
 		{
+			if(g_Au.IsLegacyGeneration())
+			{
+				DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(*bi);
+				if(!city) continue;
+				const int policy = ship->MissionOrderApplyMinQ();
+				if(policy)
+				{
+					const quint8 quality = policy == 1 ? ship->QualityMade() : ship->MissionOrderMinQ();
+					if(city->RepairSpacecraft(*ship, nullptr, quality) < 0) tooExpensive = true;
+				}
+				else
+					for(int system = 0; system < SYS_Count; ++system)
+					{
+						QSet<quint16> whiches;
+						if(!ship->SystemWhiches(SYSTEM(system), whiches)) continue;
+						if(whiches.empty()) whiches.insert(0);
+						for(const quint16 which : whiches)
+						{
+							const AuSysId target(SYSTEM(system), which);
+							if(city->RepairSpacecraft(*ship, &target, ship->SystemQuality(SYSTEM(system), which)) < 0)
+								tooExpensive = true;
+						}
+					}
+				completedRepairs = !ship->IsDamaged();
+				continue;
+			}
 			DaBd* repairBd = dynamic_cast<DaBd*>(*bi);
 			if(!repairBd)
 				continue;

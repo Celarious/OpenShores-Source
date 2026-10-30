@@ -405,6 +405,8 @@ public:
 	virtual void ItDesignsNeeded(const AuId& architectId);
 
 	virtual void ScDesignAdded(quint32 designId);
+	bool ListLegacySpacecraftPublications(quint32 empire, QList<quint32>& runtimeIds, QString& error) override;
+	bool SetLegacySpacecraftPublication(quint32 empire, quint32 runtimeId, bool published, QString& error) override;
 	virtual void ScDesignChanged(quint32 designId);
 	virtual void ScDesignDeactivated(quint32 designId);
 	virtual void ScDesignDeleted(quint32 designId);

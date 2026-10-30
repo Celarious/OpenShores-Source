@@ -27,59 +27,6 @@
 
 namespace
 {
-bool SalesFilter(AuCommPacket::TYPE type, COMMODITYFILTER& filter)
-{
-	switch(type)
-	{
-	case AuCommPacket::SolicitAllSales: case AuCommPacket::SolicitItemSales: filter = FILTER_All; break;
-	case AuCommPacket::SolicitAmmoSales: filter = FILTER_Ammo; break;
-	case AuCommPacket::SolicitArmorSales: filter = FILTER_ArmorAndClothes; break;
-	case AuCommPacket::SolicitConstructionMaterialSales: filter = FILTER_ConstructionMaterials; break;
-	case AuCommPacket::SolicitFoodSales: filter = FILTER_Food; break;
-	case AuCommPacket::SolicitFuelSales: filter = FILTER_Fuel; break;
-	case AuCommPacket::SolicitMedSales: filter = FILTER_MedicalSupplies; break;
-	case AuCommPacket::SolicitMiscSales: filter = FILTER_Misc; break;
-	case AuCommPacket::SolicitNaturalResourceSales: filter = FILTER_NaturalResources; break;
-	case AuCommPacket::SolicitPartsSales: filter = FILTER_SpareParts; break;
-	case AuCommPacket::SolicitPatentSales: filter = FILTER_Patents; break;
-	case AuCommPacket::SolicitToolSales: filter = FILTER_Tools; break;
-	case AuCommPacket::SolicitWeaponSales: filter = FILTER_Weapons; break;
-	default: return false;
-	}
-	return true;
-}
-
-quint32 SaleStock(const AuItem& item, const AuLegacyCityCatalogue& catalogue,
-	const AuLegacyCity::State& state, bool fauna, bool flora)
-{
-	const auto* commodity = catalogue.CommodityForRuntimeId(item.CommodityId());
-	if(!commodity) return 0;
-	// TxForSaleChat, 0x2d6de8: retain life support and a food reserve.
-	quint64 reserve = 0;
-	if(!fauna && (commodity->id.value == 5 || commodity->id.value == 83)) reserve = quint64(state.population) * 13;
-	else if(item.IsFood() && item.FoodNutritionValue()) reserve = quint64(state.population) * (flora ? 1 : 10);
-	return item.Count() > reserve ? quint32(item.Count() - reserve) : 0;
-}
-
-// DaSentient::AddGearItemNoLock's packing order, applied to a private copy.
-// Actor callbacks would refresh environment state and re-enter the city.
-bool PackShopItem(AuGear& gear, const AuItem& item)
-{
-	if(!item.CanBeCarried()) return false;
-	for(const AuGearSlot::SLOTTYPE slot : {AuGearSlot::Body, AuGearSlot::Hand, AuGearSlot::Waist})
-		for(auto gearItem = gear.begin(); gearItem != gear.end(); ++gearItem)
-			if(gearItem->SlotType() == slot && gearItem->Item().FitItemIntoContainer(item)) return true;
-	AuGearSlot::SLOTTYPE slot = AuGearSlot::Invalid;
-	quint8 which = 0;
-	if(!gear.ItemsInSlot(AuGearSlot::Body, &which)) slot = AuGearSlot::Body;
-	else if(gear.ItemsInSlot(AuGearSlot::Hand, &which) < 2) slot = AuGearSlot::Hand;
-	else if(item.PackSize().width() * item.PackSize().height() <= 15
-		&& gear.ItemsInSlot(AuGearSlot::Waist, &which) < 4) slot = AuGearSlot::Waist;
-	if(slot == AuGearSlot::Invalid) return false;
-	gear.Insert(slot, which, item);
-	return true;
-}
-
 struct GearWriteLock
 {
 	DaPerson* person;
@@ -102,15 +49,19 @@ quint32 DaLegacyCity::CachedShopPrice(const AuLegacyCityCatalogue& catalogue, co
 		if(now - quote.value().second >= 20 * 60000) quote = m_ShopPrices.erase(quote); else ++quote;
 	auto quote = m_ShopPrices.find(key);
 	if(quote != m_ShopPrices.end()) { quote.value().second = now; return quote.value().first; }
-	const quint32 price = AuLegacyCity::ShopUnitPrice(catalogue, state, inventory, production, item, industry);
+	// 255 selects the city's buying side of the same historical price offer.
+	const quint32 price = industry == 255
+		? qMax(1u, quint32(quint64(AuLegacyCity::ShopDemandCost(catalogue, state, inventory, production, item)) * 80 / 100))
+		: AuLegacyCity::ShopUnitPrice(catalogue, state, inventory, production, item, industry);
 	m_ShopPrices.insert(key, qMakePair(price, now));
 	return price;
 }
 
-void DaLegacyCity::RxChatMessage(const AuCommPacket* message, quint32&, bool)
+void DaLegacyCity::RxChatMessage(const AuCommPacket* message, quint32& countSupplied, bool)
 {
 	using namespace AuLegacyCity;
 	if(!message || !g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker() || !AuLegacyItemTechnologyActive() || IsDead()) return;
+	if(RxPersonnelChat(message, countSupplied) || RxSpacecraftBlueprintMessage(message) || RxSpacecraftServiceMessage(message)) return;
 	COMMODITYFILTER filter = FILTER_All;
 	const bool solicit = SalesFilter(message->Type(), filter);
 	const auto* bid = dynamic_cast<const AuCommBid*>(message);
@@ -213,7 +164,7 @@ void DaLegacyCity::RxChatMessage(const AuCommPacket* message, quint32&, bool)
 		AuGear packedGear = *gearLock.gear;
 		quint32 delivered = 0;
 		for(; delivered < requested.Count(); ++delivered)
-			if(!PackShopItem(packedGear, *bought)) break;
+			if(!PackPersonalItem(packedGear, *bought)) break;
 		if(!delivered)
 		{ lock.unlock(); reply(tr("Your gear has no room for that item.")); return; }
 		bought->SetCount(delivered);

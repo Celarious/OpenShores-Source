@@ -10,7 +10,7 @@ using namespace AuLegacyCityProtocol;
 bool Valid(const Request& r)
 {
 	// TEMPORARY ARCHITECT MANUFACTURING TEST: action 30 uses the existing economy envelope.
-	if(!r.token || r.action > TestingFinishIndustryProcess || (IsStudio(r.action) && (r.studioIndex >= 16
+	if(!r.token || r.action > BuySpacecraft || (r.action == BuySpacecraft && !r.designId) || (IsStudio(r.action) && (r.studioIndex >= 16
 		|| r.studioPassword.size() > 128))) return false;
 	if(r.action != List && r.action != Spawn && r.action != ConstructionList && r.action != Build
 		&& r.action != EconomyList && r.action != BankState
@@ -100,11 +100,11 @@ bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& resul
 	if(version >= 4) in >> r.money;
 	if(version >= 5) in >> r.studioIndex;
 	if(version >= 6 && !ReadText(in, r.studioPassword, 512)) return false;
-	// TEMPORARY ARCHITECT MANUFACTURING TEST: only the version-4 request carries action 30.
-	if((version < 1 || version > 6) || action > TestingFinishIndustryProcess || (version == 1 && action > Route)
+	// Factory purchases reuse the version-4 economy envelope, including designId.
+	if((version < 1 || version > 6) || action > BuySpacecraft || (version == 1 && action > Route)
 		|| (version == 2 && action > ChangeRoad)
 		|| (version == 3 && action > RunIndustryProcess)
-		|| (version == 4 && action > BankClaimReward && action != TestingFinishIndustryProcess)
+		|| (version == 4 && action > BankClaimReward && action != TestingFinishIndustryProcess && action != BuySpacecraft)
 		|| (version >= 5 && !IsStudio(static_cast<Action>(action)))
 		|| in.status() != QDataStream::Ok || !in.atEnd()) return false;
 	r.action = static_cast<Action>(action);
@@ -114,7 +114,7 @@ bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& resul
 QByteArray AuLegacyCityProtocol::EncodeReply(const Reply& r)
 {
 	// TEMPORARY ARCHITECT MANUFACTURING TEST: the normal economy reply also reports action 30.
-	if(!r.token || r.action > TestingFinishIndustryProcess || r.entries.size() > MaximumEntries
+	if(!r.token || r.action > BuySpacecraft || r.entries.size() > MaximumEntries
 		|| r.production.size() > MaximumReplyBytes / 2
 		|| r.recipeChoices.size() > MaximumRecipeChoices
 		|| (!r.hasRecipeChoices && !r.recipeChoices.isEmpty())
@@ -175,10 +175,10 @@ bool AuLegacyCityProtocol::DecodeReply(const QByteArray& bytes, Reply& result)
 	QDataStream in(bytes); in.setVersion(QDataStream::Qt_4_1);
 	in >> version >> action >> r.token >> r.selectedCity >> r.selectedDevelopment >> r.hasList >> r.truncated;
 	// TEMPORARY ARCHITECT MANUFACTURING TEST: preserve ordinary version-4/5 economy replies for action 30.
-	if((version < 1 || version > 6) || action > TestingFinishIndustryProcess || (version == 1 && action > Route)
+	if((version < 1 || version > 6) || action > BuySpacecraft || (version == 1 && action > Route)
 		|| (version == 2 && action > ChangeRoad)
 		|| (version == 3 && action > RunIndustryProcess)
-		|| (version < 6 && action > BankClaimReward && action != TestingFinishIndustryProcess)
+		|| (version < 6 && action > BankClaimReward && action != TestingFinishIndustryProcess && action != BuySpacecraft)
 		|| (version == 6 && !IsStudio(static_cast<Action>(action)))
 		|| !r.token || !ReadText(in, r.message, 4096)) return false;
 	in >> count;

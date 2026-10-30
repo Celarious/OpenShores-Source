@@ -39,6 +39,7 @@
 #include "dacapsule.h"
 #include "daatomlist.h"
 #include "daperson.h"
+#include "davessel.h"
 #include "damissile.h"
 #include "dateleporter.h"
 #include "dadesigner.h"
@@ -2269,6 +2270,14 @@ bool DaLegacyCity::DemolishDevelopment(DaPerson& person, quint32 id, bool clear,
 				DaAtomList occupants; world->ListSubatoms(occupants);
 				for(auto* atom : occupants)
 				{
+					if(removed.industryId == 126)
+						if(DaVessel* ship = dynamic_cast<DaVessel*>(atom))
+							if(ship->IsDormant() && ship->IsMoored())
+							{
+								const AuPoint stored = placement.UnProject(ship->Location());
+								if(ship->Location().Distance2(placement.Translation()) < 4 * radius * radius
+									&& std::abs(stored.x) <= radius && std::abs(stored.y) <= radius) ship->Kill();
+							}
 					auto* occupant = dynamic_cast<DaCreature*>(atom);
 					if(!occupant || occupant->Parent() != world || !occupant->IsLockedPose()) continue;
 					const AuPoint local = placement.UnProject(occupant->Location());

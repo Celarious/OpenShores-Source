@@ -1,6 +1,7 @@
 #include "aulegacycityinventory.h"
 #include "aulegacycitystate.h"
 #include "auitem.h"
+#include "auglobal.h"
 #include <QDataStream>
 #include <memory>
 
@@ -10,6 +11,14 @@ bool ReadCityInventory(const QByteArray& bytes, const AuLegacyCityCatalogue& cat
 	AuItemHash& output, QString& error)
 {
 	error.clear();
+	// AuItem decoding consults generation-dependent descriptors immediately.
+	// Reject even an empty snapshot until the complete immutable catalogue is
+	// activated, so nested/tool inventories share the same readiness boundary.
+	if(!catalogue.IsValid() || !AuLegacyItemTechnologyActive())
+	{ error = QStringLiteral("Legacy commodity metadata is not ready."); return false; }
+	for(const quint16 commodity : catalogue.RuntimeCommodityIds())
+		if(!g_Au.HasLegacyCommodity(COMMODITYID(commodity)))
+		{ error = QStringLiteral("Legacy commodity metadata is not ready."); return false; }
 	AuItemHash inventory;
 	if(bytes.isEmpty()) { output = inventory; return true; }
 	if(bytes.size() > MaximumStateBytes / 2)

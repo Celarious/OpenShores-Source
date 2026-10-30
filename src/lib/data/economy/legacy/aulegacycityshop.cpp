@@ -1,11 +1,63 @@
 #include "aulegacycityshop.h"
 #include "aulegacycityproduction.h"
 #include "aulegacycitystate.h"
+#include "augear.h"
 #include <cmath>
 #include <limits>
 
 namespace AuLegacyCity
 {
+bool PackPersonalItem(AuGear& gear, const AuItem& item)
+{
+	if(!item.CanBeCarried()) return false;
+	for(const AuGearSlot::SLOTTYPE slot : {AuGearSlot::Body, AuGearSlot::Hand, AuGearSlot::Waist})
+		for(auto& stored : gear)
+			if(stored.SlotType() == slot && stored.Item().FitItemIntoContainer(item)) return true;
+	AuGearSlot::SLOTTYPE slot = AuGearSlot::Invalid;
+	quint8 which = 0;
+	if(!gear.ItemsInSlot(AuGearSlot::Body, &which)) slot = AuGearSlot::Body;
+	else if(gear.ItemsInSlot(AuGearSlot::Hand, &which) < 2) slot = AuGearSlot::Hand;
+	else if(item.PackSize().width() * item.PackSize().height() <= 15
+		&& gear.ItemsInSlot(AuGearSlot::Waist, &which) < 4) slot = AuGearSlot::Waist;
+	if(slot == AuGearSlot::Invalid) return false;
+	gear.Insert(slot, which, item);
+	return true;
+}
+
+quint32 SaleStock(const AuItem& item, const AuLegacyCityCatalogue& catalogue,
+	const State& state, bool fauna, bool flora)
+{
+	const CommodityRecord* commodity = catalogue.CommodityForRuntimeId(item.CommodityId());
+	if(!commodity) return 0;
+	// TxForSaleChat, 0x2d6de8: retain life support and a food reserve.
+	quint64 reserve = 0;
+	if(!fauna && (commodity->id.value == 5 || commodity->id.value == 83)) reserve = quint64(qMax(0, state.population)) * 13;
+	else if(item.IsFood() && item.FoodNutritionValue()) reserve = quint64(qMax(0, state.population)) * (flora ? 1 : 10);
+	return item.Count() > reserve ? quint32(item.Count() - reserve) : 0;
+}
+
+bool SalesFilter(AuCommPacket::TYPE type, COMMODITYFILTER& filter)
+{
+	switch(type)
+	{
+	case AuCommPacket::SolicitAllSales: case AuCommPacket::SolicitItemSales: filter = FILTER_All; break;
+	case AuCommPacket::SolicitAmmoSales: filter = FILTER_Ammo; break;
+	case AuCommPacket::SolicitArmorSales: filter = FILTER_ArmorAndClothes; break;
+	case AuCommPacket::SolicitConstructionMaterialSales: filter = FILTER_ConstructionMaterials; break;
+	case AuCommPacket::SolicitFoodSales: filter = FILTER_Food; break;
+	case AuCommPacket::SolicitFuelSales: filter = FILTER_Fuel; break;
+	case AuCommPacket::SolicitMedSales: filter = FILTER_MedicalSupplies; break;
+	case AuCommPacket::SolicitMiscSales: filter = FILTER_Misc; break;
+	case AuCommPacket::SolicitNaturalResourceSales: filter = FILTER_NaturalResources; break;
+	case AuCommPacket::SolicitPartsSales: filter = FILTER_SpareParts; break;
+	case AuCommPacket::SolicitPatentSales: filter = FILTER_Patents; break;
+	case AuCommPacket::SolicitToolSales: filter = FILTER_Tools; break;
+	case AuCommPacket::SolicitWeaponSales: filter = FILTER_Weapons; break;
+	default: return false;
+	}
+	return true;
+}
+
 namespace
 {
 // Keep the original float calculation while preventing the unsigned supply
@@ -27,8 +79,8 @@ quint32 ProductionQuantity(const AuLegacyCityCatalogue& catalogue, const Product
 }
 }
 
-quint32 ShopUnitPrice(const AuLegacyCityCatalogue& catalogue, const State& city,
-	const AuItemHash& inventory, const ProductionState& production, const AuItem& item, quint8 industry)
+quint32 ShopDemandCost(const AuLegacyCityCatalogue& catalogue, const State& city,
+	const AuItemHash& inventory, const ProductionState& production, const AuItem& item)
 {
 	CommodityId historical;
 	if(!AuLegacyItemTechnologyActive()
@@ -95,7 +147,15 @@ quint32 ShopUnitPrice(const AuLegacyCityCatalogue& catalogue, const State& city,
 	const float cost = std::ceil(item.UnitCost() * demand);
 	if(!std::isfinite(cost)) return 0;
 	const quint64 maximumPrice = std::numeric_limits<quint32>::max();
-	const quint64 demandCost = cost < 1.f ? 1 : cost >= double(maximumPrice) ? maximumPrice : quint64(cost);
+	return quint32(cost < 1.f ? 1 : cost >= double(maximumPrice) ? maximumPrice : quint64(cost));
+}
+
+quint32 ShopUnitPrice(const AuLegacyCityCatalogue& catalogue, const State& city,
+	const AuItemHash& inventory, const ProductionState& production, const AuItem& item, quint8 industry)
+{
+	const quint64 demandCost = ShopDemandCost(catalogue, city, inventory, production, item);
+	if(!demandCost) return 0;
+	const quint64 maximumPrice = std::numeric_limits<quint32>::max();
 	quint64 price = demandCost * 120 / 100;
 	if(price == demandCost) ++price;
 	if(industry == 105) price *= 2;

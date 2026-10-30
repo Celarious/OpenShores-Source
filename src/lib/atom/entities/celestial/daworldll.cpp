@@ -16,6 +16,7 @@
 #include "auglslconst.h"
 #include "aulegacybuildinggeometry.h"
 #include "aulegacycitycatalogue.h"
+#include "aulegacycityspacecraft.h"
 #include "auqueryenvironment.h"
 #include "auroadmap.h"
 #include "auscparts.h"
@@ -1796,6 +1797,7 @@ DaWorldLL::DaWorldLL(const DaWorldLL& c) : DaWorld(c)
 // Send a report to chain-of-command of all cities when the local ship's officer is available.
 void DaWorldLL::ReportOfficerAvailable()
 {
+	if(g_Au.IsLegacyGeneration()) { ReportLegacyOfficerAvailable(); return; }
 	//Q_ASSERT(m_CaptId.IsNull());
 	// Make a list of the empires who have cities on this planet, with a starfleet academy or university.
 	QHash<quint32, const DaBd*> empireBds;
@@ -1968,7 +1970,7 @@ void DaWorldLL::Tock(const AuTime& last, const AuTime& now, const AuScripts& scr
 	DaWorld::Tock(last, now, scripts, tockTrans);
 
 	// Calc bd and city presense. Bd and City presense determined/cached by BdHere().
-	if(BdHere() &&
+	if((g_Au.IsLegacyGeneration() ? HasEstablishedLegacyCity() : BdHere()) &&
 			g_Au.m_EnableReportOfficers &&
 			CaptId().IsNull() &&
 			IsHabitable(HABITABLE_System) &&
@@ -2640,10 +2642,18 @@ bool DaWorldLL::IsSpawnAreaObstructed(const AuPoint& sloc, quint32 designId, qui
 		if(blockedByUnit)
 		{
 			DaVessel* ship = dynamic_cast<DaVessel*>(unit);
+			bool newerDesign = ship && (designQ > ship->QualityOfDesign()
+				|| (designQ == ship->QualityOfDesign() && designId > ship->DesignId()));
+			if(ship && g_Au.IsLegacyGeneration())
+			{
+				AuScReport candidate;
+				const DgData& data = g_Au.LockScDesignsForRead();
+				const bool loaded = data.ScDesignReport(designId, candidate);
+				g_Au.UnlockScDesigns();
+				newerDesign = loaded && AuLegacyCity::NewerSpacecraftDesign(candidate, *ship);
+			}
 			if(ship && ship->IsNew() &&
-					((designQ > ship->QualityOfDesign() ||
-					  (designQ == ship->QualityOfDesign() &&
-					   designId > ship->DesignId())) &&	// Newer design replaces older design of same Q
+					(newerDesign &&
 					 !ship->FindPersonRecursive()))
 			{
 				// Replaceable ship is not considered an obstruction.
@@ -13205,6 +13215,14 @@ DaBd* DaWorldLL::CreateBuilding(quint32 designId, quint8 quality, INDUSTRYID ind
 // Adds hangared spacecraft to the list that are subordinate to this world. Not recursive.
 void DaWorldLL::FindHangaredSpaceships(DaAtomList& spaceships) const
 {
+	if(g_Au.IsLegacyGeneration())
+	{
+		DaAtomList children; ListSubatoms(children);
+		for(DaAtom* atom : children)
+			if(DaVessel* ship = dynamic_cast<DaVessel*>(atom))
+				if(ship->IsDormant() && ship->IsMoored()) spaceships.append(ship);
+		return;
+	}
 	DaAtomList bds;
 	FindBds(bds);
 	for(DaAtomList::const_iterator bi = bds.cbegin(); bi != bds.cend(); bi++)

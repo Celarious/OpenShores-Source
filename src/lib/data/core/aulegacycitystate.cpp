@@ -103,6 +103,7 @@ bool EncodeState(const State& state, QByteArray& output, QString& error)
 	for(const Flag& flag : state.flags) out << flag.empire << flag.location << flag.level << flag.capturedAt;
 	out << state.inventory << state.manufacturing << state.accounting << state.reportHistory;
 	out << state.lastEmployment << state.lastPopulationCycle << state.citizenSpecies << state.lastAttack;
+	out << state.garrisonTroops;
 	if(out.status() != QDataStream::Ok || bytes.size() > MaximumStateBytes)
 	{ error = QStringLiteral("Legacy city state exceeds its envelope limit."); return false; }
 	output = bytes;
@@ -178,6 +179,7 @@ bool DecodeState(const QByteArray& bytes, State& output, QString& error)
 		{ error = QStringLiteral("Invalid legacy city citizen species."); return false; }
 		in >> state.lastAttack;
 	}
+	if(version >= 4) in >> state.garrisonTroops;
 	if(in.status() != QDataStream::Ok || !in.atEnd() || !Valid(state, error))
 	{ if(error.isEmpty()) error = QStringLiteral("Malformed legacy city state or trailing data."); return false; }
 	output = state;

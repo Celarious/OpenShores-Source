@@ -432,6 +432,83 @@ bool PrepareLegacyStudioMedia(quint32 libraryId, AuScDesignExchangeEntry& exchan
 	error.clear(); return true;
 }
 
+bool AuDbGlobal::ListLegacySpacecraftPublications(quint32 empire, QList<quint32>& runtimeIds, QString& error)
+{
+	error.clear();
+	if(!IsLegacyGeneration()) { error = QStringLiteral("Legacy publication requires a Legacy universe."); return false; }
+	struct Publication { quint32 runtime, source; bool published; };
+	QVector<Publication> records;
+	{
+		CatalogConnection connection;
+		if(!connection.Open()) { error = QStringLiteral("The legacy publication database is unavailable."); return false; }
+		QSqlQuery query(connection.db);
+		if(!query.prepare("SELECT DISTINCT runtime.id, source.id, publication.runtimeDesignId IS NOT NULL "
+			"FROM n_LegacyScDesign source JOIN n_ScDesign runtime ON runtime.id = source.runtimeDesignId "
+			"LEFT JOIN n_LegacyScPublication publication ON publication.runtimeDesignId = runtime.id "
+			"AND (publication.empireId = ? OR publication.empireId = 0) "
+			"WHERE runtime.state = ? ORDER BY runtime.id"))
+		{ error = QStringLiteral("The legacy publication schema is unavailable. Apply legacyspacecraft.sql."); return false; }
+		query.addBindValue(qulonglong(empire)); query.addBindValue(int(AuDesign::Final));
+		if(!query.exec())
+		{ qWarning() << "Legacy publications:" << query.lastError().text(); error = QStringLiteral("The legacy publication library could not be queried."); return false; }
+		while(query.next())
+		{
+			Publication record;
+			if(!ReadCatalogId(query.value(0), record.runtime) || !ReadCatalogId(query.value(1), record.source))
+			{ error = QStringLiteral("The legacy publication library contains an invalid design identifier."); return false; }
+			record.published = query.value(2).toBool(); records.append(record);
+		}
+		if(query.lastError().isValid())
+		{ error = QStringLiteral("The legacy publication library could not finish reading."); return false; }
+	}
+	// Release SQL before reading the immutable source catalogue. Original
+	// DnSpaceShip::IsPublic uses source state 2, independently of empire copies.
+	QList<quint32> selected;
+	const DgData& data = LockScDesignsForRead();
+	for(const auto& record : records)
+	{
+		const auto source = data.LegacyScDesign(record.source);
+		if(record.published || (source && source->SourceDesign().header.state == 2)) selected.append(record.runtime);
+	}
+	UnlockScDesigns();
+	runtimeIds = selected;
+	return true;
+}
+
+bool AuDbGlobal::SetLegacySpacecraftPublication(quint32 empire, quint32 runtimeId, bool published, QString& error)
+{
+	error.clear();
+	if(!IsLegacyGeneration() || !runtimeId)
+	{ error = QStringLiteral("A valid Legacy spacecraft blueprint is required."); return false; }
+	CatalogConnection connection;
+	if(!connection.Open()) { error = QStringLiteral("The legacy publication database is unavailable."); return false; }
+	CatalogTransaction transaction(connection.db);
+	if(!transaction.Begin()) { error = QStringLiteral("The legacy publication transaction could not begin."); return false; }
+	QSqlQuery query(connection.db);
+	if(published)
+	{
+		if(!query.prepare("INSERT INTO n_LegacyScPublication (runtimeDesignId, empireId) "
+			"SELECT runtime.id, ? FROM n_ScDesign runtime JOIN n_LegacyScDesign source ON source.runtimeDesignId = runtime.id "
+			"WHERE runtime.id = ? AND runtime.state = ? ON CONFLICT DO NOTHING RETURNING runtimeDesignId"))
+		{ error = QStringLiteral("The legacy publication schema is unavailable. Apply legacyspacecraft.sql."); return false; }
+		query.addBindValue(qulonglong(empire)); query.addBindValue(qulonglong(runtimeId)); query.addBindValue(int(AuDesign::Final));
+	}
+	else
+	{
+		if(!query.prepare("DELETE FROM n_LegacyScPublication WHERE empireId = ? AND runtimeDesignId = ? RETURNING runtimeDesignId"))
+		{ error = QStringLiteral("The legacy publication schema is unavailable. Apply legacyspacecraft.sql."); return false; }
+		query.addBindValue(qulonglong(empire)); query.addBindValue(qulonglong(runtimeId));
+	}
+	if(!query.exec())
+	{ qWarning() << "Legacy publication:" << query.lastError().text(); error = QStringLiteral("The legacy publication could not be stored."); return false; }
+	if(!query.next())
+	{ error = published ? QStringLiteral("This blueprint is already published here or its final Legacy design is unavailable.")
+		: QStringLiteral("This blueprint is not published to this empire."); return false; }
+	query.finish();
+	if(!transaction.Commit()) { error = QStringLiteral("The legacy publication transaction could not be committed."); return false; }
+	return true;
+}
+
 void ProcessLegacySpacecraftRequest(const AuLegacyScProtocol::Request& request, AuLegacyScProtocol::Reply& reply)
 {
 	using namespace AuLegacyScProtocol;

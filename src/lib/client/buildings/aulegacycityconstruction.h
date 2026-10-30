@@ -11,6 +11,7 @@ class AuBldConstruct;
 class AuLegacyCityBank;
 class AuLegacyCityManufacture;
 class AuLegacyCityDesignStudio;
+class AuBldHangar;
 class QButtonGroup;
 class QCheckBox;
 class QComboBox;
@@ -96,6 +97,7 @@ private:
 	AuLegacyCityManufacture* m_Manufacture;
 	AuLegacyCityBank* m_Bank;
 	AuLegacyCityDesignStudio* m_Studio;
+	AuBldHangar* m_Hangar;
 	QStackedWidget* m_LaborPages;
 	QTabBar* m_LaborTabs;
 	bool m_DualPages = false;

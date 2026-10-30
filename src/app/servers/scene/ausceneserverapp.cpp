@@ -11794,6 +11794,10 @@ void AuSceneServerApp::SpacecraftStasisRecoverDown(AuId shipId, AuId personId, q
 	DaVessel* ship = dynamic_cast<DaVessel*>(ether.FindDormantAtom(shipId));
 	if(ship && !ship->IsMoored())
 	{
+		if(g_Au.IsLegacyGeneration() && !agentRecover && (!ship->IsPrivatelyOwned()
+			|| quint8(ship->Galaxy()) != personGalaxy
+			|| (ship->OwnerId() != personId && !AuRosterEntry::IsOfficer(ship->BerthTypeOccupied(personId)))))
+		{ g_Au.UnlockEtheriumDelete(); return; }
 		// The dormant unmoored ship was found here.
 		// A moored dormant ship is a ship stored in a hanger; that cannot be summoned here.
 		// Ships in stasis cannot be restored immediately.

@@ -7,14 +7,14 @@ CREATE TABLE IF NOT EXISTS a_LegacyCity
   allegianceEmpire bigint NOT NULL DEFAULT 0,
   population integer NOT NULL DEFAULT 0 CHECK (population >= 0),
   satisfaction smallint NOT NULL DEFAULT 1 CHECK (satisfaction BETWEEN -20 AND 20),
-  stateVersion smallint NOT NULL DEFAULT 3 CHECK (stateVersion BETWEEN 1 AND 3),
+  stateVersion smallint NOT NULL DEFAULT 4 CHECK (stateVersion BETWEEN 1 AND 4),
   stateData bytea NOT NULL CHECK (octet_length(stateData) BETWEEN 1 AND 8388608),
   reportHistory bytea NOT NULL DEFAULT ''::bytea
 ) INHERITS (a_Atom);
--- Keep version-1/2 envelopes readable until their next ordinary city save.
+-- Keep version-1/2/3 envelopes readable until their next ordinary city save.
 ALTER TABLE a_LegacyCity DROP CONSTRAINT IF EXISTS a_legacycity_stateversion_check;
-ALTER TABLE a_LegacyCity ALTER COLUMN stateVersion SET DEFAULT 3;
-ALTER TABLE a_LegacyCity ADD CONSTRAINT a_legacycity_stateversion_check CHECK (stateVersion BETWEEN 1 AND 3);
+ALTER TABLE a_LegacyCity ALTER COLUMN stateVersion SET DEFAULT 4;
+ALTER TABLE a_LegacyCity ADD CONSTRAINT a_legacycity_stateversion_check CHECK (stateVersion BETWEEN 1 AND 4);
 CREATE UNIQUE INDEX IF NOT EXISTS legacy_city_id ON a_LegacyCity(id);
 CREATE INDEX IF NOT EXISTS legacy_city_parent ON a_LegacyCity(idp);
 CREATE INDEX IF NOT EXISTS legacy_city_empire ON a_LegacyCity(controllingEmpire);

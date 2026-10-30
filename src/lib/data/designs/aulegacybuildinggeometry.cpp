@@ -60,6 +60,7 @@ struct Builder
 	QHash<QString, int> batchIndices;
 	int vertices = 0;
 	bool hasBounds = false;
+	bool noCollision = false;
 	void Warning(const QString& text)
 	{
 		if(!mesh.warnings.contains(text)) mesh.warnings.append(text);
@@ -77,8 +78,8 @@ struct Builder
 		QVector3D normal = QVector3D::crossProduct(b - a, c - a);
 		if(normal.lengthSquared() < 1e-12f) return;
 		normal.normalize();
-		const QString key = QStringLiteral("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10")
-			.arg(slot).arg(deck).arg(interior).arg(doorId).arg(detailId).arg(twoSided).arg(stairs).arg(collisionOnly).arg(depthOnly).arg(equipment);
+		const QString key = QStringLiteral("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10/%11")
+			.arg(slot).arg(deck).arg(interior).arg(doorId).arg(detailId).arg(twoSided).arg(stairs).arg(collisionOnly).arg(depthOnly).arg(equipment).arg(noCollision);
 		int index = batchIndices.value(key, -1);
 		if(index < 0)
 		{
@@ -88,6 +89,7 @@ struct Builder
 			batch.equipment = equipment;
 			batch.stairs = stairs;
 			batch.collisionOnly = collisionOnly;
+			batch.noCollision = noCollision;
 			batch.depthOnly = depthOnly;
 			mesh.batches.append(batch);
 		}
@@ -791,6 +793,10 @@ void StreetLight(Builder& out, const QPointF& location, int deck, float foundati
 {
 	// DpDevelopment::CreateStreetLight 0x64df90. The glass shade is the
 	// separate BuildingTexture 37 tile; no spacecraft light geometry is used.
+	// Keep lamp triangles in separate batches so nearby solid geometry that
+	// shares their texture retains collision.
+	const bool previousNoCollision = out.noCollision;
+	out.noCollision = true;
 	const double base = deck * AuLegacyBd::DeckHeight;
 	const float twoPi = 6.2831855f;
 	const QVector3D center = Position(location, base);
@@ -818,6 +824,7 @@ void StreetLight(Builder& out, const QPointF& location, int deck, float foundati
 		out.Quad(37, deck, false, shaft[i - 1] + QVector3D(0, 0, 25), shaft[i] + QVector3D(0, 0, 25),
 			rim[i], rim[i - 1], {0, 0}, {1, 0}, {1, 1}, {0, 1});
 	}
+	out.noCollision = previousNoCollision;
 }
 
 void RunwayLight(Builder& out, const QPointF& location, float foundationDepth = 0)

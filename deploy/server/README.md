@@ -600,21 +600,25 @@ player labor, enables citizen labor, and halts or resumes projects. Extensions
 retain the existing building's design and material. A new town square requires
 an empire flag and a valid city name.
 
-Construction and economy use legacy city state version 3. Fresh database
+Construction, economy and ship personnel services use legacy city state version 4. Fresh database
 initialization creates the current legacy city tables. For an existing universe,
 stop the servers and apply `postgres/schema/legacycities.sql` to `auUniverse`
 using the existing deployment database administration procedure. That script
-updates the version constraint and retains version-1/2 envelopes; ordinary city
-saves write version 3. Rebuild both client and servers manually before resuming.
+updates the version constraint and retains version-1/2/3 envelopes; ordinary city
+saves write version 4, including the city's garrison troop pool. Spacecraft factory
+processes also use a versioned manufacturing envelope; existing processes remain
+readable. Also apply `postgres/schema/legacyspacecraft.sql` for the per-empire
+Legacy blueprint publication table. Rebuild both client and servers manually
+before resuming.
 
 After a manual client/server build, verify founding with and without a flag,
 material shortages and repeated labor, halt/resume, multi-level completion and
 extensions, each road/landscaping type, demolition and town-square deletion
 restrictions, and restart/reconnect with work partially complete. Check the
-separate F10/F11 windows and a modern server as well. Stage-5 economy recovery is
-in progress: manufacturing, storage, workforce, population, bank accounts and
-commerce need manual build and runtime acceptance. Ship services and the full
-political lifecycle remain later stages.
+separate F10/F11 windows and a modern server as well. Stage-5 economy recovery was
+accepted on 19 October 2026. Stage-6 spacecraft manufacturing and city ship
+services require a new manual build and gameplay acceptance. The full political
+lifecycle remains stage 7.
 
 F10 now exposes historical manufacturing recipes, citizen employment and minimum
 TL, plus bank loans, treasury transfers, reward redemption and capital

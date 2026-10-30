@@ -33,8 +33,9 @@ namespace
 const double SpawnRadius = 16.4041994750656; // Original five-metre obstruction test.
 const int BoatSearchRings = 4;
 const int BoatSearchSamplesPerRing = 16;
+}
 
-AuPoint SearchOffset(int index)
+AuPoint ProductionSpawnOffset(int index)
 {
 	// DpBuilding::SpawnVehicle 0x5f15e0 and SpawnBoat 0x52d6a0 share
 	// these eight positions, in this order. Vehicles then try eight more.
@@ -49,15 +50,20 @@ AuPoint SearchOffset(int index)
 	return AuPoint(x, -y, 0);
 }
 
-bool RoadContains(DaWorldLL& world, const Development& road, const AuGlobeLLF& point)
+bool ProductionRoadEndpoints(const DaWorldLL& world, const Development& road, AuGlobeLLF& start, AuGlobeLLF& end)
 {
 	AuMatrix4x4 placement;
 	world.BuildingConstructionTransform(world.LocOfLL(road.location, road.altitudeMSL),
 		road.facingRadians, nullptr, AuPoint(), placement);
 	const double halfLength = road.roadLengthMeters * FeetPerMeter() / 2;
+	return world.LLOfLoc(start, placement.Project(AuPoint(0, -halfLength, 0)))
+		&& world.LLOfLoc(end, placement.Project(AuPoint(0, halfLength, 0)));
+}
+
+bool ProductionRoadContains(const DaWorldLL& world, const Development& road, const AuGlobeLLF& point)
+{
 	AuGlobeLLF start, end;
-	if(!world.LLOfLoc(start, placement.Project(AuPoint(0, -halfLength, 0)))
-		|| !world.LLOfLoc(end, placement.Project(AuPoint(0, halfLength, 0)))) return false;
+	if(!ProductionRoadEndpoints(world, road, start, end)) return false;
 	float fraction = 0;
 	const AuGlobeLLF closest = point.CoordOnSegment(start, end, &fraction, world.LLShape());
 	if(fraction < 0 || fraction > 1) return false;
@@ -68,6 +74,8 @@ bool RoadContains(DaWorldLL& world, const Development& road, const AuGlobeLLF& p
 	return float(world.LocOfLL(point, altitude).Distance2(world.LocOfLL(closest, altitude))) <= halfWidth * halfWidth;
 }
 
+namespace
+{
 AuBox SpawnBounds(DaWorldLL& world, const AuPoint& location)
 {
 	// Match IsSpawnAreaObstructed's box as well as its centre-distance test.
@@ -228,7 +236,7 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 		int tried = 0;
 		for(int index = 0; index < samples; ++index)
 		{
-			const AuPoint offset = SearchOffset(boat ? index % BoatSearchSamplesPerRing : index);
+			const AuPoint offset = ProductionSpawnOffset(boat ? index % BoatSearchSamplesPerRing : index);
 			AuPoint local(offset.x * radius, offset.y * radius, 0);
 			if(boat)
 			{
@@ -261,7 +269,7 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 			else
 			{
 				const auto road = std::find_if(roads.cbegin(), roads.cend(),
-					[&world, &ll](const Development& value) { return RoadContains(world, value, ll); });
+					[&world, &ll](const Development& value) { return ProductionRoadContains(world, value, ll); });
 				if(road == roads.cend() || !road->roadSlab) continue;
 				candidate.slab = road->id;
 				candidate.ground = world.GetSurfaceLocation(ll);

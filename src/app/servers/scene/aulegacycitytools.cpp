@@ -11,6 +11,7 @@
 #include "aulegacycityproduction.h"
 #include "aulegacystudioprotocol.h"
 #include "aulegacyshipequipment.h"
+#include "auscreport.h"
 #include "aumatrix4x4.h"
 #include "auqueryenvironment.h"
 #include "auserverinterface.h"
@@ -129,9 +130,18 @@ void EconomyRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityPr
 	if(!selected || !ContainsSite(world, *selected, origin))
 	{ if(request.action != EconomyList) reply.message = QObject::tr("Stand at this industry to operate it."); return; }
 	reply.selectedCity = cityId; reply.selectedDevelopment = developmentId;
-	if(request.action == SetIndustryProcess)
-		reply.accepted = city->SetIndustryProcess(person, developmentId, request.processSlot,
-			request.manufacturingRecipe, request.minimumTechnology, request.citizenEnabled, reply.message);
+	if(request.action == BuySpacecraft)
+		reply.accepted = selected->industryId == 87
+			&& city->BuySpacecraft(person, developmentId, request.designId, reply.message);
+	else if(request.action == SetIndustryProcess)
+	{
+		if(selected->industryId == 87 && request.designId)
+			reply.accepted = city->SetSpacecraftProcess(person, developmentId, request.processSlot,
+				request.designId, request.minimumTechnology, request.citizenEnabled, reply.message);
+		else
+			reply.accepted = city->SetIndustryProcess(person, developmentId, request.processSlot,
+				request.manufacturingRecipe, request.minimumTechnology, request.citizenEnabled, reply.message);
+	}
 	else if(request.action == FetchIndustryMaterials || request.action == RunIndustryProcess)
 		reply.accepted = city->OperateIndustryProcess(person, developmentId, request.processSlot, true,
 			request.action == RunIndustryProcess, reply.message);
@@ -186,6 +196,31 @@ void EconomyRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityPr
 			break;
 		}
 	reply.hasEconomy = true;
+	if(reply.economyIndustry == 87)
+	{
+		QList<quint32> designs;
+		QString libraryError;
+		if(g_Au.ListLegacySpacecraftPublications(city->EmpireId(), designs, libraryError))
+		{
+			QList<quint32> needed;
+			reply.hasList = true;
+			const DgData& records = g_Au.LockScDesignsForRead();
+			for(const quint32 id : designs)
+			{
+				if(reply.entries.size() == MaximumEntries) { reply.truncated = true; break; }
+				AuScReport design;
+				const bool loaded = records.ScDesignReport(id, design);
+				if(!loaded) needed.append(id);
+				Entry entry; entry.cityId = cityId; entry.developmentId = developmentId;
+				entry.designId = id; entry.industryId = 87;
+				entry.name = loaded ? design.DesignName() : QObject::tr("Blueprint %1 (loading)").arg(id);
+				reply.entries.append(entry);
+			}
+			g_Au.UnlockScDesigns();
+			for(const quint32 id : needed) g_Au.ScDesignNeeded(id);
+		}
+		else if(reply.message.isEmpty()) reply.message = libraryError;
+	}
 }
 
 void BankRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityProtocol::Reply& reply,

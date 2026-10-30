@@ -1356,6 +1356,8 @@ void DaAnimal::Look(DaAtom*& foodAtom, AuPoint& foodDir, float& foodRange, DaAto
 					if(!seeIt && !smellIt && !hearIt)
 						continue;	// Out of range to see, smell
 									// or hear.
+					if(LegacyBuildingBlocksAttack(*creature))
+						continue;	// Ignore creatures hidden by city geometry.
 
 					// My size is a factor when sizing up other
 					// creatures.
@@ -1630,6 +1632,8 @@ void DaAnimal::Look(DaAtom*& foodAtom, AuPoint& foodDir, float& foodRange, DaAto
 							hearIt = true;
 						if(!seeIt && !smellIt && !hearIt)
 							continue;	// Out of range to see, smell or hear.
+						if(LegacyBuildingBlocksAttack(*targetVeh))
+							continue;	// Ignore occupants hidden by city geometry.
 
 						// My size is a factor when sizing up other
 						// creatures.
@@ -2006,6 +2010,8 @@ void DaAnimal::Look(DaAtom*& foodAtom, AuPoint& foodDir, float& foodRange, DaAto
 						hearIt = true;
 					if(!seeIt && !smellIt && !hearIt)
 						continue;	// Out of range to see, smell or hear.
+					if(LegacyBuildingBlocksAttack(*creature))
+						continue;	// Ignore creatures hidden by city geometry.
 
 					// My size is a factor when sizing up other creatures.
 					if(myVolume == 0.)
@@ -2287,6 +2293,8 @@ void DaAnimal::Look(DaAtom*& foodAtom, AuPoint& foodDir, float& foodRange, DaAto
 						if(!seeIt && !smellIt && !hearIt)
 							continue;	// Out of range to see, smell
 										// or hear.
+						if(LegacyBuildingBlocksAttack(*targetVeh))
+							continue;	// Ignore occupants hidden by city geometry.
 
 						// My size is a factor when sizing up other
 						// creatures.
@@ -3171,8 +3179,8 @@ void DaAnimal::DoAI(const AuTime& last, const AuTime& now)
 		break;
 	}
 
-	// An in-range target behind a legacy wall still requires pursuit.
-	if(targetAtom && Activity() == Attacking && weapon.m_Mode != WM_Area && LegacyShipBlocksAttack(*targetAtom))
+	// An in-range target behind a legacy ship wall still requires pursuit.
+	if(targetAtom && Activity() == Attacking && weapon.m_Mode != WM_Area && LegacyAttackObstacle(*targetAtom))
 		SetActivity(targetAtom == threatAtom ? Charging : Chasing);
 
 	// Turn to face the target (away from target when fleeing).
@@ -3806,6 +3814,13 @@ void DaAnimal::ExecuteDecision()
 		break;
 	case 1:
 		// Attack a target.
+		if(g_Au.IsLegacyGeneration())
+		{
+			const DaAtom* env = FindEnvironmentAtom();
+			const DaAtom* target = env ? env->FindIdRecursive(targetId) : nullptr;
+			if(target && LegacyBuildingBlocksAttack(*target))
+				break;	// The target may have moved behind a wall since this attack was chosen.
+		}
 		if(weapon.m_Mode == WM_Area)
 		{
 			// Perform area attack that excludes me and others of my own kind.
@@ -3826,7 +3841,7 @@ void DaAnimal::ExecuteDecision()
 			// Calculate a random z height from the ground up to their camera location.
 			DaAtom* env = FindEnvironmentAtom();
 			DaAtom* targetAtom = env->FindIdRecursive(targetId);
-			if(targetAtom && !LegacyShipBlocksAttack(*targetAtom))
+			if(targetAtom && !LegacyAttackObstacle(*targetAtom))
 			{
 				AuPoint targetLoc = targetDir * targetRange;
 				float gcg = targetAtom->GroundHeightAboveCG();

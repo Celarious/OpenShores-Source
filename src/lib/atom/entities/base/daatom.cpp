@@ -978,6 +978,19 @@ QString DaAtom::Description() const
 
 void DaAtom::ConnectSignals()
 {
+	if(g_Au.IsLegacyGeneration())
+	{
+		// Recovery takes the etherium delete lock and may hand the ship to a
+		// different worker. Always queue through the existing application path.
+		if(g_Au.IsSceneSolo())
+			qApp->connect(this, SIGNAL(LegacySpacecraftRecovery(AuId, AuId, quint8, bool)),
+				SLOT(SpacecraftStasisRecover(AuId, AuId, quint8, bool)),
+				(Qt::ConnectionType)(Qt::QueuedConnection | Qt::UniqueConnection));
+		else if(g_Au.IsSceneWorker())
+			qApp->connect(this, SIGNAL(LegacySpacecraftRecovery(AuId, AuId, quint8, bool)),
+				SLOT(SpacecraftStasisRecoverDown(AuId, AuId, quint8, bool)),
+				(Qt::ConnectionType)(Qt::QueuedConnection | Qt::UniqueConnection));
+	}
 	// Connect our signals to the slots in the app. Beware not to do this every time we get added to another atom or we
 	// accumulate multiple signal/slot connections.
 	if(g_Au.IsSceneSolo())

@@ -2577,6 +2577,7 @@ public:
 
 	// Send a report to chain-of-command of all cities when the local ship's officer is available.
 	void ReportOfficerAvailable();
+	void ReportLegacyOfficerAvailable();
 
 	// 'mBld' is the orientation matrix of the proposed or existing building.
 	// 'siteCen' is the ground level center point of the building site.

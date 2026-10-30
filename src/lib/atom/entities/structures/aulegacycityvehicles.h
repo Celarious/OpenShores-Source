@@ -7,6 +7,8 @@
 #include <memory>
 
 class AuItemHash;
+class AuPoint;
+class AuGlobeLLF;
 class DaLegacyCity;
 class DaWorldLL;
 namespace AuLegacyCity
@@ -14,6 +16,11 @@ namespace AuLegacyCity
 struct State;
 struct ProductionState;
 struct ProductionOutput;
+struct Development;
+AUATOM_DLL bool ProductionRoadEndpoints(const DaWorldLL& world, const Development& road,
+	AuGlobeLLF& start, AuGlobeLLF& end);
+AUATOM_DLL bool ProductionRoadContains(const DaWorldLL& world, const Development& road, const AuGlobeLLF& point);
+AUATOM_DLL AuPoint ProductionSpawnOffset(int index);
 
 // Original physical vehicle outputs; virtual mine/commercial/naval/tank
 // registrations remain separate from these slab and water spawns.

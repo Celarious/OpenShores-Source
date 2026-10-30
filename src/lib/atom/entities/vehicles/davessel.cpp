@@ -26,6 +26,7 @@
 #include "daasteroid.h"
 #include "daatomlist.h"
 #include "dabd.h"
+#include "dalegacycity.h"
 #include "dadesigner.h"
 #include "daeffect.h"
 #include "dagalaxy.h"
@@ -1517,7 +1518,13 @@ const DaAtom* DaVessel::MissionDestination(AuMissionOrder::TYPE& destOrder, AuPo
 	case AuMissionOrder::GoToCity:
 	case AuMissionOrder::GoToCityAnywhere:
 		destOffset = AuPoint(0,0);
-		dest = MissionDestGoToCity(order);
+		if(g_Au.IsLegacyGeneration())
+		{
+			const DaAtom* environment = FindEnvironmentAtom();
+			const DaAtom* city = environment ? environment->FindIdRecursive(order.DestinationId()) : nullptr;
+			dest = city && city->AtomType() == ATOM_LegacyCity ? city : nullptr;
+		}
+		else dest = MissionDestGoToCity(order);
 		break;
 
 	case AuMissionOrder::GoToStation:
@@ -1526,18 +1533,16 @@ const DaAtom* DaVessel::MissionDestination(AuMissionOrder::TYPE& destOrder, AuPo
 		break;
 
 	case AuMissionOrder::GoToBestCity:
-		//destOffset = AuPoint(0,0);
-		//dest = MissionDestGoToBestCity();
+		if(g_Au.IsLegacyGeneration()) { destOffset = AuPoint(); dest = MissionDestLegacyCity(false); }
 		break;
 
 	case AuMissionOrder::GoToBestStation:
 		destOffset = AuPoint(0,0);
-		dest = MissionDestGoToBestStation();
+		dest = g_Au.IsLegacyGeneration() ? MissionDestLegacyStationOrCity(false, false) : MissionDestGoToBestStation();
 		break;
 
 	case AuMissionOrder::GoToBestStationOrCity:
-		//destOffset = AuPoint(0,0);
-		//dest = MissionDestGoToBestCityOrStation();
+		if(g_Au.IsLegacyGeneration()) { destOffset = AuPoint(); dest = MissionDestLegacyStationOrCity(false); }
 		break;
 
 	case AuMissionOrder::GoToCoordinate:
@@ -1566,7 +1571,7 @@ const DaAtom* DaVessel::MissionDestination(AuMissionOrder::TYPE& destOrder, AuPo
 
 	case AuMissionOrder::PatrolCities:
 		destOffset = AuPoint(0,0);
-		dest = MissionDestPatrolCities();
+		dest = g_Au.IsLegacyGeneration() ? MissionDestLegacyCity(false, true) : MissionDestPatrolCities();
 		break;
 
 	case AuMissionOrder::PatrolStations:
@@ -1584,7 +1589,7 @@ const DaAtom* DaVessel::MissionDestination(AuMissionOrder::TYPE& destOrder, AuPo
 
 	case AuMissionOrder::GoToClosestCity:
 		destOffset = AuPoint(0,0);
-		dest = MissionDestGoToClosestCity();
+		dest = g_Au.IsLegacyGeneration() ? MissionDestLegacyCity(true) : MissionDestGoToClosestCity();
 		break;
 
 	case AuMissionOrder::GoToClosestStation:
@@ -1594,7 +1599,7 @@ const DaAtom* DaVessel::MissionDestination(AuMissionOrder::TYPE& destOrder, AuPo
 
 	case AuMissionOrder::GoToClosestStationOrCity:
 		destOffset = AuPoint(0,0);
-		dest = MissionDestGoToClosestStationOrCity();
+		dest = g_Au.IsLegacyGeneration() ? MissionDestLegacyStationOrCity(true) : MissionDestGoToClosestStationOrCity();
 		break;
 
 	case AuMissionOrder::GoToOrbitBestPlanet:
@@ -2591,6 +2596,16 @@ bool DaVessel::KillDormantAbandoned()
 	else
 	{
 		// Ship in a hangar.
+		if(g_Au.IsLegacyGeneration())
+		{
+			DaAtomList cities;
+			if(Parent()) Parent()->FindLegacyCitiesRecursive(cities);
+			for(DaAtom* atom : cities)
+				if(const DaLegacyCity* city = dynamic_cast<const DaLegacyCity*>(atom))
+					if(city->IsHangarShipValid(*this)) return false;
+			Kill();
+			return true;
+		}
 		// Check for a hangar.
 		const DaBd* bd = dynamic_cast<const DaBd*>(Parent());
 		if(!bd || bd->IndustryId() != IID_Hangar)
@@ -4826,6 +4841,7 @@ bool DaVessel::EmergeFromWormhole(DaSolarSystem* inSystem)
 
 void DaVessel::FindRepairBds(DaAtomList& repairBds)
 {
+	if(g_Au.IsLegacyGeneration()) { FindLegacyServiceCities(repairBds, LegacyRepair); return; }
 	if(InArena())
 		return;
 	if(InDesignEnvironment())
@@ -4907,6 +4923,7 @@ void DaVessel::FindRepairBds(DaAtomList& repairBds)
 // Lists all buildings that this ship can reach for trade, via ground, station, or transporter.
 void DaVessel::FindReachableBds(DaAtomList& reachableBds) const
 {
+	if(g_Au.IsLegacyGeneration()) { FindLegacyServiceCities(reachableBds, LegacyReachable); return; }
 	if(InArena())
 		return;
 	if(InDesignEnvironment())
@@ -5019,6 +5036,13 @@ void DaVessel::FindTradeBds(DaAtomList& tradeBds, COMMODITYID tradeCID) const
 // CID_Invalid = 'Citizens' in empire commerce restrictions data.
 void DaVessel::FindTradeBds(DaAtomList& tradeBds, COMMODITYID tradeCID, const DaAtomList& reachableBds) const
 {
+	if(g_Au.IsLegacyGeneration())
+	{
+		DaAtomList allowed;
+		FindLegacyServiceCities(allowed, LegacyTrade, tradeCID);
+		for(DaAtom* city : allowed) if(reachableBds.contains(city)) tradeBds.append(city);
+		return;
+	}
 	// Find buildings that will trade with this ship.
 	quint32 empireId = EmpireId();
 	for(DaAtomList::const_iterator bi = reachableBds.cbegin(); bi != reachableBds.cend(); bi++)
@@ -5057,6 +5081,7 @@ void DaVessel::FindTradeBds(DaAtomList& tradeBds, COMMODITYID tradeCID, const Da
 
 void DaVessel::FindTroopBds(DaAtomList& troopBds)
 {
+	if(g_Au.IsLegacyGeneration()) { FindLegacyServiceCities(troopBds, LegacyTroops); return; }
 	// Find buildings that can trade with this ship.
 	DaAtomList bds;
 	FindReachableBds(bds);
@@ -5088,6 +5113,7 @@ void DaVessel::FindTroopBds(DaAtomList& troopBds)
 
 void DaVessel::FindCrewBds(DaAtomList& crewBds)
 {
+	if(g_Au.IsLegacyGeneration()) { FindLegacyServiceCities(crewBds, LegacyCrew); return; }
 	// Find buildings that can trade with this ship.
 	DaAtomList bds;
 	FindReachableBds(bds);
@@ -5129,6 +5155,7 @@ void DaVessel::FindCrewBds(DaAtomList& crewBds)
 
 void DaVessel::FindPassengerLoadBds(DaAtomList& passBds)
 {
+	if(g_Au.IsLegacyGeneration()) { FindLegacyServiceCities(passBds, LegacyPassengersLoad); return; }
 	// Find buildings that can trade with this ship.
 	DaAtomList bds;
 	FindReachableBds(bds);
@@ -5169,6 +5196,7 @@ void DaVessel::FindPassengerLoadBds(DaAtomList& passBds)
 
 void DaVessel::FindPassengerUnloadBds(DaAtomList& passBds)
 {
+	if(g_Au.IsLegacyGeneration()) { FindLegacyServiceCities(passBds, LegacyPassengersUnload); return; }
 	// Find buildings that can trade with this ship.
 	DaAtomList bds;
 	FindReachableBds(bds);
@@ -6282,22 +6310,23 @@ void DaVessel::TransferColonists(DaVessel* fromShip, int howMany)
 		// Release the passenger berth the npc occupied on the origin ship.
 		fromShip->RemoveBerthOccupant(npc->Id());
 
-		// Occupy a passenger berth with the npc.
-		npc->OccupyBerth(this);
-		AuPoint berthLoc = BerthLocation(npc->Id());
-
-		// A location was found inside the hull to place the passenger.
-		npc->Stand();
-		berthLoc.z += BerthSpawnHeight(*this, *npc);
-		AuMatrix4x4 t;
-		t.Translate(berthLoc);
-		double zRot = g_Au.Dice().Roll(1,360,-1) * DEG2RAD;
-		t.RotateZ(zRot);
-		npc->ChangePosAndOrient(AuAtomPos(Id(), t));	// Move the citizen atom to this ship.
-		npc->InvalidateEnvironment();
-		npc->SetModified();
-		npc->GoToWork();
+		MoveBerthOccupantAboard(*npc);
 	}
+}
+
+void DaVessel::MoveBerthOccupantAboard(DaNpc& npc)
+{
+	npc.OccupyBerth(this);
+	AuPoint berthLoc = BerthLocation(npc.Id());
+	npc.Stand();
+	berthLoc.z += BerthSpawnHeight(*this, npc);
+	AuMatrix4x4 transform;
+	transform.Translate(berthLoc);
+	transform.RotateZ(g_Au.Dice().Roll(1,360,-1) * DEG2RAD);
+	npc.ChangePosAndOrient(AuAtomPos(Id(), transform));
+	npc.InvalidateEnvironment();
+	npc.SetModified();
+	npc.GoToWork();
 }
 
 void DaVessel::TransferCryo(DaVessel* fromShip, int howMany)
@@ -6327,21 +6356,7 @@ void DaVessel::TransferTroops(DaVessel* fromShip, int howMany)
 		// Release the passenger berth the troop occupied on the origin ship.
 		fromShip->RemoveBerthOccupant(troop->Id());
 
-		// Occupy a troop berth with the troop.
-		troop->OccupyBerth(this);
-		AuPoint berthLoc = BerthLocation(troop->Id());
-
-		// A location was found inside the hull to place the passenger.
-		troop->Stand();
-		berthLoc.z += BerthSpawnHeight(*this, *troop);
-		AuMatrix4x4 t;
-		t.Translate(berthLoc);
-		double zRot = g_Au.Dice().Roll(1,360,-1) * DEG2RAD;
-		t.RotateZ(zRot);
-		troop->ChangePosAndOrient(AuAtomPos(Id(), t));		// Move the troop atom to this ship.
-		troop->InvalidateEnvironment();
-		troop->SetModified();
-		troop->GoToWork();
+		MoveBerthOccupantAboard(*troop);
 	}
 }
 
@@ -6800,6 +6815,40 @@ void DaVessel::RepairAllPossible(DaBd* bd, const AuSysId& sysId, quint8 repairQ)
 // Repair all damaged systems. Use whatever parts are needed from city's inventory.
 // This is used in response to a bona fide repair offer. The city insured it had what was needed before it made the repair offer.
 // If the stuff is missing too bad; we'll fake it and nobody will ever know.
+quint8 DaVessel::LegacyMinimumRepairTechnology() const
+{
+	QReadLocker lock(&m_SystemsLock);
+	if(!m_ssaShipSystems.HasLegacyTechnology()) return 31;
+	// AuShipSystemArray::MinRepairTechLevel, 2016 0x1b2aa0: a trimmed
+	// average of the hull, capacitor, power plant and supplier systems.
+	int total = 0, minimum = 31, maximum = 0;
+	for(const SYSTEM system : {SYS_Hull, SYS_Capacitor, SYS_PowerPlant})
+	{
+		const int technology = m_ssaShipSystems.SystemTechLevel(system, 0);
+		total += technology; minimum = qMin(minimum, technology); maximum = qMax(maximum, technology);
+	}
+	for(const AuShipSystem& system : m_ssaShipSystems)
+	{
+		const int technology = system.TechLevel();
+		total += technology; minimum = qMin(minimum, technology); maximum = qMax(maximum, technology);
+	}
+	return quint8((total - minimum - maximum) / (m_ssaShipSystems.size() + 1));
+}
+
+void DaVessel::ApplyServiceRepairs(const AuRepairParts& supplied, const AuSysId* system)
+{
+	RepairConditions();
+	QSet<AuSysId> repaired;
+	m_DamageLock.lockForWrite();
+	for(AuRepairParts::const_iterator part = supplied.cbegin(); part != supplied.cend(); ++part)
+		if(system) m_Damage.RepairParts(*system, part.key(), part.value(), repaired);
+		else m_Damage.RepairParts(part.key(), part.value(), repaired);
+	if(system) m_Damage.RepairAllHitPoints(*system);
+	else m_Damage.RepairAllHitPoints();
+	m_DamageLock.unlock();
+	DamageStateChanged();
+}
+
 void DaVessel::RepairAll(DaBd* bd)
 {
 	RepairConditions();
@@ -8194,6 +8243,7 @@ bool DaVessel::RemoveCargoNoLock(const AuItem& iTake, quint32 howMany)
 	{
 		m_VesselLock.lockForWrite();
 		hadTheCargo = (m_fFuelQuantity >= howMany)?true:false;
+		if(g_Au.IsLegacyGeneration() && !hadTheCargo) { m_VesselLock.unlock(); return false; }
 		m_fFuelQuantity -= howMany;
 		if(m_fFuelQuantity < 0)
 			m_fFuelQuantity = 0;
@@ -8203,14 +8253,23 @@ bool DaVessel::RemoveCargoNoLock(const AuItem& iTake, quint32 howMany)
 	else if(iTake.CommodityId() == CID_Electricity)
 	{
 		hadTheCargo = (CapacitorLevel() >= howMany)?true:false;
+		if(g_Au.IsLegacyGeneration() && !hadTheCargo) return false;
 		DischargeCapacitor(howMany);
 		SetModified();	// Trigger update due to inventory change.
 	}
-	else if(m_Cargo.TakeItem(iTake, howMany))
+	else
 	{
-		hadTheCargo = true;
-		m_tmCargoChange.Set();
-		SetModified();	// Trigger update due to inventory change.
+		if(g_Au.IsLegacyGeneration())
+		{
+			const AuItemHash::const_iterator item = m_Cargo.Find(iTake);
+			if(item == m_Cargo.cend() || item->second->Count() < howMany) return false;
+		}
+		if(m_Cargo.TakeItem(iTake, howMany))
+		{
+			hadTheCargo = true;
+			m_tmCargoChange.Set();
+			SetModified();	// Trigger update due to inventory change.
+		}
 	}
 	return hadTheCargo;
 }
@@ -12538,6 +12597,17 @@ void DaVessel::RxHailRequest(const AuCommHailRequest* msg, DaPerson* person, AuC
 {
 	if(!msg)
 		return;
+	if(g_Au.IsLegacyGeneration() && IsDormant() && !IsMoored())
+	{
+		// Original 2016 Hail Crew/Company tips explicitly summon private
+		// wrecks. A hangared ship never reaches this path. The application
+		// rechecks the existing stasis timer before any relocation.
+		if(IsPrivatelyOwned() && msg->FromGalaxy() == Galaxy()
+			&& (msg->Scope() == AuCommStdChannel::CrewMates || msg->Scope() == AuCommStdChannel::Company)
+			&& (AuRosterEntry::IsOfficer(BerthTypeOccupied(msg->FromId())) || OwnerId() == msg->FromId()))
+			emit LegacySpacecraftRecovery(Id(), msg->FromId(), quint8(msg->FromGalaxy()), false);
+		return;
+	}
 
 	if(AuCommStdChannel::IsHailChannel(msg->ChannelName()))
 	{
@@ -15773,6 +15843,26 @@ void DaVessel::RepairAndResupplyStation()
 	DaSolarSystem* system = FindParentSolarSystemInEnv();
 	if(!system || system->IsEmptySystem())
 		return;
+	if(g_Au.IsLegacyGeneration())
+	{
+		DaAtomList cities, supplies, repairs, troops;
+		system->FindLegacyCitiesRecursive(cities);
+		for(DaAtom* atom : cities)
+		{
+			DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(atom);
+			if(!city || city->EmpireId() != EmpireId() || !city->HasSpacecraftService(111)) continue;
+			supplies.append(city);
+			if(city->HasSpacecraftService(110, LegacyMinimumRepairTechnology())) repairs.append(city);
+			if(city->HasSpacecraftService(11)) troops.append(city);
+		}
+		if(!repairs.isEmpty())
+			dynamic_cast<DaLegacyCity*>(repairs[g_Au.Dice().Roll(1, repairs.size(), -1)])->RepairSpacecraft(*this);
+		if(!supplies.isEmpty())
+			dynamic_cast<DaLegacyCity*>(supplies[g_Au.Dice().Roll(1, supplies.size(), -1)])->SupplySpaceStation(*this);
+		if(!troops.isEmpty())
+			dynamic_cast<DaLegacyCity*>(troops[g_Au.Dice().Roll(1, troops.size(), -1)])->BoardSpacecraftPersonnel(*this, ROLE_Troop, TroopBerthsAvailable());
+		return;
+	}
 
 	// Allow repairs at quality of lowest system.
 	DaAtomList supplyCities;

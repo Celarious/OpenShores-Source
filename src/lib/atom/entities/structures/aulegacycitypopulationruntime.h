@@ -34,6 +34,7 @@ struct PopulationRuntimeFacts
 	// The caller supplies these explicitly before enabling affected branches.
 	bool connectionsKnown = false;
 	bool attackKnown = false;
+	int assignedTroops = 0;
 };
 
 struct PopulationRuntimeReport
@@ -50,6 +51,8 @@ struct PopulationRuntimeReport
 	bool revoltRequested = false;
 	bool cycleInterrupted = false, revoltCaptured = false;
 	quint32 revoltOldEmpire = 0, revoltNewEmpire = 0;
+	quint16 troopsAtCity = 0;
+	quint8 troopsDrafted = 0;
 	double reportedLastTribute = 0;
 	quint32 tributeDestination = 0;
 	float tributeAmount = 0;

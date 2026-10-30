@@ -4836,6 +4836,24 @@ void AuAtomInterface::RedeemGovtDebt(const AuId& opBd)
 
 bool AuAtomInterface::HangarLaunch(bool takeCaptBerth)
 {
+	if(g_Au.IsLegacyGeneration())
+	{
+		DaPerson* person = LockAvatar();
+		QString result; AuId personId; QString personName; bool success = false;
+		if(person)
+		{
+			personId = person->Id(); personName = person->Name();
+			const AuQueryEnvironment* environment = person->LockEnvironmentQuery();
+			const AuId cityId = environment->LegacyCityId(); person->UnlockEnvironmentQuery();
+			DaAtom* system = person->FindEnvironmentAtom();
+			DaLegacyCity* city = system ? dynamic_cast<DaLegacyCity*>(system->FindIdRecursive(cityId)) : nullptr;
+			if(city) success = city->HangarSpacecraft(*person, AuId(), true, takeCaptBerth, result);
+			else result = tr("Stand inside a completed hangar to launch a spacecraft.");
+		}
+		UnlockAvatar();
+		if(!result.isEmpty()) { AuCommThought response(result, personId, personName); g_Au.SendAtomChat(response); }
+		return success;
+	}
 	QString resultMsg;
 	AuId personId;
 	QString personName;
@@ -4904,6 +4922,24 @@ bool AuAtomInterface::HangarLaunch(bool takeCaptBerth)
 
 bool AuAtomInterface::HangarMothball(const AuId& shipId)
 {
+	if(g_Au.IsLegacyGeneration())
+	{
+		DaPerson* person = LockAvatar();
+		QString result; AuId personId; QString personName; bool success = false;
+		if(person)
+		{
+			personId = person->Id(); personName = person->Name();
+			const AuQueryEnvironment* environment = person->LockEnvironmentQuery();
+			const AuId cityId = environment->LegacyCityId(); person->UnlockEnvironmentQuery();
+			DaAtom* system = person->FindEnvironmentAtom();
+			DaLegacyCity* city = system ? dynamic_cast<DaLegacyCity*>(system->FindIdRecursive(cityId)) : nullptr;
+			if(city) success = city->HangarSpacecraft(*person, shipId, false, false, result);
+			else result = tr("Stand inside a completed hangar to store a spacecraft.");
+		}
+		UnlockAvatar();
+		if(!result.isEmpty()) { AuCommThought response(result, personId, personName); g_Au.SendAtomChat(response); }
+		return success;
+	}
 	QString resultMsg;
 	AuId personId;
 	QString personName;
@@ -6482,6 +6518,9 @@ void AuAtomInterface::ReleaseSpacecraftTitle()
 
 void AuAtomInterface::RepairShopRecover()
 {
+	// 2016 private ships return from stasis through Hail Crew/Company.
+	// The modern repair-shop recovery protocol must not move Legacy ships.
+	if(g_Au.IsLegacyGeneration()) return;
 	bool restricted = false;
 	bool isOfficer = false;
 	quint8 galaxy = GALAXY_Count;
@@ -10929,6 +10968,21 @@ void AuAtomInterface::HangarQuery(QString& shipDesc, quint32& shipDesign, quint3
 	shipDesign = 0;
 	shipsInHangar = 0;
 	DaPerson* person = LockAvatar();
+	if(g_Au.IsLegacyGeneration())
+	{
+		shipDesc.clear();
+		if(person)
+		{
+			const AuQueryEnvironment* environment = person->LockEnvironmentQuery();
+			const AuId cityId = environment->LegacyCityId(); person->UnlockEnvironmentQuery();
+			DaAtom* system = person->FindEnvironmentAtom();
+			DaLegacyCity* city = system ? dynamic_cast<DaLegacyCity*>(system->FindIdRecursive(cityId)) : nullptr;
+			DaVessel* ship = city ? city->FindShipInHangar(*person, &shipsInHangar) : nullptr;
+			if(ship) { shipDesc = ship->NameWithEmpire() + ", " + ship->DesignName(); shipDesign = ship->DesignId(); }
+		}
+		UnlockAvatar();
+		return;
+	}
 	if(person && person->InIndustry() == IID_Hangar)
 	{
 		DaVessel* hangarShip = 0;

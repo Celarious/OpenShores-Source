@@ -8,6 +8,7 @@
 //
 #include "audesign.h"
 #include "auscreport.h"
+#include "aulegacyscstats.h"
 #include "auexchangerating.h"
 #include "dgdata.h"
 #include <QSqlError>
@@ -300,6 +301,10 @@ void AuScDesignExchangeEntry::SqlDelete(QSqlDatabase& db) const
 
 bool AuScDesignExchangeEntry::CanBeManufactured() const
 {
+	// Legacy media can retain a report made before its runtime assembly was
+	// published. Its final exchange state and recovered snapshot establish
+	// availability; GD-derived manufacture components are constructed at the city.
+	if(m_Report->LegacyStats()) return m_State == AuDesign::Final && m_Report->CanBeManufactured();
 	return m_Report->CanBeManufactured();
 }
 

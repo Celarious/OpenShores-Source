@@ -24,4 +24,15 @@ GRANT SELECT, INSERT ON n_LegacyScDesign TO audog;
 GRANT UPDATE (name, runtimeDesignId) ON n_LegacyScDesign TO audog;
 GRANT USAGE, SELECT ON SEQUENCE n_legacyscdesign_id_seq TO audog;
 
+-- Legacy publication is independent for each empire. Empire zero is the public
+-- library; runtime design IDs remain distinct from n_LegacyScDesign source IDs.
+CREATE TABLE IF NOT EXISTS n_LegacyScPublication
+(
+  runtimeDesignId bigint NOT NULL REFERENCES n_ScDesign (id) ON DELETE CASCADE,
+  empireId bigint NOT NULL CHECK (empireId BETWEEN 0 AND 4294967295),
+  PRIMARY KEY (runtimeDesignId, empireId)
+);
+CREATE INDEX IF NOT EXISTS legacy_sc_publication_empire ON n_LegacyScPublication (empireId);
+GRANT SELECT, INSERT, DELETE ON n_LegacyScPublication TO audog;
+
 COMMIT;

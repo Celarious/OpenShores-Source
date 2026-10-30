@@ -20,6 +20,12 @@ class AuPointArray;
 class AuResKey;
 class DaItem;
 class DaVehicle;
+class DaVessel;
+class DaNpc;
+class DaSentient;
+class AuCommAcceptRepair;
+class AuCommAccept;
+class AuSysId;
 class AuLegacyCityCatalogue;
 namespace AuLegacyCity { struct CitizenConstructionFacts; struct ProductionState; }
 namespace AuLegacyCity { struct PopulationRuntimeFacts; struct PopulationRuntimeReport; struct AccountingState; struct EmploymentTotals; }
@@ -59,6 +65,9 @@ public:
 	// destinations use the historical random ground point near the town square.
 	AuPoint SpawnLocation(const AuGlobeLLF* home = nullptr) const;
 	AuLegacyCity::State Snapshot() const;
+	// Original airport perimeter candidates and road fallback, in the world's frame.
+	void AirportTerminalLandingSpots(QList<AuPoint>& spots) const;
+	AuPoint FindSpacecraftLandingSite(const DaVessel& ship) const;
 	// A finished building establishes the settlement; flags and landscaping do not.
 	bool HasCompletedBuilding() const;
 	void RegisterEmpireVisit(quint32 empireId, qint64 now);
@@ -92,6 +101,9 @@ public:
 	bool DemolishDevelopment(DaPerson& person, quint32 developmentId, bool clearLand, QString& error);
 	bool SetIndustryProcess(DaPerson& person, quint32 developmentId, quint16 processSlot,
 		quint16 processId, quint8 minimumTechnology, bool enabled, QString& error);
+	bool SetSpacecraftProcess(DaPerson& person, quint32 developmentId, quint16 processSlot,
+		quint32 designId, quint8 minimumTechnology, bool enabled, QString& error);
+	bool BuySpacecraft(DaPerson& person, quint32 developmentId, quint32 designId, QString& error);
 	bool OperateIndustryProcess(DaPerson& person, quint32 developmentId, quint16 processSlot,
 		bool fetch, bool run, QString& error);
 	// TEMPORARY ARCHITECT MANUFACTURING TEST: remove after testing.
@@ -99,6 +111,29 @@ public:
 	bool OperateBank(DaPerson& person, const AuLegacyCityProtocol::Request& request,
 		AuLegacyCityProtocol::Reply& reply);
 	void ServiceVehicle(DaVehicle& vehicle, DaPerson& person);
+	bool HasOfficerAcademy() const;
+	int SpacecraftPersonnelAvailable(const DaVessel& ship, NPC_ROLE role, const DaPerson* loader = nullptr) const;
+	int BoardSpacecraftPersonnel(DaVessel& ship, NPC_ROLE role, int requested,
+		const DaPerson* loader = nullptr, const DaSentient* commander = nullptr);
+	int DebarkSpacecraftPassengers(DaVessel& ship, int requested, quint32* transportFee = nullptr, bool requireHomes = true);
+	bool RxPersonnelChat(const AuCommPacket* message, quint32& countSupplied);
+	bool RxSpacecraftBlueprintMessage(const AuCommPacket* message);
+	void AcceptSpacecraftBlueprint(DaPerson& person, const AuCommAccept& message);
+	void EquipSpacecraftPersonnel(DaNpc& npc);
+	bool RxSpacecraftServiceMessage(const AuCommPacket* message);
+	void AcceptSpacecraftRepair(DaPerson& person, const AuCommAcceptRepair& message);
+	void AcceptSpacecraftCargo(DaPerson& person, const AuCommAccept& message);
+	bool CanAccessSpacecraft(const DaVessel& ship) const;
+	bool IsSpacecraftOnSlab(const DaVessel& ship) const;
+	void SupplySpaceStation(DaVessel& ship);
+	bool HasSpacecraftService(quint8 industry, quint8 minimumTechnology = 0) const;
+	int RepairSpacecraft(DaVessel& ship, const AuSysId* system = nullptr, quint8 minimumQuality = 0,
+		quint32 maximumPrice = 0xffffffffu, bool perform = true, quint16* seconds = nullptr);
+	int TransferSpacecraftCargo(DaVessel& ship, COMMODITYID commodity, int count, bool buy,
+		bool mission = true, const AuItem* exact = nullptr, quint32 maximumPrice = 0xffffffffu);
+	DaVessel* FindShipInHangar(const DaPerson& person, quint32* count = nullptr) const;
+	bool IsHangarShipValid(const DaVessel& ship) const;
+	bool HangarSpacecraft(DaPerson& person, const AuId& shipId, bool launch, bool takeCaptain, QString& message);
 	bool CanSupplyVehicleOrdnance(const DaVehicle& vehicle) const;
 	void ListVehicleOrdnance(const DaVehicle& vehicle, AuItemHash& ordnance) const;
 	// Caller holds the vehicle's ammunition lock; commits the stock exchange

@@ -126,6 +126,8 @@ bool DaLegacyCity::CompleteCityReport(AuCityReport& report, const State& state,
 	report.m_LegacyAccounting = ledger;
 	report.m_LegacyMoraleChange = qint8(std::max(-128, std::min(127, population.change.moraleChange)));
 	report.m_LegacyPopulationAfter = state.population;
+	report.m_TroopsAtCity = population.troopsAtCity;
+	report.m_TroopsDrafted = population.troopsDrafted;
 	report.m_HasLegacyDetails = true;
 	report.m_LegacyReportedPopulation = population.reportedChange;
 	report.m_LegacyOccupied = population.occupied;

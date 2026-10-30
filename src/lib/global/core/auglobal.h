@@ -2894,6 +2894,19 @@ public:
 		Q_UNUSED(designId);
 	}
 
+	// Original Legacy blueprints may be published independently to several
+	// empires. The modern exchange's single publisher is a separate registry.
+	virtual bool ListLegacySpacecraftPublications(quint32 empire, QList<quint32>& runtimeIds, QString& error)
+	{
+		Q_UNUSED(empire); runtimeIds.clear();
+		error = QStringLiteral("The legacy spacecraft publication database is unavailable."); return false;
+	}
+	virtual bool SetLegacySpacecraftPublication(quint32 empire, quint32 runtimeId, bool published, QString& error)
+	{
+		Q_UNUSED(empire); Q_UNUSED(runtimeId); Q_UNUSED(published);
+		error = QStringLiteral("The legacy spacecraft publication database is unavailable."); return false;
+	}
+
 	// You must override this to use it. See AuDbGlobal.
 	virtual void ScDesignChanged(quint32 designId)
 	{

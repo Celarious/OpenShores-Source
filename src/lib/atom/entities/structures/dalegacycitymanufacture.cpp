@@ -3,6 +3,7 @@
 #include "aulegacycityinventory.h"
 #include "aulegacycitypopulation.h"
 #include "aulegacycityproduction.h"
+#include "aulegacycityspacecraft.h"
 #include "aulegacyfinancetransfer.h"
 #include "augear.h"
 #include "auglobal.h"
@@ -23,6 +24,11 @@ bool DaLegacyCity::OperateIndustryProcess(DaPerson& person, quint32 developmentI
 	AuLegacyFinanceTransfer transfer(&person);
 	error.clear();
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	if(!catalogue || !catalogue->IsValid() || !AuLegacyItemTechnologyActive())
+	{ error = QStringLiteral("Legacy commodity metadata is not ready."); return false; }
+	for(const quint16 commodity : catalogue->RuntimeCommodityIds())
+		if(!g_Au.HasLegacyCommodity(COMMODITYID(commodity)))
+		{ error = QStringLiteral("Legacy commodity metadata is not ready."); return false; }
 	auto* world = dynamic_cast<DaWorldLL*>(Parent());
 	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker() || !catalogue || !world
 		|| person.IsDead() || person.FindParentPlanetInEnv() != world)
@@ -50,7 +56,9 @@ bool DaLegacyCity::OperateIndustryProcess(DaPerson& person, quint32 developmentI
 	if(originalProcess == originalProduction.processes.cend())
 	{ error = QStringLiteral("This process is still being initialized."); return false; }
 	const quint32 actorEmpire = person.EmpireId();
-	if(!originalProcess->enabled && actorEmpire != before.controllingEmpire)
+	const bool authorized = original->industryId == 87 ? CanConfigureSpacecraftFactory(person, *this)
+		: actorEmpire == before.controllingEmpire;
+	if(!originalProcess->enabled && !authorized)
 	{ error = QStringLiteral("Only the city's empire may operate a process disabled for citizen work."); return false; }
 	if(run && originalProcess->completeAt)
 		return false; // A duplicate start is harmless; the reply carries the running snapshot.

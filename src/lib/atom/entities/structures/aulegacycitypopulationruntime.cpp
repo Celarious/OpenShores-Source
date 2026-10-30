@@ -7,6 +7,7 @@
 #include "auspecies.h"
 #include "daatomlist.h"
 #include "dalegacycity.h"
+#include "danpc.h"
 #include "daworldll.h"
 #include "daworldringsection.h"
 #include "dasolarsystem.h"
@@ -111,6 +112,9 @@ PopulationRuntimeFacts GatherPopulationFacts(DaLegacyCity& city, DaWorldLL& worl
 	world.ListNormalSubatoms(atoms);
 	for(DaAtom* atom : atoms)
 	{
+		const auto* troop = dynamic_cast<const DaNpc*>(atom);
+		if(troop && troop->Role() == ROLE_Troop && troop->CurrentHitPoints() > 0
+			&& troop->EmpireId() == state.controllingEmpire && troop->GarrisonBd() == city.Id()) ++facts.assignedTroops;
 		DaLegacyCity* other = dynamic_cast<DaLegacyCity*>(atom);
 		if(!other || other == &city || world.ResourceZone(other->Location()) != zone) continue;
 		c.environmentPopulation += other->Snapshot().population;
@@ -363,6 +367,22 @@ bool ApplyCityPopulation(State& state, AuItemHash& inventory, AccountingState& a
 	}
 	state.loyalPopulation = loyalPopulation;
 	state.citizenSpecies = citizenKey;
+	// CityCycle 0x279708: one recruit per friendly base flag per cycle,
+	// bounded by the town/flag requirement and one seventh of population.
+	int troops = int(state.garrisonTroops) + facts.assignedTroops;
+	const int requiredTroops = c.townSquareTroops + c.militaryFlagTroops * int(c.levels[10]);
+	const int troopLimit = qMin(requiredTroops, state.population / 7);
+	if(state.controllingEmpire && !c.occupied)
+		for(const Flag& flag : state.flags)
+		{
+			if(troops >= troopLimit) break;
+			if(flag.empire != state.controllingEmpire) continue;
+			++state.garrisonTroops; ++troops; ++result.troopsDrafted;
+			loyalPopulation -= qMin(loyalPopulation, quint32(1));
+			--state.population;
+		}
+	state.loyalPopulation = loyalPopulation;
+	result.troopsAtCity = quint16(qMin(troops, 65535));
 	const bool emptied = c.population > 0 && (result.change.suffocated + result.change.starved >= c.population
 		|| result.change.population == 0);
 	if(emptied && c.indigenousWorld && citizenKey != facts.nativeSpecies)

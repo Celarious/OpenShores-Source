@@ -7685,6 +7685,13 @@ void DaVehicle::GetRenderLightsRecursive(const DaPerson& person, const AuMatrix4
 			colLight = QColor(AuGLLight::ColorHalogen());
 			kQ = 1.f/(float)(SUVLight * SUVLight);
 			kL = .004f;	// Stronger light because we are simulating two headlights
+			if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank)
+			{
+				// Four times the light contribution for low-angle illumination of slabs.
+				const float tankLightRadius = 240.f * (float)FeetPerMeter();
+				kQ = 1.f / (tankLightRadius * tankLightRadius);
+				kL = .001f;
+			}
 			break;
 		}
 		if(useCone)

@@ -34,6 +34,7 @@ class AuEmojiList;
 class AuScRoute;
 class DaSentient;
 class DaWorldLL;
+class DaLegacyCity;
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
@@ -3120,6 +3121,7 @@ private:	// AI
 	bool PilotObstacleAvoid(AuPoint& courseLoc, const DaVessel* ship) const;
 	void PilotPlunderUnit(DaVessel* ship, const DaUnit* unit);
 	void PilotToBd(DaVessel* ship, const DaBd* bd, const DaWorld* planet);
+	void PilotToLegacyCity(DaVessel* ship, const DaLegacyCity* city, const DaWorld* planet);
 	void PilotToHoverSite(DaVessel* ship, const DaWorld* planet, const AuPoint& landLoc);
 	void PilotToLandingSite(DaVessel* ship, const DaWorld* planet, const AuPoint& landLoc);
 	void PilotToPlanet(DaVessel* ship, const DaWorld* planet, const AuPoint& destOffset);

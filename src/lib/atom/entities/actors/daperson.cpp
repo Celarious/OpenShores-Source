@@ -25033,6 +25033,13 @@ void DaPerson::CommAccept(const AuCommAccept& msg)
 
 	// The seller must be aboard a ship or must be
 	// in a grocery, cantina, or retail store.
+	if(g_Au.IsLegacyGeneration())
+		if(DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(buyer))
+		{
+			if(dynamic_cast<const AuItemScDesign*>(msg.Item())) city->AcceptSpacecraftBlueprint(*this, msg);
+			else city->AcceptSpacecraftCargo(*this, msg);
+			return;
+		}
 	DaVessel* sellerShip = 0;
 	if(IsInSpacecraft())
 		sellerShip = FindParentVesselInEnv();
@@ -25716,6 +25723,11 @@ void DaPerson::CommAcceptRepair(const AuCommAcceptRepair& msg)
 	}
 
 	DaBd* bd = dynamic_cast<DaBd*>(atom);
+	if(g_Au.IsLegacyGeneration())
+	{
+		if(DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(atom)) city->AcceptSpacecraftRepair(*this, msg);
+		return;
+	}
 	if(!bd)
 		return;	// Something is wrong. Atom is not a bd.
 

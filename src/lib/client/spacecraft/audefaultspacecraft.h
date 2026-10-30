@@ -9,6 +9,8 @@
 
 #include "auclientlib.h"
 #include "audialog.h"
+#include <QPair>
+#include <QVector>
 
 class QComboBox;
 class QLabel;
@@ -16,17 +18,22 @@ class QLabel;
 class AUCLIENT_DLL AuDefaultSpacecraft : public AuDialog
 {
 	Q_OBJECT;
+public:
+	enum Purpose { ModernProduction, LegacyProduction, LegacyPurchase };
 private:
+	Purpose m_Purpose;
 	quint32								m_DesignId;			// Design selected to buy, if accepted.
 	QString								m_DesignName;		// Design selected to buy, if accepted.
 	quint8								m_DesignQ;
+	QVector<QPair<quint32, QString>> m_AdditionalDesigns;
 
 	// Widgets
 	QComboBox*							m_MakeWhat;
 
 public:
-	AuDefaultSpacecraft(QWidget* parent=0);
+	AuDefaultSpacecraft(QWidget* parent=0, Purpose purpose=ModernProduction);
 	virtual ~AuDefaultSpacecraft();
+	void SetAdditionalDesigns(const QVector<QPair<quint32, QString>>& designs) { m_AdditionalDesigns = designs; }
 
 	inline quint32 DesignId() const
 	{

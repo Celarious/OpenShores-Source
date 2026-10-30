@@ -104,6 +104,12 @@ AuBldHangar::~AuBldHangar()
 void AuBldHangar::showEvent(QShowEvent* event)
 {
 	QWidget::showEvent(event);
+	if(g_Au.IsLegacyGeneration())
+		m_Mothball->setToolTip(tr("<html><b>Mothball</b><br>Each avatar may store one spacecraft in this hangar. "
+			"The spacecraft must be on the ground, rigged for repairs, and empty of players and officers. "
+			"Crew and troops may remain aboard. You must have command authority or be eligible to take the captain's berth. "
+			"<b>Stored spacecraft are lost when their hangar is deconstructed or decays. "
+			"Battle damage does not harm stored spacecraft.</b></html>"));
 
 	// Show all my widgets.
 	QGridLayout* lay = (QGridLayout*)layout();
