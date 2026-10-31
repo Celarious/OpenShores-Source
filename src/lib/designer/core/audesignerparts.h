@@ -61,7 +61,7 @@ protected:
 	virtual void hideEvent(QHideEvent* event);
 	void RestoreSettings();
 	void SaveSettings();
-	void SetPartSelected(quint16 partId, bool isSelected);
+	void SetRowSelected(int row, bool isSelected);
 	virtual void showEvent(QShowEvent* event);
 
 public slots:

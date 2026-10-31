@@ -25,10 +25,12 @@
 #include "dgdata.h"
 #include "auapp.h"
 #include "auframe.h"
+#include <QHash>
 #include <QHeaderView>
 #include <QIcon>
 #include <QInputDialog>
 #include <QMenu>
+#include <QSet>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <memory>
@@ -206,12 +208,20 @@ void AuDesignerParts::UpdateContents()
 		return;
 	}
 
-	// List of the ids that are supposed to be in the table so we can remove the unwanted ones at the end.
-	QList<quint16> intable;
+	// IDs that are supposed to be in the table, for removing obsolete rows.
+	QSet<quint16> intable;
 
 	//qDebug() << "AuDesignerParts::UpdateContents";
 	m_PartsTable->setSortingEnabled(false);
 	m_PartsTable->blockSignals(true);
+
+	// Sorting stays disabled during this refresh. New rows are inserted at the
+	// front, so their count is the offset from each original row to its current row.
+	QHash<quint16, int> partRows;
+	partRows.reserve(m_PartsTable->rowCount());
+	for(int row=0; row<m_PartsTable->rowCount(); row++)
+		partRows.insert(m_PartsTable->item(row, 0)->data(Qt::UserRole).toUInt(), row);
+	int insertedRows = 0;
 
 	const AuScSelection& selected = pView->DesignerPartObjectSelection();
 	DaPerson* person;
@@ -224,12 +234,13 @@ void AuDesignerParts::UpdateContents()
 			const AuScParts* parts = de->LockPartsForRead();
 			if(parts)
 			{
-				// Get the list of part ids that we should have in our table.
-				intable = parts->keys();
+				// Collect the part IDs as we update the table.
+				intable.reserve(parts->size());
 
 				for(AuScParts::const_iterator pi = parts->cbegin(); pi != parts->cend(); pi++)
 				{
 					quint16 partId = pi.key();
+					intable.insert(partId);
 					bool isSelected = selected.contains(partId);
 					bool wasSelected = m_PartSel->contains(partId);
 
@@ -248,7 +259,11 @@ void AuDesignerParts::UpdateContents()
 						{
 							// Update row selection state.
 							if(isSelected != wasSelected)
-								SetPartSelected(partId, isSelected);
+							{
+								int row = partRows.value(partId, -1);
+								if(row >= 0)
+									SetRowSelected(row + insertedRows, isSelected);
+							}
 							continue;
 						}
 
@@ -353,8 +368,10 @@ void AuDesignerParts::UpdateContents()
 					if(hasPart)
 					{
 						// The part is already in the table so just update the contents.
-						for(int row=0; row<m_PartsTable->rowCount(); row++)
+						int originalRow = partRows.value(partId, -1);
+						if(originalRow >= 0)
 						{
+							int row = originalRow + insertedRows;
 							int col=0;
 							QTableWidgetItem* twid = m_PartsTable->item(row, col++);
 							if(twid->data(Qt::UserRole).toUInt() == partId)
@@ -446,7 +463,6 @@ void AuDesignerParts::UpdateContents()
 									twseal->setSelected(isSelected);
 									twgroup->setSelected(isSelected);
 								}
-								break;
 							}
 						}
 					}
@@ -454,6 +470,7 @@ void AuDesignerParts::UpdateContents()
 					{
 						// The part is not in the table so insert a new record.
 						m_PartsTable->insertRow(0);
+						insertedRows++;
 
 						int col=0;
 						AuTableWidgetIntegerItem* twid = new AuTableWidgetIntegerItem(partId);
@@ -613,31 +630,19 @@ void AuDesignerParts::UpdateContents()
 
 	*m_PartSel = selected;
 
-	// Remove rows that no longer belong in the table.
+	// Remove rows backwards so deleting a row does not change later indices.
+	for(int row=m_PartsTable->rowCount()-1; row>=0; row--)
+		if(!intable.contains(m_PartsTable->item(row, 0)->data(Qt::UserRole).toUInt()))
+			m_PartsTable->removeRow(row);
+
+	// Remove cached copies of parts that no longer exist.
 	AuScParts::iterator mpi = m_Parts->begin();
 	while(mpi != m_Parts->end())
 	{
-		// If my part is not in the intable list, it needs to be removed.
 		if(intable.contains(mpi.key()))
-		{
-			// My part is in the parts list so it remains in the table.
 			mpi++;
-		}
 		else
 		{
-			// My part is no longer in the parts list so it must be removed from the table.
-			for(int row=0; row<m_PartsTable->rowCount(); row++)
-			{
-				QTableWidgetItem* item = m_PartsTable->item(row, 0);
-				if(item->data(Qt::UserRole).toUInt() == mpi.key())
-				{
-					// Found the part's row in the table. Remove it.
-					m_PartsTable->removeRow(row);
-					break;
-				}
-			}
-
-			// Remove my part.
 			delete *mpi;
 			mpi = m_Parts->erase(mpi);
 		}
@@ -1377,36 +1382,27 @@ void AuDesignerParts::PartsRightClicked()
 	}
 }
 
-void AuDesignerParts::SetPartSelected(quint16 partId, bool isSelected)
+void AuDesignerParts::SetRowSelected(int row, bool isSelected)
 {
-	for(int row=0; row<m_PartsTable->rowCount(); row++)
-	{
-		int col=0;
-		QTableWidgetItem* twid = m_PartsTable->item(row, col++);
-		if(twid->data(Qt::UserRole).toUInt() != partId)
-			continue;
+	int col=0;
+	QTableWidgetItem* twid = m_PartsTable->item(row, col++);
+	twid->setSelected(isSelected);
 
-		// Found the part's row in the table.
-		twid->setSelected(isSelected);
+	QTableWidgetItem* twname = m_PartsTable->item(row, col++);
+	twname->setSelected(isSelected);
 
-		QTableWidgetItem* twname = m_PartsTable->item(row, col++);
-		twname->setSelected(isSelected);
+	QTableWidgetItem* twvis = m_PartsTable->item(row, col++);
+	twvis->setSelected(isSelected);
 
-		QTableWidgetItem* twvis = m_PartsTable->item(row, col++);
-		twvis->setSelected(isSelected);
+	QTableWidgetItem* twlock = m_PartsTable->item(row, col++);
+	twlock->setSelected(isSelected);
 
-		QTableWidgetItem* twlock = m_PartsTable->item(row, col++);
-		twlock->setSelected(isSelected);
+	QTableWidgetItem* twomit = m_PartsTable->item(row, col++);
+	twomit->setSelected(isSelected);
 
-		QTableWidgetItem* twomit = m_PartsTable->item(row, col++);
-		twomit->setSelected(isSelected);
+	QTableWidgetItem* twseal = m_PartsTable->item(row, col++);
+	twseal->setSelected(isSelected);
 
-		QTableWidgetItem* twseal = m_PartsTable->item(row, col++);
-		twseal->setSelected(isSelected);
-
-		QTableWidgetItem* twgroup = m_PartsTable->item(row, col++);
-		twgroup->setSelected(isSelected);
-
-		break;
-	}
+	QTableWidgetItem* twgroup = m_PartsTable->item(row, col++);
+	twgroup->setSelected(isSelected);
 }
