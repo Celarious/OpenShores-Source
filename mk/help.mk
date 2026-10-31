@@ -16,6 +16,9 @@ help:
 		'  make linux-servers        Build all Linux servers' \
 		'  make win                  Build all Windows clients' \
 		'  make win-client           Build the Windows scene client' \
+		'  make mac-client           Build and package the native Mac client' \
+		'  make mac-package          Package an existing native Mac build' \
+		'  make mac-dmg              Create a DMG from an already packaged Mac app' \
 		'  make clean                Remove all build outputs and cache volumes' \
 		'' \
 		"$${heading}Release packages (always Docker)$${reset}" \

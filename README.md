@@ -67,6 +67,11 @@ Output goes to `build/<platform>-<config>/`. Run clients from `bin/` and keep th
 
 ## Release packages
 
+Native macOS builds use `make mac-client` on a Mac with Qt 5.15, SDL2,
+CMake, Ninja, Python 3 and Apple's command-line developer tools installed.
+See [the Mac build guide](tools/macos/README.md) for packaging, output paths
+and connection testing. Linux and Windows build commands are unchanged.
+
 ```bash
 make linux-package   # Linux game and launcher archives
 make win-package     # Windows game and launcher archives

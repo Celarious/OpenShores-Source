@@ -49,6 +49,12 @@ if(NOT TARGET OpenGL::GLU)
         set_property(TARGET OpenGL::GLU PROPERTY
             INTERFACE_LINK_LIBRARIES glu32
         )
+    elseif(APPLE)
+        # GLU is part of Apple's OpenGL framework, rather than a separate dylib.
+        add_library(OpenGL::GLU INTERFACE IMPORTED)
+        set_property(TARGET OpenGL::GLU PROPERTY
+            INTERFACE_LINK_LIBRARIES OpenGL::GL
+        )
     else()
         find_library(GLU_LIBRARY NAMES GLU REQUIRED)
         add_library(OpenGL::GLU UNKNOWN IMPORTED)
