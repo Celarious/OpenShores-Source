@@ -43,11 +43,102 @@
 #include "deflora.h"
 #include "dgdata.h"
 #include "dprock.h"
+#include <cmath>
+#include <limits>
 
 #define ROAD_MAX_ALT_DEVIATION			(15*FeetPerMeter())		// Max difference between road level and actual ground level.
 #define d_SiteEdgeStep					(50*FeetPerMeter())
 #define d_MinVillageRange				(75*FeetPerMeter())
 #define d_MaxVillageRange				(175*FeetPerMeter())
+
+bool AuGlobeTerrainTriCen::OverlapsDetailRange(const DaWorldLL& world, const AuPoint& groundPos, double range) const
+{
+	if(!std::isfinite(range) || range < 0 || !std::isfinite(groundPos.x)
+		|| !std::isfinite(groundPos.y) || !std::isfinite(groundPos.z)) return true;
+	if(!m_DetailBoundsReady)
+	{
+		m_DetailBoundsReady = true;
+		m_DetailBoundsRadius = -1;
+		const AuGlobeLL coordinates[] = {m_LL0, m_LL1, m_LL2};
+		const bool globe = world.LLShape() == LL_Globe;
+		double minimumLongitude = m_LL0.Longitude(), maximumLongitude = minimumLongitude;
+		double minimumLatitude = m_LL0.Latitude(), maximumLatitude = minimumLatitude;
+		for(const auto& ll : coordinates)
+		{
+			double longitude = ll.Longitude();
+			if(!std::isfinite(longitude) || !std::isfinite(ll.Latitude())) return true;
+			if(globe)
+			{
+				// Match the short seam crossing used by detailed globe tessellation.
+				while(longitude - m_LL0.Longitude() > PI) longitude -= 2 * PI;
+				while(longitude - m_LL0.Longitude() < -PI) longitude += 2 * PI;
+			}
+			minimumLongitude = qMin(minimumLongitude, longitude);
+			maximumLongitude = qMax(maximumLongitude, longitude);
+			minimumLatitude = qMin(minimumLatitude, ll.Latitude());
+			maximumLatitude = qMax(maximumLatitude, ll.Latitude());
+		}
+		if(minimumLatitude < -PI / 2 || maximumLatitude > PI / 2) return true;
+		const double radius = m_Loc0.Length();
+		double precisionScale = radius;
+		if(globe && (!std::isfinite(radius) || radius <= 0)) return true;
+		if(globe && (maximumLatitude >= PI / 2 - 1e-12 || minimumLatitude <= -PI / 2 + 1e-12))
+		{
+			// Longitude at a pole is arbitrary. Bound the entire latitude cap,
+			// including any fan produced by interpolation toward that pole.
+			const bool northCap = maximumLatitude >= PI / 2 - 1e-12;
+			m_DetailBoundsCenter = AuPoint(0, 0, northCap ? radius : -radius);
+			const double capSine = northCap ? std::sin(minimumLatitude) : -std::sin(maximumLatitude);
+			m_DetailBoundsRadius = radius * std::sqrt(qMax(0.0, 2 * (1 - capSine)));
+		}
+		else
+		{
+			const double longitudeSpan = maximumLongitude - minimumLongitude;
+			if(globe)
+			{
+				// A wider interval is ambiguous after seam unwrapping. Do not
+				// reject such a patch using a bound that assumes a short arc.
+				if(longitudeSpan > PI) return true;
+			}
+			else
+			{
+				const auto* section = dynamic_cast<const DaWorldRingSection*>(&world);
+				if(!section || longitudeSpan * section->SectionAngle() / (2 * PI) > PI) return true;
+				// Ring-section longitudes are linear across the section; its two
+				// ends must not be wrapped together as on a complete globe.
+				precisionScale = section->OrbitRadius();
+			}
+			const AuGlobeLL rectangle[] = {
+				AuGlobeLL(minimumLongitude, minimumLatitude), AuGlobeLL(minimumLongitude, maximumLatitude),
+				AuGlobeLL(maximumLongitude, minimumLatitude), AuGlobeLL(maximumLongitude, maximumLatitude)};
+			AuPoint corners[4];
+			for(int i = 0; i < 4; ++i)
+				corners[i] = globe ? rectangle[i].GlobeLocation(radius) : world.LocOfLL(rectangle[i]);
+			// Average offsets so large ring coordinates do not lose a small patch.
+			m_DetailBoundsCenter = corners[0]
+				+ ((corners[1] - corners[0]) + (corners[2] - corners[0]) + (corners[3] - corners[0])) / 4;
+			m_DetailBoundsRadius = 0;
+			for(const auto& corner : corners)
+			{
+				if(!std::isfinite(corner.x) || !std::isfinite(corner.y) || !std::isfinite(corner.z))
+				{
+					m_DetailBoundsRadius = -1;
+					return true;
+				}
+				m_DetailBoundsRadius = qMax(m_DetailBoundsRadius, corner.Distance(m_DetailBoundsCenter));
+			}
+			// For a short spherical LL rectangle, the minimum dot product to
+			// its average corner occurs at a corner. Cylinder arcs behave the
+			// same way, with the linear latitude distance added independently.
+		}
+		// LocOfLL on a large ring subtracts orbit-scale coordinates. Include
+		// floating-point cancellation without an arbitrary terrain-size margin.
+		m_DetailBoundsRadius += qMax(1e-6, 64 * std::numeric_limits<double>::epsilon() * precisionScale);
+	}
+	if(m_DetailBoundsRadius < 0) return true;
+	const double reach = range + m_DetailBoundsRadius;
+	return groundPos.Distance2(m_DetailBoundsCenter) <= reach * reach;
+}
 
 static GLuint							s_FlagEmpireTex = 0;	// Texture id of flag icon for top-down view.
 static GLuint							s_FlagEnemyTex = 0;		// Texture id of flag icon for top-down view.
@@ -7934,9 +8025,19 @@ void DaWorldLL::RenderLegacyCityInteriors(const AuMatrix4x4& projection, AuAtomR
 	if(!g_Au.IsLegacyGeneration()) return;
 	DaAtomList atoms;
 	ListSubatoms(atoms);
+	bool buildingsReady = ari.mm.LegacyTerrainReady(Id());
 	for(DaAtom* atom : atoms)
 		if(auto* city = dynamic_cast<DaLegacyCity*>(atom))
+		{
+			if(!city->IsNormal() || matrices.constFind(city->Id()) == matrices.cend()) continue;
 			city->RenderPreTerrain(projection, ari, matrices, sceneAtom);
+			if(!city->GraphicsReady())
+			{
+				buildingsReady = false;
+				ari.mm.DeferLegacySceneWork();
+			}
+		}
+	if(buildingsReady) ari.mm.LegacyBuildingsPrepared(Id());
 }
 
 void DaWorldLL::RenderTerrainInfo(const AuMatrix4x4& model, AuAtomRenderInfo& ari, const DaPerson* scenePerson)

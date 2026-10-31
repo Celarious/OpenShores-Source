@@ -464,7 +464,7 @@ public:
 	// NOTE: Don't call this function unless you understand the implications.
 	virtual void CopyFlora(const DePlanetFlora* flora);
 
-	virtual void CreateFloraTextures(AuGLEffects& re, int resourceZone);
+	virtual void CreateFloraTextures(AuGLEffects& re, AuGLModelMaker& mm, int resourceZone);
 
 	virtual QString DefaultName(const QString& solarSystemName) const;
 

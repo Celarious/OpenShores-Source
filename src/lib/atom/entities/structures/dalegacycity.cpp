@@ -750,6 +750,11 @@ struct DaLegacyCity::Runtime
 		float radius = 0;
 		float halfWidth = 0, halfLength = 0;
 	};
+	struct SiteNode
+	{
+		AuPoint minimum, maximum;
+		int first = 0, count = 0, left = -1, right = -1;
+	};
 	struct DrawBatch
 	{
 		quint32 development = 0;
@@ -833,6 +838,7 @@ struct DaLegacyCity::Runtime
 	QHash<quint64, QSharedPointer<DpStation>> consoles;
 	QHash<quint32, qint64> weaponLastFired;
 	bool asynchronous = false;
+	bool asyncBuildAllowed = false;
 	quint64 requestedRevision = 0, builtRevision = 0;
 	QSharedPointer<Job> job;
 	quint64 revision = 0, drawRevision = 0;
@@ -852,6 +858,9 @@ struct DaLegacyCity::Runtime
 	const DaWorldLL* siteWorld = nullptr;
 	QVector<AuLegacyCity::Development> siteState;
 	QVector<Site> sites, renderedSites;
+	QVector<int> siteOrder;
+	QVector<SiteNode> siteNodes;
+	double minimumSiteAltitude = 0, maximumSiteAltitude = 0;
 	~Runtime()
 	{
 		if(job) job->cancelled.store(true, std::memory_order_release);
@@ -868,6 +877,83 @@ struct DaLegacyCity::Runtime
 	{
 		const double range = 2 * (site.radius + 32.8084);
 		return worldLocation.Distance2(site.placement.Translation()) <= range * range;
+	}
+
+	int BuildSiteNode(int first, int count)
+	{
+		SiteNode node; node.first = first; node.count = count;
+		for(int i = first; i < first + count; ++i)
+		{
+			const Site& site = sites.at(siteOrder.at(i));
+			// Enclose SiteInRange's sphere, with rounding room for large ring
+			// coordinates. The original exact range test still follows lookup.
+			const double range = 2 * (site.radius + 32.8084) + 1;
+			const AuPoint reach(range, range, range), center = site.placement.Translation();
+			node.minimum = i == first ? center - reach : node.minimum.Min(center - reach);
+			node.maximum = i == first ? center + reach : node.maximum.Max(center + reach);
+		}
+		const int id = siteNodes.size(); siteNodes.append(node);
+		if(count <= 8) return id;
+		const AuPoint span = node.maximum - node.minimum;
+		const int axis = span.x >= span.y && span.x >= span.z ? 0 : span.y >= span.z ? 1 : 2;
+		const int middle = first + count / 2;
+		std::nth_element(siteOrder.begin() + first, siteOrder.begin() + middle, siteOrder.begin() + first + count,
+			[this, axis](int a, int b) {
+				const AuPoint ca = sites.at(a).placement.Translation(), cb = sites.at(b).placement.Translation();
+				return axis == 0 ? ca.x < cb.x : axis == 1 ? ca.y < cb.y : ca.z < cb.z;
+			});
+		const int left = BuildSiteNode(first, middle - first);
+		const int right = BuildSiteNode(middle, first + count - middle);
+		siteNodes[id].left = left; siteNodes[id].right = right; siteNodes[id].count = 0;
+		return id;
+	}
+
+	void BuildSiteIndex()
+	{
+		siteOrder.resize(sites.size()); siteNodes.clear();
+		for(int i = 0; i < sites.size(); ++i)
+		{
+			siteOrder[i] = i;
+			const double altitude = sites.at(i).state.altitudeMSL;
+			minimumSiteAltitude = i ? std::min(minimumSiteAltitude, altitude) : altitude;
+			maximumSiteAltitude = i ? std::max(maximumSiteAltitude, altitude) : altitude;
+		}
+		if(!sites.isEmpty()) BuildSiteNode(0, sites.size());
+	}
+
+	void FindSiteNode(int id, const AuPoint& minimum, const AuPoint& maximum, QVector<int>& candidates) const
+	{
+		const SiteNode& node = siteNodes[id];
+		if(node.maximum.x < minimum.x || node.minimum.x > maximum.x
+			|| node.maximum.y < minimum.y || node.minimum.y > maximum.y
+			|| node.maximum.z < minimum.z || node.minimum.z > maximum.z) return;
+		if(node.count)
+		{
+			for(int i = node.first; i < node.first + node.count; ++i) candidates.append(siteOrder[i]);
+			return;
+		}
+		FindSiteNode(node.left, minimum, maximum, candidates);
+		FindSiteNode(node.right, minimum, maximum, candidates);
+	}
+
+	QVector<int> NearbySites(const DaWorldLL& world, const AuGlobeLL& ll) const
+	{
+		QVector<int> candidates;
+		if(siteNodes.isEmpty())
+		{
+			// A copied site snapshot can be sampled before its index is built.
+			for(int i = 0; i < sites.size(); ++i) candidates.append(i);
+			return candidates;
+		}
+		// At fixed longitude/latitude, globe and ring projections vary linearly
+		// with altitude. Enclose the whole segment so sites at differing heights
+		// cannot be rejected using a sea-level or incoming-terrain sample.
+		const AuPoint first = world.LocOfLL(ll, minimumSiteAltitude);
+		const AuPoint last = world.LocOfLL(ll, maximumSiteAltitude);
+		FindSiteNode(0, first.Min(last), first.Max(last), candidates);
+		// Altitude blending and pavement ownership depend on authored site order.
+		std::sort(candidates.begin(), candidates.end());
+		return candidates;
 	}
 
 	// DpGlobeRoad::AdjustAltMSL, 0x652140. Returns the squared distance from 'll'
@@ -929,6 +1015,7 @@ struct DaLegacyCity::Runtime
 				}
 				sites.append(site);
 			}
+		BuildSiteIndex();
 		++terrainRevision;
 	}
 
@@ -974,7 +1061,7 @@ struct DaLegacyCity::Runtime
 				retire->job.swap(job);
 				QThreadPool::globalInstance()->start(retire, -1);
 			}
-			if(!job && builtRevision != requestedRevision)
+			if(asyncBuildAllowed && !job && builtRevision != requestedRevision)
 			{
 				job.reset(new Job);
 				job->revision = requestedRevision; job->developments = developments;
@@ -1348,6 +1435,7 @@ void DaLegacyCity::Runtime::BuildTask::run()
 	{
 		Runtime result;
 		result.sites = job->sites;
+		result.BuildSiteIndex();
 		result.Build(job->developments, world, job->previous, &job->cancelled, true);
 		job->result.swap(result.buildings);
 		job->succeeded = !job->cancelled.load(std::memory_order_acquire);
@@ -1426,6 +1514,24 @@ DaLegacyCity::DaLegacyCity(const DaLegacyCity& city) : DaAtom(city), m_Runtime(n
 }
 DaAtom* DaLegacyCity::Clone() const { return new DaLegacyCity(*this); }
 AuLegacyCity::State DaLegacyCity::Snapshot() const { QReadLocker lock(&m_CityLock); return m_City; }
+QByteArray DaLegacyCity::TerrainCacheKey() const
+{
+	QByteArray data;
+	QDataStream out(&data, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_4_1);
+	{
+		QReadLocker lock(&m_CityLock);
+		out << quint32(m_City.developments.size());
+		// Match SameTerrainSite, retaining development order because blends
+		// and pavement ownership depend on the order sites are sampled.
+		for(const auto& dev : m_City.developments)
+			out << dev.id << dev.industryId << dev.constructionProcessId << dev.materialId << dev.location
+				<< dev.designId << dev.minimumDeck << dev.maximumDeck << dev.completedLevels
+				<< dev.altitudeMSL << dev.facingRadians << dev.constructed << dev.demolished << dev.roadSlab
+				<< dev.components.isEmpty() << dev.roadLengthMeters << dev.roadWidthMeters
+				<< dev.roadStartAltitudeMSL << dev.roadEndAltitudeMSL << dev.biodomeRadiusMeters;
+	}
+	return QCryptographicHash::hash(data, QCryptographicHash::Sha256);
+}
 bool DaLegacyCity::HasCompletedBuilding() const
 {
 	QReadLocker lock(&m_CityLock);
@@ -1629,8 +1735,10 @@ bool DaLegacyCity::Runtime::PavementEdgeDistance(const DaWorldLL& world, const A
 	// Mirrors the pavement rules of AdjustTerrain. Overlapping sites are a union,
 	// so the nearest edge wins.
 	bool found = false;
-	for(const auto& site : sites)
+	const auto candidates = NearbySites(world, ll);
+	for(const int index : candidates)
 	{
+		const Site& site = sites[index];
 		const auto& dev = site.state;
 		const AuPoint worldLocation = world.LocOfLL(ll, dev.altitudeMSL);
 		if(!SiteInRange(site, worldLocation)) continue;
@@ -1659,8 +1767,10 @@ double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altit
 	int& levelSites, bool& hideRocks, int& hideGrass, bool& hideShrubs,
 	bool& hideTrees, WORLDTEX_TYPE& pavementType) const
 {
-	for(const auto& site : sites)
+	const auto candidates = NearbySites(world, ll);
+	for(const int index : candidates)
 	{
+		const Site& site = sites[index];
 		// The original projects at the site's altitude, not the incoming terrain
 		// altitude. This keeps its square boundary stable on slopes and globes.
 		const auto& dev = site.state;
@@ -3727,7 +3837,9 @@ void DaLegacyCity::PaintOnSurfaceMap(const DaWorldLL& world, QPainter& painter, 
 void DaLegacyCity::DeleteDeviceObjects(AuAtomRenderInfo& ari)
 {
 	UpdateSiteTerrain(ari, true);
-	QMutexLocker lock(&m_Runtime->lock); m_Runtime->DeleteDraw(ari, Id());
+	QMutexLocker lock(&m_Runtime->lock);
+	m_Runtime->asyncBuildAllowed = false;
+	m_Runtime->DeleteDraw(ari, Id());
 	DaAtom::DeleteDeviceObjects(ari);
 }
 
@@ -3780,6 +3892,15 @@ void DaLegacyCity::RenderPreTerrain(const AuMatrix4x4& projection, AuAtomRenderI
 	RenderCity(projection, ari, matrices, sceneAtom, true);
 }
 
+bool DaLegacyCity::GraphicsReady() const
+{
+	QMutexLocker lock(&m_Runtime->lock);
+	QReadLocker stateLock(&m_CityLock);
+	return m_Runtime->sourceRevision == m_CityRevision && m_Runtime->requestedRevision
+		&& m_Runtime->builtRevision == m_Runtime->requestedRevision && !m_Runtime->job
+		&& m_Runtime->drawRevision == m_Runtime->revision && m_Runtime->uploads.isEmpty();
+}
+
 void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 	AuModelMatrixHash& matrices, const DaPerson* sceneAtom, bool beforeTerrain)
 {
@@ -3797,7 +3918,11 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 	// DaCity::EnclosureNeeded 0x28f190, also used by CreateDeviceObjects.
 	const bool enclosureNeeded = (world->Hydrographics() && world->AltitudeMSL(Transform().Translation()) <= -32)
 		|| !world->HasBreathableAtmosphere();
-	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
+	const bool terrainReady = ari.mm.LegacyTerrainReady(world->Id());
+	const bool decorationsReady = ari.mm.LegacyDecorationsReady(world->Id());
+	QMutexLocker lock(&m_Runtime->lock);
+	m_Runtime->asyncBuildAllowed = terrainReady;
+	m_Runtime->Ensure(*this);
 	if(m_Runtime->minePostJob)
 	{
 		const auto pending = m_Runtime->minePostJob;
@@ -3814,8 +3939,8 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 			m_Runtime->minePostJob.reset();
 		}
 	}
-	if(m_Runtime->minePostRevision != m_Runtime->revision
-		|| m_Runtime->minePostTerrainRevision != m_Runtime->terrainRevision)
+	if(decorationsReady && (m_Runtime->minePostRevision != m_Runtime->revision
+		|| m_Runtime->minePostTerrainRevision != m_Runtime->terrainRevision))
 	{
 		if(!m_Runtime->minePostJob)
 		{
@@ -3838,6 +3963,7 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 			}
 		}
 	}
+	if(m_Runtime->minePostJob) ari.mm.DeferLegacySceneWork();
 	m_Runtime->UploadDraw(ari, Id());
 	auto& shader = ari.re->GLSL().ModelTexColorShader();
 	shader.Select(projection, *ari.re);

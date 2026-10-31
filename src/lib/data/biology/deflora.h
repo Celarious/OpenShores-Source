@@ -523,7 +523,11 @@ public:
 	void CalculateTextureSizes(quint32 genSeed, int resourceZone);
 
 	// Flora change is needed to dirty the flora DNA cache if the plant flora DNA changes.
-	void CreateDeviceObjects(AuGLEffects& re, const AuId& planetId, quint32 genSeed, int resourceZone, const AuTime& floraChange);
+	void CreateDeviceObjects(AuGLEffects& re, const AuId& planetId, quint32 genSeed, int resourceZone, const AuTime& floraChange,
+		const QImage* preparedImage = nullptr);
+
+	static void PaintGroundTexture(QImage& image, DePlanetFlora* flora, int resourceZones, quint32 genSeed,
+		const AuTime& floraChange);
 
 	void CreateDeviceObjects(AuGLEffects& re, const AuId& flowerPotId, quint32 genSeed, int resourceZone, AuFloraDNA::ZONE zone,
 			int plantType, COMMODITYID idCommodity);

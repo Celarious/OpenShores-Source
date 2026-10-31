@@ -68,6 +68,8 @@ public:
 	// destinations use the historical random ground point near the town square.
 	AuPoint SpawnLocation(const AuGlobeLLF* home = nullptr) const;
 	AuLegacyCity::State Snapshot() const;
+	// Stable terrain-only fingerprint; economy and inventory do not affect it.
+	QByteArray TerrainCacheKey() const;
 	// Original airport perimeter candidates and road fallback, in the world's frame.
 	void AirportTerminalLandingSpots(QList<AuPoint>& spots) const;
 	AuPoint FindSpacecraftLandingSite(const DaVessel& ship) const;
@@ -237,6 +239,7 @@ public:
 		QList<AuGLSun>& suns, QList<AuGLLight>& lights) const override;
 	void RenderPreTerrain(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom);
+	bool GraphicsReady() const;
 	void RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom, AuRenderLastMap& last,
 		RENDERPASS pass, DaAtomList& sc, DaAtomList& scFog, DaAtomList& scGlobe,

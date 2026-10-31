@@ -495,44 +495,46 @@ void DeFlora::PaintBranch(QImage& im, AuFloraDNA::ZONE /*zone*/, const AuDice& C
 		// The brush images are expected to be square.
 		QImage imleaf(QString(":data/Leaf%1.png").arg(leafBrushImage));
 		brLeafSize = imleaf.width();
-		QPixmap myleaf(brLeafSize, brLeafSize);
+		QImage myleaf(brLeafSize, brLeafSize, QImage::Format_ARGB32);
+		myleaf.fill(Qt::transparent);
 		QPainter pleaf(&myleaf);
 
 		pleaf.drawImage(0,0, imleaf);
-		brLeaf[2].setTexture(myleaf);
+		brLeaf[2].setTextureImage(myleaf);
 
 		// Make two more that are progressively darker.
 		pleaf.fillRect(0,0, brLeafSize,brLeafSize, QColor(0,0,0,30));
-		brLeaf[1].setTexture(myleaf);
+		brLeaf[1].setTextureImage(myleaf);
 
 		pleaf.fillRect(0,0, brLeafSize,brLeafSize, QColor(0,0,0,50));
-		brLeaf[0].setTexture(myleaf);
+		brLeaf[0].setTextureImage(myleaf);
 	}
 
 	// Make brushs from the bark texture for painting the branches and thorns.
 	QBrush brBark[4];
 	{
 		QImage imbark(":data/txBark.png");
-		QPixmap mybark(imbark.width(), imbark.width());
+		QImage mybark(imbark.width(), imbark.width(), QImage::Format_ARGB32);
+		mybark.fill(Qt::transparent);
 		QTransform tbark;
 		tbark.scale(unitsPerPixel, unitsPerPixel);
 
 		QPainter pbark(&mybark);
 		pbark.drawImage(0,0, imbark, 0,DNA().BarkTexture*imbark.width(), imbark.width(),imbark.width());
-		brBark[3].setTexture(mybark);
+		brBark[3].setTextureImage(mybark);
 		brBark[3].setTransform(tbark);
 
 		// Make three more that are progressively darker.
 		pbark.fillRect(0,0, imbark.width(),imbark.width(), QColor(0,0,0,30));
-		brBark[2].setTexture(mybark);
+		brBark[2].setTextureImage(mybark);
 		brBark[2].setTransform(tbark);
 
 		pbark.fillRect(0,0, imbark.width(),imbark.width(), QColor(0,0,0,30));
-		brBark[1].setTexture(mybark);
+		brBark[1].setTextureImage(mybark);
 		brBark[1].setTransform(tbark);
 
 		pbark.fillRect(0,0, imbark.width(),imbark.width(), QColor(0,0,0,30));
-		brBark[0].setTexture(mybark);
+		brBark[0].setTextureImage(mybark);
 		brBark[0].setTransform(tbark);
 	}
 
@@ -906,6 +908,7 @@ void DeFlora::PaintBranch(QImage& im, AuFloraDNA::ZONE /*zone*/, const AuDice& C
 			QImage impetal(QString(":data/Petal%1.png").arg(petalBrushImage));
 			brPetalSize = impetal.width();
 			QImage mypetal(brPetalSize, brPetalSize, QImage::Format_ARGB32);
+			mypetal.fill(Qt::transparent);
 			QPainter ppetal(&mypetal);
 
 			// The petal image is grey scale. We will paint over it in a mode that changes its color to the DNA petal color.
@@ -913,14 +916,14 @@ void DeFlora::PaintBranch(QImage& im, AuFloraDNA::ZONE /*zone*/, const AuDice& C
 			ppetal.setCompositionMode(QPainter::CompositionMode_Multiply);
 			ppetal.fillRect(0,0, brPetalSize,brPetalSize, m_DNA.PetalColor());
 			ppetal.setCompositionMode(QPainter::CompositionMode_SourceOver);	// default mode
-			brPetal[2].setTexture(QPixmap::fromImage(mypetal));
+			brPetal[2].setTextureImage(mypetal);
 
 			// Make two more that are progressively darker.
 			ppetal.fillRect(0,0, brPetalSize,brPetalSize, QColor(0,0,0,30));
-			brPetal[1].setTexture(QPixmap::fromImage(mypetal));
+			brPetal[1].setTextureImage(mypetal);
 
 			ppetal.fillRect(0,0, brPetalSize,brPetalSize, QColor(0,0,0,60));
-			brPetal[0].setTexture(QPixmap::fromImage(mypetal));
+			brPetal[0].setTextureImage(mypetal);
 		}
 
 		bool mustHaveFlower = !hasLeaf;	// No leaves means we must have a flower.
@@ -2638,6 +2641,108 @@ void DePlanetFlora::PaintGroundCover(QImage& grassPolar, QImage& grassTemperate,
 	m_Flora[AuFloraDNA::Tropical].PaintGroundCover(grassTropical, genSeed, resourceZone, AuFloraDNA::Tropical, floraChange);
 }
 
+void DePlanetFlora::PaintGroundTexture(QImage& imgrass, DePlanetFlora* flora, int resourceZones,
+	quint32 genSeed, const AuTime& floraChange)
+{
+	// Get images of all the grasses on the planet.
+	QList<QImage> grasses;
+	for(int resourceZone=0; resourceZone<resourceZones; resourceZone++)
+	{
+		QImage grass[3];
+		flora[resourceZone].PaintGroundCover(grass[0], grass[1], grass[2], genSeed, resourceZone, floraChange);
+
+		// Each grass image is actually 4 different ones, tiled 2x2.
+		for(int glat=0; glat<3; glat++)
+		{
+			int width = grass[glat].width()/2;
+			int height = grass[glat].height()/2;
+			QImage gsub(width, height, QImage::Format_ARGB32);
+
+			for(int tilex=0; tilex<width*2; tilex+=width)
+			{
+				for(int tiley=0; tiley<height*2; tiley+=height)
+				{
+					// Paint the subtile of the grass image into a single image of its own.
+					QPainter psub(&gsub);
+					psub.setCompositionMode(QPainter::CompositionMode_Clear);	// clear mode
+					psub.fillRect(0,0,width,height, QBrush(Qt::transparent));
+					psub.setCompositionMode(QPainter::CompositionMode_Source);
+					psub.drawImage(0,0, grass[glat], tilex,tiley);
+					psub.end();
+
+					grasses.append(gsub.scaled(32,32));
+				}
+			}
+		}
+	}
+
+	// Prepare dice for consitent grass texture at this planet.
+	AuDice dice;
+	dice.Seed(genSeed);
+
+	const int tileSize = g_Au.GroundTextureSize();	// This texture is applied to the ground.
+
+	// Create a repeatable grassy texture tile using the images of local grasses. We will paint more and more grass into
+	// the image, grabbing copies of it at several steps along the way. That way the transition from ligth to moderate to dense
+	// vegetation connects nicely because the underlying texture remains the same, just more plants are added.
+	QImage imrep(tileSize*3, tileSize*3, QImage::Format_ARGB32);
+	imrep.fill(Qt::transparent);
+
+	QPainter prep;
+	prep.begin(&imrep);
+
+	// Draw a bunch of grass. Each iteration of the loop paints another layer of grass on top. After each iteration, we
+	// measure for the desired vegetation density due to variations between grasses; we can't always just draw a certain
+	// number of them.
+	float targetDensity = .9f;
+	float density;
+	int farside = tileSize*2;
+	do
+	{
+		// Select a grass image at random.
+		int grass = dice.Roll(1,grasses.count(),-1);
+
+		// Generate a random coordinate within a tile.
+		int ix = dice.Roll(1,tileSize,-1);
+		int iy = dice.Roll(1,tileSize,-1);
+
+		// Generate a random angle for this spot of grass.
+		int angle = dice.Roll(1,360,-1);
+
+		// Draw a tile pattern of the grasses.
+		for(int tx=0; tx<3; tx++)
+			for(int ty=0; ty<3; ty++)
+			{
+				prep.translate(ix + tx*tileSize, iy + ty*tileSize);
+				prep.rotate(angle);
+				prep.drawImage(0,0, grasses[grass]);
+				prep.resetTransform();
+			}
+
+		// Measure the current density in the center tile.
+		density = 0;
+		for(int tx=tileSize; tx<farside; tx++)
+			for(int ty=tileSize; ty<farside; ty++)
+			{
+				QRgb rgb = imrep.pixel(tx,ty);
+				float alpha = (float)qAlpha(rgb) / 255.f;
+				density += alpha;
+			}
+		density /= tileSize * tileSize;	// Average alpha of tile.
+	}
+	while(density < targetDensity);
+
+	prep.end();
+
+	// Copy the center tile from the 3x3 tile image to the grass texture.
+	imgrass = QImage(tileSize, tileSize, QImage::Format_ARGB32);
+	imgrass.fill(Qt::transparent);
+	QPainter phigh(&imgrass);
+	phigh.drawImage(0,0, imrep, tileSize,tileSize, tileSize,tileSize);
+	phigh.end();
+
+}
+
 void DePlanetFlora::CreateDeviceObjects(AuGLEffects& re, const AuId& flowerPotId, quint32 genSeed, int resourceZone,
 		AuFloraDNA::ZONE zone, int plantType, COMMODITYID idCommodity)
 {
@@ -2669,7 +2774,7 @@ void DePlanetFlora::CreateDeviceObjects(AuGLEffects& re, const AuId& flowerPotId
 }
 
 void DePlanetFlora::CreateDeviceObjects(AuGLEffects& re, const AuId& planetId, quint32 genSeed, int resourceZone,
-		const AuTime& floraChange)
+		const AuTime& floraChange, const QImage* preparedImage)
 {
 	if(!m_glFloraTex)
 	{
@@ -2685,7 +2790,8 @@ void DePlanetFlora::CreateDeviceObjects(AuGLEffects& re, const AuId& planetId, q
 		else
 		{
 			QImage imtex;
-			PaintFlora(imtex, genSeed, resourceZone, floraChange);
+			if(preparedImage) imtex = *preparedImage;
+			else PaintFlora(imtex, genSeed, resourceZone, floraChange);
 			if(!imtex.isNull())
 			{
 				// Create a texture map from the QImage object we've created.

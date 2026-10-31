@@ -34,6 +34,7 @@ class DaItem;
 class DaNpc;
 class DaPerson;
 class DaSentient;
+class DaWorldLL;
 class DePlanetFauna;
 class DePlanetFlora;
 
@@ -513,8 +514,13 @@ public:
 		m_Loc2 = loc2;
 	}
 
+	// Conservative surface-patch range test, including edge/interior overlap.
+	// The derived LL-rectangle bound is cached without changing disk formats.
+	bool OverlapsDetailRange(const DaWorldLL& world, const AuPoint& groundPos, double range) const;
+
 	void operator<<(QDataStream& in)
 	{
+		m_DetailBoundsReady = false;
 		AuGlobeLLTri::operator<<(in);
 		in >> m_Loc0;
 		in >> m_Loc1;
@@ -528,6 +534,11 @@ public:
 		out << m_Loc1;
 		out << m_Loc2;
 	}
+
+private:
+	mutable bool m_DetailBoundsReady = false;
+	mutable AuPoint m_DetailBoundsCenter;
+	mutable double m_DetailBoundsRadius = -1; // Negative means conservatively unbounded.
 };
 
 inline QDataStream& operator<<(QDataStream& out, const AuGlobeTerrainTriCen& o)

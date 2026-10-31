@@ -15,6 +15,8 @@
 #include <QRunnable>
 #include <QElapsedTimer>
 #include <QSharedPointer>
+#include <QSet>
+#include <atomic>
 
 class AuId;
 class Au3dsModelInstance;
@@ -33,8 +35,7 @@ protected:
 	bool								m_Killed;				// Used in StopRunning logic.
 
 private:
-	//mutable QMutex						m_RunStateLock;			// Guards m_RunState. Locked while running.
-	quint8								m_RunState;				// 0=hasn't run, 1=running, 2=done running.
+	std::atomic<quint8>					m_RunState;				// Publishes worker results when set to 2.
 
 public:
 	inline AuRunnable()
@@ -56,13 +57,7 @@ public:
 
 	inline bool IsDoneRunning() const
 	{
-		//if(m_RunStateLock.tryLock())
-		{
-			bool isDoneRunning = m_RunState == 2;
-			//m_RunStateLock.unlock();
-			return isDoneRunning;
-		}
-		//return false;
+		return m_RunState.load(std::memory_order_acquire) == 2;
 	}
 
 	inline void StopRunning()
@@ -75,8 +70,7 @@ protected:
 
 	inline void RunFinish()
 	{
-		m_RunState = 2;
-		//m_RunStateLock.unlock();
+		m_RunState.store(2, std::memory_order_release);
 	}
 };
 
@@ -358,9 +352,10 @@ private:
 	QImage								m_FloraImage;			// The resulting image.
 	quint32								m_GenSeed;				// Planet genseed
 	int									m_ResourceZone;
+	AuTime m_FloraChange;
 
 public:
-	AuFloraImage(const DePlanetFlora& flora, quint32 genSeed, int resourceZone);
+	AuFloraImage(const DePlanetFlora& flora, quint32 genSeed, int resourceZone, const AuTime& floraChange);
 
 	// Sets 'imgFlora' to a valid image when ready.
 	// Updates 'flora' with my data when done, which includes DeFlora::m_TextureSize gleaned while painting the flora image.
@@ -380,23 +375,16 @@ public:
 class AuGrassImages : public AuRunnable
 {
 private:
-	DePlanetFlora						m_Flora;				// Flora, updated with size information when finished.
-	QImage								m_Grass0;				// The resulting image.
-	QImage								m_Grass1;				// The resulting image.
-	QImage								m_Grass2;				// The resulting image.
-	quint32								m_GenSeed;				// Planet genseed
-	int									m_ResourceZone;
+	QVector<DePlanetFlora> m_Flora;
+	QImage m_Grass;
+	quint32 m_GenSeed;
+	AuTime m_FloraChange;
 
 public:
-	AuGrassImages(const DePlanetFlora& flora, quint32 genSeed, int resourceZone);
+	AuGrassImages(const DePlanetFlora* flora, int resourceZones, quint32 genSeed, const AuTime& floraChange);
 
-	// Returns true when the return images are valid.
-	bool GrassImages(QImage& grass0, QImage& grass1, QImage& grass2);
-
-	int ResourceZone() const
-	{
-		return m_ResourceZone;
-	}
+	// Returns the complete ground-cover tile, including its density composition.
+	bool GrassImage(QImage& grass);
 
 	// This guy does the grunt work to create the grass.
 	virtual void run();
@@ -491,9 +479,19 @@ public:
 	// Prepares once on a worker, uploads in bounded render-thread steps, then
 	// shares the immutable model. Output retains pending/ready model ownership.
 	bool LegacySc(AuGLEffects& re, const AuScDesign& design, QSharedPointer<AuLegacyScModel>& model);
-	void BeginLegacyScFrame() { m_LegacyScUploadBudget.invalidate(); }
+	void BeginLegacyScFrame() { m_LegacyScUploadBudget.invalidate(); m_LegacySceneWorkPending = false; }
 	// Cities and spacecraft share the same per-frame GL upload allowance.
 	QElapsedTimer& LegacyUploadBudget() { return m_LegacyScUploadBudget; }
+	// Initial scene loading is staged independently of drawing order. Once
+	// ready, keep existing scenery available while new terrain patches load.
+	bool LegacyTerrainReady(const AuId& worldId) const;
+	void LegacyTerrainPrepared(const AuId& worldId);
+	bool LegacyDecorationsReady(const AuId& worldId) const;
+	void LegacyBuildingsPrepared(const AuId& worldId);
+	// Render-thread decoration work shares the existing city/ship frame budget.
+	bool LegacyDecorationStep();
+	void DeferLegacySceneWork();
+	bool LegacySceneWorkPending() const { return m_LegacySceneWorkPending; }
 	void DeleteLegacySc(quint32 designId);
 	void ClearLegacySc(); // Call with the owning GL context current before teardown.
 
@@ -558,11 +556,10 @@ public:
 	AuGLVAO FlatRingworldSectionModel(AuOpenGLFunctions& GLf, const DaWorldRingSection* world, float& minAltMSL,
 			float& maxAltMSL);
 
-	// Paints the image of all the species of flora in a resource zone of a planet. This image is used to create a texture for
-	// the plant models themselves.
-	// Sets 'imgFlora' to a valid image when ready.
-	// Updates 'flora' with my data when done, which includes DeFlora::m_TextureSize gleaned while painting the flora image.
-	void FloraImage(QImage& imgFlora, DePlanetFlora& flora, const AuId& planetId, quint32 genSeed, int resourceZone);
+	// Prepares the plant palette on a worker in Legacy scenes, then uploads it
+	// within the frame budget. Modern scenes retain synchronous preparation.
+	void FloraTexture(AuGLEffects& re, DePlanetFlora& flora, const AuId& planetId, quint32 genSeed, int resourceZone,
+		const AuTime& floraChange);
 
 	// Query for gl model id corresponding to a globe atom id.
 	// Causes the model to be created if needed.
@@ -574,9 +571,8 @@ public:
 
 	void InvalidateGlobeModelTri(const AuId& worldId, int triIndex);
 
-	// Returns true when the images are ready.
-	bool GrassImages(QImage& grass0, QImage& grass1, QImage& grass2, DePlanetFlora& flora, const AuId& planetId, quint32 genSeed,
-			int resourceZone);
+	bool GrassTexture(QImage& grass, const DePlanetFlora* flora, int resourceZones, const AuId& planetId,
+		quint32 genSeed, const AuTime& floraChange);
 
 	// Returns true if any of our worker threads are still running.
 	bool IsBusy() const;
@@ -624,6 +620,9 @@ private:
 	QList<QSharedPointer<AuLegacyScModel>> m_LegacyScKeepAlive;
 	QList<QWeakPointer<AuLegacyScModel>> m_LegacyScModels;
 	QElapsedTimer m_LegacyScUploadBudget;
+	QSet<AuId> m_LegacyTerrainReady;
+	QSet<AuId> m_LegacyBuildingsReady;
+	bool m_LegacySceneWorkPending = false;
 	void RetainLegacySc(const QSharedPointer<AuLegacyScModel>& model);
 
 	unordered_multimap<quint32, AuBdFrame*, AuDesignIdHash>	m_BdFrame;			// Bd under construction models, key is design id

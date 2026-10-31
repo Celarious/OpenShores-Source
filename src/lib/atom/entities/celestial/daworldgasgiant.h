@@ -822,7 +822,7 @@ protected:
 	// 'minAltMSL' is the lowest MSL altitude in the triangle data that will be sent to the shader.
 	GLuint CreateAtLookupTable(AuGLEffects &re, float maxAltMSL, float minAltMSL, GLuint terElevTex[5]) const;
 
-	virtual void CreateFloraTextures(AuGLEffects& re, int resourceZone);
+	virtual void CreateFloraTextures(AuGLEffects& re, AuGLModelMaker& mm, int resourceZone);
 
 	void CreateGeologicalFeatures(const AuDice& dice);
 

@@ -462,7 +462,7 @@ public:
 
 	void CreateForScan(double orbitRadius, ORBITZONE orbitZone);
 
-	virtual void CreateFloraTextures(AuGLEffects& /*re*/, int /*resourceZone*/)
+	virtual void CreateFloraTextures(AuGLEffects& /*re*/, AuGLModelMaker& /*mm*/, int /*resourceZone*/)
 	{
 	}
 

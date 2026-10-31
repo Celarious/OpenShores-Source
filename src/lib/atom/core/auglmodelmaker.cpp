@@ -21,6 +21,7 @@
 #include "daworldringsection.h"
 #include "dgdata.h"
 #include "hashpack.h"
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QTextStream>
@@ -35,7 +36,6 @@
 bool AuRunnable::RunStart()
 {
 	// When the program is killed, the global data pointer gets set to null.
-	//m_RunStateLock.lock();
 	if(!gp_AuGlobal || m_Killed)
 	{
 		RunFinish();
@@ -1238,39 +1238,55 @@ bool AuGLModelMaker::Weather(AuWeather& wx, const DaWorldLL* world)
 	return false;
 }
 
-bool AuGLModelMaker::GrassImages(QImage& grass0, QImage& grass1, QImage& grass2, DePlanetFlora& flora, const AuId& planetId,
-		quint32 genSeed, int resourceZone)
+bool AuGLModelMaker::GrassTexture(QImage& grass, const DePlanetFlora* flora, int resourceZones, const AuId& planetId,
+		quint32 genSeed, const AuTime& floraChange)
 {
-	for(unordered_multimap<AuId, AuGrassImages*, AuIdHash>::iterator gi = m_GrassImages.find(planetId);
-			gi != m_GrassImages.end() && (*gi).first == planetId; gi++)
-		if((*gi).second->ResourceZone() == resourceZone)
-			return (*gi).second->GrassImages(grass0, grass1, grass2);
-
-	// Did not find the grass images for the specific resource zone.
-	// Insert a nu entry and give it to the thread pool to do the work.
-	AuGrassImages* grassi = new AuGrassImages(flora, genSeed, resourceZone);
-	m_GrassImages.insert(pair<AuId, AuGrassImages*>(planetId, grassi));
-	QThreadPool::globalInstance()->start(grassi, 0);			// Lower priority than terrain so terrain gets made first.
+	const auto gi = m_GrassImages.find(planetId);
+	if(gi != m_GrassImages.end())
+	{
+		if(gi->second->GrassImage(grass)) return true;
+	}
+	else
+	{
+		// This tile is a terrain material, also needed by distant/preview worlds
+		// that never render local buildings or enter the decoration stage.
+		AuGrassImages* images = new AuGrassImages(flora, resourceZones, genSeed, floraChange);
+		m_GrassImages.insert(pair<AuId, AuGrassImages*>(planetId, images));
+		QThreadPool::globalInstance()->start(images, -1);
+	}
+	DeferLegacySceneWork();
 	return false;
 }
 
-void AuGLModelMaker::FloraImage(QImage& imtex, DePlanetFlora& flora, const AuId& planetId, quint32 genSeed, int resourceZone)
+void AuGLModelMaker::FloraTexture(AuGLEffects& re, DePlanetFlora& flora, const AuId& planetId, quint32 genSeed,
+	int resourceZone, const AuTime& floraChange)
 {
-	for(unordered_multimap<AuId, AuFloraImage*, AuIdHash>::iterator gi = m_FloraImages.find(planetId);
-			gi != m_FloraImages.end() && (*gi).first == planetId; gi++)
+	if(!g_Au.IsLegacyGeneration())
 	{
-		if((*gi).second->ResourceZone() == resourceZone)
-		{
-			(*gi).second->FloraImage(flora, imtex);
-			return;
-		}
+		flora.CreateDeviceObjects(re, planetId, genSeed, resourceZone, floraChange);
+		return;
 	}
-
-	// Did not find the specific model. Schedule it for creation.
-	// Insert a nu entry and give it to the thread pool to create the model.
-	AuFloraImage* gm = new AuFloraImage(flora, genSeed, resourceZone);
-	m_FloraImages.insert(pair<AuId, AuFloraImage*>(planetId, gm));
-	QThreadPool::globalInstance()->start(gm, 0);			// Lowest priority so terrain gets made first.
+	QImage image;
+	bool found = false;
+	const auto range = m_FloraImages.equal_range(planetId);
+	for(auto gi = range.first; gi != range.second; ++gi)
+		if(gi->second->ResourceZone() == resourceZone)
+		{
+			if(gi->second->IsDoneRunning() && !LegacyDecorationStep()) return;
+			gi->second->FloraImage(flora, image);
+			found = true;
+			break;
+		}
+	if(!found && LegacyDecorationsReady(planetId))
+	{
+		AuFloraImage* job = new AuFloraImage(flora, genSeed, resourceZone, floraChange);
+		m_FloraImages.insert(pair<AuId, AuFloraImage*>(planetId, job));
+		QThreadPool::globalInstance()->start(job, -1);
+	}
+	if(image.isNull()) { DeferLegacySceneWork(); return; }
+	if(!LegacyDecorationStep()) return;
+	flora.CreateDeviceObjects(re, planetId, genSeed, resourceZone, floraChange, &image);
+	if(flora.Texture()) DeleteFloraImage(planetId, resourceZone);
 }
 
 bool AuGLModelMaker::CreateFlora(const DaWorldLL* world, AuPoint& groundLoc, QMap<AuResKey, AuGlobeFlora>& grass,
@@ -1290,9 +1306,11 @@ bool AuGLModelMaker::CreateFlora(const DaWorldLL* world, AuPoint& groundLoc, QMa
 	else
 	{
 		// Insert a nu entry and give it to the thread pool to create the model.
+		if(!LegacyDecorationsReady(world->Id())) return false;
 		fmi = m_Flora.insert(pair<AuId, AuFloraModel*>(world->Id(), new AuFloraModel(world->Id(), groundLoc))).first;
-		QThreadPool::globalInstance()->start((*fmi).second, 1);			// Higher priority than ships so grass gets made first.
+		QThreadPool::globalInstance()->start((*fmi).second, g_Au.IsLegacyGeneration() ? -1 : 1);
 	}
+	DeferLegacySceneWork();
 	return false;
 }
 
@@ -1310,9 +1328,11 @@ bool AuGLModelMaker::CreateRocks(const DaWorldLL* world, AuPoint& groundLoc, QMa
 	else
 	{
 		// Insert a nu entry and give it to the thread pool to create the model.
+		if(!LegacyDecorationsReady(world->Id())) return false;
 		rmi = m_Rock.insert(pair<AuId, AuRockModel*>(world->Id(), new AuRockModel(world->Id(), groundLoc))).first;
-		QThreadPool::globalInstance()->start((*rmi).second, 1);			// Higher priority than ships so grass gets made first.
+		QThreadPool::globalInstance()->start((*rmi).second, g_Au.IsLegacyGeneration() ? -1 : 1);
 	}
+	DeferLegacySceneWork();
 	return false;
 }
 
@@ -1431,6 +1451,41 @@ bool AuGLModelMaker::Bd(AuOpenGLFunctions& GLf, quint32 designId, quint32 empire
 		QThreadPool::globalInstance()->start(gm, 0);			// Lower priority than terrain so terrain gets made first.
 		return false;
 	}
+}
+
+bool AuGLModelMaker::LegacyTerrainReady(const AuId& worldId) const
+{
+	return !g_Au.IsLegacyGeneration() || m_LegacyTerrainReady.contains(worldId);
+}
+
+void AuGLModelMaker::LegacyTerrainPrepared(const AuId& worldId)
+{
+	if(g_Au.IsLegacyGeneration()) m_LegacyTerrainReady.insert(worldId);
+}
+
+bool AuGLModelMaker::LegacyDecorationsReady(const AuId& worldId) const
+{
+	return !g_Au.IsLegacyGeneration()
+		|| (m_LegacyTerrainReady.contains(worldId) && m_LegacyBuildingsReady.contains(worldId));
+}
+
+void AuGLModelMaker::LegacyBuildingsPrepared(const AuId& worldId)
+{
+	if(g_Au.IsLegacyGeneration() && LegacyTerrainReady(worldId)) m_LegacyBuildingsReady.insert(worldId);
+}
+
+void AuGLModelMaker::DeferLegacySceneWork()
+{
+	if(g_Au.IsLegacyGeneration()) m_LegacySceneWorkPending = true;
+}
+
+bool AuGLModelMaker::LegacyDecorationStep()
+{
+	if(!g_Au.IsLegacyGeneration()) return true;
+	if(!m_LegacyScUploadBudget.isValid()) m_LegacyScUploadBudget.start();
+	if(m_LegacyScUploadBudget.nsecsElapsed() < 4000000) return true;
+	DeferLegacySceneWork();
+	return false;
 }
 
 bool AuGLModelMaker::LegacySc(AuGLEffects& re, const AuScDesign& design, QSharedPointer<AuLegacyScModel>& output)
@@ -2172,6 +2227,8 @@ void AuGLModelMaker::DeleteFlatRingworldSectionModel(const AuId& worldId)
 
 void AuGLModelMaker::DeleteGlobeModel(const AuId& worldId)
 {
+	m_LegacyTerrainReady.remove(worldId);
+	m_LegacyBuildingsReady.remove(worldId);
 	//qDebug() << "AuGLModelMaker::DeleteGlobeModel" << worldId << "deleteCache" << deleteCache;
 	// Delete the display list object.
 	unordered_map<AuId, AuGlobeModel*, AuIdHash>::iterator gi = m_Globes.find(worldId);
@@ -2290,6 +2347,8 @@ void AuGLModelMaker::DeleteGlobeModelTri(const AuId& worldId, int triIndex)
 
 void AuGLModelMaker::DeleteRingworldSectionModel(const AuId& worldId)
 {
+	m_LegacyTerrainReady.remove(worldId);
+	m_LegacyBuildingsReady.remove(worldId);
 	//qDebug() << "AuGLModelMaker::DeleteRingworldSectionModel" << worldId << "deleteCache" << deleteCache;
 	// Delete the display list object.
 	unordered_map<AuId, AuGlobeModel*, AuIdHash>::iterator gi = m_RingworldSections.find(worldId);
@@ -2748,6 +2807,59 @@ AuGLVAO AuFlatGlobeModel::VAO(AuOpenGLFunctions& GLf, float& minAltMSL, float& m
 	return m_VAO;
 }
 
+namespace
+{
+// Caller holds the ether lifetime guard. The private ether owns the returned
+// world, its designer parent and both kinds of building sites. A world clone
+// alone retains the live ether and would query live cities from this worker.
+DaWorldLL* CloneTerrainWorldSnapshot(const DaWorldLL& source, AuEther& snapshot)
+{
+	const DaDesigner* designer = source.FindParentDesignerInEnv();
+	if(designer) snapshot.AddAtom(designer->Clone());
+	DaWorldLL* world = static_cast<DaWorldLL*>(source.Clone());
+	snapshot.AddAtom(world);
+	if(designer) world->ChangePos(AuAtomPos(designer->Id(), AuPoint(), AuPoint()));
+
+	bool hasModernBuildings = false;
+	DaAtomList children;
+	source.ListNormalSubatoms(children);
+	for(const DaAtom* child : children)
+	{
+		const bool modernBuilding = dynamic_cast<const DaBd*>(child) != nullptr;
+		if(modernBuilding || dynamic_cast<const DaLegacyCity*>(child)) snapshot.AddAtom(child->Clone());
+		hasModernBuildings |= modernBuilding;
+	}
+	if(hasModernBuildings) world->BdAdded();
+	return world;
+}
+
+DaWorldLL* CloneTerrainWorldSnapshot(const AuId& worldId, AuEther& snapshot)
+{
+	const AuEther& live = g_Au.LockEtheriumDelete();
+	const DaWorldLL* source = dynamic_cast<const DaWorldLL*>(live.FindNormalAtom(worldId));
+	DaWorldLL* world = source ? CloneTerrainWorldSnapshot(*source, snapshot) : nullptr;
+	g_Au.UnlockEtheriumDelete();
+	return world;
+}
+
+QString LegacyTerrainCacheSuffix(const DaWorldLL& world)
+{
+	QVector<const DaLegacyCity*> cities;
+	DaAtomList children;
+	world.ListNormalSubatoms(children);
+	for(const DaAtom* child : children)
+		if(const auto* city = dynamic_cast<const DaLegacyCity*>(child)) cities.append(city);
+	QByteArray data;
+	QDataStream out(&data, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_4_1);
+	out << quint32(cities.size());
+	// Match sampling order too: overlapping cities can influence each other's
+	// altitude blends and pavement ownership just as developments do.
+	for(const auto* city : cities) out << city->Id().GetID() << city->TerrainCacheKey();
+	return QStringLiteral("-legacy-sites-v1-%1").arg(QString::fromLatin1(
+		QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex()));
+}
+}
+
 // This guy does the grunt work to create the model of the globe.
 void AuFlatGlobeModel::run()
 {
@@ -2757,11 +2869,19 @@ void AuFlatGlobeModel::run()
 
 	Q_ASSERT(m_GlobeTris.isEmpty());
 
+	// Hash the same private city sites used on a cache miss. World ModifyTime
+	// alone cannot validate Legacy city changes, and a later live snapshot
+	// could otherwise be written under the key of an earlier site state.
+	const bool legacyTerrain = g_Au.IsLegacyGeneration();
+	AuEther tempEther("AuFlatGlobeModel::run");
+	DaWorldLL* clonedWorld = legacyTerrain ? CloneTerrainWorldSnapshot(m_WorldId, tempEther) : nullptr;
+	const bool useCache = CacheEnabled() && (!legacyTerrain || clonedWorld);
+	const QString cacheSuffix = clonedWorld ? LegacyTerrainCacheSuffix(*clonedWorld) : QString();
 	// Try loading from cache.
 	QDir cacheDir(g_Au.CacheGame());
-	QString cacheFileName = cacheDir.absoluteFilePath(QString("WGF%1").arg(m_WorldId.GetID()));
+	QString cacheFileName = cacheDir.absoluteFilePath(QString("WGF%1%2").arg(m_WorldId.GetID()).arg(cacheSuffix));
 	QFile cacheFile(cacheFileName);
-	if(CacheEnabled() && cacheFile.open(QIODevice::ReadOnly))
+	if(useCache && cacheFile.open(QIODevice::ReadOnly))
 	{
 		// Load from cache file.
 		QDataStream dsfile(&cacheFile);
@@ -2807,12 +2927,7 @@ void AuFlatGlobeModel::run()
 		// Create the models since they were not loaded from the cache.
 		if(c_CacheDebugs)
 			qDebug() << "AuFlatGlobeModel::run creating model";
-		DaWorldLL* clonedWorld = 0;
-		const AuEther& etherium = g_Au.LockEtheriumDelete();
-		const DaWorldLL* world = dynamic_cast<const DaWorldLL*>(etherium.FindNormalAtom(m_WorldId));
-		if(world)
-			clonedWorld = (DaWorldLL*)world->Clone();	// Clone the world so it can make triangles without locking etherium.
-		g_Au.UnlockEtheriumDelete();
+		if(!clonedWorld) clonedWorld = CloneTerrainWorldSnapshot(m_WorldId, tempEther);
 		if(clonedWorld)
 		{
 			DaWorldSphere* glworld = dynamic_cast<DaWorldSphere*>(clonedWorld);
@@ -2844,23 +2959,10 @@ void AuFlatGlobeModel::run()
 			}
 
 			m_WorldModifyTime = clonedWorld->ModifyTime();
-
-			/* This takes way too long.
-			// The normal atom destructor would destroy its subatoms and remove their indexes from the root atom. We don't want
-			// that to happen to our cloned cities. We must delete the cloned cities in a way that they do not climb up the parent
-			// atom chain and mess with root atom indexes. That means simply deleting them ourself here, instead of letting the
-			// clonedWorld destructor do it.
-			DaAtomList* subatoms = clonedWorld->LockSubatomsForWrite();
-			if(subatoms)
-				while(!subatoms->isEmpty())
-					delete subatoms->takeFirst();
-			clonedWorld->UnlockSubatoms();
-			*/
-			delete clonedWorld;
 		}
 
 		// Store result in cache.
-		if(CacheEnabled() && !m_GlobeTris.isEmpty())
+		if(useCache && !m_GlobeTris.isEmpty())
 		{
 			// Insure the cache folder exists.
 			if(g_Au.CreateCacheGame())
@@ -3024,11 +3126,16 @@ void AuNearGlobeModel::run()
 		return;
 	Q_ASSERT(m_GlobeTris.isEmpty());
 
+	const bool legacyTerrain = g_Au.IsLegacyGeneration();
+	AuEther tempEther("AuNearGlobeModel::run");
+	DaWorldLL* clonedWorld = legacyTerrain ? CloneTerrainWorldSnapshot(m_WorldId, tempEther) : nullptr;
+	const bool useCache = CacheEnabled() && (!legacyTerrain || clonedWorld);
+	const QString cacheSuffix = clonedWorld ? LegacyTerrainCacheSuffix(*clonedWorld) : QString();
 	// Try loading from cache.
 	QDir cacheDir(g_Au.CacheGame());
-	QString cacheFileName = cacheDir.absoluteFilePath(QString("WGN%1").arg(m_WorldId.GetID()));
+	QString cacheFileName = cacheDir.absoluteFilePath(QString("WGN%1%2").arg(m_WorldId.GetID()).arg(cacheSuffix));
 	QFile cacheFile(cacheFileName);
-	if(CacheEnabled() && cacheFile.open(QIODevice::ReadOnly))
+	if(useCache && cacheFile.open(QIODevice::ReadOnly))
 	{
 		// Load from cache file.
 		QDataStream dsfile(&cacheFile);
@@ -3072,23 +3179,16 @@ void AuNearGlobeModel::run()
 		// Create the models since they were not loaded from the cache.
 		if(c_CacheDebugs)
 			qDebug() << "AuNearGlobeModel::run creating";
-		DaWorldLL* clonedWorld = 0;
-		const AuEther& etherium = g_Au.LockEtheriumDelete();
-		const DaWorldLL* world = dynamic_cast<const DaWorldLL*>(etherium.FindNormalAtom(m_WorldId));
-		if(world)
-			clonedWorld = (DaWorldLL*)world->Clone();	// Clone the world so it can make triangles without locking etherium.
-		g_Au.UnlockEtheriumDelete();
+		if(!clonedWorld) clonedWorld = CloneTerrainWorldSnapshot(m_WorldId, tempEther);
 		if(clonedWorld)
 		{
 			clonedWorld->CreateNearGlobeSurfaceTriangles(m_GlobeTris);
 
 			m_WorldModifyTime = clonedWorld->ModifyTime();
-
-			delete clonedWorld;
 		}
 
 		// Store result in cache.
-		if(CacheEnabled() && !m_GlobeTris.isEmpty())
+		if(useCache && !m_GlobeTris.isEmpty())
 		{
 			// Insure the cache folder exists.
 			if(g_Au.CreateCacheGame())
@@ -3360,11 +3460,16 @@ void AuGlobeModel::run()
 		return;
 	Q_ASSERT(m_GlobeTris.isEmpty());
 
+	const bool legacyTerrain = g_Au.IsLegacyGeneration();
+	AuEther tempEther("AuGlobeModel::run");
+	DaWorldLL* clonedWorld = legacyTerrain ? CloneTerrainWorldSnapshot(m_WorldId, tempEther) : nullptr;
+	const bool useCache = CacheEnabled() && (!legacyTerrain || clonedWorld);
+	const QString cacheSuffix = clonedWorld ? LegacyTerrainCacheSuffix(*clonedWorld) : QString();
 	// Try loading from cache.
 	QDir cacheDir(g_Au.CacheGame());
-	QString cacheFileName = cacheDir.absoluteFilePath(QString("WGA%1").arg(m_WorldId.GetID()));
+	QString cacheFileName = cacheDir.absoluteFilePath(QString("WGA%1%2").arg(m_WorldId.GetID()).arg(cacheSuffix));
 	QFile cacheFile(cacheFileName);
-	if(CacheEnabled() && cacheFile.open(QIODevice::ReadOnly))
+	if(useCache && cacheFile.open(QIODevice::ReadOnly))
 	{
 		// Load from cache file.
 		QDataStream dsfile(&cacheFile);
@@ -3437,12 +3542,7 @@ void AuGlobeModel::run()
 		// Create the models since they were not loaded from the cache.
 		if(c_CacheDebugs)
 			qDebug() << "AuGlobeModel::run creating";
-		DaWorldLL* clonedWorld = 0;
-		const AuEther& etherium = g_Au.LockEtheriumDelete();
-		const DaWorldLL* world = dynamic_cast<const DaWorldLL*>(etherium.FindNormalAtom(m_WorldId));
-		if(world)
-			clonedWorld = (DaWorldLL*)world->Clone();	// Clone the world so it can make triangles without locking etherium.
-		g_Au.UnlockEtheriumDelete();
+		if(!clonedWorld) clonedWorld = CloneTerrainWorldSnapshot(m_WorldId, tempEther);
 		if(clonedWorld)
 		{
 			// Create terrain triangles array that will be used when making high tessellation patches on the globe.
@@ -3453,12 +3553,10 @@ void AuGlobeModel::run()
 
 			//qDebug() << "AuGlobeModel::run" << m_VAO.m_MaxAltMSL << m_VAO.m_MinAltMSL;
 			m_WorldModifyTime = clonedWorld->ModifyTime();
-
-			delete clonedWorld;
 		}
 
 		// Store result in cache.
-		if(CacheEnabled() && !m_GlobeTris.isEmpty())
+		if(useCache && !m_GlobeTris.isEmpty())
 		{
 			// Insure the cache folder exists.
 			if(g_Au.CreateCacheGame())
@@ -3839,41 +3937,7 @@ void AuGlobeModelTri::run()
 		const AuEther& etherium = g_Au.LockEtheriumDelete();
 		const DaWorldLL* world = dynamic_cast<const DaWorldLL*>(etherium.FindNormalAtom(m_WorldId));
 		if(world)
-		{
-			// Buildings in a design environment preview need the design environment parent.
-			const DaDesigner* pdes = world->FindParentDesignerInEnv();
-			if(pdes)
-			{
-				DaAtom* clone = pdes->Clone();
-				tempEther.AddAtom(clone);
-
-				clonedWorld = (DaWorldLL*)world->Clone();	// Clone the world so it can make triangles without locking etherium.
-				tempEther.AddAtom(clonedWorld);
-				clonedWorld->ChangePos(AuAtomPos(pdes->Id(), AuPoint(), AuPoint()));
-			}
-			else
-			{
-				clonedWorld = (DaWorldLL*)world->Clone();	// Clone the world so it can make triangles without locking etherium.
-				tempEther.AddAtom(clonedWorld);
-			}
-
-			// Clone both building representations so terrain can see their sites.
-			bool bds = false;
-			DaAtomList subs;
-			world->ListNormalSubatoms(subs);
-			for(DaAtomList::const_iterator ai = subs.cbegin(); ai != subs.cend(); ai++)
-			{
-				if(!dynamic_cast<const DaBd*>(*ai) && !dynamic_cast<const DaLegacyCity*>(*ai))
-					continue;
-
-				// Add the clone.
-				DaAtom* clone = (*ai)->Clone();
-				tempEther.AddAtom(clone);
-				bds = bds || dynamic_cast<const DaBd*>(*ai);
-			}
-			if(bds)
-				clonedWorld->BdAdded();
-		}
+			clonedWorld = CloneTerrainWorldSnapshot(*world, tempEther);
 		g_Au.UnlockEtheriumDelete();
 		if(clonedWorld)
 			clonedWorld->CreateAtTerrainTriangles(m_GlobeTris, m_TerrainTri, m_Killed);
@@ -3934,21 +3998,19 @@ void AuGlobeModelTri::DeleteGL()
 
 //-+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
-AuGrassImages::AuGrassImages(const DePlanetFlora& flora, quint32 genSeed, int resourceZone)
+AuGrassImages::AuGrassImages(const DePlanetFlora* flora, int resourceZones, quint32 genSeed, const AuTime& floraChange)
 {
-	m_Flora = flora;
+	for(int zone = 0; zone < resourceZones; ++zone) m_Flora.append(flora[zone]);
 	m_GenSeed = genSeed;
-	m_ResourceZone = resourceZone;
+	m_FloraChange = floraChange;
 }
 
-bool AuGrassImages::GrassImages(QImage& grass0, QImage& grass1, QImage& grass2)
+bool AuGrassImages::GrassImage(QImage& grass)
 {
 	if(!IsDoneRunning())
 		return false;
-	grass0 = m_Grass0;
-	grass1 = m_Grass1;
-	grass2 = m_Grass2;
-	return true;
+	grass = m_Grass;
+	return !grass.isNull();
 }
 
 // This function does the grunt work.
@@ -3957,18 +4019,19 @@ void AuGrassImages::run()
 	//qDebug() << "AuGrassImages::run" << m_WorldId;
 	if(!RunStart())
 		return;
-	//DHH flora change time needed m_Flora.PaintGroundCover(m_Grass0, m_Grass1, m_Grass2, m_GenSeed, m_ResourceZone);
+	DePlanetFlora::PaintGroundTexture(m_Grass, m_Flora.data(), m_Flora.size(), m_GenSeed, m_FloraChange);
 	RunFinish();
 	//qDebug() << "AuGrassImages::run" << m_WorldId << "done.";
 }
 
 //-+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
-AuFloraImage::AuFloraImage(const DePlanetFlora& flora, quint32 genSeed, int resourceZone)
+AuFloraImage::AuFloraImage(const DePlanetFlora& flora, quint32 genSeed, int resourceZone, const AuTime& floraChange)
 {
 	m_Flora = flora;
 	m_GenSeed = genSeed;
 	m_ResourceZone = resourceZone;
+	m_FloraChange = floraChange;
 }
 
 void AuFloraImage::FloraImage(DePlanetFlora& flora, QImage& imgFlora)
@@ -3985,7 +4048,7 @@ void AuFloraImage::run()
 	//qDebug() << "AuFloraImage::run" << m_WorldId;
 	if(!RunStart())
 		return;
-	//DHH flora change time needed m_Flora.PaintFlora(m_FloraImage, m_GenSeed, m_ResourceZone);
+	m_Flora.PaintFlora(m_FloraImage, m_GenSeed, m_ResourceZone, m_FloraChange);
 	RunFinish();
 	//qDebug() << "AuFloraImage::run" << m_WorldId << "done.";
 }
@@ -4069,42 +4132,9 @@ void AuFloraModel::run()
 			world->QueryNaturalResources(res, rz);
 		}
 
-		// Buildings in a design environment preview need the design environment parent.
-		const DaDesigner* pdes = world->FindParentDesignerInEnv();
-		if(pdes)
-		{
-			DaAtom* clone = pdes->Clone();
-			tempEther.AddAtom(clone);
-
-			clonedWorld = (DaWorldLL*)world->Clone();	// Clone the world so it can make triangles without locking etherium.
-			tempEther.AddAtom(clonedWorld);
-			clonedWorld->ChangePos(AuAtomPos(pdes->Id(), AuPoint(), AuPoint()));
-		}
-		else
-		{
-			clonedWorld = (DaWorldLL*)world->Clone();	// Clone the world so it can make triangles without locking etherium.
-			tempEther.AddAtom(clonedWorld);
-		}
-
+		clonedWorld = CloneTerrainWorldSnapshot(*world, tempEther);
 		genSeed = world->GenSeed();
 		floraGlow = world->FloraGlow();
-
-		// Flora uses the same sites as terrain, including city-owned legacy buildings.
-		bool bds = false;
-		DaAtomList subs;
-		world->ListNormalSubatoms(subs);
-		for(DaAtomList::const_iterator ai = subs.cbegin(); ai != subs.cend(); ai++)
-		{
-			if(!dynamic_cast<const DaBd*>(*ai) && !dynamic_cast<const DaLegacyCity*>(*ai))
-				continue;
-
-			// Add the clones.
-			DaAtom* clone = (*ai)->Clone();
-			tempEther.AddAtom(clone);
-			bds = bds || dynamic_cast<const DaBd*>(*ai);
-		}
-		if(bds)
-			clonedWorld->BdAdded();
 	}
 	g_Au.UnlockEtheriumDelete();
 	if(clonedWorld && gp_AuGlobal)
@@ -4234,41 +4264,8 @@ void AuRockModel::run()
 			world->QueryNaturalResources(res, rz);
 		}
 
-		// Buildings in a design environment preview need the design environment parent.
-		const DaDesigner* pdes = world->FindParentDesignerInEnv();
-		if(pdes)
-		{
-			DaAtom* clone = pdes->Clone();
-			tempEther.AddAtom(clone);
-
-			clonedWorld = (DaWorldLL*)world->Clone();	// Clone the world so it can make triangles without locking etherium.
-			tempEther.AddAtom(clonedWorld);
-			clonedWorld->ChangePos(AuAtomPos(pdes->Id(), AuPoint(), AuPoint()));
-		}
-		else
-		{
-			clonedWorld = (DaWorldLL*)world->Clone();	// Clone the world so it can make triangles without locking etherium.
-			tempEther.AddAtom(clonedWorld);
-		}
-
+		clonedWorld = CloneTerrainWorldSnapshot(*world, tempEther);
 		genSeed = world->GenSeed();
-
-		// Rock hiding also needs city-owned legacy building sites in the worker.
-		bool bds = false;
-		DaAtomList subs;
-		world->ListNormalSubatoms(subs);
-		for(DaAtomList::const_iterator ai = subs.cbegin(); ai != subs.cend(); ai++)
-		{
-			if(!dynamic_cast<const DaBd*>(*ai) && !dynamic_cast<const DaLegacyCity*>(*ai))
-				continue;
-
-			// Add the clones.
-			DaAtom* clone = (*ai)->Clone();
-			tempEther.AddAtom(clone);
-			bds = bds || dynamic_cast<const DaBd*>(*ai);
-		}
-		if(bds)
-			clonedWorld->BdAdded();
 	}
 	g_Au.UnlockEtheriumDelete();
 	if(clonedWorld)

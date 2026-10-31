@@ -633,6 +633,7 @@ private:
 	bool								m_bFreeMouse;			// true when mouse is free, so we don't keep repositioning the mouse
 	AuGLVAO								m_BusyVAO;
 	bool								m_bWaitingForScene;		// True while waiting for scene atom.
+	bool m_WaitingForScenery;							// Initial Legacy terrain, buildings and decorations.
 	float								m_CameraAnimSpeed;		// in feet per second. 0 = no animation
 	CURSOR								m_Cursor;				// Current cursor.
 	float								m_Fade;					// Fade-out effect. 0=black/quieter, 1=no fade

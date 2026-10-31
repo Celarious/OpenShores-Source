@@ -7016,6 +7016,7 @@ void DaWorldGasGiant::DeleteFloraDeviceObjects(AuGLEffects& re, AuGLModelMaker& 
 	mm.DeleteFloraModel(Id());
 
 	mm.DeleteFloraImages(Id());
+	mm.DeleteGrassImages(Id());
 
 	for(int rz=0; rz<ResourceZones(); rz++)
 	{
@@ -7426,9 +7427,12 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 			resourceZone = (*gi).m_ResourceZone;
 			if(!m_pFlora[resourceZone].Texture())
 			{
-				CreateFloraTextures(re, resourceZone);
+				CreateFloraTextures(re, mm, resourceZone);
 				if(!m_pFlora[resourceZone].Texture())
+				{
+					resourceZone = -1;
 					continue;
+				}
 			}
 			re.GLSL().FloraShader().SetTexture(m_pFlora[resourceZone].Texture());
 		}
@@ -7458,6 +7462,7 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 		AuGLVAO* vao = m_FloraVAOsHigh[(*gi).m_VAOIndex];
 		if(!vao || !vao->VAO())
 		{
+			if(!mm.LegacyDecorationStep()) continue;
 			// Create the specific VAO model we need.
 			if(!vao)
 			{
@@ -7515,9 +7520,12 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 			resourceZone = (*gi).m_ResourceZone;
 			if(!m_pFlora[resourceZone].Texture())
 			{
-				CreateFloraTextures(re, resourceZone);
+				CreateFloraTextures(re, mm, resourceZone);
 				if(!m_pFlora[resourceZone].Texture())
+				{
+					resourceZone = -1;
 					continue;
+				}
 			}
 			re.GLSL().FloraShader().SetTexture(m_pFlora[resourceZone].Texture());
 		}
@@ -7559,6 +7567,7 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 		AuGLVAO* vao = m_FloraVAOsHigh[(*gi).m_VAOIndex];
 		if(!vao || !vao->VAO())
 		{
+			if(!mm.LegacyDecorationStep()) continue;
 			// Create the specific VAO model we need.
 			if(!vao)
 			{
@@ -7612,9 +7621,12 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 			resourceZone = (*gi).m_ResourceZone;
 			if(!m_pFlora[resourceZone].Texture())
 			{
-				CreateFloraTextures(re, resourceZone);
+				CreateFloraTextures(re, mm, resourceZone);
 				if(!m_pFlora[resourceZone].Texture())
+				{
+					resourceZone = -1;
 					continue;
+				}
 			}
 			re.GLSL().FloraShader().SetTexture(m_pFlora[resourceZone].Texture());
 		}
@@ -7656,6 +7668,7 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 		AuGLVAO* vao = m_FloraVAOsHigh[(*gi).m_VAOIndex];
 		if(!vao || !vao->VAO())
 		{
+			if(!mm.LegacyDecorationStep()) continue;
 			// Create the specific VAO model we need.
 			if(!vao)
 			{
@@ -7756,9 +7769,12 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 					resourceZone = (*gi).m_ResourceZone;
 					if(!m_pFlora[resourceZone].Texture())
 					{
-						CreateFloraTextures(re, resourceZone);
+						CreateFloraTextures(re, mm, resourceZone);
 						if(!m_pFlora[resourceZone].Texture())
+						{
+							resourceZone = -1;
 							continue;
+						}
 					}
 					re.GLSL().AquaticFloraShader().SetTexture(m_pFlora[resourceZone].Texture());
 				}
@@ -7788,6 +7804,7 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 				AuGLVAO* vao = m_FloraVAOsHigh[(*gi).m_VAOIndex];
 				if(!vao || !vao->VAO())
 				{
+					if(!mm.LegacyDecorationStep()) continue;
 					// Create the specific VAO model we need.
 					if(!vao)
 					{
@@ -7855,9 +7872,12 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 					resourceZone = (*gi).m_ResourceZone;
 					if(!m_pFlora[resourceZone].Texture())
 					{
-						CreateFloraTextures(re, resourceZone);
+						CreateFloraTextures(re, mm, resourceZone);
 						if(!m_pFlora[resourceZone].Texture())
+						{
+							resourceZone = -1;
 							continue;
+						}
 					}
 					re.GLSL().AquaticFloraShader().SetTexture(m_pFlora[resourceZone].Texture());
 				}
@@ -7899,6 +7919,7 @@ void DaWorldGasGiant::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4
 				AuGLVAO* vao = m_FloraVAOsHigh[(*gi).m_VAOIndex];
 				if(!vao || !vao->VAO())
 				{
+					if(!mm.LegacyDecorationStep()) continue;
 					// Create the specific VAO model we need.
 					if(!vao)
 					{
@@ -8062,6 +8083,7 @@ void DaWorldGasGiant::RenderRocks(const AuMatrix4x4& projection, const AuMatrix4
 
 		if(!vao->VAO())
 		{
+			if(!mm.LegacyDecorationStep()) continue;
 			// Create the specific VAO model we need.
 			(*gi).CreateVAO(re, *vao);
 		}
@@ -8103,6 +8125,7 @@ void DaWorldGasGiant::RenderRocks(const AuMatrix4x4& projection, const AuMatrix4
 void DaWorldGasGiant::RenderHenges(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuAtomRenderInfo& ari,
 		float ambientR, float ambientG, float ambientB, float fogDensity, float fogR, float fogG, float fogB)
 {
+	if(!ari.mm.LegacyDecorationsReady(Id())) return;
 	// Check to see if we have any henges before doing this work.
 	if(!HasHenge())
 		return;
@@ -8116,7 +8139,7 @@ void DaWorldGasGiant::RenderHenges(const AuMatrix4x4& projection, const AuMatrix
 		// This does not create the open gl display list.
 		m_HengeColumn = dynamic_cast<Au3dsGLSLModelInstance*>(ari.Models().LoadModelThreaded(modelFile, true, 1));
 	}
-	else if(!m_HengeColumn->HasGLModel())
+	else if(!m_HengeColumn->HasGLModel() && ari.mm.LegacyDecorationStep())
 		m_HengeColumn->GLModel(*ari.re);					// GL display list isn't done yet. Attempt to create the GL display list.
 
 	if(!m_HengeFirePit)
@@ -8128,7 +8151,7 @@ void DaWorldGasGiant::RenderHenges(const AuMatrix4x4& projection, const AuMatrix
 		// This does not create the open gl display list.
 		m_HengeFirePit = dynamic_cast<Au3dsGLSLModelInstance*>(ari.Models().LoadModelThreaded(modelFile, true, 1));
 	}
-	else if(!m_HengeFirePit->HasGLModel())
+	else if(!m_HengeFirePit->HasGLModel() && ari.mm.LegacyDecorationStep())
 		m_HengeFirePit->GLModel(*ari.re);				// GL display list isn't done yet. Attempt to create the GL display list.
 
 	if(!m_HengeRock)
@@ -8140,8 +8163,15 @@ void DaWorldGasGiant::RenderHenges(const AuMatrix4x4& projection, const AuMatrix
 		// This does not create the open gl display list.
 		m_HengeRock = dynamic_cast<Au3dsGLSLModelInstance*>(ari.Models().LoadModelThreaded(modelFile, true, 1));
 	}
-	else if(!m_HengeRock->HasGLModel())
+	else if(!m_HengeRock->HasGLModel() && ari.mm.LegacyDecorationStep())
 		m_HengeRock->GLModel(*ari.re);					// GL display list isn't done yet. Attempt to create the GL display list.
+
+	if(g_Au.IsLegacyGeneration() && (!m_HengeColumn || !m_HengeColumn->HasGLModel()
+		|| !m_HengeFirePit || !m_HengeFirePit->HasGLModel() || !m_HengeRock || !m_HengeRock->HasGLModel()))
+	{
+		ari.mm.DeferLegacySceneWork();
+		return;
+	}
 
 	AuPoint globeP = model.Translation();		// Globe's position in eye space.
 
@@ -8376,7 +8406,8 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 			double d2 = (*tti).m_Loc2.Distance2(groundPos);
 			if(d0 < g_Au.DetailedTerrainRangeFt2() ||
 					d1 < g_Au.DetailedTerrainRangeFt2() ||
-					d2 < g_Au.DetailedTerrainRangeFt2())
+					d2 < g_Au.DetailedTerrainRangeFt2() ||
+					(g_Au.IsLegacyGeneration() && tti->OverlapsDetailRange(*this, groundPos, g_Au.DetailedTerrainRangeFt())))
 			{
 				// Triangle location is close enough to see high level of detail.
 				countAttempted++;
@@ -8482,7 +8513,8 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 			double d2 = (*tti).m_Loc2.Distance2(groundPos);
 			if(d0 < g_Au.DetailedTerrainRangeFt2() ||
 					d1 < g_Au.DetailedTerrainRangeFt2() ||
-					d2 < g_Au.DetailedTerrainRangeFt2())
+					d2 < g_Au.DetailedTerrainRangeFt2() ||
+					(g_Au.IsLegacyGeneration() && tti->OverlapsDetailRange(*this, groundPos, g_Au.DetailedTerrainRangeFt())))
 			{
 				// Triangle location is close enough to see high level of detail.
 				countAttempted++;
@@ -8534,6 +8566,8 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 	// viewer's position.
 	float clipCos;
 	AuPoint clipUp;
+	const bool terrainReady = countAttempted > 0 && countShown == countAttempted;
+	if(terrainReady) ari.mm.LegacyTerrainPrepared(Id());
 	if((float)countShown/(float)countAttempted < .7071f)
 	{
 		// We did not draw all of the highly tessellated ground patches. Don't make a hole until they are all present.
@@ -10123,127 +10157,28 @@ int DaWorldGasGiant::PopulationMax() const
 
 void DaWorldGasGiant::CreateGrassTexture(AuGLEffects& re, AuGLModelMaker& mm)
 {
-	if(!m_pFlora)
-		return;
-
-	quint32 genSeed = GenSeed();
-	//qDebug() << "DaWorldGasGiant::CreateGrassTexture" << Id() << Name();
-
-	// Get images of all the grasses on the planet.
-	QList<QImage> grasses;
-	for(int resourceZone=0; resourceZone<ResourceZones(); resourceZone++)
+	if(!m_pFlora) return;
+	QImage grass;
+	if(g_Au.IsLegacyGeneration())
 	{
-		QImage grass[3];
-		// QPixmap: It is not safe to use pixmaps outside the GUI thread
-		//if(!mm.GrassImages(grass[0], grass[1], grass[2], m_pFlora[resourceZone], Id(), genSeed, resourceZone))
-			//return;
-		m_pFlora[resourceZone].PaintGroundCover(grass[0], grass[1], grass[2], genSeed, resourceZone, m_tmFloraChange);
-
-		// Each grass image is actually 4 different ones, tiled 2x2.
-		for(int glat=0; glat<3; glat++)
-		{
-			int width = grass[glat].width()/2;
-			int height = grass[glat].height()/2;
-			QImage gsub(width, height, QImage::Format_ARGB32);
-
-			for(int tilex=0; tilex<width*2; tilex+=width)
-			{
-				for(int tiley=0; tiley<height*2; tiley+=height)
-				{
-					// Paint the subtile of the grass image into a single image of its own.
-					QPainter psub(&gsub);
-					psub.setCompositionMode(QPainter::CompositionMode_Clear);	// clear mode
-					psub.fillRect(0,0,width,height, QBrush(Qt::transparent));
-					psub.setCompositionMode(QPainter::CompositionMode_Source);
-					psub.drawImage(0,0, grass[glat], tilex,tiley);
-					psub.end();
-
-					//gsub.save(QString("%1x%2y%3_gsub.png").arg(Id().StringId()).arg(tilex).arg(tiley));
-					grasses.append(gsub.scaled(32,32));
-				}
-			}
-		}
+		if(!mm.GrassTexture(grass, m_pFlora, ResourceZones(), Id(), GenSeed(), m_tmFloraChange)) return;
+		if(!mm.LegacyDecorationStep()) return;
 	}
-	mm.DeleteGrassImages(Id());
-
-	// Prepare dice for consitent grass texture at this planet.
-	AuDice dice;
-	dice.Seed(genSeed);
-
-	const int tileSize = g_Au.GroundTextureSize();	// This texture is applied to the ground.
-	//qDebug() << "DaWorldGasGiant::CreateGrassTexture" << Id() << Name() << "grasses" << grasses.count() << "tileSize" << tileSize;
-
-	// Create a repeatable grassy texture tile using the images of local grasses. We will paint more and more grass into
-	// the image, grabbing copies of it at several steps along the way. That way the transition from ligth to moderate to dense
-	// vegetation connects nicely because the underlying texture remains the same, just more plants are added.
-	QImage imrep(tileSize*3, tileSize*3, QImage::Format_ARGB32);
-	imrep.fill(Qt::transparent);
-
-	QPainter prep;
-	prep.begin(&imrep);
-
-	// Draw a bunch of grass. Each iteration of the loop paints another layer of grass on top. After each iteration, we
-	// measure for the desired vegetation density due to variations between grasses; we can't always just draw a certain
-	// number of them.
-	float targetDensity = .9f;
-	float density;
-	int farside = tileSize*2;
-	do
-	{
-		// Select a grass image at random.
-		int grass = dice.Roll(1,grasses.count(),-1);
-
-		// Generate a random coordinate within a tile.
-		int ix = dice.Roll(1,tileSize,-1);
-		int iy = dice.Roll(1,tileSize,-1);
-
-		// Generate a random angle for this spot of grass.
-		int angle = dice.Roll(1,360,-1);
-
-		// Draw a tile pattern of the grasses.
-		for(int tx=0; tx<3; tx++)
-			for(int ty=0; ty<3; ty++)
-			{
-				prep.translate(ix + tx*tileSize, iy + ty*tileSize);
-				prep.rotate(angle);
-				prep.drawImage(0,0, grasses[grass]);
-				prep.resetTransform();
-			}
-
-		// Measure the current density in the center tile.
-		density = 0;
-		for(int tx=tileSize; tx<farside; tx++)
-			for(int ty=tileSize; ty<farside; ty++)
-			{
-				QRgb rgb = imrep.pixel(tx,ty);
-				float alpha = (float)qAlpha(rgb) / 255.f;
-				density += alpha;
-			}
-		density /= tileSize * tileSize;	// Average alpha of tile.
-	}
-	while(density < targetDensity);
-
-	prep.end();
-
-	// Copy the center tile from the 3x3 tile image to the grass texture.
-	QImage imgrass(tileSize, tileSize, QImage::Format_ARGB32);
-	imgrass.fill(Qt::transparent);
-	QPainter phigh(&imgrass);
-	phigh.drawImage(0,0, imrep, tileSize,tileSize, tileSize,tileSize);
-	phigh.end();
+	else
+		DePlanetFlora::PaintGroundTexture(grass, m_pFlora, ResourceZones(), GenSeed(), m_tmFloraChange);
 
 	QString texName = QString("%1GHigh").arg(Id().StringId());
-	m_glTexGrass = re.CreateTextureFromBitmap(Id().GetID(), texName, imgrass, GL_LINEAR, GL_LINEAR, true);
-	//qDebug() << "DaWorldGasGiant::CreateGrassTexture" << Id() << Name() << "finished" << texName;
+	m_glTexGrass = re.CreateTextureFromBitmap(Id().GetID(), texName, grass, GL_LINEAR, GL_LINEAR, true);
+	if(m_glTexGrass) mm.DeleteGrassImages(Id());
 }
 
-void DaWorldGasGiant::CreateFloraTextures(AuGLEffects& re, int resourceZone)
+void DaWorldGasGiant::CreateFloraTextures(AuGLEffects& re, AuGLModelMaker& mm, int resourceZone)
 {
 	Q_ASSERT(m_pFlora);											// Caller insured this to be true.
 	Q_ASSERT(!m_pFlora[resourceZone].Texture());				// Caller already checked this for us.
 	//qDebug("DaWorldGasGiant::CreateFloraTextures %d %s creating flora textures for zone %d", Id().GetID(),
 			//(const char*)Name().toAscii(), resourceZone);
-	m_pFlora[resourceZone].CreateDeviceObjects(re, Id(), GenSeed(), resourceZone, m_tmFloraChange);
+	mm.FloraTexture(re, m_pFlora[resourceZone], Id(), GenSeed(), resourceZone, m_tmFloraChange);
 	//qDebug("DaWorldGasGiant::CreateFloraTextures %d %s creating flora textures for zone %d done", Id().GetID(),
 			//(const char*)Name().toAscii(), resourceZone);
 }

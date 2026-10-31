@@ -1906,6 +1906,7 @@ AuDesignerView::AuDesignerView(QWidget* parent) : QOpenGLWidget(parent), m_Scene
 	m_IsDesignMode = false;
 	m_IsDesignPreview = false;
 	m_bWaitingForScene = false;		// True when waiting for scene atom to init.
+	m_WaitingForScenery = true;
 
 	OnViewResetCamera();
 
@@ -2230,9 +2231,12 @@ int AuDesignerView::SceneInterfaceWidth()
 void AuDesignerView::paintGL()
 {
 	bool showWait = m_bWaitingForScene || m_SceneAtomTransition || !auApp->IsSceneConnected();
+	if(showWait) m_WaitingForScenery = true;
 
 	//qDebug() << "AuDesignerView::paintGL";
 	RenderScene();
+	showWait = showWait || (g_Au.IsLegacyGeneration() && m_WaitingForScenery);
+	window()->setEnabled(!showWait);
 
 	if(showWait)
 	{
@@ -2269,7 +2273,7 @@ void AuDesignerView::paintGL()
 
 	ShowNetActivity();
 
-	RenderViewButtons();
+	if(!showWait) RenderViewButtons();
 
 	// Before this was done by AuModel.  ProcessControls();
 
@@ -2291,6 +2295,14 @@ void AuDesignerView::RenderScene()
 		// We have a scene atom.
 		CreateDeviceObjects(sceneAtom);				// Tell atoms to create scene data they need.
 		RenderScene(sceneAtom);						// Render the objects in the scene.
+		if(m_WaitingForScenery)
+		{
+			const DaWorldLL* world = sceneAtom->FindParentWorldInEnv();
+			const bool stagesReady = sceneAtom->InDesignEnvironment() || !world || !sceneAtom->IsInAtmosphere()
+				|| m_RenderInfo->mm.LegacyDecorationsReady(world->Id());
+			if(stagesReady && !m_RenderInfo->mm.LegacySceneWorkPending() && !m_RenderInfo->mm.IsBusy())
+				m_WaitingForScenery = false;
+		}
 		FinishScene();								// Unlock the scene atom.
 		ShowOrderLoc();
 	}
@@ -3024,6 +3036,7 @@ void AuDesignerView::SetSceneAtom(const AuId& idScene)
 	if(idScene.IsNull())
 	{
 		m_idSceneAtom = idScene;
+		m_WaitingForScenery = true;
 		m_SceneRendered = false;
 		DpConsole::RestoreAdjustments(m_idSceneAtom);			// Restore the scene atom's console screen adjustments.
 
@@ -3052,6 +3065,7 @@ void AuDesignerView::SetSceneAtom(const AuId& idScene)
 	{
 		// A new atom becomes the scene atom.
 		m_idSceneAtom = pSceneAtom->Id();
+		m_WaitingForScenery = true;
 		m_SceneRendered = false;
 		DpConsole::RestoreAdjustments(m_idSceneAtom);		// Restore the scene atom's console screen adjustments.
 
