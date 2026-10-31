@@ -11,6 +11,11 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
+if(APPLE)
+    # Prefer the selected Qt frameworks over stale /usr/local Qt headers.
+    set(CMAKE_NO_SYSTEM_FROM_IMPORTED ON)
+endif()
+
 set(AU_OUTPUT_ROOT "${CMAKE_BINARY_DIR}" CACHE PATH
     "Directory that receives executables and runtime libraries"
 )
@@ -88,6 +93,11 @@ target_link_libraries(AuPlatform INTERFACE
     OpenGL::GL
     OpenGL::GLU
 )
+
+if(APPLE)
+    find_library(AU_COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
+    target_link_libraries(AuPlatform INTERFACE "${AU_COREGRAPHICS_FRAMEWORK}")
+endif()
 
 add_subdirectory(lib)
 add_subdirectory(resources)
