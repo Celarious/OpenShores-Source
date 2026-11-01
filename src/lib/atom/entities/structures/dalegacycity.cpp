@@ -1503,7 +1503,9 @@ void DaLegacyCity::Runtime::MinePostTask::run()
 	job->finished.store(true, std::memory_order_release);
 }
 
-DaLegacyCity::DaLegacyCity() : m_Runtime(new Runtime) { m_Runtime->asynchronous = g_Au.IsSceneClient(); }
+// Model cities supply movement collision without ever being rendered. Keep
+// their queries synchronous; only scene replicas may wait for render readiness.
+DaLegacyCity::DaLegacyCity() : m_Runtime(new Runtime) {}
 DaLegacyCity::~DaLegacyCity() = default;
 DaLegacyCity::DaLegacyCity(const DaLegacyCity& city) : DaAtom(city), m_Runtime(new Runtime)
 {

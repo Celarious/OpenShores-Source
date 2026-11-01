@@ -64,6 +64,12 @@ AuCityReport DaLegacyCity::GatherCityReport(const State& state, const Population
 	if(DecodeAccounting(state.accounting, accounting, error)) report.m_LastTribute = accounting.lastTribute;
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!world) return report;
+	// CityCycle 0x278e1d reports the world's named, undeployed cadet only
+	// at an eligible academy, outside occupation and recent attacks.
+	const bool occupied = state.population && state.loyalPopulation
+		&& state.allegianceEmpire != state.controllingEmpire;
+	if(!occupied && !facts.context.underAttack && HasOfficerAcademy() && world->CaptId().IsNull())
+		report.m_CaptName = world->CaptName();
 	report.m_PlanetName = world->HtmlName();
 	report.m_PlanetDesc = world->Description();
 	world->LLOfLoc(report.m_LL, Location());
