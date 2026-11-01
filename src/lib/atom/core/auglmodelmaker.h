@@ -24,6 +24,11 @@ class DaWorldSphere;
 class DaWorldRingSection;
 class DePlanetFlora;
 class AuLegacyScModel;
+class AuSceneSkyBox;
+class AuSceneSkyBoxCache;
+class auNebula;
+class DaGalaxy;
+class AuGLEffects;
 class AuScDesign;
 class AuGLEffects;
 
@@ -494,6 +499,9 @@ public:
 	bool LegacySceneWorkPending() const { return m_LegacySceneWorkPending; }
 	void DeleteLegacySc(quint32 designId);
 	void ClearLegacySc(); // Call with the owning GL context current before teardown.
+	bool PrepareSceneSkyBox(AuGLEffects& re, const DaGalaxy& galaxy, const AuId& systemId,
+		const AuPoint& viewerInSectors, auNebula& sky, std::shared_ptr<AuSceneSkyBox>& handle);
+	void ClearSceneSkyBoxes(AuGLEffects* re = nullptr);
 
 	bool BdFrame(AuOpenGLFunctions& GLf, quint32 designId, COMMODITYID hullMaterial, int percentComplete, AuBdRender& bdRender); 
 
@@ -623,6 +631,7 @@ private:
 	QSet<AuId> m_LegacyTerrainReady;
 	QSet<AuId> m_LegacyBuildingsReady;
 	bool m_LegacySceneWorkPending = false;
+	std::unique_ptr<AuSceneSkyBoxCache> m_SceneSkyBoxes;
 	void RetainLegacySc(const QSharedPointer<AuLegacyScModel>& model);
 
 	unordered_multimap<quint32, AuBdFrame*, AuDesignIdHash>	m_BdFrame;			// Bd under construction models, key is design id

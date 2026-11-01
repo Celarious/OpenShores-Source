@@ -6,6 +6,7 @@
 
 #include "auglmodelmaker.h"
 #include "aulegacyscmodel.h"
+#include "ausceneskybox.h"
 #include "augleffects.h"
 //
 #include "aubddesign.h"
@@ -1532,6 +1533,19 @@ void AuGLModelMaker::DeleteLegacySc(quint32 designId)
 		model->Cancel();
 		m_LegacyScKeepAlive.removeAll(model);
 	}
+}
+
+bool AuGLModelMaker::PrepareSceneSkyBox(AuGLEffects& re, const DaGalaxy& galaxy, const AuId& systemId,
+	const AuPoint& viewerInSectors, auNebula& sky, std::shared_ptr<AuSceneSkyBox>& handle)
+{
+	if(!m_SceneSkyBoxes) m_SceneSkyBoxes.reset(new AuSceneSkyBoxCache(m_CacheEnabled));
+	return m_SceneSkyBoxes->Prepare(re, galaxy, systemId, viewerInSectors, sky, handle);
+}
+
+void AuGLModelMaker::ClearSceneSkyBoxes(AuGLEffects* re)
+{
+	if(m_SceneSkyBoxes) m_SceneSkyBoxes->Clear(re);
+	m_SceneSkyBoxes.reset();
 }
 
 void AuGLModelMaker::ClearLegacySc()

@@ -893,6 +893,9 @@ protected:
 	void ProcessControlInput(const DiControlInputArray& aActiveControls);
 
 	void ShowDesignerMenu();
+
+private:
+	void CreateModernBuildingDock();
 };
 
 #endif // AuDesignerFrame_H

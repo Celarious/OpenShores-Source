@@ -2359,7 +2359,12 @@ GLuint DaWorldLL::CreateTerrainTexture(AuGLEffects& re, WORLDTEX_TYPE worldTexTy
 	GLuint texId = 0;
 	const QString textureFile = legacyPavement ? AuLegacyBd::Geometry::SiteTextureFile(int(worldTexType))
 		: QString(":data/") + tileFile[worldTexType];
-	QString texName = QString("WTX%1.%2.%3").arg(worldTexType).arg(tileSize).arg(legacyPavement);
+	// Palette slots may share an image. Claim the existing texture before
+	// decoding and scaling; CreateTextureFromBitmap's cache lookup is too late
+	// to avoid repeating that CPU work. Sampling options below are fixed.
+	const QString texName = QStringLiteral("Terrain.%1.%2").arg(tileSize).arg(textureFile);
+	texId = re.UseTexture(STATIC_TEXTURE_ID, texName);
+	if(texId) return texId;
 	QImage imgTile(textureFile);
 	if(!imgTile.isNull())
 	{

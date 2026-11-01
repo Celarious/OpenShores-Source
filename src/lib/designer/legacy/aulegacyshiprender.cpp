@@ -22,6 +22,7 @@
 #include "dicontrolinput.h"
 #include "aujoystick.h"
 #include "auNebula.h"
+#include "auskyboxworker.h"
 #include "dagalaxy.h"
 #include "dhdna.h"
 #include "dpconsole.h"
@@ -50,14 +51,12 @@
 #include <QHideEvent>
 #include <QShowEvent>
 #include <QTimer>
-#include <QThread>
 #include <QKeyEvent>
 #include <QMap>
 #include <QMatrix4x4>
 #include <QMouseEvent>
 #include <QOpenGLBuffer>
 #include <QOpenGLContext>
-#include <QOffscreenSurface>
 #include <QOpenGLFunctions>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
@@ -141,162 +140,74 @@ SystemBindings LoadSystemBindings(const Station& station, int closeHullDoorsId =
 	return result;
 }
 
-struct SkyJob
+GLuint GenerateDesignerSky(AuGLEffects& re, const std::atomic<bool>& cancelled, QString& error,
+	unsigned int paneSize, bool mipMap)
 {
-	std::atomic<bool> cancelled{false};
-	std::mutex mutex;
+	QElapsedTimer clock;
+	clock.start();
+	DaGalaxy galaxy(ShoresOfHazeron);
+	AuDice dice;
+	dice.TimeSeed();
+	const quint32 seed = dice.Random();
+	AuPoint sector;
+	const int galaxyRadius = int(galaxy.Radius() / 10);
+	for(int attempt = 0; attempt < 64; ++attempt)
+	{
+		const int radius = dice.RandomMinMax(galaxyRadius * .8f, galaxyRadius * .95f);
+		sector = AuPoint(radius, 0).RotateZ(dice.RandomMinMax(0, 2 * Pi));
+		sector.Round(1);
+		if(galaxy.StarDensity(sector * 10) > 0) break;
+	}
+	const AuPoint system = sector + AuPoint(dice.RandomMinMax(-.45f, .45f),
+		dice.RandomMinMax(-.45f, .45f), dice.RandomMinMax(-.45f, .45f));
+	auNebula sky(0, 0, -2.9924924f, .38151205f, -1.8401746f, -1.8524430f,
+		30, 0, false, AuPoint(), seed, 0, galaxy.Color());
+	// The designer only needs a sparse outer-system sky. Sample its nearby
+	// 50-parsec neighborhood; scanning the entire galaxy adds millions of
+	// density queries and cloud quads to a cosmetic loading step.
+	const int nearbyRadius = 5;
+	for(int x = -nearbyRadius; x <= nearbyRadius && !cancelled; ++x)
+		for(int y = -nearbyRadius; y <= nearbyRadius; ++y)
+			for(int z = -nearbyRadius; z <= nearbyRadius; ++z)
+			{
+				const AuPoint neighbor = sector + AuPoint(x, y, z);
+				const float density = galaxy.StarDensity(neighbor * 10);
+				const double distance = (neighbor - system).Length() + 1;
+				const int stars = int(std::ceil(density * 50 / (distance * 8)));
+				for(int star = 0; star < stars; ++star)
+				{
+					const AuPoint offset(dice.RandomMinMax(-1, 1), dice.RandomMinMax(-1, 1),
+						dice.RandomMinMax(-1, 1));
+					sky.m_vStars.append(galParticle{neighbor + offset - system});
+				}
+			}
+	const qint64 samplingMs = clock.elapsed();
+	re.glDisable(GL_DEPTH_TEST);
+	re.glDisable(GL_CULL_FACE);
+	re.glDisable(GL_SCISSOR_TEST);
+	re.glActiveTexture(GL_TEXTURE0);
+	int face = 0;
+	for(; face < 6 && !cancelled; ++face)
+	{
+		if(!sky.CreateSkyBoxFace(re, system, paneSize, mipMap, face))
+		{
+			error = QStringLiteral("Unable to create the spacecraft preview skybox.");
+			break;
+		}
+	}
+	const qint64 facesMs = clock.elapsed() - samplingMs;
 	GLuint texture = 0;
-	bool done = false;
-	QString error;
-
-	void Cancel(AuGLEffects& re)
+	if(face == 6 && !cancelled)
 	{
-		std::lock_guard<std::mutex> lock(mutex);
-		cancelled = true;
-		if(texture) re.glDeleteTextures(1, &texture);
-		texture = 0;
+		texture = sky.m_img;
+		sky.m_img = 0;
 	}
-};
-
-// Only the completed texture crosses contexts. VAOs, shader uniforms and
-// galaxy data remain exclusively on the worker, which never accesses a widget.
-class SkyThread : public QThread
-{
-public:
-	std::shared_ptr<SkyJob> job;
-	QOpenGLContext* glContext;
-	QOffscreenSurface* surface;
-	unsigned int paneSize;
-	bool mipMap;
-
-	SkyThread(const std::shared_ptr<SkyJob>& work, QOpenGLContext* context,
-		QOffscreenSurface* target, unsigned int size, bool mip)
-		: job(work), glContext(context), surface(target), paneSize(size), mipMap(mip)
-	{
-		glContext->moveToThread(this);
-		connect(this, &QThread::finished, surface, &QObject::deleteLater);
-		connect(this, &QThread::finished, this, &QObject::deleteLater);
-	}
-
-	void run() override
-	{
-		QElapsedTimer clock;
-		clock.start();
-		qint64 contextMs = 0, shaderMs = 0, generationMs = 0;
-		QString error;
-		if(!job->cancelled && glContext->makeCurrent(surface))
-		{
-			contextMs = clock.elapsed();
-			{
-				AuGLEffects re;
-				if(re.initializeOpenGLFunctions())
-				{
-					const bool shadersReady = re.GLSL().InitializeSkyBox(re);
-					shaderMs = clock.elapsed() - contextMs;
-					if(shadersReady) Generate(re, error);
-					else error = QStringLiteral("Unable to initialize preview skybox shaders.");
-					generationMs = clock.elapsed() - contextMs - shaderMs;
-					re.GLSL().DeleteSkyBox();
-				}
-				else error = QStringLiteral("Unable to initialize preview skybox OpenGL functions.");
-			}
-			glContext->doneCurrent();
-		}
-		else if(!job->cancelled) error = QStringLiteral("Unable to activate the preview skybox context.");
-		delete glContext;
-		if(qEnvironmentVariableIsSet("HAZERON_LEGACY_STARTUP_STATS"))
-			qInfo() << "Legacy designer sky worker: context" << contextMs << "ms, shaders"
-				<< shaderMs << "ms, generation" << generationMs << "ms, total" << clock.elapsed() << "ms";
-		std::lock_guard<std::mutex> lock(job->mutex);
-		job->error = error;
-		job->done = true;
-	}
-
-	void Generate(AuGLEffects& re, QString& error)
-	{
-		QElapsedTimer clock;
-		clock.start();
-		DaGalaxy galaxy(ShoresOfHazeron);
-		AuDice dice;
-		dice.TimeSeed();
-		const quint32 seed = dice.Random();
-		AuPoint sector;
-		const int galaxyRadius = int(galaxy.Radius() / 10);
-		for(int attempt = 0; attempt < 64; ++attempt)
-		{
-			const int radius = dice.RandomMinMax(galaxyRadius * .8f, galaxyRadius * .95f);
-			sector = AuPoint(radius, 0).RotateZ(dice.RandomMinMax(0, 2 * Pi));
-			sector.Round(1);
-			if(galaxy.StarDensity(sector * 10) > 0) break;
-		}
-		const AuPoint system = sector + AuPoint(dice.RandomMinMax(-.45f, .45f),
-			dice.RandomMinMax(-.45f, .45f), dice.RandomMinMax(-.45f, .45f));
-		auNebula sky(0, 0, -2.9924924f, .38151205f, -1.8401746f, -1.8524430f,
-			30, 0, false, AuPoint(), seed, 0, galaxy.Color());
-		// The designer only needs a sparse outer-system sky. Sample its nearby
-		// 50-parsec neighborhood; scanning the entire galaxy adds millions of
-		// density queries and cloud quads to a cosmetic loading step.
-		const int nearbyRadius = 5;
-		for(int x = -nearbyRadius; x <= nearbyRadius && !job->cancelled; ++x)
-			for(int y = -nearbyRadius; y <= nearbyRadius; ++y)
-				for(int z = -nearbyRadius; z <= nearbyRadius; ++z)
-				{
-					const AuPoint neighbor = sector + AuPoint(x, y, z);
-					const float density = galaxy.StarDensity(neighbor * 10);
-					const double distance = (neighbor - system).Length() + 1;
-					const int stars = int(std::ceil(density * 50 / (distance * 8)));
-					for(int star = 0; star < stars; ++star)
-					{
-						const AuPoint offset(dice.RandomMinMax(-1, 1), dice.RandomMinMax(-1, 1),
-							dice.RandomMinMax(-1, 1));
-						sky.m_vStars.append(galParticle{neighbor + offset - system});
-					}
-				}
-		const qint64 samplingMs = clock.elapsed();
-		re.glDisable(GL_DEPTH_TEST);
-		re.glDisable(GL_CULL_FACE);
-		re.glDisable(GL_SCISSOR_TEST);
-		re.glActiveTexture(GL_TEXTURE0);
-		int face = 0;
-		for(; face < 6 && !job->cancelled; ++face)
-		{
-			if(!sky.CreateSkyBoxFace(re, system, paneSize, mipMap, face))
-			{
-				error = QStringLiteral("Unable to create the spacecraft preview skybox.");
-				break;
-			}
-		}
-		const qint64 facesMs = clock.elapsed() - samplingMs;
-		if(face == 6 && !job->cancelled)
-		{
-			// Finish here before publishing; painting never waits for the worker.
-			re.glFinish();
-			std::lock_guard<std::mutex> lock(job->mutex);
-			if(!job->cancelled)
-			{
-				job->texture = sky.m_img;
-				sky.m_img = 0;
-			}
-		}
-		if(qEnvironmentVariableIsSet("HAZERON_LEGACY_STARTUP_STATS"))
-			qInfo() << "Legacy designer sky generation: sampling" << samplingMs << "ms, faces"
-				<< facesMs << "ms, GPU completion" << clock.elapsed() - samplingMs - facesMs
-				<< "ms, stars" << sky.m_vStars.size() << ", pane" << paneSize << ", mipmaps" << mipMap;
-		sky.DeleteDeviceObjects(re);
-		// AuGLTexture's destructor intentionally does not delete GL names.
-		// These caches belong only to this worker, even in the shared group.
-		const QString textureIds[] = {QStringLiteral("StarGlow"), QStringLiteral("StarSpriteDot")};
-		for(const QString& textureId : textureIds)
-		{
-			if(auto* texture = re.FindTexture(textureId))
-			{
-				const GLuint name = texture->GlName();
-				re.glDeleteTextures(1, &name);
-				re.DeleteTexture(STATIC_TEXTURE_ID, textureId);
-			}
-		}
-	}
-};
+	if(qEnvironmentVariableIsSet("HAZERON_LEGACY_STARTUP_STATS"))
+		qInfo() << "Legacy designer sky generation: sampling" << samplingMs << "ms, faces"
+			<< facesMs << "ms, stars" << sky.m_vStars.size() << ", pane" << paneSize << ", mipmaps" << mipMap;
+	sky.DeleteDeviceObjects(re);
+	return texture;
+}
 
 struct TextureRegion
 {
@@ -596,7 +507,7 @@ public:
 	std::vector<std::unique_ptr<PsEngineTrail>> contrails;
 	GLuint contrailStreak = 0, contrailGlow = 0;
 	std::unique_ptr<auNebula> sky;
-	std::shared_ptr<SkyJob> skyJob;
+	std::shared_ptr<AuSkyBoxJob> skyJob;
 	QString skyError;
 	unsigned int skyPaneSize = 0;
 	bool skyMipMap = false;
@@ -2735,32 +2646,10 @@ void AuLegacyShipRender::PrepareSky()
 		re.glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 		re.glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
-		// Qt requires offscreen surface creation/destruction on the GUI thread.
-		// Establish sharing before the widget's context can be destroyed, then
-		// transfer the worker context; all generation runs on SkyThread.
-		auto* workerContext = new QOpenGLContext;
-		workerContext->setFormat(context()->format());
-		workerContext->setShareContext(context());
-		if(!QOpenGLContext::supportsThreadedOpenGL() || !workerContext->create()
-			|| !QOpenGLContext::areSharing(context(), workerContext))
-		{
-			delete workerContext;
-			m_Impl->skyError = QStringLiteral("Unable to create a shared preview skybox context.");
-			return;
-		}
-		auto* surface = new QOffscreenSurface;
-		surface->setFormat(workerContext->format());
-		surface->create();
-		if(!surface->isValid())
-		{
-			delete surface;
-			delete workerContext;
-			m_Impl->skyError = QStringLiteral("Unable to create the preview skybox surface.");
-			return;
-		}
-		m_Impl->skyJob = std::make_shared<SkyJob>();
-		auto* worker = new SkyThread(m_Impl->skyJob, workerContext, surface, paneSize, mipMap);
-		worker->start(QThread::LowPriority);
+		m_Impl->skyJob = AuStartSkyBoxJob(context(),
+			[paneSize, mipMap](AuGLEffects& worker, const std::atomic<bool>& cancelled, QString& error) {
+				return GenerateDesignerSky(worker, cancelled, error, paneSize, mipMap);
+			}, m_Impl->skyError);
 	}
 	if(m_Impl->skyJob)
 	{

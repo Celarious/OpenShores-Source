@@ -12,6 +12,8 @@
 #include "auscface.h"
 #include "hashpack.h"
 #include <QFile>
+#include <QCoreApplication>
+#include <QThread>
 #include <limits>
 #include <cmath>
 
@@ -61,6 +63,20 @@ bool AuGLVAO::IntersectsFrustum(const AuViewFrustum& frustum, const AuMatrix4x4&
 
 // Compressed source loaded from glsl.har. Only contains data during Initialize.
 thread_local QHash<QString, QByteArray>	s_GLSLProgramSrc;
+
+static void ReportSkyBoxShaderError(const QString& title, const QString& message)
+{
+	// Worker failures are harvested by the owning view. QWidget error dialogs
+	// may only be created on the GUI thread; preserve them for ordinary builds.
+	if(!QCoreApplication::instance()
+		|| QThread::currentThread() != QCoreApplication::instance()->thread())
+	{
+		qWarning().noquote() << title << message;
+		return;
+	}
+	AuGLSLErr dialog(title, message);
+	dialog.exec();
+}
 
 static void LoadLegacySurfaceShaders()
 {
@@ -1240,15 +1256,17 @@ AuGLSL::~AuGLSL()
 bool AuGLSL::InitializeSkyBox(AuOpenGLFunctions& GLf)
 {
 	m_GLf = &GLf;
-	m_MaxLights = 0;
+	m_MaxLights = 1;
 	Hashpack::ReadFiles(":glsl.har", s_GLSLProgramSrc);
-	const AuGLSLProgramOpt opt(0);
+	const AuGLSLProgramOpt opt(1);
 	m_FarStar->Build(GLf, opt);
 	m_GalaxyStar->Build(GLf, opt);
 	m_GalaxyCloud->Build(GLf, opt);
+	m_Nebula->Build(GLf, opt);
 	s_GLSLProgramSrc.clear();
 	DeselectProgram();
-	return m_FarStar->IsLinked() && m_GalaxyStar->IsLinked() && m_GalaxyCloud->IsLinked();
+	return m_FarStar->IsLinked() && m_GalaxyStar->IsLinked()
+		&& m_GalaxyCloud->IsLinked() && m_Nebula->IsLinked();
 }
 
 void AuGLSL::DeleteSkyBox()
@@ -1257,6 +1275,7 @@ void AuGLSL::DeleteSkyBox()
 	m_FarStar->DeleteGL();
 	m_GalaxyStar->DeleteGL();
 	m_GalaxyCloud->DeleteGL();
+	m_Nebula->DeleteGL();
 }
 
 void AuGLSL::Initialize(AuOpenGLFunctions& GLf, unsigned int maxLights)
@@ -1666,10 +1685,9 @@ AuGLSLShader::AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QStr
 	{
 		// Abort if a program source fails to load.
 		QString title = QObject::tr("%1 Load Error").arg(shaderType == GL_VERTEX_SHADER ? "Vertex Shader" : "Fragment Shader");
-		AuGLSLErr mb(title,
+		ReportSkyBoxShaderError(title,
 				QObject::tr("<html>Failed to load shader %1.<br>"
 					"This is a critical error. The program must abort.</html>").arg(shaderName));
-		mb.exec();
 		//exit(-1);
 		m_Shader = 0;
 		return;
@@ -1677,6 +1695,12 @@ AuGLSLShader::AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QStr
 
 	// Create an OpenGL shader object.
 	m_Shader = GLf.glCreateShader(shaderType);
+	if(!m_Shader)
+	{
+		ReportSkyBoxShaderError(QObject::tr("Shader Creation Error"),
+			QObject::tr("Unable to create shader %1.").arg(shaderName));
+		return;
+	}
 
 	// Read the source code from the hash table of compressed source code.
 	QByteArray src = AuUncompress(*psi, __FILE__, __LINE__,shaderName);
@@ -1715,10 +1739,10 @@ AuGLSLShader::AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QStr
 		{
 			// Abort if we fail to load the light code.
 			QString title = QObject::tr("%1 Load Error").arg(shaderType == GL_VERTEX_SHADER ? "Vertex Shader" : "Fragment Shader");
-			AuGLSLErr mb(title,
+			ReportSkyBoxShaderError(title,
 					QObject::tr("<html>Failed to include H_SunLightGlobe.glsl in shader %1.<br>"
 						"This is a critical error. The program must abort.</html>").arg(shaderName));
-			mb.exec();
+			GLf.glDeleteShader(m_Shader);
 			//exit(-1);
 			m_Shader = 0;
 			return;
@@ -1733,10 +1757,10 @@ AuGLSLShader::AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QStr
 		{
 			// Abort if we fail to load the light code.
 			QString title = QObject::tr("%1 Load Error").arg(shaderType == GL_VERTEX_SHADER ? "Vertex Shader" : "Fragment Shader");
-			AuGLSLErr mb(title,
+			ReportSkyBoxShaderError(title,
 					QObject::tr("<html>Failed to include LightRingworld.glsl in shader %1.<br>"
 						"This is a critical error. The program must abort.</html>").arg(shaderName));
-			mb.exec();
+			GLf.glDeleteShader(m_Shader);
 			//exit(-1);
 			m_Shader = 0;
 			return;
@@ -1751,10 +1775,10 @@ AuGLSLShader::AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QStr
 		{
 			// Abort if we fail to load the light code.
 			QString title = QObject::tr("%1 Load Error").arg(shaderType == GL_VERTEX_SHADER ? "Vertex Shader" : "Fragment Shader");
-			AuGLSLErr mb(title,
+			ReportSkyBoxShaderError(title,
 					QObject::tr("<html>Failed to include H_SunLight.glsl in shader %1.<br>"
 						"This is a critical error. The program must abort.</html>").arg(shaderName));
-			mb.exec();
+			GLf.glDeleteShader(m_Shader);
 			//exit(-1);
 			m_Shader = 0;
 			return;
@@ -1784,11 +1808,12 @@ AuGLSLShader::AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QStr
 	{
 		// Abort if a program fails to compile.
 		QString title = QObject::tr("%1 Compile Error").arg(shaderType == GL_VERTEX_SHADER ? "Vertex Shader" : "Fragment Shader");
-		AuGLSLErr mb(title,
+		ReportSkyBoxShaderError(title,
 				QObject::tr("<html>Failed to compile shader %1.<br>"
 					"This is a critical error. "
 					"The program must abort.<br><br>%2</html>").arg(shaderName).arg(GetInfoLog(GLf)));
-		mb.exec();
+		GLf.glDeleteShader(m_Shader);
+		m_Shader = 0;
 		//exit(-1);
 	}
 }
@@ -2196,12 +2221,26 @@ void AuGLSLFarStar::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 		qDebug() << "AuGLSLFarStar::Build";
 	Q_ASSERT(!m_Program);
 	m_Program = m_GLf->glCreateProgram();
+	if(!m_Program)
+	{
+		ReportSkyBoxShaderError(QObject::tr("Shader Creation Error"),
+			QObject::tr("Unable to create a skybox shader program."));
+		return;
+	}
 
 	// Load and compile source code for individual shaders that comprise the shader program.
 	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "FarStar.v", opt.MaxLights());
+	if(!vs.Id()) { DeleteGL(); return; }
 	m_GLf->glAttachShader(m_Program, vs.Id());
 
 	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, "FarStar.f");
+	if(!fs.Id())
+	{
+		m_GLf->glDetachShader(m_Program, vs.Id());
+		m_GLf->glDeleteShader(vs.Id());
+		DeleteGL();
+		return;
+	}
 	m_GLf->glAttachShader(m_Program, fs.Id());
 
 	// Bind user defined 'in' variables to vertex attribute indices.
@@ -2219,13 +2258,12 @@ void AuGLSLFarStar::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 #endif
 	if(!linked)
 	{
-		AuGLSLErr mb(QObject::tr("Shader Linking Error"),
+		ReportSkyBoxShaderError(QObject::tr("Shader Linking Error"),
 				QObject::tr("<html>Failed to link <b>%2</b> shader.<br>"
 					"This is a critical error. "
 					"The program must abort.<br><br>%1</html>")
 				.arg(GetProgramInfoLog())
 				.arg("FarStar"));
-		mb.exec();
 		//exit(-1);
 	}
 
@@ -2235,6 +2273,8 @@ void AuGLSLFarStar::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 
 	m_GLf->glDetachShader(m_Program, fs.Id());
 	m_GLf->glDeleteShader(fs.Id());
+
+	if(!linked) { DeleteGL(); return; }
 
 	// Install program object as part of current GL state so we can query locations of uniform variables.
 	m_GLf->glUseProgram(m_Program);
@@ -2256,12 +2296,26 @@ void AuGLSLGalaxyStar::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt
 		qDebug() << "AuGLSLGalaxyStar::Build";
 	Q_ASSERT(!m_Program);
 	m_Program = m_GLf->glCreateProgram();
+	if(!m_Program)
+	{
+		ReportSkyBoxShaderError(QObject::tr("Shader Creation Error"),
+			QObject::tr("Unable to create a skybox shader program."));
+		return;
+	}
 
 	// Load and compile source code for individual shaders that comprise the shader program.
 	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "GalaxyStar.v", opt.MaxLights());
+	if(!vs.Id()) { DeleteGL(); return; }
 	m_GLf->glAttachShader(m_Program, vs.Id());
 
 	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, "GalaxyStar.f");
+	if(!fs.Id())
+	{
+		m_GLf->glDetachShader(m_Program, vs.Id());
+		m_GLf->glDeleteShader(vs.Id());
+		DeleteGL();
+		return;
+	}
 	m_GLf->glAttachShader(m_Program, fs.Id());
 
 	// Bind user defined 'in' variables to vertex attribute indices.
@@ -2279,13 +2333,12 @@ void AuGLSLGalaxyStar::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt
 #endif
 	if(!linked)
 	{
-		AuGLSLErr mb(QObject::tr("Shader Linking Error"),
+		ReportSkyBoxShaderError(QObject::tr("Shader Linking Error"),
 				QObject::tr("<html>Failed to link <b>%2</b> shader.<br>"
 					"This is a critical error. "
 					"The program must abort.<br><br>%1</html>")
 				.arg(GetProgramInfoLog())
 				.arg("GalaxyStar"));
-		mb.exec();
 		//exit(-1);
 	}
 
@@ -2295,6 +2348,8 @@ void AuGLSLGalaxyStar::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt
 
 	m_GLf->glDetachShader(m_Program, fs.Id());
 	m_GLf->glDeleteShader(fs.Id());
+
+	if(!linked) { DeleteGL(); return; }
 
 	// Install program object as part of current GL state so we can query locations of uniform variables.
 	m_GLf->glUseProgram(m_Program);
@@ -2319,12 +2374,26 @@ void AuGLSLGalaxyCloud::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& op
 		qDebug() << "AuGLSLGalaxyCloud::Build";
 	Q_ASSERT(!m_Program);
 	m_Program = m_GLf->glCreateProgram();
+	if(!m_Program)
+	{
+		ReportSkyBoxShaderError(QObject::tr("Shader Creation Error"),
+			QObject::tr("Unable to create a skybox shader program."));
+		return;
+	}
 
 	// Load and compile source code for individual shaders that comprise the shader program.
 	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "GalaxyCloud.v", opt.MaxLights());
+	if(!vs.Id()) { DeleteGL(); return; }
 	m_GLf->glAttachShader(m_Program, vs.Id());
 
 	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, "GalaxyCloud.f");
+	if(!fs.Id())
+	{
+		m_GLf->glDetachShader(m_Program, vs.Id());
+		m_GLf->glDeleteShader(vs.Id());
+		DeleteGL();
+		return;
+	}
 	m_GLf->glAttachShader(m_Program, fs.Id());
 
 	// Bind user defined 'in' variables to vertex attribute indices.
@@ -2343,13 +2412,12 @@ void AuGLSLGalaxyCloud::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& op
 #endif
 	if(!linked)
 	{
-		AuGLSLErr mb(QObject::tr("Shader Linking Error"),
+		ReportSkyBoxShaderError(QObject::tr("Shader Linking Error"),
 				QObject::tr("<html>Failed to link <b>%2</b> shader.<br>"
 					"This is a critical error. "
 					"The program must abort.<br><br>%1</html>")
 				.arg(GetProgramInfoLog())
 				.arg("GalaxyCloud"));
-		mb.exec();
 		//exit(-1);
 	}
 
@@ -2359,6 +2427,8 @@ void AuGLSLGalaxyCloud::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& op
 
 	m_GLf->glDetachShader(m_Program, fs.Id());
 	m_GLf->glDeleteShader(fs.Id());
+
+	if(!linked) { DeleteGL(); return; }
 
 	// Install program object as part of current GL state so we can query locations of uniform variables.
 	m_GLf->glUseProgram(m_Program);
@@ -2381,12 +2451,26 @@ void AuGLSLNebula::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 		qDebug() << "AuGLSLNebula::Build";
 	Q_ASSERT(!m_Program);
 	m_Program = m_GLf->glCreateProgram();
+	if(!m_Program)
+	{
+		ReportSkyBoxShaderError(QObject::tr("Shader Creation Error"),
+			QObject::tr("Unable to create a skybox shader program."));
+		return;
+	}
 
 	// Load and compile source code for individual shaders that comprise the shader program.
 	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "Nebula.v", opt.MaxLights());
+	if(!vs.Id()) { DeleteGL(); return; }
 	m_GLf->glAttachShader(m_Program, vs.Id());
 
 	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, "Nebula.f");
+	if(!fs.Id())
+	{
+		m_GLf->glDetachShader(m_Program, vs.Id());
+		m_GLf->glDeleteShader(vs.Id());
+		DeleteGL();
+		return;
+	}
 	m_GLf->glAttachShader(m_Program, fs.Id());
 
 	// Bind user defined 'in' variables to vertex attribute indices.
@@ -2406,13 +2490,12 @@ void AuGLSLNebula::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 #endif
 	if(!linked)
 	{
-		AuGLSLErr mb(QObject::tr("Shader Linking Error"),
+		ReportSkyBoxShaderError(QObject::tr("Shader Linking Error"),
 				QObject::tr("<html>Failed to link <b>%2</b> shader.<br>"
 					"This is a critical error. "
 					"The program must abort.<br><br>%1</html>")
 				.arg(GetProgramInfoLog())
 				.arg("Nebula"));
-		mb.exec();
 		//exit(-1);
 	}
 
@@ -2422,6 +2505,8 @@ void AuGLSLNebula::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 
 	m_GLf->glDetachShader(m_Program, fs.Id());
 	m_GLf->glDeleteShader(fs.Id());
+
+	if(!linked) { DeleteGL(); return; }
 
 	// Install program object as part of current GL state so we can query locations of uniform variables.
 	m_GLf->glUseProgram(m_Program);

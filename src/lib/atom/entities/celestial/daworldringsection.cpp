@@ -3960,6 +3960,14 @@ GLuint DaWorldRingSection::CreateAtLookupTable(AuGLEffects &re, float maxAltMSL,
 void DaWorldRingSection::CreateGrassTexture(AuGLEffects& re, AuGLModelMaker& mm)
 {
 	if(!m_pFlora) return;
+	const QString texName = QString("%1GHigh").arg(Id().StringId());
+	// Reuse the view's world texture before regenerating its grass image.
+	m_glTexGrass = re.UseTexture(Id().GetID(), texName);
+	if(m_glTexGrass)
+	{
+		mm.DeleteGrassImages(Id());
+		return;
+	}
 	QImage grass;
 	if(g_Au.IsLegacyGeneration())
 	{
@@ -3969,7 +3977,6 @@ void DaWorldRingSection::CreateGrassTexture(AuGLEffects& re, AuGLModelMaker& mm)
 	else
 		DePlanetFlora::PaintGroundTexture(grass, m_pFlora, ResourceZones(), GenSeed(), m_tmFloraChange);
 
-	QString texName = QString("%1GHigh").arg(Id().StringId());
 	m_glTexGrass = re.CreateTextureFromBitmap(Id().GetID(), texName, grass, GL_LINEAR, GL_LINEAR, true);
 	if(m_glTexGrass) mm.DeleteGrassImages(Id());
 }

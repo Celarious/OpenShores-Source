@@ -50,6 +50,9 @@ public:
 	GLuint								m_img;
 	QVector<nebParticle>				m_vNebula;
 	QVector<galParticle>				m_vStars;		// These stars depict the stars in our Galaxy and the blue aura clouds.
+	// Original sampler inputs captured by the scene before worker submission.
+	AuPoint m_GalacticSector;
+	AuDice m_GalacticDice;
 	// These stars depict the rest of the stars in the Universe we can faintly see 
 	QVector<AuPoint>					m_vUniStars;
 	int		m_iParticles;		// Number of particles to generate nebula
@@ -87,6 +90,16 @@ public:
 	// Append one X slice and return the next X. Start at -galaxy.Radius()/10
 	// with an empty star array; finish when X exceeds galaxy.Radius()/10.
 	int AppendGalacticStarFieldSlice(const DaGalaxy& galaxy, const AuPoint& sectorLoc, AuDice& dice, int x);
+	// CPU-only preparation. Retains the original sampling, seeded nebula and colours.
+	void PrepareCachedGalacticStarField(const DaGalaxy& galaxy, const AuPoint& sectorLoc,
+		const AuDice& dice, quint64 galaxyIdentity);
+	void PrepareCachedNebula();
+	void PrepareSkyBoxGeometry();
+	// Incremental uploads allocate one buffer or copy at most 4 MiB per call.
+	// Call until true before starting face zero; false uploads everything at once.
+	bool UploadSkyBoxGeometry(AuGLEffects& re, bool incremental = true);
+	// Opt in only on background jobs; retain draw ordering while yielding between batches.
+	void SetSkyBoxWorkSliced(bool enabled) { m_SlicedWork = enabled; }
 
 	void DeleteDeviceObjects(AuOpenGLFunctions& GLf);
 
@@ -132,6 +145,19 @@ public:
 	}
 
 private:
+	bool m_CachedNebulaPrepared;
+	bool m_SlicedWork;
+	bool m_CpuGeometryPrepared;
+	int m_GeometryUploadStage;
+	qint64 m_GeometryUploadOffset;
+	QVector<GLfloat> m_CloudPositions, m_CloudTexCoords;
+	QVector<GLfloat> m_GalaxyPositions, m_UniversePositions;
+	QVector<GLfloat> m_NebulaTexCoords, m_NebulaColors;
+	AuGLVAO m_GalaxyCloudVAO, m_GalaxyStarsVAO, m_UniverseStarsVAO, m_NebulaVAO;
+	void DeletePreparedGeometry();
+	void DrawPreparedGeometry(AuGLEffects& re, AuGLVAO& vao, GLenum mode, int vertices, int attributes);
+	void RenderGalacticCloud(AuGLEffects& re, const AuMatrix4x4& projection,
+		const AuMatrix4x4& model, GLuint texture);
 	bool BuildSkyBox(AuGLEffects& re, const AuPoint& pos, unsigned int paneSize, bool mipMap, int face);
 	void RenderNebula(double distance, AuGLEffects& re, const AuMatrix4x4& projection, const AuMatrix4x4& model, GLuint texture);
 	void RenderStars(float starDotSize, AuGLEffects& re, const AuMatrix4x4& projection, const AuMatrix4x4& model, GLuint texture,

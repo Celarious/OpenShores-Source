@@ -1027,6 +1027,7 @@ void AuDesignerFrame::ToggleBuildingUi()
 		return;
 	}
 	if(m_LegacyCityLaborDock) m_LegacyCityLaborDock->hide();
+	if(m_CommDock) CreateModernBuildingDock();
 	if(m_BuildingDock)
 	{
 		if(m_View && m_View->SceneContext() != SCENE_Universe)
@@ -2229,6 +2230,19 @@ void AuDesignerFrame::ClientUnitEmpireReceived(quint32 empireId)
 		StarMapInit(empireId);
 }
 
+void AuDesignerFrame::CreateModernBuildingDock()
+{
+	if(m_BuildingDock || g_Au.IsLegacyGeneration()) return;
+	m_BuildingDock = new AuBuildingDock(this);
+	addDockWidget(Qt::RightDockWidgetArea, m_BuildingDock, Qt::Vertical);
+	m_BuildingDock->hide();
+	m_BuildingDock->setFloating(true);
+	m_DockBars.m_DockWidgets.append(AuFrameDock(m_BuildingDock));
+	connect(m_BuildingDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+		if(visible && g_Au.IsLegacyGeneration()) m_BuildingDock->hide();
+	});
+}
+
 void AuDesignerFrame::CreateDockWidgets()
 {
 	//qDebug() << "AuDesignerFrame::CreateDockWidgets";
@@ -2668,19 +2682,14 @@ void AuDesignerFrame::CreateDockWidgets()
 		m_BdExchangeDock->setFloating(true);
 		m_DockBars.m_DockWidgets.append(AuFrameDock(m_BdExchangeDock));
 
-		// Bd Building window
-		m_BuildingDock = new AuBuildingDock(this);
-		addDockWidget(Qt::RightDockWidgetArea, m_BuildingDock, Qt::Vertical);
-		m_BuildingDock->hide();
-		m_BuildingDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_BuildingDock));
+		// Legacy uses its own F10 labor window. Avoid constructing the unused
+		// modern building pages and loading their interface assets during login.
+		if(!g_Au.IsLegacyGeneration())
+			CreateModernBuildingDock();
 		// Dock menus and restored layouts must respect the same generation
 		// boundary as F10/F11, including attempts to show a modern dock directly.
 		connect(m_ConstructionDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
 			if(visible && g_Au.IsLegacyGeneration()) m_ConstructionDock->hide();
-		});
-		connect(m_BuildingDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
-			if(visible && g_Au.IsLegacyGeneration()) m_BuildingDock->hide();
 		});
 
 		// Locator System Map

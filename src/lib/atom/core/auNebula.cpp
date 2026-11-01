@@ -10,10 +10,22 @@
 #include "auglobal.h"
 #include "aunoise.h"
 #include "dagalaxy.h"
+#include <QDataStream>
+#include <QThread>
+#include <condition_variable>
+#include <list>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
 #define FARPOINT 2.5980762113533159402911695122588	//.3*sqrt(75);	// Farthest point possible away from nebula to be visible
 
 auNebula::auNebula()
 {
+	m_CachedNebulaPrepared = false;
+	m_SlicedWork = false;
+	m_CpuGeometryPrepared = false;
+	m_GeometryUploadStage = 0;
+	m_GeometryUploadOffset = -1;
 	m_CloudDensity = 0;
 	m_CloudTexture = 0;
 	m_CoreRadPc = DaGalaxy::CoreRadius(ShoresOfHazeron);	// Radius of the galaxy core in pc.
@@ -37,6 +49,11 @@ auNebula::auNebula()
 auNebula::auNebula(int iParticles, int iStars, float fA, float fB, float fC, float fD,
 				   float fParticleSize, int iColor, bool bReverse, AuPoint center, int seed, int type, const QColor& galaxyColor)
 {
+	m_CachedNebulaPrepared = false;
+	m_SlicedWork = false;
+	m_CpuGeometryPrepared = false;
+	m_GeometryUploadStage = 0;
+	m_GeometryUploadOffset = -1;
 	m_CloudDensity = 0;
 	m_CloudTexture = 0;
 	m_CoreRadPc = DaGalaxy::CoreRadius(ShoresOfHazeron);	// Radius of the galaxy core in pc.
@@ -58,8 +75,15 @@ auNebula::auNebula(int iParticles, int iStars, float fA, float fB, float fC, flo
 	m_img = 0;
 }
 
-auNebula::auNebula(const auNebula &rhs) : m_vNebula(rhs.m_vNebula), m_vStars(rhs.m_vStars)
+auNebula::auNebula(const auNebula &rhs) : m_vNebula(rhs.m_vNebula), m_vStars(rhs.m_vStars), m_vUniStars(rhs.m_vUniStars)
 {
+	m_CachedNebulaPrepared = rhs.m_CachedNebulaPrepared;
+	m_SlicedWork = false;
+	m_CpuGeometryPrepared = false;
+	m_GeometryUploadStage = 0;
+	m_GeometryUploadOffset = -1;
+	m_GalacticSector = rhs.m_GalacticSector;
+	m_GalacticDice = rhs.m_GalacticDice;
 	m_CloudColor = rhs.m_CloudColor;
 	m_CloudDensity = rhs.m_CloudDensity;
 	m_CloudTexture = rhs.m_CloudTexture;
@@ -93,6 +117,7 @@ auNebula::~auNebula()
 
 void auNebula::DeleteDeviceObjects(AuOpenGLFunctions& GLf)
 {
+	DeletePreparedGeometry();
 	if(m_img)
 	{
 		GLf.glDeleteTextures(1, &m_img);
@@ -142,6 +167,294 @@ int auNebula::AppendGalacticStarFieldSlice(const DaGalaxy& galaxy, const AuPoint
 	return ix + step;
 }
 
+void auNebula::PrepareCachedGalacticStarField(const DaGalaxy& galaxy, const AuPoint& sectorLoc,
+	const AuDice& dice, quint64 galaxyIdentity)
+{
+	struct Entry
+	{
+		GALAXY galaxy;
+		quint64 identity;
+		AuPoint sector;
+		quint32 sequence;
+		QVector<galParticle> samples;
+		bool ready, failed;
+		Entry() : ready(false), failed(false) {}
+		quint64 Bytes() const { return quint64(samples.size()) * sizeof(galParticle); }
+	};
+	static std::mutex cacheMutex;
+	static std::condition_variable cacheReady;
+	static std::list<std::shared_ptr<Entry> > cache;
+	std::shared_ptr<Entry> entry;
+	// The LCG is invertible. A copied next value uniquely identifies its state
+	// without consuming any values from the sampler's original sequence.
+	AuDice sequenceDice(dice);
+	const quint32 sequence = sequenceDice.Random();
+	bool hit = false;
+	{
+		std::unique_lock<std::mutex> lock(cacheMutex);
+		for(std::list<std::shared_ptr<Entry> >::iterator it = cache.begin(); it != cache.end(); ++it)
+		{
+			if((*it)->galaxy == galaxy.Galaxy() && (*it)->identity == galaxyIdentity
+				&& (*it)->sector == sectorLoc && (*it)->sequence == sequence)
+			{
+				entry = *it;
+				cache.splice(cache.begin(), cache, it);
+				hit = true;
+				while(!entry->ready) cacheReady.wait(lock);
+				if(entry->failed) throw std::runtime_error("Skybox CPU preparation failed.");
+				break;
+			}
+		}
+		if(!entry)
+		{
+			entry.reset(new Entry);
+			entry->galaxy = galaxy.Galaxy(); entry->identity = galaxyIdentity;
+			entry->sector = sectorLoc; entry->sequence = sequence;
+			cache.push_front(entry);
+		}
+	}
+	if(!hit)
+	{
+		try
+		{
+			AuDice sampleDice(dice);
+			CreateGalacticStarField(galaxy, sectorLoc, sampleDice);
+			entry->samples = m_vStars;
+			{
+				std::lock_guard<std::mutex> lock(cacheMutex);
+				entry->ready = true;
+				quint64 bytes = 0;
+				for(std::list<std::shared_ptr<Entry> >::const_iterator it = cache.begin(); it != cache.end(); ++it)
+					if((*it)->ready) bytes += (*it)->Bytes();
+				while(cache.size() > 4 || bytes > 128U * 1024U * 1024U)
+				{
+					std::list<std::shared_ptr<Entry> >::iterator it = cache.end(); --it;
+					if(!(*it)->ready) break;
+					bytes -= (*it)->Bytes(); cache.erase(it);
+				}
+			}
+			cacheReady.notify_all();
+		}
+		catch(...)
+		{
+			{
+				std::lock_guard<std::mutex> lock(cacheMutex);
+				entry->failed = true; entry->ready = true; cache.remove(entry);
+			}
+			cacheReady.notify_all();
+			throw;
+		}
+	}
+	m_vStars = entry->samples;
+}
+
+void auNebula::PrepareCachedNebula()
+{
+	if(m_CachedNebulaPrepared) return;
+	QByteArray key;
+	QDataStream out(&key, QIODevice::WriteOnly);
+	out.setVersion(QDataStream::Qt_4_1);
+	out << m_Seed << m_iParticles << m_iStars << m_iColor << m_bReverseColor
+		<< m_Type << m_fA << m_fB << m_fC << m_fD << m_fParticleSize
+		<< m_fTotalMax << m_Dimensions;
+	struct Entry
+	{
+		QByteArray key;
+		QVector<nebParticle> nebula;
+		QVector<galParticle> stars;
+		QVector<AuPoint> universe;
+		float a, b, c, d, maxSpeed, maxAngle;
+		AuPoint dimensions;
+		AuDice dice;
+		QColor cloudColor;
+		bool ready, failed;
+		Entry() : ready(false), failed(false) {}
+		quint64 Bytes() const
+		{
+			return quint64(nebula.size()) * sizeof(nebParticle)
+				+ quint64(stars.size()) * sizeof(galParticle) + quint64(universe.size()) * sizeof(AuPoint);
+		}
+	};
+	static std::mutex cacheMutex;
+	static std::condition_variable cacheReady;
+	static std::list<std::shared_ptr<Entry> > cache;
+	std::shared_ptr<Entry> entry;
+	bool hit = false;
+	{
+		std::unique_lock<std::mutex> lock(cacheMutex);
+		for(std::list<std::shared_ptr<Entry> >::iterator it = cache.begin(); it != cache.end(); ++it)
+		{
+			if((*it)->key == key)
+			{
+				entry = *it; cache.splice(cache.begin(), cache, it);
+				hit = true;
+				while(!entry->ready) cacheReady.wait(lock);
+				if(entry->failed) throw std::runtime_error("Skybox CPU preparation failed.");
+				break;
+			}
+		}
+		if(!entry)
+		{
+			entry.reset(new Entry); entry->key = key; cache.push_front(entry);
+		}
+	}
+	if(!hit)
+	{
+		try
+		{
+			m_vNebula.clear(); m_vUniStars.clear();
+			const int oldStars = m_vStars.size();
+			CreateNebula();
+			entry->nebula = m_vNebula; entry->universe = m_vUniStars;
+			if(m_iStars) entry->stars = m_vStars.mid(oldStars);
+			entry->a = m_fA; entry->b = m_fB; entry->c = m_fC; entry->d = m_fD;
+			entry->maxSpeed = m_fMaxSpeed; entry->maxAngle = m_fMaxAngle;
+			entry->dimensions = m_Dimensions; entry->dice = m_Dice; entry->cloudColor = m_CloudColor;
+			{
+				std::lock_guard<std::mutex> lock(cacheMutex);
+				entry->ready = true;
+				quint64 bytes = 0;
+				for(std::list<std::shared_ptr<Entry> >::const_iterator it = cache.begin(); it != cache.end(); ++it)
+					if((*it)->ready) bytes += (*it)->Bytes();
+				while(cache.size() > 4 || bytes > 128U * 1024U * 1024U)
+				{
+					std::list<std::shared_ptr<Entry> >::iterator it = cache.end(); --it;
+					if(!(*it)->ready) break;
+					bytes -= (*it)->Bytes(); cache.erase(it);
+				}
+			}
+			cacheReady.notify_all();
+		}
+		catch(...)
+		{
+			{
+				std::lock_guard<std::mutex> lock(cacheMutex);
+				entry->failed = true; entry->ready = true; cache.remove(entry);
+			}
+			cacheReady.notify_all();
+			throw;
+		}
+	}
+	else
+	{
+		m_vNebula = entry->nebula; m_vUniStars = entry->universe;
+		if(m_iStars) m_vStars += entry->stars;
+		m_fA = entry->a; m_fB = entry->b; m_fC = entry->c; m_fD = entry->d;
+		m_fMaxSpeed = entry->maxSpeed; m_fMaxAngle = entry->maxAngle;
+		m_Dimensions = entry->dimensions; m_Dice = entry->dice; m_CloudColor = entry->cloudColor;
+	}
+	m_CachedNebulaPrepared = true;
+}
+
+void auNebula::DeletePreparedGeometry()
+{
+	if(m_GalaxyCloudVAO.VAO()) m_GalaxyCloudVAO.DeleteGL();
+	if(m_GalaxyStarsVAO.VAO()) m_GalaxyStarsVAO.DeleteGL();
+	if(m_UniverseStarsVAO.VAO()) m_UniverseStarsVAO.DeleteGL();
+	if(m_NebulaVAO.VAO()) m_NebulaVAO.DeleteGL();
+	QVector<GLfloat>().swap(m_CloudPositions); QVector<GLfloat>().swap(m_CloudTexCoords);
+	QVector<GLfloat>().swap(m_GalaxyPositions); QVector<GLfloat>().swap(m_UniversePositions);
+	QVector<GLfloat>().swap(m_NebulaTexCoords); QVector<GLfloat>().swap(m_NebulaColors);
+	m_CpuGeometryPrepared = false;
+	m_GeometryUploadStage = 0;
+	m_GeometryUploadOffset = -1;
+}
+
+void auNebula::PrepareSkyBoxGeometry()
+{
+	if(m_CpuGeometryPrepared) return;
+	const int cloudVertices = m_vStars.size() * 6;
+	m_CloudPositions.resize(cloudVertices * 3); m_CloudTexCoords.resize(cloudVertices * 2);
+	m_GalaxyPositions.resize(m_vStars.size() * 3);
+	static const int order[6] = {0,3,2,2,1,0};
+	static const GLfloat tex[6][2] = {{0,0},{0,1},{1,1},{1,1},{1,0},{0,0}};
+	for(int i = 0; i < m_vStars.size(); ++i)
+	{
+		const AuPoint& center = m_vStars.at(i).pos;
+		m_GalaxyPositions[i*3] = center.x; m_GalaxyPositions[i*3+1] = center.y; m_GalaxyPositions[i*3+2] = center.z;
+		AuPoint normal(-center), right;
+		normal.Unit(); normal.ArbitraryAxis(right);
+		AuPoint up = normal.Cross(right); up.Unit();
+		// Keep the original double arithmetic and final float conversion.
+		const AuPoint points[4] = {center + (-right-up), center + (right-up),
+			center + (right+up), center + (-right+up)};
+		for(int corner = 0; corner < 6; ++corner)
+		{
+			const AuPoint& point = points[order[corner]];
+			const int index = (i*6+corner)*3, uv = (i*6+corner)*2;
+			m_CloudPositions[index] = point.x; m_CloudPositions[index+1] = point.y; m_CloudPositions[index+2] = point.z;
+			m_CloudTexCoords[uv] = tex[corner][0]; m_CloudTexCoords[uv+1] = tex[corner][1];
+		}
+	}
+	m_UniversePositions.resize(m_vUniStars.size()*3);
+	for(int i = 0; i < m_vUniStars.size(); ++i)
+	{
+		m_UniversePositions[i*3] = m_vUniStars.at(i).x;
+		m_UniversePositions[i*3+1] = m_vUniStars.at(i).y;
+		m_UniversePositions[i*3+2] = m_vUniStars.at(i).z;
+	}
+	const int nebulaVertices = m_vNebula.size()*6;
+	m_NebulaTexCoords.resize(nebulaVertices*2); m_NebulaColors.resize(nebulaVertices*3);
+	for(int i = 0; i < m_vNebula.size(); ++i)
+		for(int corner = 0; corner < 6; ++corner)
+		{
+			const int index = (i*6+corner)*3, uv = (i*6+corner)*2;
+			m_NebulaColors[index] = m_vNebula.at(i).r;
+			m_NebulaColors[index+1] = m_vNebula.at(i).g;
+			m_NebulaColors[index+2] = m_vNebula.at(i).b;
+			m_NebulaTexCoords[uv] = tex[corner][0]; m_NebulaTexCoords[uv+1] = tex[corner][1];
+		}
+	m_CpuGeometryPrepared = true;
+}
+
+bool auNebula::UploadSkyBoxGeometry(AuGLEffects& re, bool incremental)
+{
+	PrepareSkyBoxGeometry();
+	while(m_GeometryUploadStage < 6)
+	{
+		AuGLVAO* vao = nullptr;
+		QVector<GLfloat>* data = nullptr;
+		int buffer = 0, attribute = 0, components = 3, vertices = 0, buffers = 1;
+		switch(m_GeometryUploadStage)
+		{
+		case 0: vao = &m_GalaxyCloudVAO; data = &m_CloudPositions; vertices = m_vStars.size()*6; buffers = 2; break;
+		case 1: vao = &m_GalaxyCloudVAO; data = &m_CloudTexCoords; vertices = m_vStars.size()*6; buffers = 2; buffer = attribute = 1; components = 2; break;
+		case 2: vao = &m_GalaxyStarsVAO; data = &m_GalaxyPositions; vertices = m_vStars.size(); break;
+		case 3: vao = &m_UniverseStarsVAO; data = &m_UniversePositions; vertices = m_vUniStars.size(); break;
+		case 4: vao = &m_NebulaVAO; data = &m_NebulaTexCoords; vertices = m_vNebula.size()*6; buffers = 3; buffer = attribute = 1; components = 2; break;
+		case 5: vao = &m_NebulaVAO; data = &m_NebulaColors; vertices = m_vNebula.size()*6; buffers = 3; buffer = attribute = 2; break;
+		}
+		if(data->isEmpty()) { ++m_GeometryUploadStage; m_GeometryUploadOffset = -1; continue; }
+		if(!vao->VAO()) vao->CreateGL(re, vertices, buffers);
+		vao->SelectGL();
+		re.glBindBuffer(GL_ARRAY_BUFFER, vao->Buffer(buffer));
+		const qint64 bytes = qint64(data->size()) * sizeof(GLfloat);
+		const bool allocate = m_GeometryUploadOffset < 0;
+		if(allocate)
+		{
+			re.glBufferData(GL_ARRAY_BUFFER, bytes, nullptr, GL_STATIC_DRAW);
+			re.glVertexAttribPointer(attribute, components, GL_FLOAT, GL_FALSE, 0, 0);
+			m_GeometryUploadOffset = 0;
+		}
+		else
+		{
+			const qint64 count = incremental ? qMin<qint64>(4*1024*1024, bytes-m_GeometryUploadOffset) : bytes-m_GeometryUploadOffset;
+			const char* source = reinterpret_cast<const char*>(data->constData());
+			re.glBufferSubData(GL_ARRAY_BUFFER, m_GeometryUploadOffset, count, source+m_GeometryUploadOffset);
+			m_GeometryUploadOffset += count;
+		}
+		re.glBindBuffer(GL_ARRAY_BUFFER, 0);
+		vao->DeselectGL();
+		if(m_GeometryUploadOffset == bytes)
+		{
+			QVector<GLfloat>().swap(*data);
+			++m_GeometryUploadStage; m_GeometryUploadOffset = -1;
+		}
+		if(incremental) return m_GeometryUploadStage == 6;
+	}
+	return true;
+}
+
 void auNebula::CreateSkyBox(AuAtomRenderInfo& ari, const AuPoint& pos, unsigned int paneSize, bool mipMap)
 {
 	BuildSkyBox(*ari.re, pos, paneSize, mipMap, -1);
@@ -165,7 +478,8 @@ bool auNebula::CreateSkyBoxFace(AuGLEffects& re, const AuPoint& pos, unsigned in
 bool auNebula::BuildSkyBox(AuGLEffects& re, const AuPoint& pos, unsigned int paneSize, bool mipMap, int face)
 {
 	//qDebug() << "auNebula::CreateSkyBox pos" << pos << "size" << paneSize << "mip" << mipMap;
-	if(face == 0)
+	if(face <= 0 && !m_CachedNebulaPrepared) DeletePreparedGeometry();
+	if(face == 0 && !m_CachedNebulaPrepared)
 	{
 		// Rebuilding the cube after a graphics-setting change reuses galactic
 		// samples, but must regenerate the same universe stars, without appending.
@@ -174,7 +488,8 @@ bool auNebula::BuildSkyBox(AuGLEffects& re, const AuPoint& pos, unsigned int pan
 		if(m_iStars) m_vStars.clear();
 		m_fTotalMax = (float)0xffffffff;
 	}
-	if(face <= 0) CreateNebula();
+	if(face <= 0 && !m_CachedNebulaPrepared) CreateNebula();
+	UploadSkyBoxGeometry(re, false);
 	//qDebug() << "auNebula::CreateSkyBox nebula created";
 
 	GLuint glowTexture = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, "StarGlow", ":data/smoketransparent.png",
@@ -329,126 +644,8 @@ bool auNebula::BuildSkyBox(AuGLEffects& re, const AuPoint& pos, unsigned int pan
 		float starDotSize = paneSize / 2048.f;	// This is used more as a scaling factor than a size.
 		RenderStars(starDotSize, re, projection, model, sunGlowTexture, pos);
 
-		// Now draw galaxy cloud as quads
-		if(!m_vStars.isEmpty())
-		{
-			re.GLSL().GalaxyCloudShader().Select();
-			re.GLSL().GalaxyCloudShader().SetProjection(projection);
-			re.GLSL().GalaxyCloudShader().SetModelView(model);
-			re.GLSL().GalaxyCloudShader().SetTexture(glowTexture);
-			re.GLSL().GalaxyCloudShader().SetColor(m_GalaxyColor);
-
-			AuPoint vRight(model[0], model[4], model[8]);
-			AuPoint vUp(model[1], model[5], model[9]);
-			AuPoint vPoint0;
-			AuPoint vPoint1;
-			AuPoint vPoint2;
-			AuPoint vPoint3;
-			const double fAdjustedSize = 1;
-
-			// Create vertex locations, 6 vertices per star position because the quad is made with two triangles.
-			int vertices = m_vStars.count()*6;
-			GLfloat* starPos = new GLfloat[vertices*3];
-			GLfloat* texCoord = new GLfloat[vertices*2];
-			int starPosIdx = 0;
-			int texCoordIdx = 0;
-			for(QVector<galParticle>::const_iterator si = m_vStars.constBegin(); si != m_vStars.constEnd(); si++)
-			{
-				// Calculate vRight and vUp vectors that are consistent between panes of the sky box.
-				AuPoint vN(-(*si).pos);
-				vN.Unit();
-				vN.ArbitraryAxis(vRight);
-				vUp = vN.Cross(vRight);
-				vUp.Unit();
-
-				//-------------------------------------------------------------
-				//
-				// vPoint3                vPoint2
-				//         +------------+
-				//         |            |
-				//         |     +      |
-				//         |    *si     |
-				//         |            |
-				//         +------------+
-				// vPoint0                vPoint1
-				//
-				// Now, build a quad around the center point (*si) based on the vRight and vUp vectors.
-				// This will guarantee that the quad will be orthogonal to the view.
-				//
-				//-------------------------------------------------------------
-				//const double fAdjustedSize = .5 + (*si).Length() / 250;
-				vPoint0 = (*si).pos + ((-vRight - vUp) * fAdjustedSize);
-				vPoint1 = (*si).pos + (( vRight - vUp) * fAdjustedSize);
-				vPoint2 = (*si).pos + (( vRight + vUp) * fAdjustedSize);
-				vPoint3 = (*si).pos + ((-vRight + vUp) * fAdjustedSize);
-
-				// Triangle 1
-				starPos[starPosIdx++] = vPoint0.x;
-				starPos[starPosIdx++] = vPoint0.y;
-				starPos[starPosIdx++] = vPoint0.z;
-				texCoord[texCoordIdx++] = 0;
-				texCoord[texCoordIdx++] = 0;
-
-				starPos[starPosIdx++] = vPoint3.x;
-				starPos[starPosIdx++] = vPoint3.y;
-				starPos[starPosIdx++] = vPoint3.z;
-				texCoord[texCoordIdx++] = 0;
-				texCoord[texCoordIdx++] = 1;
-
-				starPos[starPosIdx++] = vPoint2.x;
-				starPos[starPosIdx++] = vPoint2.y;
-				starPos[starPosIdx++] = vPoint2.z;
-				texCoord[texCoordIdx++] = 1;
-				texCoord[texCoordIdx++] = 1;
-
-				// Triangle 2
-				starPos[starPosIdx++] = vPoint2.x;
-				starPos[starPosIdx++] = vPoint2.y;
-				starPos[starPosIdx++] = vPoint2.z;
-				texCoord[texCoordIdx++] = 1;
-				texCoord[texCoordIdx++] = 1;
-
-				starPos[starPosIdx++] = vPoint1.x;
-				starPos[starPosIdx++] = vPoint1.y;
-				starPos[starPosIdx++] = vPoint1.z;
-				texCoord[texCoordIdx++] = 1;
-				texCoord[texCoordIdx++] = 0;
-
-				starPos[starPosIdx++] = vPoint0.x;
-				starPos[starPosIdx++] = vPoint0.y;
-				starPos[starPosIdx++] = vPoint0.z;
-				texCoord[texCoordIdx++] = 0;
-				texCoord[texCoordIdx++] = 0;
-			}
-
-			AuGLVAO vao;
-			vao.CreateGL(re, vertices, 2);
-
-			vao.SelectGL();
-
-			// bind buffer for vertices and copy data into buffer.
-			re.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(0));
-			re.glBufferData(GL_ARRAY_BUFFER, vertices*3*sizeof(GLfloat), starPos, GL_STREAM_DRAW);
-			re.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);	// Describe the data in the buffer.
-
-			// bind buffer for tex coords and copy data into buffer.
-			re.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(1));
-			re.glBufferData(GL_ARRAY_BUFFER, vertices*2*sizeof(GLfloat), texCoord, GL_STREAM_DRAW);
-			re.glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);	// Describe the data in the buffer.
-
-			re.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-			vao.DrawGL(GL_TRIANGLES);
-			vao.DeselectGL();
-
-			// Delete the vertex array object. It is no longer needed because the display list has captured what it wants.
-			vao.DeleteGL();
-
-			delete [] starPos;
-			delete [] texCoord;
-
-			re.GLSL().GalaxyCloudShader().Deselect();
-		}
+		// Immutable unit cloud geometry serves all six faces.
+		RenderGalacticCloud(re, projection, model, glowTexture);
 
 		// Draw the nebula.
 		if(m_iParticles > 0)
@@ -482,8 +679,39 @@ bool auNebula::BuildSkyBox(AuGLEffects& re, const AuPoint& pos, unsigned int pan
 	re.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, oldfbo);	// Unbind frame buffer
 
 	re.glDeleteFramebuffers(1, &fbo);
+	if(face < 0 || face == 5) DeletePreparedGeometry();
 	//qDebug() << "auNebula::CreateSkyBox done";
 	return true;
+}
+
+void auNebula::DrawPreparedGeometry(AuGLEffects& re, AuGLVAO& vao, GLenum mode, int vertices, int attributes)
+{
+	if(!m_SlicedWork) { vao.DrawGL(mode); return; }
+	for(int attribute = 0; attribute < attributes; ++attribute) re.glEnableVertexAttribArray(attribute);
+	// Whole quads retain primitive and additive blending order across batches.
+	const int batch = mode == GL_TRIANGLES ? 65532 : 65536;
+	for(int first = 0; first < vertices; first += batch)
+	{
+		re.glDrawArrays(mode, first, qMin(batch, vertices-first));
+		re.glFlush();
+		QThread::yieldCurrentThread();
+	}
+	for(int attribute = 0; attribute < attributes; ++attribute) re.glDisableVertexAttribArray(attribute);
+}
+
+void auNebula::RenderGalacticCloud(AuGLEffects& re, const AuMatrix4x4& projection,
+	const AuMatrix4x4& model, GLuint texture)
+{
+	if(m_vStars.isEmpty()) return;
+	re.GLSL().GalaxyCloudShader().Select();
+	re.GLSL().GalaxyCloudShader().SetProjection(projection);
+	re.GLSL().GalaxyCloudShader().SetModelView(model);
+	re.GLSL().GalaxyCloudShader().SetTexture(texture);
+	re.GLSL().GalaxyCloudShader().SetColor(m_GalaxyColor);
+	m_GalaxyCloudVAO.SelectGL();
+	DrawPreparedGeometry(re, m_GalaxyCloudVAO, GL_TRIANGLES, m_vStars.size()*6, 2);
+	m_GalaxyCloudVAO.DeselectGL();
+	re.GLSL().GalaxyCloudShader().Deselect();
 }
 
 void auNebula::RenderSkyBox(AuGLEffects& re, const AuMatrix4x4& projection, const AuMatrix4x4& model, float opacity)
@@ -872,163 +1100,45 @@ void auNebula::CalculateColor()
 void auNebula::RenderNebula(double distance, AuGLEffects& re, const AuMatrix4x4& projection, const AuMatrix4x4& model,
 		GLuint texture)
 {
-	if(m_vNebula.isEmpty())
-		return;
-
-	// Draw Nebula
-	float fAdjustedSize = m_fParticleSize - m_fParticleSize*(distance/FARPOINT);
-
+	Q_UNUSED(distance);
+	if(m_vNebula.isEmpty()) return;
 	re.GLSL().NebulaShader().Select();
 	re.GLSL().NebulaShader().SetProjectionModelView(projection * model);
 	re.GLSL().NebulaShader().SetTexture(texture);
-
-	// Draw Nebula
-	AuPoint vRight(model[0], model[4], model[8]);
-	AuPoint vUp(model[1], model[5], model[9]);
-	AuPoint vPoint0;
-	AuPoint vPoint1;
-	AuPoint vPoint2;
-	AuPoint vPoint3;
-	AuPoint vCenter;
-	fAdjustedSize = 4.0f/300.0f;
-
-	// Construct vertex, tex coord, and color data.
-	const int vertices = m_vNebula.count() * 6;					// Number of vertices we will be creating for quads (2 tris each).
-	GLfloat* nebPos = new GLfloat[vertices*3];					// vertices
-	int nebPosIdx = 0;
-	GLfloat* nebCol = new GLfloat[vertices*3];					// colors
-	int nebColIdx = 0;
-	GLfloat* nebTex = new GLfloat[vertices*2];					// texture coords
-	int nebTexIdx = 0;
-	for(QVector<nebParticle>::const_iterator ni = m_vNebula.constBegin(); ni != m_vNebula.constEnd(); ni++)
+	const AuPoint right(model[0], model[4], model[8]), up(model[1], model[5], model[9]);
+	const float size = 4.0f/300.0f;
+	const int vertices = m_vNebula.size()*6;
+	QVector<GLfloat> positions(vertices*3);
+	static const int order[6] = {0,3,2,2,1,0};
+	for(int i = 0; i < m_vNebula.size(); ++i)
 	{
-		//-------------------------------------------------------------
-		//
-		// vPoint3                vPoint2
-		//         +------------+
-		//         |            |
-		//         |     +      |
-		//         |    *ni     |
-		//         |            |
-		//         +------------+
-		// vPoint0                vPoint1
-		//
-		// Now, build a quad around the center point based on the vRight 
-		// and vUp vectors. This will guarantee that the quad will be 
-		// orthogonal to the view.
-		//
-		//-------------------------------------------------------------
-		vPoint0 = (*ni).pos + ((-vRight - vUp) * fAdjustedSize );
-		vPoint1 = (*ni).pos + (( vRight - vUp) * fAdjustedSize );
-		vPoint2 = (*ni).pos + (( vRight + vUp) * fAdjustedSize );
-		vPoint3 = (*ni).pos + ((-vRight + vUp) * fAdjustedSize );
-
-		// Vertex
-		nebPos[nebPosIdx++] = vPoint0.x;
-		nebPos[nebPosIdx++] = vPoint0.y;
-		nebPos[nebPosIdx++] = vPoint0.z;
-
-		nebCol[nebColIdx++] = (*ni).r;
-		nebCol[nebColIdx++] = (*ni).g;
-		nebCol[nebColIdx++] = (*ni).b;
-
-		nebTex[nebTexIdx++] = 0;
-		nebTex[nebTexIdx++] = 0;
-
-		// Vertex
-		nebPos[nebPosIdx++] = vPoint3.x;
-		nebPos[nebPosIdx++] = vPoint3.y;
-		nebPos[nebPosIdx++] = vPoint3.z;
-
-		nebCol[nebColIdx++] = (*ni).r;
-		nebCol[nebColIdx++] = (*ni).g;
-		nebCol[nebColIdx++] = (*ni).b;
-
-		nebTex[nebTexIdx++] = 0;
-		nebTex[nebTexIdx++] = 1;
-
-		// Vertex
-		nebPos[nebPosIdx++] = vPoint2.x;
-		nebPos[nebPosIdx++] = vPoint2.y;
-		nebPos[nebPosIdx++] = vPoint2.z;
-
-		nebCol[nebColIdx++] = (*ni).r;
-		nebCol[nebColIdx++] = (*ni).g;
-		nebCol[nebColIdx++] = (*ni).b;
-
-		nebTex[nebTexIdx++] = 1;
-		nebTex[nebTexIdx++] = 1;
-
-		// Vertex
-		nebPos[nebPosIdx++] = vPoint2.x;
-		nebPos[nebPosIdx++] = vPoint2.y;
-		nebPos[nebPosIdx++] = vPoint2.z;
-
-		nebCol[nebColIdx++] = (*ni).r;
-		nebCol[nebColIdx++] = (*ni).g;
-		nebCol[nebColIdx++] = (*ni).b;
-
-		nebTex[nebTexIdx++] = 1;
-		nebTex[nebTexIdx++] = 1;
-
-		// Vertex
-		nebPos[nebPosIdx++] = vPoint1.x;
-		nebPos[nebPosIdx++] = vPoint1.y;
-		nebPos[nebPosIdx++] = vPoint1.z;
-
-		nebCol[nebColIdx++] = (*ni).r;
-		nebCol[nebColIdx++] = (*ni).g;
-		nebCol[nebColIdx++] = (*ni).b;
-
-		nebTex[nebTexIdx++] = 1;
-		nebTex[nebTexIdx++] = 0;
-
-		// Vertex
-		nebPos[nebPosIdx++] = vPoint0.x;
-		nebPos[nebPosIdx++] = vPoint0.y;
-		nebPos[nebPosIdx++] = vPoint0.z;
-
-		nebCol[nebColIdx++] = (*ni).r;
-		nebCol[nebColIdx++] = (*ni).g;
-		nebCol[nebColIdx++] = (*ni).b;
-
-		nebTex[nebTexIdx++] = 0;
-		nebTex[nebTexIdx++] = 0;
+		const AuPoint& center = m_vNebula.at(i).pos;
+		// Face-specific expanded positions retain the original CPU double
+		// addition and float rounding; the shader remains unchanged.
+		const AuPoint points[4] = {center + ((-right-up)*size), center + ((right-up)*size),
+			center + ((right+up)*size), center + ((-right+up)*size)};
+		for(int corner = 0; corner < 6; ++corner)
+		{
+			const AuPoint& point = points[order[corner]];
+			const int index = (i*6+corner)*3;
+			positions[index] = point.x; positions[index+1] = point.y; positions[index+2] = point.z;
+		}
 	}
-
-	// Generate vertex array(s) for this object. We only need one.
-	AuGLVAO vao;
-	vao.CreateGL(re, vertices, 3);
-
-	vao.SelectGL();
-
-	// bind buffer for vertices and copy data into buffer.
-	re.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(0));
-	re.glBufferData(GL_ARRAY_BUFFER, vertices*3*sizeof(GLfloat), nebPos, GL_STREAM_DRAW);
-	re.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	// bind buffer for tex coords and copy data into buffer.
-	re.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(1));
-	re.glBufferData(GL_ARRAY_BUFFER, vertices*2*sizeof(GLfloat), nebTex, GL_STREAM_DRAW);
-	re.glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	// bind buffer for tex coords and copy data into buffer.
-	re.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(2));
-	re.glBufferData(GL_ARRAY_BUFFER, vertices*3*sizeof(GLfloat), nebCol, GL_STREAM_DRAW);
-	re.glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
+	m_NebulaVAO.SelectGL();
+	re.glBindBuffer(GL_ARRAY_BUFFER, m_NebulaVAO.Buffer(0));
+	const qint64 bytes = qint64(positions.size()) * sizeof(GLfloat);
+	re.glBufferData(GL_ARRAY_BUFFER, bytes, nullptr, GL_STREAM_DRAW);
+	const qint64 chunk = m_SlicedWork ? 4*1024*1024 : bytes;
+	for(qint64 offset = 0; offset < bytes; offset += chunk)
+	{
+		const char* source = reinterpret_cast<const char*>(positions.constData());
+		re.glBufferSubData(GL_ARRAY_BUFFER, offset, qMin(chunk, bytes-offset), source+offset);
+		if(m_SlicedWork) { re.glFlush(); QThread::yieldCurrentThread(); }
+	}
+	re.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
 	re.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	vao.DrawGL(GL_TRIANGLES);
-	vao.DeselectGL();
-
-	// Delete the vertex array object. It is no longer needed because the display list has captured what it wants.
-	vao.DeleteGL();
-
-	delete [] nebPos;
-	delete [] nebTex;
-	delete [] nebCol;
-
+	DrawPreparedGeometry(re, m_NebulaVAO, GL_TRIANGLES, vertices, 3);
+	m_NebulaVAO.DeselectGL();
 	re.GLSL().NebulaShader().Deselect();
 }
 
@@ -1046,36 +1156,9 @@ void auNebula::RenderStars(float starDotSize, AuGLEffects& re, const AuMatrix4x4
 		re.GLSL().FarStarShader().SetSize(sds2 * 1.5);
 		re.GLSL().FarStarShader().SetTexture(texture);
 
-		// Create vertex locations.
-		int vertices = m_vUniStars.count();
-		GLfloat* uniStarPos = new GLfloat[vertices*3];
-		int uniStarPosIdx = 0;
-		for(QVector<AuPoint>::const_iterator si = m_vUniStars.constBegin(); si != m_vUniStars.constEnd(); si++)
-		{
-			uniStarPos[uniStarPosIdx++] = (*si).x;
-			uniStarPos[uniStarPosIdx++] = (*si).y;
-			uniStarPos[uniStarPosIdx++] = (*si).z;
-		}
-
-		AuGLVAO vao;
-		vao.CreateGL(re, vertices, 1);
-
-		vao.SelectGL();
-
-		// bind buffer for vertices and copy data into buffer.
-		re.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(0));
-		re.glBufferData(GL_ARRAY_BUFFER, vertices*3*sizeof(GLfloat), uniStarPos, GL_STREAM_DRAW);
-		re.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);	// Describe the data in the buffer.
-
-		re.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-		vao.DrawGL(GL_POINTS);
-		vao.DeselectGL();
-
-		// Delete the vertex array object. It is no longer needed because the display list has captured what it wants.
-		vao.DeleteGL();
-
-		delete [] uniStarPos;
+		m_UniverseStarsVAO.SelectGL();
+		DrawPreparedGeometry(re, m_UniverseStarsVAO, GL_POINTS, m_vUniStars.size(), 1);
+		m_UniverseStarsVAO.DeselectGL();
 
 		re.GLSL().FarStarShader().Deselect();
 	}
@@ -1101,36 +1184,9 @@ void auNebula::RenderStars(float starDotSize, AuGLEffects& re, const AuMatrix4x4
 		float tMax = .5f/sds2;
 		re.GLSL().GalaxyStarShader().SetIntensityRanges(iMin,iMax, tMin,tMax);	// Ranges of intensity and transparency.
 
-		// Create vertex locations.
-		int vertices = m_vStars.count();
-		GLfloat* galaxyStarPos = new GLfloat[vertices*3];
-		int galaxyStarPosIdx = 0;
-		for(QVector<galParticle>::const_iterator si = m_vStars.constBegin(); si != m_vStars.constEnd(); si++)
-		{
-			galaxyStarPos[galaxyStarPosIdx++] = (*si).pos.x;
-			galaxyStarPos[galaxyStarPosIdx++] = (*si).pos.y;
-			galaxyStarPos[galaxyStarPosIdx++] = (*si).pos.z;
-		}
-
-		AuGLVAO vao;
-		vao.CreateGL(re, vertices, 1);
-
-		vao.SelectGL();
-
-		// bind buffer for vertices and copy data into buffer.
-		re.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(0));
-		re.glBufferData(GL_ARRAY_BUFFER, m_vStars.size()*3*sizeof(GLfloat), galaxyStarPos, GL_STREAM_DRAW);
-		re.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);	// Describe the data in the buffer.
-
-		re.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-		vao.DrawGL(GL_POINTS);
-		vao.DeselectGL();
-
-		// Delete the vertex array object. It is no longer needed because the display list has captured what it wants.
-		vao.DeleteGL();
-
-		delete [] galaxyStarPos;
+		m_GalaxyStarsVAO.SelectGL();
+		DrawPreparedGeometry(re, m_GalaxyStarsVAO, GL_POINTS, m_vStars.size(), 1);
+		m_GalaxyStarsVAO.DeselectGL();
 
 		re.GLSL().GalaxyStarShader().Deselect();
 	}

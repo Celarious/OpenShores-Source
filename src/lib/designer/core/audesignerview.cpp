@@ -1961,6 +1961,7 @@ AuDesignerView::~AuDesignerView()
 	// the GL function table; queued CPU jobs are cancelled without waiting.
 	if(context()) disconnect(context(), nullptr, this, nullptr);
 	if(isValid()) makeCurrent();
+	m_MM->ClearSceneSkyBoxes(isValid() ? m_RenderInfo->re : nullptr);
 	m_MM->ClearLegacySc();
 	delete m_RenderInfo;
 	delete m_ModelCache;
@@ -1985,6 +1986,7 @@ void AuDesignerView::initializeGL()
 	Q_INIT_RESOURCE(aulegacycityconstructionui);
 	connect(context(), &QOpenGLContext::aboutToBeDestroyed, this, [this]() {
 		makeCurrent();
+		m_MM->ClearSceneSkyBoxes(m_RenderInfo->re);
 		m_MM->ClearLegacySc();
 	});
 	//qDebug("AuDesignerView::initializeGL");
@@ -6848,11 +6850,13 @@ void AuDesignerView::ResetGameGeneration()
 	{
 		makeCurrent();
 		AtomsCleared();
+		m_MM->ClearSceneSkyBoxes(m_RenderInfo->re);
 		m_MM->ClearLegacySc();
 		doneCurrent();
 	}
 	else
 	{
+		m_MM->ClearSceneSkyBoxes();
 		m_SceneLock.lockForWrite();
 		m_SceneEther.DeleteEther();
 		m_SceneLock.unlock();

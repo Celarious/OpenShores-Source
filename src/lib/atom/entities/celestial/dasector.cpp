@@ -9,6 +9,7 @@
 #include "auatomrenderinfo.h"
 #include "audice.h"
 #include "augleffects.h"
+#include "auglmodelmaker.h"
 #include "auglobal.h"
 #include "auNebula.h"
 #include "aunoise.h"
@@ -623,6 +624,8 @@ void DaSector::RenderEnvironment(const AuMatrix4x4& projection, const AuMatrix4x
 	// Render Sky box
 	// Nebula data is needed for sky box and nebula cloud effect, though it's overkill for just the cloud.
 	// Nebula data is needed for black holes to draw their refraction zone.
+	const bool backgroundSky = g_Au.IsLegacyGeneration() && !sceneAtom->InDesignEnvironment();
+	const bool createdNebula = !m_Nebula;
 	if(!m_Nebula)
 	{
 		//qDebug() << "DaSector::RenderEnvironment" << Id() << Name() << "creating sky box";
@@ -684,25 +687,34 @@ void DaSector::RenderEnvironment(const AuMatrix4x4& projection, const AuMatrix4x
 		m_Nebula = new auNebula(iParticles, 0, -2.9924924f, 0.38151205f, -1.8401746f, -1.8524430f,
 				30, iColor, bReverseColor, pos, seed, iType, FindParentGalaxy()->Color());
 		m_Nebula->SetCloudTexture(cloudTexture);
+		m_Nebula->m_GalacticSector = sectorLoc / 10.;
+		m_Nebula->m_GalacticDice = dice;
 
 		// Now setup stars
 
 		// Get Sector location in Sector Coordinates
 		sectorLoc /= 10.;									// Convert to a "sector" location.
 		//qDebug() << "galaxy radius" << iDistance << "sectors";
-		m_Nebula->CreateGalacticStarField(*pg, sectorLoc, dice);
+		if(!backgroundSky) m_Nebula->CreateGalacticStarField(*pg, sectorLoc, dice);
 		//qDebug() << "stars" << m_Nebula->m_vStars.count();
 
 		// Get System location inside its Sector Coordinates
 		AuPoint solarLoc = sysloc / 10.;			// Location in "sectors".
 		sectorLoc += solarLoc;		// Add solar location offset to sector location. Result in "sector" coordinates (10x pc).
 
-		m_Nebula->CreateSkyBox(ari, sectorLoc, g_Au.SkyBoxPaneSize(), g_Au.SkyBoxMipMap());
+		if(!backgroundSky) m_Nebula->CreateSkyBox(ari, sectorLoc, g_Au.SkyBoxPaneSize(), g_Au.SkyBoxMipMap());
 	}
-	else
+	if(backgroundSky && m_Nebula)
+	{
+		const DaGalaxy* galaxy = FindParentGalaxy();
+		if(!galaxy || !ari.mm.PrepareSceneSkyBox(*ari.re, *galaxy, pss->Id(),
+			Location() / 10. + sysloc / 10., *m_Nebula, m_SkyBox))
+			ari.mm.DeferLegacySceneWork();
+	}
+	if(m_Nebula && (!createdNebula || backgroundSky))
 	{
 		//qDebug() << "DaSector::RenderEnvironment" << Id() << Name() << "rendering sky box";
-		if(opacity && g_Au.DrawSkyBox())
+		if(opacity && g_Au.DrawSkyBox() && m_Nebula->m_img)
 			m_Nebula->RenderSkyBox(*ari.re, farProjection, tmodel, opacity);	// The sky box is visible, at least a little bit.
 
 		// Calculate nebula cloud density. This is the density of the cloudy nebula effect painted in the scene.
@@ -1095,10 +1107,13 @@ void DaSector::DeleteDeviceObjects(AuAtomRenderInfo& ari)
 {
 	if(m_Nebula)
 	{
+		// The per-view cache owns this texture; the sector only borrows its name.
+		if(m_SkyBox) m_Nebula->m_img = 0;
 		m_Nebula->DeleteDeviceObjects(*ari.re);
 		delete m_Nebula;
 		m_Nebula = 0;
 	}
+	m_SkyBox.reset();
 
 	DaAtom::DeleteDeviceObjects(ari);
 }

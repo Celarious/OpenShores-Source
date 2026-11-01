@@ -9,10 +9,12 @@
 
 #include "ausegment.h"
 #include "daatom.h"
+#include <memory>
 
 class auNebula;
 class DaSolarSystem;
 class AuGLEffects;
+class AuSceneSkyBox;
 
 class AUATOM_DLL DaSector : public DaAtom  
 {
@@ -26,6 +28,7 @@ private:
 	AuSegmentArray						m_ExploredWormholes;	// Wormholes explored by client empire.
 	AuSegmentArray						m_KnownWormholes;		// Wormholes in systems that have been explored by client empire.
 	auNebula*							m_Nebula;
+	std::shared_ptr<AuSceneSkyBox> m_SkyBox;
 	AuElapsedTimer						m_tmLastStarCache;
 
 public:
