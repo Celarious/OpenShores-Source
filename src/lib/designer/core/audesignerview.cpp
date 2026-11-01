@@ -1761,7 +1761,7 @@ AuDesignerView::AuDesignerView(QWidget* parent) : QOpenGLWidget(parent), m_Scene
 	m_AtomKeyMods = Qt::NoModifier;
 	m_AtomMouseMods = Qt::NoModifier;
 	m_bFreeCamera = true;
-	m_bFreeMouse = false;
+	m_bFreeMouse = true;
 	m_BusyAngle = 0;
 	m_CameraAnimSpeed = 0;
 	m_Cursor = CURSOR_Unknown;
@@ -1769,7 +1769,7 @@ AuDesignerView::AuDesignerView(QWidget* parent) : QOpenGLWidget(parent), m_Scene
 	m_DragConstraint = 0;
 	m_ModalDlgCount = 0;
 	m_InCity = false;
-	m_InputMode = Character;
+	m_InputMode = UI;
 	m_IsShipCommand = false;
 	m_IsWarping = true;
 	m_ItemManipulator = 0;
