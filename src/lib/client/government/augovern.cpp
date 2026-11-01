@@ -35,7 +35,9 @@ void AuGovernDock::UpdateTitleShortcut()
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
-AuGovern::AuGovern(QWidget* parent) : QWidget(parent)
+AuGovern::AuGovern(QWidget* parent, bool staged) : QWidget(parent),
+	m_Announcements(0), m_Citizens(0), m_Commerce(0), m_Diplomacy(0), m_Places(0),
+	m_Patents(0), m_Policy(0), m_Taxes(0), m_PatentsTabIndex(-1), m_InitializePage(0)
 {
 	m_Pages = new QStackedLayout();
 
@@ -49,64 +51,85 @@ AuGovern::AuGovern(QWidget* parent) : QWidget(parent)
 	lay->setSpacing(2);
 	setLayout(lay);
 
-	// Create all governance pages.
+	if(!staged)
+		while(!InitializeNextPage()) {}
+}
+
+bool AuGovern::InitializeNextPage()
+{
+	if(IsInitialized()) return true;
+	AuGovernTabs* tabs = m_Tabs;
+	switch(m_InitializePage)
+	{
+	case 0:
 	{
 		int tabIndex = tabs->AddTab(QIcon(":data/Speaker.png"));
 		tabs->SetTabToolTip(tabIndex, tr("Announcements"));
 		m_Announcements = new AuGovAnnouncements(this);
 		m_Pages->addWidget(m_Announcements);
+		break;
 	}
-
+	case 1:
 	{
 		int tabIndex = tabs->AddTab(QIcon(":data/CommGovernment.png"));
 		tabs->SetTabToolTip(tabIndex, tr("Policy"));
 		m_Policy = new AuGovPolicy(this);
 		m_Pages->addWidget(m_Policy);
+		break;
 	}
-
+	case 2:
 	{
 		int tabIndex = tabs->AddTab(QIcon(":data/CommDiplomacy.png"));
 		tabs->SetTabToolTip(tabIndex, tr("Diplomacy"));
 		m_Diplomacy = new AuGovDiplomacy(this);
 		m_Pages->addWidget(m_Diplomacy);
+		break;
 	}
-
+	case 3:
 	{
 		int tabIndex = tabs->AddTab(QIcon(":data/GovCommerce.png"));
 		tabs->SetTabToolTip(tabIndex, tr("Commerce"));
 		m_Commerce = new AuGovCommerce(this);
 		m_Pages->addWidget(m_Commerce);
+		break;
 	}
-
+	case 4:
 	{
 		int tabIndex = tabs->AddTab(QIcon(":data/c_Patent.png"));
 		m_PatentsTabIndex = tabIndex;
 		tabs->SetTabToolTip(tabIndex, tr("Patents"));
 		m_Patents = new AuGovPatents(this);
 		m_Pages->addWidget(m_Patents);
+		break;
 	}
-
+	case 5:
 	{
 		int tabIndex = tabs->AddTab(QIcon(":data/CommCrew.png"));
 		tabs->SetTabToolTip(tabIndex, tr("Citizens"));
 		m_Citizens = new AuEmpireCitizens(this);
 		m_Pages->addWidget(m_Citizens);
+		break;
 	}
-
+	case 6:
 	{
 		int tabIndex = tabs->AddTab(QIcon(":data/City.png"));
 		tabs->SetTabToolTip(tabIndex, tr("Cities and Bases"));
 		m_Places = new AuGovCities(this);
 		m_Pages->addWidget(m_Places);
+		break;
 	}
-
+	case 7:
 	{
 		int tabIndex = tabs->AddTab(QIcon(":data/GovTaxes.png"));
 		tabs->SetTabToolTip(tabIndex, tr("Taxes"));
 		m_Taxes = new AuGovTaxes(this);
 		m_Pages->addWidget(m_Taxes);
+		break;
 	}
-	UpdatePatentPage();
+	}
+	++m_InitializePage;
+	if(IsInitialized()) UpdatePatentPage();
+	return IsInitialized();
 }
 
 AuGovern::~AuGovern()
@@ -115,6 +138,7 @@ AuGovern::~AuGovern()
 
 void AuGovern::UpdateDatabase()
 {
+	if(!IsInitialized()) return;
 	UpdatePatentPage();
 	AuFrame* frame = auApp->Frame();
 	if(frame && frame->GetAndResetEmpireDataReceived())
@@ -140,6 +164,7 @@ void AuGovern::UpdateDatabase()
 
 void AuGovern::UpdatePatentPage()
 {
+	if(!IsInitialized()) return;
 	const int pageIndex = m_Pages->indexOf(m_Patents);
 	if(g_Au.IsLegacyGeneration() && pageIndex >= 0)
 	{
@@ -163,6 +188,7 @@ void AuGovern::showEvent(QShowEvent* event)
 
 void AuGovern::CurrentTabChanged(int idx)
 {
+	if(!IsInitialized()) return;
 	m_Pages->setCurrentIndex(idx);
 }
 

@@ -24,14 +24,18 @@
 #include "dastar.h"
 #include "dgdata.h"
 #include <QFile>
+#include <QElapsedTimer>
 #include <QFileDialog>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QProgressDialog>
+#include <QRunnable>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTcpSocket>
+#include <QThreadPool>
 #include <QVBoxLayout>
+#include <atomic>
 
 static QColor	s_AvatarColor(32,255,32);
 static QColor	s_BlackColor(0,0,0);
@@ -40,6 +44,47 @@ static QColor	s_ExColor(0,100,100);
 static QColor	s_GalaxyColor(255,255,255);
 static QColor	s_UnexColor(100,60,80);
 static QColor	s_UnkColor(255,0,255);
+
+// CPU-only snapshot. The worker never touches widgets, icons or GL resources,
+// and its shared ownership permits the panel to close without waiting for it.
+struct AuStarMapPlacesSnapshot
+{
+	AuStarMapData starMap;
+	DgEmpire personEmpire;
+	std::atomic<bool> ready;
+	AuStarMapPlacesSnapshot() : ready(false) {}
+};
+
+namespace
+{
+class AuStarMapPlacesSnapshotDeleteTask : public QRunnable
+{
+	AuStarMapPlacesSnapshot* m_Snapshot;
+public:
+	explicit AuStarMapPlacesSnapshotDeleteTask(AuStarMapPlacesSnapshot* snapshot) : m_Snapshot(snapshot) {}
+	void run() override { delete m_Snapshot; }
+};
+
+class AuStarMapPlacesSnapshotTask : public QRunnable
+{
+	std::shared_ptr<AuStarMapPlacesSnapshot> m_Snapshot;
+public:
+	explicit AuStarMapPlacesSnapshotTask(const std::shared_ptr<AuStarMapPlacesSnapshot>& snapshot) : m_Snapshot(snapshot) {}
+	void run() override
+	{
+		m_Snapshot->starMap = g_AuClient.LockStarMapForRead();
+		m_Snapshot->personEmpire.m_id = g_AuClient.m_StarMapEmpire;
+		g_AuClient.UnlockStarMap();
+		const DgData& gd = g_Au.LockDataForRead();
+		const bool found = gd.Empire(m_Snapshot->personEmpire);
+		g_Au.UnlockData();
+		if(!found)
+			m_Snapshot->personEmpire.ChangeEmpireName(m_Snapshot->personEmpire.Name(),
+					AuLocatorStarMap::tr("Empire"));
+		m_Snapshot->ready.store(true, std::memory_order_release);
+	}
+};
+}
 
 AuLocatorStarMapDock::AuLocatorStarMapDock(QWidget* parent) :
 	AuDockWidget(":data/RangeGalaxy.png", tr("<b>Star Map</b>"), tr("Star Map"), parent)
@@ -68,6 +113,75 @@ void AuLocatorStarMapDock::UpdateTitleShortcut()
 }
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+
+bool AuLocatorStarMap::PrepareNextStep()
+{
+	if(m_PrepareStep == 5) return true;
+	if(m_PrepareDirty && m_PrepareStep > 1)
+	{
+		RestartPreparation();
+		return false;
+	}
+	if(m_PrepareStep == 0)
+	{
+		m_PrepareStep = 1;
+		RestoreSettings();
+		m_PrepareSnapshot = std::shared_ptr<AuStarMapPlacesSnapshot>(new AuStarMapPlacesSnapshot,
+				[](AuStarMapPlacesSnapshot* snapshot) {
+					// Releasing a large copied map must not stall the UI either.
+					QThreadPool::globalInstance()->start(new AuStarMapPlacesSnapshotDeleteTask(snapshot));
+				});
+		QThreadPool::globalInstance()->start(new AuStarMapPlacesSnapshotTask(m_PrepareSnapshot));
+		return false;
+	}
+	if(m_PrepareStep == 1)
+	{
+		if(!m_PrepareSnapshot->ready.load(std::memory_order_acquire)) return false;
+		if(m_PrepareDirty) { RestartPreparation(); return false; }
+		m_PrepareSector = m_PrepareSnapshot->starMap.m_Sectors.begin();
+		m_PrepareStep = 2;
+		return false;
+	}
+	if(m_PrepareStep == 2)
+	{
+		const QIcon sectorIcon(":data/RangeSector.png"), systemIcon(":data/RangeSystem.png");
+		const QIcon scannedSystemIcon(":data/SolarSystemInfo.png"), cityIcon(":data/City.png");
+		QElapsedTimer budget;
+		budget.start();
+		while(m_PrepareSector != m_PrepareSnapshot->starMap.m_Sectors.end())
+		{
+			AddSectorPlaces(m_PrepareSector, m_PrepareSnapshot->personEmpire, m_PrepareFlagIcons,
+					sectorIcon, systemIcon, scannedSystemIcon, cityIcon);
+			++m_PrepareSector;
+			if(budget.elapsed() >= 8) return false;
+		}
+		m_PlacesValid = true;
+		m_PrepareStep = 3;
+		return false;
+	}
+	if(m_PrepareStep == 3)
+	{
+		if(m_StarMapGL) m_StarMapGL->LookAtPlace(AuId(GALAXY_Count));
+		else if(m_StarMapW) m_StarMapW->LookAtPlace(AuId(GALAXY_Count));
+		m_PrepareStep = 4;
+		return false;
+	}
+	if(m_StarMapGL && !m_StarMapGL->PrepareNextStep()) return false;
+	m_PrepareSnapshot.reset();
+	m_PrepareFlagIcons.clear();
+	m_PrepareStep = 5;
+	m_CenterOnFirstShow = !isVisible();
+	return true;
+}
+
+void AuLocatorStarMap::RestartPreparation()
+{
+	InitPlaces();
+	m_PrepareSnapshot.reset();
+	m_PrepareFlagIcons.clear();
+	m_PrepareStep = 0;
+	m_PrepareDirty = false;
+}
 
 AuLocatorStarMap::AuLocatorStarMap(QWidget* parent) : QWidget(parent)
 {
@@ -750,12 +864,14 @@ void AuLocatorStarMap::ToggleShowWormholes()
 void AuLocatorStarMap::showEvent(QShowEvent* event)
 {
 	QWidget::showEvent(event);
+	if(PlacesPreparing()) return;
 
 	RestoreSettings();
 
-	if(!m_PlacesValid)
+	if(!m_PlacesValid || m_CenterOnFirstShow)
 	{
-		ListPlaces();
+		if(!m_PlacesValid) ListPlaces();
+		m_CenterOnFirstShow = false;
 		if(m_StarMapGL)
 			m_StarMapGL->LookAtPlace(AuId(GALAXY_Count));					// Look at location of scene atom.
 		else if(m_StarMapW)
@@ -978,6 +1094,7 @@ void AuLocatorStarMap::StarMapUpdateSectorStarted(const AuId& sectorId, unsigned
 void AuLocatorStarMap::StarMapUpdateAllComplete()
 {
 	m_RequestData->setEnabled(true);
+	if(PlacesPreparing()) { m_PrepareDirty = true; m_PlacesValid = false; return; }
 
 	// Get current selection so we can restore it.
 	AuIdList selection;
@@ -1002,6 +1119,7 @@ void AuLocatorStarMap::StarMapUpdateAllComplete()
 void AuLocatorStarMap::StarMapUpdateGalaxyComplete(GALAXY galaxy)
 {
 	m_RequestData->setEnabled(true);
+	if(PlacesPreparing()) { m_PrepareDirty = true; m_PlacesValid = false; return; }
 
 	// Get current selection so we can restore it.
 	AuIdList selection;
@@ -1026,6 +1144,7 @@ void AuLocatorStarMap::StarMapUpdateGalaxyComplete(GALAXY galaxy)
 void AuLocatorStarMap::StarMapUpdateSectorComplete(GALAXY galaxy, const AuIdList& sectorIds)
 {
 	m_RequestData->setEnabled(true);
+	if(PlacesPreparing()) { m_PrepareDirty = true; m_PlacesValid = false; return; }
 
 	// Get current selection so we can restore it.
 	AuIdList selection;
@@ -1167,189 +1286,7 @@ void AuLocatorStarMap::ListPlaces()
 			sectI != starMap.m_Sectors.end(); sectI++)
 	{
 		prog->setValue(prog->value()+1);
-		if(m_SectorsPresent.contains((*sectI).first))
-			continue;	// We already have this sector.
-
-		// Locate the model index for the galaxy at the root.
-		QModelIndex galIdx;
-		GALAXY galaxy = GALAXY_Count;
-		for(int galRow=0; galRow<m_PlacesModel.rowCount(QModelIndex()); galRow++)
-		{
-			// GALAXY enum stored on column 0.
-			QModelIndex itemIdx = m_PlacesModel.index(galRow,0, QModelIndex());
-			galaxy = (GALAXY)m_PlacesModel.data(itemIdx, Qt::UserRole).toInt();
-			if(galaxy == (*sectI).second.Galaxy())
-			{
-				galIdx = itemIdx;
-				break;
-			}
-		}
-		if(galIdx == QModelIndex())
-		{
-			// Galaxy not found. Create an entry.
-			galIdx = AddPlace(QModelIndex(), AuId((*sectI).second.Galaxy()), DaAtom::ATOM_Galaxy,
-					QIcon(":data/RangeGalaxy.png"), GalaxyName((*sectI).second.Galaxy()), s_GalaxyColor, AuPoint(0,0), "",
-					AuId(0), (*sectI).second.Galaxy(), false,false,0,0,false,false, 0, 0);
-		}
-
-		//qDebug() << "sector" << sectI.key() << (*sectI).second.m_Name << "loc" << (*sectI).second.m_Loc;
-		// Locate the model index for the sector, if it already exists.
-		QModelIndex sectIdx;
-		for(int sectorRow=0; sectorRow<m_PlacesModel.rowCount(galIdx); sectorRow++)
-		{
-			// Atom id stored on column 0.
-			QModelIndex itemIdx = m_PlacesModel.index(sectorRow,0, galIdx);
-			AuId itemId = AuId(m_PlacesModel.data(itemIdx, Qt::UserRole).toUInt());
-			if(itemId == (*sectI).first)
-			{
-				sectIdx = itemIdx;
-				break;
-			}
-		}
-		if(sectIdx == QModelIndex())
-		{
-			// Sector not found.
-			m_SectorsPresent.insert((*sectI).first, galaxy);
-			// Convert from parsec coord to sector coord.
-			AuPoint fLoc = (*sectI).second.m_Loc/10.0;
-
-			QString sectorName((*sectI).second.m_Name);
-			if(sectorName == "Sector")
-				sectorName += QString(" (%1, %2, %3)").arg(fLoc.x).arg(fLoc.y).arg(fLoc.z);
-
-			sectIdx = AddPlace(galIdx, (*sectI).first, DaAtom::ATOM_Sector, sectorIcon, sectorName,
-					QColor(255,255,255), (*sectI).second.m_Loc, "", AuId(0), (*sectI).second.Galaxy(), false,false,0,0,false,false,
-					0, 0);
-
-			// Process solar systems.
-			for(unordered_map<AuId, AuStarMapSystem, AuIdHash>::const_iterator sysI = (*sectI).second.m_Systems.begin();
-					sysI != (*sectI).second.m_Systems.end(); sysI++)
-			{
-				//qDebug() << " system" << (*sysI).second.m_Name << "loc" << (*sysI).second.m_Loc;
-				AuPoint systemLoc = (*sectI).second.m_Loc + (*sysI).second.m_Loc;
-
-				quint8 genHab = 0;
-				quint32 genSeed = 0;
-				QIcon sysIcon(systemIcon);
-				bool isScanned = (*sysI).second.IsScanned();
-				if(isScanned)
-					sysIcon = scannedSystemIcon;
-				genHab = (*sysI).second.m_GenHab;
-				genSeed = (*sysI).second.m_GenSeed;
-
-				quint8 signalStr = (*sysI).second.DetectedSignalStrength();
-
-				QModelIndex sysIdx;
-				if((*sysI).second.IsExplored())
-				{
-					// System is explored.
-					quint16 empireShips, empireStations, friendShips, friendStations, neutralShips, neutralStations, enemyShips,
-							enemyStations;
-					SpacecraftPresent((*sysI).second, personEmpire.m_id, empireShips, empireStations, friendShips, friendStations,
-							neutralShips, neutralStations, enemyShips, enemyStations);
-
-					sysIdx = AddPlace(sectIdx, (*sysI).first, DaAtom::ATOM_SolarSystem, sysIcon,
-							(*sysI).second.m_Name, s_ExColor, systemLoc, "", (*sectI).first, (*sectI).second.Galaxy(),
-							(*sysI).second.IsCoreBlackHole(), (*sysI).second.IsEmptySystem(), genHab, genSeed, true, isScanned, 0,
-							signalStr,
-							empireShips, empireStations, friendShips, friendStations, neutralShips, neutralStations, enemyShips,
-							enemyStations);
-
-					// Explored systems show their wormholes, both explored and unexplored wormholes.
-					for(QList<AuStarMapWormhole>::const_iterator wi = (*sysI).second.m_Wormholes.cbegin();
-							wi != (*sysI).second.m_Wormholes.cend(); wi++)
-						if((*wi).Polarity() != AuWormhole::Intergalactic &&
-								(*wi).Polarity() != AuWormhole::IntergalacticOneWay)
-						{
-							if(m_StarMapGL)
-								m_StarMapGL->AddPlaceWormhole((*sysI).first, (*wi).VecToDest(), (*wi).IsExplored());
-							else if(m_StarMapW)
-								m_StarMapW->AddPlaceWormhole((*sysI).first, (*wi).VecToDest(), (*wi).IsExplored());
-						}
-				}
-				else if(signalStr && m_ShowDetectedPlaces)
-				{
-					// Warp signature detected from unexplored system.
-					sysIdx = AddPlace(sectIdx, (*sysI).first, DaAtom::ATOM_SolarSystem, sysIcon,
-							(*sysI).second.m_Name, s_DetectedColor, systemLoc, tr(""), (*sectI).first, (*sectI).second.Galaxy(),
-							(*sysI).second.IsCoreBlackHole(), (*sysI).second.IsEmptySystem(), genHab, genSeed, false, false, 0,
-							signalStr);
-				}
-				else
-				{
-					// Unexplored and undetected.
-					sysIdx = AddPlace(sectIdx, (*sysI).first, DaAtom::ATOM_SolarSystem, sysIcon,
-							(*sysI).second.m_Name, s_BlackColor, systemLoc, tr(""), (*sectI).first, (*sectI).second.Galaxy(),
-							(*sysI).second.IsCoreBlackHole(), (*sysI).second.IsEmptySystem(), genHab, genSeed, false,false, 0, 0);
-				}
-
-				// Cities are only reported for systems that have been explored, btw.
-				if((*sysI).second.m_Cities.size() && sysIdx != QModelIndex())
-				{
-					// Process cities.
-					for(unordered_map<AuId, AuStarMapCity, AuIdHash>::const_iterator cityI = (*sysI).second.m_Cities.begin();
-							cityI != (*sysI).second.m_Cities.end(); cityI++)
-					{
-						// What do we know about the empire who owns the city.
-						QString empireName;
-						POLITICAL_STANCE stance;
-						QColor stanceColor;
-						if(personEmpire.m_id == (*cityI).second.m_Empire)
-						{
-							// It is our empire.
-							empireName = personEmpire.Name();
-							stance = POL_Empire;
-							stanceColor = PoliticalStanceColor(stance, false);
-						}
-						else
-						{
-							// It is not our empire.
-							stance = personEmpire.PoliticalStance((*cityI).second.m_Empire);	// Will get default vs unknown.
-							if(personEmpire.IsEmpireKnown((*cityI).second.m_Empire))
-							{
-								// It is an empire we have encountered so we know its name.
-								empireName = personEmpire.NameOfKnownEmpire((*cityI).second.m_Empire);
-								stanceColor = PoliticalStanceColor(stance, false);
-							}
-							else
-							{
-								// It is an unknown empire.
-								empireName = tr("Unknown Empire");
-								stanceColor = s_UnkColor;
-							}
-						}
-
-						QHash<quint32, QIcon>::const_iterator ii = empireFlagIcons.constFind((*cityI).second.m_Empire);
-						if(ii == empireFlagIcons.cend())
-						{
-							// Flag for that empire is not in our cache yet.
-							DgEmpire empire;
-							empire.m_id = (*cityI).second.m_Empire;
-							const DgData& gd = g_Au.LockDataForRead();
-							bool hasEmpire = gd.Empire(empire);
-							g_Au.UnlockData();
-							if(hasEmpire)
-							{
-								// We have the empire record locally so we can make an icon from its flag.
-								QPixmap pxflag;
-								pxflag.convertFromImage(empire.m_flag);
-								ii = empireFlagIcons.insert((*cityI).second.m_Empire, QIcon(pxflag));
-							}
-							else
-							{
-								// We do not have the empire record so use the generic city icon instead of a flag.
-								ii = empireFlagIcons.insert((*cityI).second.m_Empire, cityIcon);
-							}
-						}
-						AddPlace(sysIdx, (*cityI).first, DaAtom::ATOM_Bd, *ii, (*cityI).second.m_Name,
-								stanceColor, systemLoc, empireName, (*sectI).first, (*sectI).second.Galaxy(),
-								false,false, 0,0,false,false, (*cityI).second.m_Empire, 0);
-					}
-				}
-			}
-		}
-
-		HighlightSector(sectI, sectIdx, personEmpire);
+		AddSectorPlaces(sectI, personEmpire, empireFlagIcons, sectorIcon, systemIcon, scannedSystemIcon, cityIcon);
 
 		// Test for cancel button on progress dialog.
 		auApp->processEvents();
@@ -1361,6 +1298,196 @@ void AuLocatorStarMap::ListPlaces()
 
 	delete prog;
 	m_PlacesValid = true;
+}
+
+void AuLocatorStarMap::AddSectorPlaces(
+		unordered_map<AuId, AuStarMapSector, AuIdHash>::const_iterator sectI,
+		const DgEmpire& personEmpire, QHash<quint32, QIcon>& empireFlagIcons,
+		const QIcon& sectorIcon, const QIcon& systemIcon, const QIcon& scannedSystemIcon, const QIcon& cityIcon)
+{
+	if(m_SectorsPresent.contains((*sectI).first))
+		return;	// We already have this sector.
+
+	// Locate the model index for the galaxy at the root.
+	QModelIndex galIdx;
+	GALAXY galaxy = GALAXY_Count;
+	for(int galRow=0; galRow<m_PlacesModel.rowCount(QModelIndex()); galRow++)
+	{
+		// GALAXY enum stored on column 0.
+		QModelIndex itemIdx = m_PlacesModel.index(galRow,0, QModelIndex());
+		galaxy = (GALAXY)m_PlacesModel.data(itemIdx, Qt::UserRole).toInt();
+		if(galaxy == (*sectI).second.Galaxy())
+		{
+			galIdx = itemIdx;
+			break;
+		}
+	}
+	if(galIdx == QModelIndex())
+	{
+		// Galaxy not found. Create an entry.
+		galIdx = AddPlace(QModelIndex(), AuId((*sectI).second.Galaxy()), DaAtom::ATOM_Galaxy,
+				QIcon(":data/RangeGalaxy.png"), GalaxyName((*sectI).second.Galaxy()), s_GalaxyColor, AuPoint(0,0), "",
+				AuId(0), (*sectI).second.Galaxy(), false,false,0,0,false,false, 0, 0);
+	}
+
+	//qDebug() << "sector" << sectI.key() << (*sectI).second.m_Name << "loc" << (*sectI).second.m_Loc;
+	// Locate the model index for the sector, if it already exists.
+	QModelIndex sectIdx;
+	for(int sectorRow=0; sectorRow<m_PlacesModel.rowCount(galIdx); sectorRow++)
+	{
+		// Atom id stored on column 0.
+		QModelIndex itemIdx = m_PlacesModel.index(sectorRow,0, galIdx);
+		AuId itemId = AuId(m_PlacesModel.data(itemIdx, Qt::UserRole).toUInt());
+		if(itemId == (*sectI).first)
+		{
+			sectIdx = itemIdx;
+			break;
+		}
+	}
+	if(sectIdx == QModelIndex())
+	{
+		// Sector not found.
+		m_SectorsPresent.insert((*sectI).first, galaxy);
+		// Convert from parsec coord to sector coord.
+		AuPoint fLoc = (*sectI).second.m_Loc/10.0;
+
+		QString sectorName((*sectI).second.m_Name);
+		if(sectorName == "Sector")
+			sectorName += QString(" (%1, %2, %3)").arg(fLoc.x).arg(fLoc.y).arg(fLoc.z);
+
+		sectIdx = AddPlace(galIdx, (*sectI).first, DaAtom::ATOM_Sector, sectorIcon, sectorName,
+				QColor(255,255,255), (*sectI).second.m_Loc, "", AuId(0), (*sectI).second.Galaxy(), false,false,0,0,false,false,
+				0, 0);
+
+		// Process solar systems.
+		for(unordered_map<AuId, AuStarMapSystem, AuIdHash>::const_iterator sysI = (*sectI).second.m_Systems.begin();
+				sysI != (*sectI).second.m_Systems.end(); sysI++)
+		{
+			//qDebug() << " system" << (*sysI).second.m_Name << "loc" << (*sysI).second.m_Loc;
+			AuPoint systemLoc = (*sectI).second.m_Loc + (*sysI).second.m_Loc;
+
+			quint8 genHab = 0;
+			quint32 genSeed = 0;
+			QIcon sysIcon(systemIcon);
+			bool isScanned = (*sysI).second.IsScanned();
+			if(isScanned)
+				sysIcon = scannedSystemIcon;
+			genHab = (*sysI).second.m_GenHab;
+			genSeed = (*sysI).second.m_GenSeed;
+
+			quint8 signalStr = (*sysI).second.DetectedSignalStrength();
+
+			QModelIndex sysIdx;
+			if((*sysI).second.IsExplored())
+			{
+				// System is explored.
+				quint16 empireShips, empireStations, friendShips, friendStations, neutralShips, neutralStations, enemyShips,
+						enemyStations;
+				SpacecraftPresent((*sysI).second, personEmpire.m_id, empireShips, empireStations, friendShips, friendStations,
+						neutralShips, neutralStations, enemyShips, enemyStations);
+
+				sysIdx = AddPlace(sectIdx, (*sysI).first, DaAtom::ATOM_SolarSystem, sysIcon,
+						(*sysI).second.m_Name, s_ExColor, systemLoc, "", (*sectI).first, (*sectI).second.Galaxy(),
+						(*sysI).second.IsCoreBlackHole(), (*sysI).second.IsEmptySystem(), genHab, genSeed, true, isScanned, 0,
+						signalStr,
+						empireShips, empireStations, friendShips, friendStations, neutralShips, neutralStations, enemyShips,
+						enemyStations);
+
+				// Explored systems show their wormholes, both explored and unexplored wormholes.
+				for(QList<AuStarMapWormhole>::const_iterator wi = (*sysI).second.m_Wormholes.cbegin();
+						wi != (*sysI).second.m_Wormholes.cend(); wi++)
+					if((*wi).Polarity() != AuWormhole::Intergalactic &&
+							(*wi).Polarity() != AuWormhole::IntergalacticOneWay)
+					{
+						if(m_StarMapGL)
+							m_StarMapGL->AddPlaceWormhole((*sysI).first, (*wi).VecToDest(), (*wi).IsExplored());
+						else if(m_StarMapW)
+							m_StarMapW->AddPlaceWormhole((*sysI).first, (*wi).VecToDest(), (*wi).IsExplored());
+					}
+			}
+			else if(signalStr && m_ShowDetectedPlaces)
+			{
+				// Warp signature detected from unexplored system.
+				sysIdx = AddPlace(sectIdx, (*sysI).first, DaAtom::ATOM_SolarSystem, sysIcon,
+						(*sysI).second.m_Name, s_DetectedColor, systemLoc, tr(""), (*sectI).first, (*sectI).second.Galaxy(),
+						(*sysI).second.IsCoreBlackHole(), (*sysI).second.IsEmptySystem(), genHab, genSeed, false, false, 0,
+						signalStr);
+			}
+			else
+			{
+				// Unexplored and undetected.
+				sysIdx = AddPlace(sectIdx, (*sysI).first, DaAtom::ATOM_SolarSystem, sysIcon,
+						(*sysI).second.m_Name, s_BlackColor, systemLoc, tr(""), (*sectI).first, (*sectI).second.Galaxy(),
+						(*sysI).second.IsCoreBlackHole(), (*sysI).second.IsEmptySystem(), genHab, genSeed, false,false, 0, 0);
+			}
+
+			// Cities are only reported for systems that have been explored, btw.
+			if((*sysI).second.m_Cities.size() && sysIdx != QModelIndex())
+			{
+				// Process cities.
+				for(unordered_map<AuId, AuStarMapCity, AuIdHash>::const_iterator cityI = (*sysI).second.m_Cities.begin();
+						cityI != (*sysI).second.m_Cities.end(); cityI++)
+				{
+					// What do we know about the empire who owns the city.
+					QString empireName;
+					POLITICAL_STANCE stance;
+					QColor stanceColor;
+					if(personEmpire.m_id == (*cityI).second.m_Empire)
+					{
+						// It is our empire.
+						empireName = personEmpire.Name();
+						stance = POL_Empire;
+						stanceColor = PoliticalStanceColor(stance, false);
+					}
+					else
+					{
+						// It is not our empire.
+						stance = personEmpire.PoliticalStance((*cityI).second.m_Empire);	// Will get default vs unknown.
+						if(personEmpire.IsEmpireKnown((*cityI).second.m_Empire))
+						{
+							// It is an empire we have encountered so we know its name.
+							empireName = personEmpire.NameOfKnownEmpire((*cityI).second.m_Empire);
+							stanceColor = PoliticalStanceColor(stance, false);
+						}
+						else
+						{
+							// It is an unknown empire.
+							empireName = tr("Unknown Empire");
+							stanceColor = s_UnkColor;
+						}
+					}
+
+					QHash<quint32, QIcon>::const_iterator ii = empireFlagIcons.constFind((*cityI).second.m_Empire);
+					if(ii == empireFlagIcons.cend())
+					{
+						// Flag for that empire is not in our cache yet.
+						DgEmpire empire;
+						empire.m_id = (*cityI).second.m_Empire;
+						const DgData& gd = g_Au.LockDataForRead();
+						bool hasEmpire = gd.Empire(empire);
+						g_Au.UnlockData();
+						if(hasEmpire)
+						{
+							// We have the empire record locally so we can make an icon from its flag.
+							QPixmap pxflag;
+							pxflag.convertFromImage(empire.m_flag);
+							ii = empireFlagIcons.insert((*cityI).second.m_Empire, QIcon(pxflag));
+						}
+						else
+						{
+							// We do not have the empire record so use the generic city icon instead of a flag.
+							ii = empireFlagIcons.insert((*cityI).second.m_Empire, cityIcon);
+						}
+					}
+					AddPlace(sysIdx, (*cityI).first, DaAtom::ATOM_Bd, *ii, (*cityI).second.m_Name,
+							stanceColor, systemLoc, empireName, (*sectI).first, (*sectI).second.Galaxy(),
+							false,false, 0,0,false,false, (*cityI).second.m_Empire, 0);
+				}
+			}
+		}
+	}
+
+	HighlightSector(sectI, sectIdx, personEmpire);
 }
 
 // Change place color highlighting of sectors and solar systems based on the current filter.
@@ -2052,6 +2179,7 @@ QModelIndex AuLocatorStarMap::AddPlace(const QModelIndex& parentIdx, const AuId&
 
 void AuLocatorStarMap::EmpireDataChanged()
 {
+	if(PlacesPreparing()) { m_PrepareDirty = true; m_PlacesValid = false; return; }
 	UpdatePlaceFlags();
 
 	if(m_RequestData)
@@ -2169,6 +2297,7 @@ void AuLocatorStarMap::StarMapViewerSettings()
 
 void AuLocatorStarMap::StarMapSectorAdded(const AuId& sectorId)
 {
+	if(PlacesPreparing()) { m_PrepareDirty = true; m_PlacesValid = false; return; }
 	//qDebug() << "AuLocatorStarMap::StarMapSectorAdded" << sectorId;
 	// We could create the same icon over and over again from the same empire's flag. Cache them.
 	QIcon sectorIcon(":data/RangeSector.png");
@@ -2363,6 +2492,7 @@ void AuLocatorStarMap::StarMapSectorAdded(const AuId& sectorId)
 
 void AuLocatorStarMap::StarMapErased()
 {
+	if(PlacesPreparing()) { m_PrepareDirty = true; m_PlacesValid = false; return; }
 	//qDebug() << "AuLocatorStarMap::StarMapErased";
 	InitPlaces();
 }
@@ -2986,6 +3116,7 @@ bool AuLocatorStarMap::ExpandPlaceRecursive(const AuId& id, const QModelIndex& p
 
 void AuLocatorStarMap::StarMapShowCities(const AuIdList& cityIds)
 {
+	m_CenterOnFirstShow = false;
 	ClearSelection();
 	SelectPlacesTree(cityIds);
 	if(m_StarMapGL)
@@ -3044,6 +3175,7 @@ bool AuLocatorStarMap::SelectPlaceTreeRecursive(const AuId& id, const QModelInde
 
 void AuLocatorStarMap::StarMapShowGalaxyLocation(const QString& galaxyName, const AuPoint& loc)
 {
+	m_CenterOnFirstShow = false;
 	ClearSelection();
 
 	// Instead of an atom id, this tree actually stores the GALAXY enum on galaxies. We have to find it by name.

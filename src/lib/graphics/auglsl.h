@@ -307,6 +307,13 @@ public:
 	// Cache the actual uploaded positions once; no GPU reads or model loads while culling.
 	// Stride is measured in floats. Missing or invalid bounds always remain visible.
 	void SetBounds(const GLfloat* positions, unsigned int vertices, unsigned int stride=3);
+	// Apply bounds already scanned during CPU preparation, after CreateGL.
+	void SetBounds(const AuPoint& minimum, const AuPoint& maximum)
+	{
+		m_BoundsMin = minimum;
+		m_BoundsMax = maximum;
+		m_BoundsValid = true;
+	}
 	bool GetBounds(AuPoint& minimum, AuPoint& maximum) const
 	{
 		if(!m_BoundsValid) return false;
@@ -22859,6 +22866,9 @@ public:
 	// Builds all known GLSL shader programs.
 	// OpenGL context must be current when this function is called.
 	void Initialize(AuOpenGLFunctions& GLf, unsigned int maxLights);
+	// Map rendering uses lines, point sprites and textured text/markers only.
+	void InitializeStarMap(AuOpenGLFunctions& GLf, unsigned int maxLights);
+	void DeleteStarMap();
 	// Worker-local subset for cubemap generation; release before its context dies.
 	bool InitializeSkyBox(AuOpenGLFunctions& GLf);
 	void DeleteSkyBox();

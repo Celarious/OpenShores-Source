@@ -57,92 +57,122 @@ AuSpacecraftTabs::~AuSpacecraftTabs()
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
-AuSpacecraftPages::AuSpacecraftPages(bool freeAvatar, QWidget* parent) : QWidget(parent)
+AuSpacecraftPages::AuSpacecraftPages(bool freeAvatar, QWidget* parent, bool staged) : QWidget(parent),
+	m_FreeAvatar(freeAvatar), m_InitializeStage(0), m_ShipAccount(0), m_ShipBerths(0),
+	m_ShipBounties(0), m_ShipDamage(0), m_ShipDesignExchange(0), m_ShipMission(0),
+	m_ShipPolicy(0), m_ShipShipments(0), m_ShipSpecs(0)
 {
 	m_Pages = new QStackedLayout();
 
-	AuSpacecraftTabs* tabs = new AuSpacecraftTabs(this);
-	connect(tabs, SIGNAL(CurrentChanged(int)), SLOT(CurrentTabChanged(int)));
+	m_Tabs = new AuSpacecraftTabs(this);
+	connect(m_Tabs, SIGNAL(CurrentChanged(int)), SLOT(CurrentTabChanged(int)));
 
 	QGridLayout* lay = new QGridLayout;
-	lay->addWidget(tabs, 0,0);
+	lay->addWidget(m_Tabs, 0,0);
 	lay->addLayout(m_Pages, 0,1);
 	lay->setMargin(2);
 	lay->setSpacing(2);
 	setLayout(lay);
 
-	// Create all pages.
-	if(!freeAvatar)
+	if(!staged)
+		while(!InitializeNextPage()) {}
+}
+
+// A caller may finish all pages during loading while yielding between calls.
+bool AuSpacecraftPages::InitializeNextPage()
+{
+	if(IsInitialized()) return true;
+	switch(m_InitializeStage++)
 	{
-		int tabIndex = tabs->AddTab(QIcon(":data/OrderTakeCommand.png"));
-		tabs->SetTabToolTip(tabIndex, tr("Mission"));
+	case 0:
+	if(!m_FreeAvatar)
+	{
+		int tabIndex = m_Tabs->AddTab(QIcon(":data/OrderTakeCommand.png"));
+		m_Tabs->SetTabToolTip(tabIndex, tr("Mission"));
 		m_ShipMission = new AuMissionTool(this);
 		m_Pages->addWidget(m_ShipMission);
 	}
-	else
-		m_ShipMission = 0;
+	break;
 
-	if(!freeAvatar)
+	case 1:
+	if(!m_FreeAvatar)
 	{
-		int tabIndex = tabs->AddTab(QIcon(":data/Captain.png"));
-		tabs->SetTabToolTip(tabIndex, tr("Policy"));
+		int tabIndex = m_Tabs->AddTab(QIcon(":data/Captain.png"));
+		m_Tabs->SetTabToolTip(tabIndex, tr("Policy"));
 		m_ShipPolicy = new AuSpacecraftPolicy(this);
 		m_Pages->addWidget(m_ShipPolicy);
 	}
-	else
-		m_ShipPolicy = 0;
+	break;
 
+	case 2:
 	{
-		int tabIndex = tabs->AddTab(QIcon(":data/CommCrew.png"));
-		tabs->SetTabToolTip(tabIndex, tr("Roster"));
+		int tabIndex = m_Tabs->AddTab(QIcon(":data/CommCrew.png"));
+		m_Tabs->SetTabToolTip(tabIndex, tr("Roster"));
 		m_ShipBerths = new AuSpacecraftBerths(this);
 		m_Pages->addWidget(m_ShipBerths);
 	}
+	break;
 
-	if(!freeAvatar)
+	case 3:
+	if(!m_FreeAvatar)
 	{
-		int tabIndex = tabs->AddTab(QIcon(":data/c_Money.png"));
-		tabs->SetTabToolTip(tabIndex, tr("Account"));
+		int tabIndex = m_Tabs->AddTab(QIcon(":data/c_Money.png"));
+		m_Tabs->SetTabToolTip(tabIndex, tr("Account"));
 		m_ShipAccount = new AuSpacecraftAccount(this);
 		m_Pages->addWidget(m_ShipAccount);
 	}
-	else
-		m_ShipAccount = 0;
+	break;
 
+	case 4:
 	{
-		int tabIndex = tabs->AddTab(QIcon(":data/JobBountyHunter.png"));
-		tabs->SetTabToolTip(tabIndex, tr("Bounties"));
+		int tabIndex = m_Tabs->AddTab(QIcon(":data/JobBountyHunter.png"));
+		m_Tabs->SetTabToolTip(tabIndex, tr("Bounties"));
 		m_ShipBounties = new AuSpacecraftBounties(this);
 		m_Pages->addWidget(m_ShipBounties);
 	}
+	break;
 
+	case 5:
 	{
-		int tabIndex = tabs->AddTab(QIcon(":data/MsgDamageReport.png"));
-		tabs->SetTabToolTip(tabIndex, tr("Damage"));
+		int tabIndex = m_Tabs->AddTab(QIcon(":data/MsgDamageReport.png"));
+		m_Tabs->SetTabToolTip(tabIndex, tr("Damage"));
 		m_ShipDamage = new AuDamageReport(this);
 		m_Pages->addWidget(m_ShipDamage);
 	}
+	break;
 
+	case 6:
+	if(!g_Au.IsLegacyGeneration())
 	{
-		int tabIndex = tabs->AddTab(QIcon(":data/c_Container.png"));
-		tabs->SetTabToolTip(tabIndex, tr("Shipments"));
+		int tabIndex = m_Tabs->AddTab(QIcon(":data/c_Container.png"));
+		m_Tabs->SetTabToolTip(tabIndex, tr("Shipments"));
 		m_ShipShipments = new AuSpacecraftShipments(this);
 		m_Pages->addWidget(m_ShipShipments);
+		for(const AuShipment& shipment : m_PendingShipments)
+			m_ShipShipments->Shipment(shipment);
+		m_PendingShipments.clear();
 	}
+	break;
 
+	case 7:
 	{
-		int tabIndex = tabs->AddTab(QIcon(":data/c_ScDesignDrawing.png"));
-		tabs->SetTabToolTip(tabIndex, tr("Specifications"));
+		int tabIndex = m_Tabs->AddTab(QIcon(":data/c_ScDesignDrawing.png"));
+		m_Tabs->SetTabToolTip(tabIndex, tr("Specifications"));
 		m_ShipSpecs = new AuSpacecraftSpecs(this);
 		m_Pages->addWidget(m_ShipSpecs);
 	}
+	break;
 
+	case 8:
 	{
-		int tabIndex = tabs->AddTab(QIcon(":data/Exchange.png"));
-		tabs->SetTabToolTip(tabIndex, tr("Blueprint Exchange"));
+		int tabIndex = m_Tabs->AddTab(QIcon(":data/Exchange.png"));
+		m_Tabs->SetTabToolTip(tabIndex, tr("Blueprint Exchange"));
 		m_ShipDesignExchange = new AuScExchange(this);
 		m_Pages->addWidget(m_ShipDesignExchange);
 	}
+	break;
+	}
+	return IsInitialized();
 }
 
 AuSpacecraftPages::~AuSpacecraftPages()
@@ -171,12 +201,16 @@ QSize AuSpacecraftPages::sizeHint() const
 
 void AuSpacecraftPages::BrokerShipment(AuShipment shipment)
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	if(m_ShipShipments)
 		m_ShipShipments->Shipment(shipment);
+	else
+		m_PendingShipments.append(shipment);
 }
 
 void AuSpacecraftPages::BrokerShipmentsClear()
 {
+	m_PendingShipments.clear();
 	if(m_ShipShipments)
 		m_ShipShipments->ShipmentsClear();
 }

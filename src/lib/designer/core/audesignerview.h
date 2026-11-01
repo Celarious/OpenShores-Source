@@ -1880,7 +1880,7 @@ private:
 	void UpdateSceneInfo(DaPerson* sceneAtom);
 
 	void OnViewResetCamera();
-	void CreateDeviceObjects(DaPerson* sceneAtom);
+	bool CreateDeviceObjects(DaPerson* sceneAtom);
 
 	//void DeleteDeviceObjects(DaAtom& root, bool staticToo);
 

@@ -20,6 +20,10 @@
 #include <QMap>
 #include <QMutex>
 #include <QString>
+#include <functional>
+#include <memory>
+
+struct AuSceneTexturePreparation;
 
 using namespace std;
 #include <unordered_map>
@@ -642,6 +646,10 @@ private:
 	GLuint								m_HUDItemsTexture;		// This one gets requested a lot.
 	QVector<AuGLTexture*>				m_Textures;
 	QMutex								m_muTextures;
+	QMap<QString, std::shared_ptr<AuSceneTexturePreparation> > m_SceneTextures;
+	bool m_SceneDevicePreparation = false;
+	bool m_SceneTexturePending = false;
+	bool m_SceneTextureUploadUsed = false;
 
 	// GLSL
 	AuGLVAO								m_BarVAO;				// For rendering horizontal status bars: health, damage, etc.
@@ -947,6 +955,17 @@ public:
 	GLuint CreateTextureFromBitmap(unsigned int uiUserId, const QString &sTextureId, const QString &sFileName,
 			GLint magFilter=GL_LINEAR, GLint minFilter=GL_LINEAR, bool mipMap=false, int clampEdges=0);
 
+	// Explicitly opted-in scene resources only. Other renderers retain synchronous creation.
+	void BeginSceneDeviceFrame() { m_SceneTextureUploadUsed = false; }
+	void BeginSceneDeviceObject() { m_SceneDevicePreparation = true; m_SceneTexturePending = false; }
+	bool EndSceneDeviceObject() { m_SceneDevicePreparation = false; return !m_SceneTexturePending; }
+	bool SceneDevicePreparation() const { return m_SceneDevicePreparation; }
+	bool SceneTexturePending() const { return m_SceneTexturePending; }
+	GLuint PrepareSceneTexture(unsigned int userId, const QString& textureId, const QString& fileName,
+		GLint magFilter=GL_LINEAR, GLint minFilter=GL_LINEAR, bool mipMap=false, int clampEdges=0);
+	GLuint PrepareSceneTexture(unsigned int userId, const QString& textureId, const std::function<QImage()>& prepare,
+		GLint magFilter=GL_LINEAR, GLint minFilter=GL_LINEAR, bool mipMap=false, int clampEdges=0);
+
 	// Create a texture map from an array of floating point triplets.
 	GLuint CreateTextureFromFloats(unsigned int uiUserId, const QString &sTextureId, const float* data, unsigned int width,
 			unsigned int height, bool mipMap=false, int clampEdges=0, GLenum format=GL_RGB);
@@ -1144,7 +1163,7 @@ public:
 
 	// Must be called while GL context is current.
 	// 'maxLights' is the maximum number of point light sources.
-	void InitializeGL(unsigned int maxLights);
+	void InitializeGL(unsigned int maxLights, bool starMapOnly=false);
 
 	inline void SetAmbientLight(QColor& ambient)
 	{

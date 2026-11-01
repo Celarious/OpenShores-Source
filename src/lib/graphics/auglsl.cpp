@@ -1278,6 +1278,30 @@ void AuGLSL::DeleteSkyBox()
 	m_Nebula->DeleteGL();
 }
 
+void AuGLSL::InitializeStarMap(AuOpenGLFunctions& GLf, unsigned int maxLights)
+{
+	m_GLf = &GLf;
+	m_MaxLights = maxLights;
+	Hashpack::ReadFiles(":glsl.har", s_GLSLProgramSrc);
+	const AuGLSLProgramOpt opt(maxLights);
+	m_Line->Build(GLf, opt);
+	m_SpriteSize->Build(GLf, opt);
+	m_SpriteSizeColor->Build(GLf, opt);
+	// RenderText and RenderSprite both use TextureShader indirectly.
+	m_Texture->Build(GLf, opt);
+	DeselectProgram();
+	s_GLSLProgramSrc.clear();
+}
+
+void AuGLSL::DeleteStarMap()
+{
+	DeselectProgram();
+	m_Line->DeleteGL();
+	m_SpriteSize->DeleteGL();
+	m_SpriteSizeColor->DeleteGL();
+	m_Texture->DeleteGL();
+}
+
 void AuGLSL::Initialize(AuOpenGLFunctions& GLf, unsigned int maxLights)
 {
 	m_GLf = &GLf;

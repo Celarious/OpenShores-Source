@@ -104,6 +104,7 @@
 #include <QNetworkDiskCache>
 #include <QNetworkReply>
 #include <QPushButton>
+#include <QScopedValueRollback>
 #include <QTimer>
 #include <QToolBar>
 #include <QUrl>
@@ -359,7 +360,6 @@ AuDesignerFrame::AuDesignerFrame(QWidget *parent) : AuFrame(parent)
 	m_LocatorCompassDock = 0;
 	m_LocatorDock = 0;
 	m_LocatorGPSDock = 0;
-	m_LocatorStarMapDock = 0;
 	m_LocatorSystemScanDock = 0;
 	m_LocatorWorldMapDock = 0;
 	m_MailDock = 0;
@@ -744,6 +744,7 @@ QSize AuDesignerFrame::sizeHint() const
 
 void AuDesignerFrame::Timer()
 {
+	if(!m_DockInitSteps.empty()) return;
 	if(m_LegacyDesigner && !m_LegacyStudioOnline)
 		return;
 
@@ -1171,6 +1172,7 @@ void AuDesignerFrame::ToggleSpacecraftRosterUi()
 
 void AuDesignerFrame::ToggleSpacecraftShipmentsUi()
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	if(m_SpacecraftShipmentsDock)
 	{
 		if(m_View && m_View->SceneContext() == SCENE_Designer)
@@ -1236,14 +1238,16 @@ void AuDesignerFrame::ToggleLocatorGPSUi()
 
 void AuDesignerFrame::ToggleLocatorStarMapUi()
 {
-	if(m_LocatorStarMapDock)
+	if(!m_LocatorDock) return;
+	if(m_View && m_View->SceneContext() != SCENE_Universe)
+		m_LocatorDock->hide();
+	else if(!m_LocatorDock->isHidden() && m_LocatorDock->m_Locator->StarMapSelected())
+		m_LocatorDock->hide();
+	else
 	{
-		if(m_View && m_View->SceneContext() != SCENE_Universe)
-			m_LocatorStarMapDock->hide();
-		else if(m_LocatorStarMapDock->isHidden())
-			m_LocatorStarMapDock->show();
-		else
-			m_LocatorStarMapDock->hide();
+		m_LocatorDock->m_Locator->SelectStarMap();
+		m_LocatorDock->show();
+		m_LocatorDock->raise();
 	}
 }
 
@@ -1780,19 +1784,19 @@ void AuDesignerFrame::closeEvent(QCloseEvent* event)
 	g_Au.Settings().setValue("/Widget/MainFrame/Geometry", saveGeometry());
 	if(auApp->RunState() == AuApp::Designer)
 	{
-		if(m_CommDock)
+		if(m_DockWidgetsReady)
 			g_Au.Settings().setValue("/Widget/MainFrame/DesignerWindowState", saveState());
 		g_Au.Settings().setValue("/Widget/MainFrame/DesignerFullScreen", isFullScreen());
 	}
 	else if(auApp->RunState() == AuApp::Solitaire)
 	{
-		if(m_CommDock)
+		if(m_DockWidgetsReady)
 			g_Au.Settings().setValue("/Widget/MainFrame/SoloWindowState", saveState());
 		g_Au.Settings().setValue("/Widget/MainFrame/SoloFullScreen", isFullScreen());
 	}
 	else
 	{
-		if(m_CommDock)
+		if(m_DockWidgetsReady)
 			g_Au.Settings().setValue("/Widget/MainFrame/WindowState1", saveState());
 		g_Au.Settings().setValue("/Widget/MainFrame/FullScreen", isFullScreen());
 	}
@@ -1803,7 +1807,7 @@ void AuDesignerFrame::closeEvent(QCloseEvent* event)
 		m_Settings->close();
 
 	// Store the visibility states of all our docking toolbars if any are currently visible.
-	if(m_DockBars.AnyVisible())
+	if(m_DockWidgetsReady && m_DockBars.AnyVisible())
 	{
 		// At least one toolbar is visible.
 		m_DockBars.SaveVisibilityStates();
@@ -1853,8 +1857,6 @@ void AuDesignerFrame::EmpireDataComplete()
 		m_Intro->EmpireDataReceived();
 	if(m_LocatorDock)
 		m_LocatorDock->m_Locator->EmpireDataChanged();
-	if(m_LocatorStarMapDock)
-		m_LocatorStarMapDock->m_Content->EmpireDataChanged();
 	if(m_GovernDock)
 		m_GovernDock->m_Govern->UpdateDatabase();
 	if(m_GovernAnnouncementsDock)
@@ -1943,8 +1945,6 @@ void AuDesignerFrame::GameOver(quint8 gameType, QByteArray gameResult)
 
 void AuDesignerFrame::ShowCitiesOnStarMap(AuIdList cityIds)
 {
-	if(m_LocatorStarMapDock)
-		m_LocatorStarMapDock->m_Content->StarMapShowCities(cityIds);
 
 	if(m_LocatorDock)
 		m_LocatorDock->m_Locator->StarMapShowCities(cityIds);
@@ -1952,8 +1952,6 @@ void AuDesignerFrame::ShowCitiesOnStarMap(AuIdList cityIds)
 
 void AuDesignerFrame::ShowGalaxyLocOnStarMap(QString galaxyName, AuPoint loc)
 {
-	if(m_LocatorStarMapDock)
-		m_LocatorStarMapDock->m_Content->StarMapShowGalaxyLocation(galaxyName, loc);
 
 	if(m_LocatorDock)
 		m_LocatorDock->m_Locator->StarMapShowGalaxyLocation(galaxyName, loc);
@@ -2028,56 +2026,42 @@ void AuDesignerFrame::StarMapUpdateAllComplete()
 {
 	if(m_LocatorDock)
 		m_LocatorDock->m_Locator->StarMapUpdateAllComplete();
-	if(m_LocatorStarMapDock)
-		m_LocatorStarMapDock->m_Content->StarMapUpdateAllComplete();
 }
 
 void AuDesignerFrame::StarMapUpdateGalaxyComplete(int galaxy)
 {
 	if(m_LocatorDock)
 		m_LocatorDock->m_Locator->StarMapUpdateGalaxyComplete((GALAXY)galaxy);
-	if(m_LocatorStarMapDock)
-		m_LocatorStarMapDock->m_Content->StarMapUpdateGalaxyComplete((GALAXY)galaxy);
 }
 
 void AuDesignerFrame::StarMapUpdateSectorComplete(int galaxy, AuIdList sectorIds)
 {
 	if(m_LocatorDock)
 		m_LocatorDock->m_Locator->StarMapUpdateSectorComplete((GALAXY)galaxy, sectorIds);
-	if(m_LocatorStarMapDock)
-		m_LocatorStarMapDock->m_Content->StarMapUpdateSectorComplete((GALAXY)galaxy, sectorIds);
 }
 
 void AuDesignerFrame::StarMapUpdateAllStarted()
 {
 	if(m_LocatorDock)
 		m_LocatorDock->m_Locator->StarMapUpdateAllStarted();
-	if(m_LocatorStarMapDock)
-		m_LocatorStarMapDock->m_Content->StarMapUpdateAllStarted();
 }
 
 void AuDesignerFrame::StarMapUpdateGalaxyStarted(int galaxy)
 {
 	if(m_LocatorDock)
 		m_LocatorDock->m_Locator->StarMapUpdateGalaxyStarted((GALAXY)galaxy);
-	if(m_LocatorStarMapDock)
-		m_LocatorStarMapDock->m_Content->StarMapUpdateGalaxyStarted((GALAXY)galaxy);
 }
 
 void AuDesignerFrame::StarMapUpdateSectorStarted(AuId sector, unsigned int range)
 {
 	if(m_LocatorDock)
 		m_LocatorDock->m_Locator->StarMapUpdateSectorStarted(sector, range);
-	if(m_LocatorStarMapDock)
-		m_LocatorStarMapDock->m_Content->StarMapUpdateSectorStarted(sector, range);
 }
 
 void AuDesignerFrame::StarMapErased()
 {
 	if(m_LocatorDock)
 		m_LocatorDock->m_Locator->StarMapErased();
-	if(m_LocatorStarMapDock)
-		m_LocatorStarMapDock->m_Content->StarMapErased();
 }
 
 void AuDesignerFrame::StarMapAddSector(AuId sectorId)
@@ -2219,8 +2203,6 @@ void AuDesignerFrame::StarMapAddSector(const DaSector* sector, quint32 empireId)
 	g_AuClient.StarMapAddSector(sector->Id(), gvsector);
 	if(m_LocatorDock)
 		m_LocatorDock->m_Locator->StarMapSectorAdded(sector->Id());
-	if(m_LocatorStarMapDock)
-		m_LocatorStarMapDock->m_Content->StarMapSectorAdded(sector->Id());
 }
 
 void AuDesignerFrame::ClientUnitEmpireReceived(quint32 empireId)
@@ -2245,29 +2227,54 @@ void AuDesignerFrame::CreateModernBuildingDock()
 
 void AuDesignerFrame::CreateDockWidgets()
 {
-	//qDebug() << "AuDesignerFrame::CreateDockWidgets";
 	Q_ASSERT(m_View);
+	if(m_DockWidgetsReady || !m_DockInitSteps.empty()) return;
+	const bool staged = auApp->RunState() != AuApp::Designer;
+	// Keep designer startup synchronous. Scene panels are fully prepared while
+	// loading, with a return to Qt between small batches of UI work.
+	auto addStep = [this, staged](const std::function<bool()>& step) {
+		if(staged) m_DockInitSteps.push_back(step);
+		else while(!step()) {}
+	};
 
-	// Designer input bar
-	m_DesignerBar = new AuDesignerBar(this);
-	addToolBar(Qt::TopToolBarArea, m_DesignerBar);
-	connect(m_DesignerBar, SIGNAL(CoordinateEntered(QString, int)), m_View, SLOT(CoordinateEntered(QString, int)));
-	connect(m_View, SIGNAL(DesignerCommandPrompt(QString)), m_DesignerBar, SLOT(SetInputPrompt(QString)));
+	addStep([this]() {
+		// Legacy's recovered designer uses its own interface. In particular,
+		// adding these toolbars here would resize the live loading viewport.
+		if(g_Au.IsLegacyGeneration() && auApp->RunState() != AuApp::Designer) return true;
+		// Designer input bar
+		m_DesignerBar = new AuDesignerBar(this);
+		addToolBar(Qt::TopToolBarArea, m_DesignerBar);
+		m_DesignerBar->hide();
+		connect(m_DesignerBar, SIGNAL(CoordinateEntered(QString, int)), m_View, SLOT(CoordinateEntered(QString, int)));
+		connect(m_View, SIGNAL(DesignerCommandPrompt(QString)), m_DesignerBar, SLOT(SetInputPrompt(QString)));
 
-	// Designer helper bar
-	m_DesignerBar2 = new AuDesignerBar2(this);
-	addToolBar(Qt::TopToolBarArea, m_DesignerBar2);
-	connect(m_View, SIGNAL(DesignerAnchorChanged(QString)), m_DesignerBar2, SLOT(SetAnchorDesc(QString)));
+		return true;
+	});
 
-	// Communicator opens all previously opened channels.
-	m_CommDock = new AuCommDock(this);
-	connect(m_CommDock->m_Comm, SIGNAL(ChoicePicked(quint32, qint8, AuId)), auApp, SLOT(ChoicePicked(quint32, qint8, AuId)));
-	connect(m_View, SIGNAL(ChatReleased()), m_CommDock->m_Comm, SLOT(FocusChatInput()));
-	connect(m_View, SIGNAL(SpotTargetOrTerrain(QString, int, bool, bool)),
-			m_CommDock->m_Comm, SLOT(SpotTargetOrTerrain(QString, int, bool, bool)));
-	addDockWidget(Qt::BottomDockWidgetArea, m_CommDock, Qt::Horizontal);
-	m_CommDock->hide();
-	m_DockBars.m_DockWidgets.append(AuFrameDock(m_CommDock));
+	addStep([this]() {
+		if(g_Au.IsLegacyGeneration() && auApp->RunState() != AuApp::Designer) return true;
+		// Designer helper bar
+		m_DesignerBar2 = new AuDesignerBar2(this);
+		addToolBar(Qt::TopToolBarArea, m_DesignerBar2);
+		m_DesignerBar2->hide();
+		connect(m_View, SIGNAL(DesignerAnchorChanged(QString)), m_DesignerBar2, SLOT(SetAnchorDesc(QString)));
+
+		return true;
+	});
+
+	addStep([this]() {
+		// Communicator opens all previously opened channels.
+		m_CommDock = new AuCommDock(this);
+		connect(m_CommDock->m_Comm, SIGNAL(ChoicePicked(quint32, qint8, AuId)), auApp, SLOT(ChoicePicked(quint32, qint8, AuId)));
+		connect(m_View, SIGNAL(ChatReleased()), m_CommDock->m_Comm, SLOT(FocusChatInput()));
+		connect(m_View, SIGNAL(SpotTargetOrTerrain(QString, int, bool, bool)),
+				m_CommDock->m_Comm, SLOT(SpotTargetOrTerrain(QString, int, bool, bool)));
+		addDockWidget(Qt::BottomDockWidgetArea, m_CommDock, Qt::Horizontal);
+		m_CommDock->hide();
+		m_DockBars.m_DockWidgets.append(AuFrameDock(m_CommDock));
+
+		return true;
+	});
 
 	if(auApp->RunState() == AuApp::Designer)
 	{
@@ -2310,432 +2317,684 @@ void AuDesignerFrame::CreateDockWidgets()
 		bool soloDesigner = auApp->IsSingleUserDesignerMode();
 
 		// Character Bio
-		m_BioDock = new AuBioDock(this);
-		connect(m_BioDock->m_Bio->m_JobsPage, SIGNAL(CloseStoryRequested(AuJobOffer)),
-				auApp, SLOT(CloseStory(AuJobOffer)));
-		connect(m_BioDock->m_Bio->m_JobsPage, SIGNAL(StoryBlockRequested(quint32)),
-				auApp, SLOT(StoryResendBlock(quint32)));
-		connect(m_BioDock->m_Bio->m_JobsPage, SIGNAL(StoryHintRequested(quint32)),
-				auApp, SLOT(StoryHint(quint32)));
-		addDockWidget(Qt::RightDockWidgetArea, m_BioDock, Qt::Vertical);
-		m_BioDock->hide();
-		m_BioDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_BioDock));
+		{
+			AuBioDock* dock = 0;
+			addStep([this, dock]() mutable {
+				if(!dock) { dock = new AuBioDock(this, true); dock->hide(); return false; }
+				if(!dock->m_Bio->InitializeNextPage()) return false;
+				m_BioDock = dock;
+				connect(m_BioDock->m_Bio->m_JobsPage, SIGNAL(CloseStoryRequested(AuJobOffer)),
+						auApp, SLOT(CloseStory(AuJobOffer)));
+				connect(m_BioDock->m_Bio->m_JobsPage, SIGNAL(StoryBlockRequested(quint32)),
+						auApp, SLOT(StoryResendBlock(quint32)));
+				connect(m_BioDock->m_Bio->m_JobsPage, SIGNAL(StoryHintRequested(quint32)),
+						auApp, SLOT(StoryHint(quint32)));
+				addDockWidget(Qt::RightDockWidgetArea, m_BioDock, Qt::Vertical);
+				m_BioDock->hide();
+				m_BioDock->setFloating(true);
+				m_DockBars.m_DockWidgets.append(AuFrameDock(m_BioDock));
+
+				return true;
+			});
+		}
 
 		// Governance tabbed pages
-		m_GovernDock = new AuGovernDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_GovernDock, Qt::Horizontal);
-		m_GovernDock->hide();
-		m_GovernDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernDock));
+		{
+			AuGovernDock* dock = 0;
+			addStep([this, dock]() mutable {
+				if(!dock) { dock = new AuGovernDock(this, true); dock->hide(); return false; }
+				if(!dock->m_Govern->InitializeNextPage()) return false;
+				m_GovernDock = dock;
+				addDockWidget(Qt::BottomDockWidgetArea, m_GovernDock, Qt::Horizontal);
+				m_GovernDock->hide();
+				m_GovernDock->setFloating(true);
+				m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernDock));
+
+				return true;
+			});
+		}
 
 		// Governance announcements
-		m_GovernAnnouncementsDock = new AuGovAnnouncementsDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_GovernAnnouncementsDock, Qt::Horizontal);
-		m_GovernAnnouncementsDock->hide();
-		m_GovernAnnouncementsDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernAnnouncementsDock));
+		addStep([=]() {
+			m_GovernAnnouncementsDock = new AuGovAnnouncementsDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_GovernAnnouncementsDock, Qt::Horizontal);
+			m_GovernAnnouncementsDock->hide();
+			m_GovernAnnouncementsDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernAnnouncementsDock));
+
+			return true;
+		});
 
 		// Governance cities
-		m_GovernCitiesDock = new AuGovCitiesDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_GovernCitiesDock, Qt::Horizontal);
-		m_GovernCitiesDock->hide();
-		m_GovernCitiesDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernCitiesDock));
+		addStep([=]() {
+			m_GovernCitiesDock = new AuGovCitiesDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_GovernCitiesDock, Qt::Horizontal);
+			m_GovernCitiesDock->hide();
+			m_GovernCitiesDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernCitiesDock));
+
+			return true;
+		});
 
 		// Governance citizens
-		m_GovernCitizensDock = new AuGovCitizensDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_GovernCitizensDock, Qt::Horizontal);
-		m_GovernCitizensDock->hide();
-		m_GovernCitizensDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernCitizensDock));
+		addStep([=]() {
+			m_GovernCitizensDock = new AuGovCitizensDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_GovernCitizensDock, Qt::Horizontal);
+			m_GovernCitizensDock->hide();
+			m_GovernCitizensDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernCitizensDock));
+
+			return true;
+		});
 
 		// Governance commerce
-		m_GovernCommerceDock = new AuGovCommerceDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_GovernCommerceDock, Qt::Horizontal);
-		m_GovernCommerceDock->hide();
-		m_GovernCommerceDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernCommerceDock));
+		addStep([=]() {
+			m_GovernCommerceDock = new AuGovCommerceDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_GovernCommerceDock, Qt::Horizontal);
+			m_GovernCommerceDock->hide();
+			m_GovernCommerceDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernCommerceDock));
+
+			return true;
+		});
 
 		// Governance diplomacy
-		m_GovernDiplomacyDock = new AuGovDiplomacyDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_GovernDiplomacyDock, Qt::Horizontal);
-		m_GovernDiplomacyDock->hide();
-		m_GovernDiplomacyDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernDiplomacyDock));
+		addStep([=]() {
+			m_GovernDiplomacyDock = new AuGovDiplomacyDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_GovernDiplomacyDock, Qt::Horizontal);
+			m_GovernDiplomacyDock->hide();
+			m_GovernDiplomacyDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernDiplomacyDock));
+
+			return true;
+		});
 
 		// Governance patents
-		m_GovernPatentsDock = new AuGovPatentsDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_GovernPatentsDock, Qt::Horizontal);
-		m_GovernPatentsDock->hide();
-		m_GovernPatentsDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernPatentsDock));
-		connect(m_GovernPatentsDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
-			if(visible && g_Au.IsLegacyGeneration()) m_GovernPatentsDock->hide();
+		addStep([=]() {
+			m_GovernPatentsDock = new AuGovPatentsDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_GovernPatentsDock, Qt::Horizontal);
+			m_GovernPatentsDock->hide();
+			m_GovernPatentsDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernPatentsDock));
+			connect(m_GovernPatentsDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+				if(visible && g_Au.IsLegacyGeneration()) m_GovernPatentsDock->hide();
+			});
+
+			return true;
 		});
 
 		// Governance policy
-		m_GovernPolicyDock = new AuGovPolicyDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_GovernPolicyDock, Qt::Horizontal);
-		m_GovernPolicyDock->hide();
-		m_GovernPolicyDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernPolicyDock));
+		addStep([=]() {
+			m_GovernPolicyDock = new AuGovPolicyDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_GovernPolicyDock, Qt::Horizontal);
+			m_GovernPolicyDock->hide();
+			m_GovernPolicyDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernPolicyDock));
+
+			return true;
+		});
 
 		// Governance taxes
-		m_GovernTaxesDock = new AuGovTaxesDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_GovernTaxesDock, Qt::Horizontal);
-		m_GovernTaxesDock->hide();
-		m_GovernTaxesDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernTaxesDock));
+		addStep([=]() {
+			m_GovernTaxesDock = new AuGovTaxesDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_GovernTaxesDock, Qt::Horizontal);
+			m_GovernTaxesDock->hide();
+			m_GovernTaxesDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_GovernTaxesDock));
+
+			return true;
+		});
 
 		// Cargo tabs
-		m_HoldDock = new AuCargoDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_HoldDock, Qt::Horizontal);
-		m_HoldDock->hide();
-		m_HoldDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_HoldDock));
+		{
+			AuCargoDock* dock = 0;
+			addStep([this, dock]() mutable {
+				if(!dock) { dock = new AuCargoDock(this, true); dock->hide(); return false; }
+				if(!dock->m_Cargo->InitializeNextPage()) return false;
+				m_HoldDock = dock;
+				addDockWidget(Qt::BottomDockWidgetArea, m_HoldDock, Qt::Horizontal);
+				m_HoldDock->hide();
+				m_HoldDock->setFloating(true);
+				m_DockBars.m_DockWidgets.append(AuFrameDock(m_HoldDock));
+				return true;
+			});
+		}
 
-		m_HoldDockFree = new AuCargoDockFree(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_HoldDockFree, Qt::Horizontal);
-		m_HoldDockFree->hide();
-		m_HoldDockFree->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_HoldDockFree));
+		{
+			AuCargoDockFree* dock = 0;
+			addStep([this, dock]() mutable {
+				if(!dock) { dock = new AuCargoDockFree(this, true); dock->hide(); return false; }
+				if(!dock->m_Cargo->InitializeNextPage()) return false;
+				m_HoldDockFree = dock;
+				addDockWidget(Qt::BottomDockWidgetArea, m_HoldDockFree, Qt::Horizontal);
+				m_HoldDockFree->hide();
+				m_HoldDockFree->setFloating(true);
+				m_DockBars.m_DockWidgets.append(AuFrameDock(m_HoldDockFree));
+
+				return true;
+			});
+		}
 
 		// Cargo Hold
-		m_CargoHoldDock = new AuCargoHoldDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_CargoHoldDock, Qt::Horizontal);
-		m_CargoHoldDock->hide();
-		m_CargoHoldDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_CargoHoldDock));
+		addStep([=]() {
+			m_CargoHoldDock = new AuCargoHoldDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_CargoHoldDock, Qt::Horizontal);
+			m_CargoHoldDock->hide();
+			m_CargoHoldDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_CargoHoldDock));
+
+			return true;
+		});
 
 		// Cargo Manifest
-		m_CargoManifestDock = new AuCargoJettisonDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_CargoManifestDock, Qt::Horizontal);
-		m_CargoManifestDock->hide();
-		m_CargoManifestDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_CargoManifestDock));
+		addStep([=]() {
+			m_CargoManifestDock = new AuCargoJettisonDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_CargoManifestDock, Qt::Horizontal);
+			m_CargoManifestDock->hide();
+			m_CargoManifestDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_CargoManifestDock));
+
+			return true;
+		});
 
 		// Cargo Ordnance
-		m_CargoOrdnanceDock = new AuCargoOrdnanceDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_CargoOrdnanceDock, Qt::Horizontal);
-		m_CargoOrdnanceDock->hide();
-		m_CargoOrdnanceDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_CargoOrdnanceDock));
+		addStep([=]() {
+			m_CargoOrdnanceDock = new AuCargoOrdnanceDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_CargoOrdnanceDock, Qt::Horizontal);
+			m_CargoOrdnanceDock->hide();
+			m_CargoOrdnanceDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_CargoOrdnanceDock));
+
+			return true;
+		});
 
 		// Cargo Transfer
-		m_CargoTransferDock = new AuCargoTransferDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_CargoTransferDock, Qt::Horizontal);
-		m_CargoTransferDock->hide();
-		m_CargoTransferDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_CargoTransferDock));
+		addStep([=]() {
+			m_CargoTransferDock = new AuCargoTransferDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_CargoTransferDock, Qt::Horizontal);
+			m_CargoTransferDock->hide();
+			m_CargoTransferDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_CargoTransferDock));
+
+			return true;
+		});
 
 		// Personal gear
-		m_GearDock = new AuGearDock(this);
-		connect(m_GearDock->m_Gear, SIGNAL(DropGearItem(AuGearPos)),
-				auApp, SLOT(DropGearItem(AuGearPos)));
-		connect(m_GearDock->m_Gear, SIGNAL(InscribeGearItem(AuGearPos, QString)),
-				auApp, SLOT(InscribeGearItem(AuGearPos, QString)));
-		connect(m_GearDock->m_Gear, SIGNAL(RedeemGearItem(AuGearPos)),
-				auApp, SLOT(RedeemGearItem(AuGearPos)));
-		connect(m_GearDock->m_Gear, SIGNAL(SetMessage(AuGearPos, QString)),
-				auApp, SLOT(SetMessage(AuGearPos, QString)));
-		connect(m_GearDock->m_Gear, SIGNAL(MoveGearItemToItem(AuGearPos, AuGearPos)),
-				auApp, SLOT(MoveGearItemToItem(AuGearPos, AuGearPos)));
-		connect(m_GearDock->m_Gear, SIGNAL(MoveGearItemToSlot(AuGearPos, quint8)),
-				auApp, SLOT(MoveGearItemToSlot(AuGearPos, quint8)));
-		connect(m_GearDock->m_Gear, SIGNAL(SetFlowerPot(AuGearPos, quint8)),
-				auApp, SLOT(SetFlowerPot(AuGearPos, quint8)));
-		connect(m_GearDock->m_Gear, SIGNAL(SetPictureFrame(AuGearPos, QString, bool, bool)),
-				auApp, SLOT(SetPictureFrame(AuGearPos, QString, bool, bool)));
-		connect(m_GearDock->m_Gear, SIGNAL(UseGearItem(AuGearPos)),
-				auApp, SLOT(UseGearItem(AuGearPos)));
-		connect(m_GearDock->m_Gear, SIGNAL(ShowGalaxyLocOnStarMap(QString, AuPoint)),
-				SLOT(ShowGalaxyLocOnStarMap(QString, AuPoint)));
-		connect(m_GearDock->m_Gear, SIGNAL(ToggleHandCraftUi()),
-				SLOT(ToggleHandCraftUi()));
-		addDockWidget(Qt::RightDockWidgetArea, m_GearDock, Qt::Vertical);
-		m_GearDock->hide();
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_GearDock));
+		addStep([=]() {
+			m_GearDock = new AuGearDock(this);
+			connect(m_GearDock->m_Gear, SIGNAL(DropGearItem(AuGearPos)),
+					auApp, SLOT(DropGearItem(AuGearPos)));
+			connect(m_GearDock->m_Gear, SIGNAL(InscribeGearItem(AuGearPos, QString)),
+					auApp, SLOT(InscribeGearItem(AuGearPos, QString)));
+			connect(m_GearDock->m_Gear, SIGNAL(RedeemGearItem(AuGearPos)),
+					auApp, SLOT(RedeemGearItem(AuGearPos)));
+			connect(m_GearDock->m_Gear, SIGNAL(SetMessage(AuGearPos, QString)),
+					auApp, SLOT(SetMessage(AuGearPos, QString)));
+			connect(m_GearDock->m_Gear, SIGNAL(MoveGearItemToItem(AuGearPos, AuGearPos)),
+					auApp, SLOT(MoveGearItemToItem(AuGearPos, AuGearPos)));
+			connect(m_GearDock->m_Gear, SIGNAL(MoveGearItemToSlot(AuGearPos, quint8)),
+					auApp, SLOT(MoveGearItemToSlot(AuGearPos, quint8)));
+			connect(m_GearDock->m_Gear, SIGNAL(SetFlowerPot(AuGearPos, quint8)),
+					auApp, SLOT(SetFlowerPot(AuGearPos, quint8)));
+			connect(m_GearDock->m_Gear, SIGNAL(SetPictureFrame(AuGearPos, QString, bool, bool)),
+					auApp, SLOT(SetPictureFrame(AuGearPos, QString, bool, bool)));
+			connect(m_GearDock->m_Gear, SIGNAL(UseGearItem(AuGearPos)),
+					auApp, SLOT(UseGearItem(AuGearPos)));
+			connect(m_GearDock->m_Gear, SIGNAL(ShowGalaxyLocOnStarMap(QString, AuPoint)),
+					SLOT(ShowGalaxyLocOnStarMap(QString, AuPoint)));
+			connect(m_GearDock->m_Gear, SIGNAL(ToggleHandCraftUi()),
+					SLOT(ToggleHandCraftUi()));
+			addDockWidget(Qt::RightDockWidgetArea, m_GearDock, Qt::Vertical);
+			m_GearDock->hide();
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_GearDock));
+
+			return true;
+		});
 
 		// Locator
-		m_LocatorDock = new AuLocatorDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_LocatorDock, Qt::Horizontal);
-		m_LocatorDock->hide();
-		m_LocatorDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_LocatorDock));
+		AuLocatorDock* locator = 0;
+		addStep([this, locator]() mutable {
+			if(!locator) { locator = new AuLocatorDock(this, true); locator->hide(); return false; }
+			if(!locator->m_Locator->InitializeNextPage()) return false;
+			m_LocatorDock = locator;
+			addDockWidget(Qt::BottomDockWidgetArea, m_LocatorDock, Qt::Horizontal);
+			m_LocatorDock->hide();
+			m_LocatorDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_LocatorDock));
+			m_LocatorDock->m_Locator->PrepareNextStep();
+
+			return true;
+		});
 
 		// Locator Compass
-		m_LocatorCompassDock = new AuLocatorCompassDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_LocatorCompassDock, Qt::Horizontal);
-		m_LocatorCompassDock->hide();
-		m_LocatorCompassDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_LocatorCompassDock));
+		addStep([=]() {
+			m_LocatorCompassDock = new AuLocatorCompassDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_LocatorCompassDock, Qt::Horizontal);
+			m_LocatorCompassDock->hide();
+			m_LocatorCompassDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_LocatorCompassDock));
+
+			return true;
+		});
 
 		// Locator GPS
-		m_LocatorGPSDock = new AuLocatorGPSDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_LocatorGPSDock, Qt::Horizontal);
-		m_LocatorGPSDock->hide();
-		m_LocatorGPSDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_LocatorGPSDock));
+		addStep([=]() {
+			m_LocatorGPSDock = new AuLocatorGPSDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_LocatorGPSDock, Qt::Horizontal);
+			m_LocatorGPSDock->hide();
+			m_LocatorGPSDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_LocatorGPSDock));
 
-		// Locator Star Map
-		m_LocatorStarMapDock = new AuLocatorStarMapDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_LocatorStarMapDock, Qt::Horizontal);
-		m_LocatorStarMapDock->hide();
-		m_LocatorStarMapDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_LocatorStarMapDock));
+			return true;
+		});
 
 		// Locator World Map
-		m_LocatorWorldMapDock = new AuLocatorWorldMapDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_LocatorWorldMapDock, Qt::Horizontal);
-		m_LocatorWorldMapDock->hide();
-		m_LocatorWorldMapDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_LocatorWorldMapDock));
+		addStep([=]() {
+			m_LocatorWorldMapDock = new AuLocatorWorldMapDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_LocatorWorldMapDock, Qt::Horizontal);
+			m_LocatorWorldMapDock->hide();
+			m_LocatorWorldMapDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_LocatorWorldMapDock));
 
-		if(soloDesigner)
-			m_MailDock = 0;
-		else
+			return true;
+		});
+
+		addStep([=]() {
+			if(soloDesigner)
+				m_MailDock = 0;
+			else
+			{
+				m_MailDock = new AuMailDock(m_View->SceneAtomId(), this);
+				connect(m_MailDock, SIGNAL(AlertMessageReceived(AuMailMsg)), SLOT(AlertMessageReceived(AuMailMsg)));
+				connect(m_MailDock, SIGNAL(GoDirectToSystem(AuId, QString, AuPoint)),
+						auApp, SLOT(GoDirectToSystem(AuId, QString, AuPoint)));
+				connect(m_MailDock, SIGNAL(GoDirectToCoord(AuPoint)), auApp, SLOT(GoDirectToCoord(AuPoint)));
+				connect(m_MailDock, SIGNAL(GoLandAtCity(AuId, QString)), auApp, SLOT(GoLandAtCity(AuId, QString)));
+				connect(m_MailDock, SIGNAL(GoOrbit(AuId, QString)), auApp, SLOT(GoOrbit(AuId, QString)));
+				connect(m_MailDock, SIGNAL(GoOrbitCity(AuId, QString)), auApp, SLOT(GoOrbitCity(AuId, QString)));
+				connect(m_MailDock, SIGNAL(GoViaWormholes(AuId, QString)), auApp, SLOT(GoViaWormholes(AuId, QString)));
+				connect(m_MailDock, SIGNAL(UpdateSquelch(AuId, bool)), auApp, SLOT(UpdateSquelch(AuId, bool)));
+				connect(m_MailDock, SIGNAL(UpdateSquelches(AuIdList, bool)), auApp, SLOT(UpdateSquelches(AuIdList, bool)));
+				addDockWidget(Qt::LeftDockWidgetArea, m_MailDock, Qt::Vertical);
+				m_MailDock->hide();
+				m_MailDock->setFloating(true);
+				m_DockBars.m_DockWidgets.append(AuFrameDock(m_MailDock));
+			}
+
+			return true;
+		});
+
 		{
-			m_MailDock = new AuMailDock(m_View->SceneAtomId(), this);
-			connect(m_MailDock, SIGNAL(AlertMessageReceived(AuMailMsg)), SLOT(AlertMessageReceived(AuMailMsg)));
-			connect(m_MailDock, SIGNAL(GoDirectToSystem(AuId, QString, AuPoint)),
-					auApp, SLOT(GoDirectToSystem(AuId, QString, AuPoint)));
-			connect(m_MailDock, SIGNAL(GoDirectToCoord(AuPoint)), auApp, SLOT(GoDirectToCoord(AuPoint)));
-			connect(m_MailDock, SIGNAL(GoLandAtCity(AuId, QString)), auApp, SLOT(GoLandAtCity(AuId, QString)));
-			connect(m_MailDock, SIGNAL(GoOrbit(AuId, QString)), auApp, SLOT(GoOrbit(AuId, QString)));
-			connect(m_MailDock, SIGNAL(GoOrbitCity(AuId, QString)), auApp, SLOT(GoOrbitCity(AuId, QString)));
-			connect(m_MailDock, SIGNAL(GoViaWormholes(AuId, QString)), auApp, SLOT(GoViaWormholes(AuId, QString)));
-			connect(m_MailDock, SIGNAL(UpdateSquelch(AuId, bool)), auApp, SLOT(UpdateSquelch(AuId, bool)));
-			connect(m_MailDock, SIGNAL(UpdateSquelches(AuIdList, bool)), auApp, SLOT(UpdateSquelches(AuIdList, bool)));
-			addDockWidget(Qt::LeftDockWidgetArea, m_MailDock, Qt::Vertical);
-			m_MailDock->hide();
-			m_MailDock->setFloating(true);
-			m_DockBars.m_DockWidgets.append(AuFrameDock(m_MailDock));
+			AuSpacecraftDock* dock = 0;
+			addStep([this, dock]() mutable {
+				if(!dock) { dock = new AuSpacecraftDock(this, true); dock->hide(); return false; }
+				if(!dock->m_Content->InitializeNextPage()) return false;
+
+				m_SpacecraftDock = dock;
+				addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftDock, Qt::Horizontal);
+				m_SpacecraftDock->hide();
+				m_SpacecraftDock->setFloating(true);
+				m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftDock));
+				return true;
+			});
 		}
 
-		m_SpacecraftDock = new AuSpacecraftDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftDock, Qt::Horizontal);
-		m_SpacecraftDock->hide();
-		m_SpacecraftDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftDock));
+		{
+			AuSpacecraftDockFree* dock = 0;
+			addStep([this, dock]() mutable {
+				if(!dock) { dock = new AuSpacecraftDockFree(this, true); dock->hide(); return false; }
+				if(!dock->m_Content->InitializeNextPage()) return false;
+				m_SpacecraftDockFree = dock;
+				addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftDockFree, Qt::Horizontal);
+				m_SpacecraftDockFree->hide();
+				m_SpacecraftDockFree->setFloating(true);
+				m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftDockFree));
+				return true;
+			});
+		}
 
-		m_SpacecraftDockFree = new AuSpacecraftDockFree(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftDockFree, Qt::Horizontal);
-		m_SpacecraftDockFree->hide();
-		m_SpacecraftDockFree->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftDockFree));
+		addStep([=]() {
 
-		m_SpacecraftAccountDock = new AuSpacecraftAccountDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftAccountDock, Qt::Horizontal);
-		m_SpacecraftAccountDock->hide();
-		m_SpacecraftAccountDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftAccountDock));
+			m_SpacecraftAccountDock = new AuSpacecraftAccountDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftAccountDock, Qt::Horizontal);
+			m_SpacecraftAccountDock->hide();
+			m_SpacecraftAccountDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftAccountDock));
 
-		m_SpacecraftBountiesDock = new AuSpacecraftBountiesDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftBountiesDock, Qt::Horizontal);
-		m_SpacecraftBountiesDock->hide();
-		m_SpacecraftBountiesDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftBountiesDock));
+			return true;
+		});
 
-		m_SpacecraftDamageDock = new AuSpacecraftDamageDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftDamageDock, Qt::Horizontal);
-		m_SpacecraftDamageDock->hide();
-		m_SpacecraftDamageDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftDamageDock));
+		addStep([=]() {
 
-		m_SpacecraftDesignExchangeDock = new AuScExchangeDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftDesignExchangeDock, Qt::Horizontal);
-		m_SpacecraftDesignExchangeDock->hide();
-		m_SpacecraftDesignExchangeDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftDesignExchangeDock));
+			m_SpacecraftBountiesDock = new AuSpacecraftBountiesDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftBountiesDock, Qt::Horizontal);
+			m_SpacecraftBountiesDock->hide();
+			m_SpacecraftBountiesDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftBountiesDock));
 
-		m_SpacecraftMissionDock = new AuSpacecraftMissionDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftMissionDock, Qt::Horizontal);
-		m_SpacecraftMissionDock->hide();
-		m_SpacecraftMissionDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftMissionDock));
+			return true;
+		});
 
-		m_SpacecraftPolicyDock = new AuSpacecraftPolicyDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftPolicyDock, Qt::Horizontal);
-		m_SpacecraftPolicyDock->hide();
-		m_SpacecraftPolicyDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftPolicyDock));
+		addStep([=]() {
 
-		m_SpacecraftRosterDock = new AuSpacecraftRosterDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftRosterDock, Qt::Horizontal);
-		m_SpacecraftRosterDock->hide();
-		m_SpacecraftRosterDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftRosterDock));
+			m_SpacecraftDamageDock = new AuSpacecraftDamageDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftDamageDock, Qt::Horizontal);
+			m_SpacecraftDamageDock->hide();
+			m_SpacecraftDamageDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftDamageDock));
 
-		m_SpacecraftShipmentsDock = new AuSpacecraftShipmentsDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftShipmentsDock, Qt::Horizontal);
-		m_SpacecraftShipmentsDock->hide();
-		m_SpacecraftShipmentsDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftShipmentsDock));
+			return true;
+		});
 
-		m_OrdersDock = new AuUnitOrdersDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_OrdersDock, Qt::Horizontal);
-		m_OrdersDock->hide();
-		m_OrdersDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_OrdersDock));
+		addStep([=]() {
+
+			m_SpacecraftDesignExchangeDock = new AuScExchangeDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftDesignExchangeDock, Qt::Horizontal);
+			m_SpacecraftDesignExchangeDock->hide();
+			m_SpacecraftDesignExchangeDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftDesignExchangeDock));
+
+			return true;
+		});
+
+		addStep([=]() {
+
+			m_SpacecraftMissionDock = new AuSpacecraftMissionDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftMissionDock, Qt::Horizontal);
+			m_SpacecraftMissionDock->hide();
+			m_SpacecraftMissionDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftMissionDock));
+
+			return true;
+		});
+
+		addStep([=]() {
+
+			m_SpacecraftPolicyDock = new AuSpacecraftPolicyDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftPolicyDock, Qt::Horizontal);
+			m_SpacecraftPolicyDock->hide();
+			m_SpacecraftPolicyDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftPolicyDock));
+
+			return true;
+		});
+
+		addStep([=]() {
+
+			m_SpacecraftRosterDock = new AuSpacecraftRosterDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftRosterDock, Qt::Horizontal);
+			m_SpacecraftRosterDock->hide();
+			m_SpacecraftRosterDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftRosterDock));
+
+			return true;
+		});
+
+		addStep([=]() {
+			if(g_Au.IsLegacyGeneration()) return true;
+			m_SpacecraftShipmentsDock = new AuSpacecraftShipmentsDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftShipmentsDock, Qt::Horizontal);
+			m_SpacecraftShipmentsDock->hide();
+			m_SpacecraftShipmentsDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftShipmentsDock));
+
+			return true;
+		});
+
+		addStep([=]() {
+
+			m_OrdersDock = new AuUnitOrdersDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_OrdersDock, Qt::Horizontal);
+			m_OrdersDock->hide();
+			m_OrdersDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_OrdersDock));
+
+			return true;
+		});
 
 		// Designer parts list.
-		m_DesignerPartsDock = new AuDesignerPartsDock(this);
-		connect(m_DesignerPartsDock, SIGNAL(GoToSelection()),
-				m_View, SLOT(DesignerGoToSelection()),
-				Qt::QueuedConnection);
-		connect(m_DesignerPartsDock, SIGNAL(PartsSelectionChanged(AuScIdSet)),
-				m_View, SLOT(DesignerSetPartSelection(AuScIdSet)),
-				Qt::QueuedConnection);
-		addDockWidget(Qt::RightDockWidgetArea, m_DesignerPartsDock, Qt::Vertical);
-		m_DesignerPartsDock->hide();
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_DesignerPartsDock));
+		addStep([=]() {
+			if(g_Au.IsLegacyGeneration()) return true;
+			m_DesignerPartsDock = new AuDesignerPartsDock(this);
+			connect(m_DesignerPartsDock, SIGNAL(GoToSelection()),
+					m_View, SLOT(DesignerGoToSelection()),
+					Qt::QueuedConnection);
+			connect(m_DesignerPartsDock, SIGNAL(PartsSelectionChanged(AuScIdSet)),
+					m_View, SLOT(DesignerSetPartSelection(AuScIdSet)),
+					Qt::QueuedConnection);
+			addDockWidget(Qt::RightDockWidgetArea, m_DesignerPartsDock, Qt::Vertical);
+			m_DesignerPartsDock->hide();
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_DesignerPartsDock));
+
+			return true;
+		});
 
 		// Designer texture wrapper.
-		m_DesignerTextureWrapDock = new AuDesignerTextureWrapDock(this);
-		connect(m_View, SIGNAL(DesignerSelectionChanged()), m_DesignerTextureWrapDock, SLOT(DesignerSelectionChanged()));
-		addDockWidget(Qt::RightDockWidgetArea, m_DesignerTextureWrapDock, Qt::Vertical);
-		m_DesignerTextureWrapDock->hide();
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_DesignerTextureWrapDock));
+		addStep([=]() {
+			if(g_Au.IsLegacyGeneration()) return true;
+			m_DesignerTextureWrapDock = new AuDesignerTextureWrapDock(this);
+			connect(m_View, SIGNAL(DesignerSelectionChanged()), m_DesignerTextureWrapDock, SLOT(DesignerSelectionChanged()));
+			addDockWidget(Qt::RightDockWidgetArea, m_DesignerTextureWrapDock, Qt::Vertical);
+			m_DesignerTextureWrapDock->hide();
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_DesignerTextureWrapDock));
 
-		// Players Online
-		if(solo)
-			m_PlayersOnlineDock = 0;
-		else
-		{
-			m_PlayersOnlineDock = new AuPlayersOnlineDock(this);
-			connect(m_PlayersOnlineDock->m_Content, SIGNAL(AddBuddy(AuId, QString)),
-					m_CommDock->m_Comm, SLOT(AddBuddy(AuId, QString)));
-			connect(m_PlayersOnlineDock->m_Content, SIGNAL(AddSquelch(AuId, QString)),
-					m_CommDock->m_Comm, SLOT(AddSquelch(AuId, QString)));
-			connect(m_PlayersOnlineDock->m_Content, SIGNAL(AvatarOnLine(AuId)), m_View, SLOT(AvatarOnLine(AuId)));
-			connect(auApp, SIGNAL(PlayersOnlineStatus(AuPlayerOnlineStatusVector)),
-					m_PlayersOnlineDock->m_Content, SLOT(PlayersOnlineStatus(AuPlayerOnlineStatusVector)));
-			connect(m_PlayersOnlineDock->m_Content, SIGNAL(OpenChannelToAvatar(AuId)),
-					m_CommDock->m_Comm, SLOT(OpenChannelTo(AuId)));
-			addDockWidget(Qt::BottomDockWidgetArea, m_PlayersOnlineDock, Qt::Horizontal);
-			m_PlayersOnlineDock->hide();
-			m_PlayersOnlineDock->setFloating(true);
-			m_DockBars.m_DockWidgets.append(AuFrameDock(m_PlayersOnlineDock));
-		}
+			return true;
+		});
+
+		addStep([=]() {
+			// Players Online
+			if(solo)
+				m_PlayersOnlineDock = 0;
+			else
+			{
+				m_PlayersOnlineDock = new AuPlayersOnlineDock(this);
+				connect(m_PlayersOnlineDock->m_Content, SIGNAL(AddBuddy(AuId, QString)),
+						m_CommDock->m_Comm, SLOT(AddBuddy(AuId, QString)));
+				connect(m_PlayersOnlineDock->m_Content, SIGNAL(AddSquelch(AuId, QString)),
+						m_CommDock->m_Comm, SLOT(AddSquelch(AuId, QString)));
+				connect(m_PlayersOnlineDock->m_Content, SIGNAL(AvatarOnLine(AuId)), m_View, SLOT(AvatarOnLine(AuId)));
+				connect(auApp, SIGNAL(PlayersOnlineStatus(AuPlayerOnlineStatusVector)),
+						m_PlayersOnlineDock->m_Content, SLOT(PlayersOnlineStatus(AuPlayerOnlineStatusVector)));
+				connect(m_PlayersOnlineDock->m_Content, SIGNAL(OpenChannelToAvatar(AuId)),
+						m_CommDock->m_Comm, SLOT(OpenChannelTo(AuId)));
+				addDockWidget(Qt::BottomDockWidgetArea, m_PlayersOnlineDock, Qt::Horizontal);
+				m_PlayersOnlineDock->hide();
+				m_PlayersOnlineDock->setFloating(true);
+				m_DockBars.m_DockWidgets.append(AuFrameDock(m_PlayersOnlineDock));
+			}
+
+			return true;
+		});
 
 		// Construction
-		m_ConstructionDock = new AuConstructionDock(this);
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanBuilding(INDUSTRYID, const AuBdReport&, COMMODITYID, quint16, bool)),
-				m_View, SLOT(PlanBd(INDUSTRYID, const AuBdReport&, COMMODITYID, quint16, bool)));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanFence(int, quint32, COMMODITYID)),
-				m_View, SLOT(PlanBdFence(int, quint32, COMMODITYID)));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanBuildingMaterial(COMMODITYID)),
-				m_View, SLOT(PlanBdMaterial(COMMODITYID)));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanConstructionProcess(const AuBdReport&)),
-				m_View, SLOT(PlanBdConstructionProcess(const AuBdReport&)));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanRoadAsphalt()),
-				m_View, SLOT(PlanGeoRoadAsphalt()));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanRoadConcrete()),
-				m_View, SLOT(PlanGeoRoadConcrete()));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanRoadDirt()),
-				m_View, SLOT(PlanGeoRoadDirt()));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanRoadGrade()),
-				m_View, SLOT(PlanGeoRoadGrade()));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanLandscapeClearing()),
-				m_View, SLOT(PlanGeoLandscapeClearing()));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanLandscapeDefoliate()),
-				m_View, SLOT(PlanGeoLandscapeDefoliate()));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanLandscapeIrrigate()),
-				m_View, SLOT(PlanGeoLandscapeIrrigate()));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanManufacturingProcess(int)),
-				m_View, SLOT(PlanManufacturingProcess(int)));
-		connect(m_ConstructionDock->m_Content, SIGNAL(PlanManufacturingWorkerOk(bool)),
-				m_View, SLOT(PlanManufacturingWorkerOk(bool)));
-		connect(m_ConstructionDock->m_Content, SIGNAL(WindowHidden()), m_View, SLOT(EndCommands()));
-		addDockWidget(Qt::RightDockWidgetArea, m_ConstructionDock, Qt::Vertical);
-		m_ConstructionDock->hide();
-		m_ConstructionDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_ConstructionDock));
+		addStep([=]() {
+			m_ConstructionDock = new AuConstructionDock(this);
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanBuilding(INDUSTRYID, const AuBdReport&, COMMODITYID, quint16, bool)),
+					m_View, SLOT(PlanBd(INDUSTRYID, const AuBdReport&, COMMODITYID, quint16, bool)));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanFence(int, quint32, COMMODITYID)),
+					m_View, SLOT(PlanBdFence(int, quint32, COMMODITYID)));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanBuildingMaterial(COMMODITYID)),
+					m_View, SLOT(PlanBdMaterial(COMMODITYID)));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanConstructionProcess(const AuBdReport&)),
+					m_View, SLOT(PlanBdConstructionProcess(const AuBdReport&)));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanRoadAsphalt()),
+					m_View, SLOT(PlanGeoRoadAsphalt()));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanRoadConcrete()),
+					m_View, SLOT(PlanGeoRoadConcrete()));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanRoadDirt()),
+					m_View, SLOT(PlanGeoRoadDirt()));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanRoadGrade()),
+					m_View, SLOT(PlanGeoRoadGrade()));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanLandscapeClearing()),
+					m_View, SLOT(PlanGeoLandscapeClearing()));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanLandscapeDefoliate()),
+					m_View, SLOT(PlanGeoLandscapeDefoliate()));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanLandscapeIrrigate()),
+					m_View, SLOT(PlanGeoLandscapeIrrigate()));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanManufacturingProcess(int)),
+					m_View, SLOT(PlanManufacturingProcess(int)));
+			connect(m_ConstructionDock->m_Content, SIGNAL(PlanManufacturingWorkerOk(bool)),
+					m_View, SLOT(PlanManufacturingWorkerOk(bool)));
+			connect(m_ConstructionDock->m_Content, SIGNAL(WindowHidden()), m_View, SLOT(EndCommands()));
+			addDockWidget(Qt::RightDockWidgetArea, m_ConstructionDock, Qt::Vertical);
+			m_ConstructionDock->hide();
+			m_ConstructionDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_ConstructionDock));
+
+			return true;
+		});
 
 		// Original construction (F11) and labor (F10) have separate Legacy
 		// windows, without modern construction/building pages or commands.
-		m_LegacyCityConstructionDock = new AuLegacyCityConstructionDock(this);
-		auto* legacyConstruction = m_LegacyCityConstructionDock->Content();
-		connect(legacyConstruction, &AuLegacyCityConstruction::PlanConstruction, m_View,
-			[this, legacyConstruction](AuLegacyCityProtocol::Request request) { m_View->PlanLegacyCity(request, legacyConstruction); });
-		connect(legacyConstruction, &AuLegacyCityConstruction::StopPlanning, m_View, &AuDesignerView::EndCommands);
-		addDockWidget(Qt::RightDockWidgetArea, m_LegacyCityConstructionDock, Qt::Vertical);
-		m_LegacyCityConstructionDock->hide(); m_LegacyCityConstructionDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_LegacyCityConstructionDock));
-		m_LegacyCityLaborDock = new AuLegacyCityLaborDock(this);
-		addDockWidget(Qt::RightDockWidgetArea, m_LegacyCityLaborDock, Qt::Vertical);
-		m_LegacyCityLaborDock->hide(); m_LegacyCityLaborDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_LegacyCityLaborDock));
-		connect(auApp, &AuApp::LegacyScTransportReset, this, [this]() {
-			if(m_GovernDock) m_GovernDock->hide();
-			if(m_GovernPatentsDock) m_GovernPatentsDock->hide();
-			if(m_LegacyCityConstructionDock) m_LegacyCityConstructionDock->hide();
-			if(m_LegacyCityLaborDock) m_LegacyCityLaborDock->hide();
-			if(m_ConstructionDock) m_ConstructionDock->hide();
-			if(m_BuildingDock) m_BuildingDock->hide();
+		addStep([=]() {
+			m_LegacyCityConstructionDock = new AuLegacyCityConstructionDock(this);
+			auto* legacyConstruction = m_LegacyCityConstructionDock->Content();
+			connect(legacyConstruction, &AuLegacyCityConstruction::PlanConstruction, m_View,
+				[this, legacyConstruction](AuLegacyCityProtocol::Request request) { m_View->PlanLegacyCity(request, legacyConstruction); });
+			connect(legacyConstruction, &AuLegacyCityConstruction::StopPlanning, m_View, &AuDesignerView::EndCommands);
+			addDockWidget(Qt::RightDockWidgetArea, m_LegacyCityConstructionDock, Qt::Vertical);
+			m_LegacyCityConstructionDock->hide(); m_LegacyCityConstructionDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_LegacyCityConstructionDock));
+
+			return true;
 		});
 
-		m_BdExchangeDock = new AuBdExchangeDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_BdExchangeDock, Qt::Horizontal);
-		m_BdExchangeDock->hide();
-		m_BdExchangeDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_BdExchangeDock));
+		{
+			AuLegacyCityLaborDock* dock = 0;
+			addStep([this, dock]() mutable {
+				if(!dock) { dock = new AuLegacyCityLaborDock(this, true); dock->hide(); return false; }
+				if(!dock->Content()->InitializeNextPage()) return false;
+				m_LegacyCityLaborDock = dock;
+				addDockWidget(Qt::RightDockWidgetArea, m_LegacyCityLaborDock, Qt::Vertical);
+				m_LegacyCityLaborDock->hide(); m_LegacyCityLaborDock->setFloating(true);
+				m_DockBars.m_DockWidgets.append(AuFrameDock(m_LegacyCityLaborDock));
+				connect(auApp, &AuApp::LegacyScTransportReset, this, [this]() {
+					if(m_GovernDock) m_GovernDock->hide();
+					if(m_GovernPatentsDock) m_GovernPatentsDock->hide();
+					if(m_LegacyCityConstructionDock) m_LegacyCityConstructionDock->hide();
+					if(m_LegacyCityLaborDock) m_LegacyCityLaborDock->hide();
+					if(m_ConstructionDock) m_ConstructionDock->hide();
+					if(m_BuildingDock) m_BuildingDock->hide();
+				});
+				return true;
+			});
+		}
 
-		// Legacy uses its own F10 labor window. Avoid constructing the unused
-		// modern building pages and loading their interface assets during login.
-		if(!g_Au.IsLegacyGeneration())
-			CreateModernBuildingDock();
-		// Dock menus and restored layouts must respect the same generation
-		// boundary as F10/F11, including attempts to show a modern dock directly.
-		connect(m_ConstructionDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
-			if(visible && g_Au.IsLegacyGeneration()) m_ConstructionDock->hide();
+		addStep([=]() {
+
+			m_BdExchangeDock = new AuBdExchangeDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_BdExchangeDock, Qt::Horizontal);
+			m_BdExchangeDock->hide();
+			m_BdExchangeDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_BdExchangeDock));
+
+			// Legacy uses its own F10 labor window. Avoid constructing the unused
+			// modern building pages and loading their interface assets during login.
+			if(!g_Au.IsLegacyGeneration())
+				CreateModernBuildingDock();
+			// Dock menus and restored layouts must respect the same generation
+			// boundary as F10/F11, including attempts to show a modern dock directly.
+			connect(m_ConstructionDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+				if(visible && g_Au.IsLegacyGeneration()) m_ConstructionDock->hide();
+			});
+
+			return true;
 		});
 
 		// Locator System Map
-		m_LocatorSystemScanDock = new AuLocatorSystemScanDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_LocatorSystemScanDock, Qt::Horizontal);
-		m_LocatorSystemScanDock->hide();
-		m_LocatorSystemScanDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_LocatorSystemScanDock));
+		addStep([=]() {
+			m_LocatorSystemScanDock = new AuLocatorSystemScanDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_LocatorSystemScanDock, Qt::Horizontal);
+			m_LocatorSystemScanDock->hide();
+			m_LocatorSystemScanDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_LocatorSystemScanDock));
 
-		m_SpacecraftSpecsDock = new AuSpacecraftSpecsDock(this);
-		addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftSpecsDock, Qt::Horizontal);
-		m_SpacecraftSpecsDock->hide();
-		m_SpacecraftSpecsDock->setFloating(true);
-		m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftSpecsDock));
+			return true;
+		});
 
-		// Restore positions and visibility of dock widgets.
-		QByteArray windowState;
-		if(solo)
-			windowState = g_Au.Settings().value("/Widget/MainFrame/SoloWindowState").toByteArray();
-		else
-			windowState = g_Au.Settings().value("/Widget/MainFrame/WindowState1").toByteArray();
-		if(!windowState.isEmpty())
-			restoreState(windowState);
+		addStep([=]() {
 
-		for(QList<AuCommPacket*>::iterator ci = m_EarlyArrivals.begin(); ci != m_EarlyArrivals.end(); ci++)
-		{
-			ChatReceived(**ci);
-			delete *ci;
-		}
-		m_EarlyArrivals.clear();
+			m_SpacecraftSpecsDock = new AuSpacecraftSpecsDock(this);
+			addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftSpecsDock, Qt::Horizontal);
+			m_SpacecraftSpecsDock->hide();
+			m_SpacecraftSpecsDock->setFloating(true);
+			m_DockBars.m_DockWidgets.append(AuFrameDock(m_SpacecraftSpecsDock));
 
-		m_DesignerBar->hide();
-		m_DesignerBar2->hide();
-		m_DesignerPartsDock->hide();
-		m_DesignerTextureWrapDock->hide();
+			return true;
+		});
+
+		addStep([=]() {
+			// Restore positions and visibility of dock widgets.
+			QByteArray windowState;
+			if(solo)
+				windowState = g_Au.Settings().value("/Widget/MainFrame/SoloWindowState").toByteArray();
+			else
+				windowState = g_Au.Settings().value("/Widget/MainFrame/WindowState1").toByteArray();
+			if(!windowState.isEmpty())
+				restoreState(windowState);
+
+			for(QList<AuCommPacket*>::iterator ci = m_EarlyArrivals.begin(); ci != m_EarlyArrivals.end(); ci++)
+			{
+				ChatReceived(**ci);
+				delete *ci;
+			}
+			m_EarlyArrivals.clear();
+
+			if(m_DesignerBar) m_DesignerBar->hide();
+			if(m_DesignerBar2) m_DesignerBar2->hide();
+			if(m_DesignerPartsDock) m_DesignerPartsDock->hide();
+			if(m_DesignerTextureWrapDock) m_DesignerTextureWrapDock->hide();
+
+			return true;
+		});
+
+		// Hidden QOpenGLWidgets must be warmed in their final window too;
+		// otherwise the first visit to the Star Map tab would pay that cost.
+		addStep([this]() {
+			return m_LocatorDock->m_Locator->PrepareNextStep();
+		});
 	}
 
-	m_DockBars.UpdateTitleShortcuts();
+	addStep([this]() {
+		m_DockBars.UpdateTitleShortcuts();
+		m_DockWidgetsReady = true;
+		if(m_StartupShipmentsCleared) BrokerShipmentsClear();
+		for(const AuShipment& shipment : m_StartupShipments) BrokerShipment(shipment);
+		m_StartupShipments.clear();
+		m_StartupShipmentsCleared = false;
+		SceneContextChanged(m_View->SceneContext());
+		return true;
+	});
+	if(staged)
+	{
+		connect(m_View, &QOpenGLWidget::frameSwapped, this, [this]() {
+			if(!m_DockInitSteps.empty())
+				QTimer::singleShot(0, this, [this]() { ContinueDockInitialization(); });
+		});
+		// Wait for a presented loading frame before doing the first batch.
+		m_View->update();
+	}
+}
 
-	// Show/hide things appropriately.
-	SceneContextChanged(m_View->SceneContext());
+void AuDesignerFrame::ContinueDockInitialization()
+{
+	if(m_DockInitRunning) return;
+	QScopedValueRollback<bool> running(m_DockInitRunning, true);
+	AuElapsedTimer budget;
+	budget.start();
+	while(!m_DockInitSteps.empty())
+	{
+		if(!m_DockInitSteps.front()()) break;
+		m_DockInitSteps.pop_front();
+		if(budget.elapsed() >= 8) break;
+	}
+	if(m_View && !m_DockWidgetsReady) m_View->update();
 }
 
 // 'sceneContext' is an SCENE_CONTEXT value.
 void AuDesignerFrame::SceneContextChanged(int sceneContext)
 {
+	if(!m_DockWidgetsReady) return;
 	// Entry/exit replication must not briefly expose the modern editor for
 	// the private sandbox used by the recovered spacecraft editor.
 	if(m_LegacyStudioPending || m_LegacyStudioOnline || m_LegacyStudioReturning)
@@ -2812,8 +3071,6 @@ void AuDesignerFrame::SceneContextChanged(int sceneContext)
 			m_LocatorDock->hide();
 		if(m_LocatorCompassDock && !m_LocatorCompassDock->isHidden())
 			m_LocatorCompassDock->hide();
-		if(m_LocatorStarMapDock && !m_LocatorStarMapDock->isHidden())
-			m_LocatorStarMapDock->hide();
 		if(m_LocatorSystemScanDock && !m_LocatorSystemScanDock->isHidden())
 			m_LocatorSystemScanDock->hide();
 		if(m_LocatorWorldMapDock && !m_LocatorWorldMapDock->isHidden())
@@ -2865,8 +3122,6 @@ void AuDesignerFrame::SceneContextChanged(int sceneContext)
 			m_LocatorDock->hide();
 		if(m_LocatorCompassDock && !m_LocatorCompassDock->isHidden())
 			m_LocatorCompassDock->hide();
-		if(m_LocatorStarMapDock && !m_LocatorStarMapDock->isHidden())
-			m_LocatorStarMapDock->hide();
 		if(m_LocatorSystemScanDock && !m_LocatorSystemScanDock->isHidden())
 			m_LocatorSystemScanDock->hide();
 		if(m_LocatorWorldMapDock && !m_LocatorWorldMapDock->isHidden())
@@ -5635,6 +5890,12 @@ void AuDesignerFrame::DesignerSetSolidsBlockPath(bool block)
 
 void AuDesignerFrame::BrokerShipment(AuShipment shipment)
 {
+	if(g_Au.IsLegacyGeneration()) return;
+	if(!m_DockWidgetsReady)
+	{
+		m_StartupShipments.append(shipment);
+		return;
+	}
 	if(m_BuildingDock)
 		m_BuildingDock->m_Labor->BrokerShipment(shipment);
 	if(m_SpacecraftDock)
@@ -5645,6 +5906,13 @@ void AuDesignerFrame::BrokerShipment(AuShipment shipment)
 
 void AuDesignerFrame::BrokerShipmentsClear()
 {
+	if(g_Au.IsLegacyGeneration()) return;
+	if(!m_DockWidgetsReady)
+	{
+		m_StartupShipments.clear();
+		m_StartupShipmentsCleared = true;
+		return;
+	}
 	if(m_BuildingDock)
 		m_BuildingDock->m_Labor->BrokerShipmentsClear();
 	if(m_SpacecraftDock)

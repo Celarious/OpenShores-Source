@@ -14,8 +14,10 @@
 #include "aumatrix4x4.h"
 #include "austarmapdata.h"
 #include "daatom.h"
+#include <QIcon>
 #include <QStandardItemModel>
 #include <QWidget>
+#include <memory>
 
 class AuStarMapGL;
 class AuStarMapPlaces;
@@ -30,6 +32,7 @@ class QCheckBox;
 class QItemSelection;
 class QSpinBox;
 class QSplitter;
+struct AuStarMapPlacesSnapshot;
 
 class AUCLIENT_DLL AuLocatorStarMap : public QWidget
 {
@@ -49,6 +52,14 @@ private:
 	bool								m_ShowNeutralPlaces;
 	bool								m_ShowUnknownPlaces;
 	bool								m_UnknownPrecedesEnemy;
+	std::shared_ptr<AuStarMapPlacesSnapshot> m_PrepareSnapshot;
+	unordered_map<AuId, AuStarMapSector, AuIdHash>::const_iterator m_PrepareSector;
+	QHash<quint32, QIcon> m_PrepareFlagIcons;
+	int m_PrepareStep = 0;
+	bool m_PrepareDirty = false;
+	bool m_CenterOnFirstShow = false;
+	bool PlacesPreparing() const { return m_PrepareStep > 0 && m_PrepareStep < 5; }
+	void RestartPreparation();
 
 	// Widgets
 	AuIconButton*						m_LookAtLastSelected;
@@ -81,6 +92,8 @@ public:
 	virtual ~AuLocatorStarMap();
 
 	virtual QSize sizeHint() const;
+
+	bool PrepareNextStep();
 
 	void StarMapErased();
 
@@ -166,6 +179,9 @@ protected:
 			const DgEmpire& personEmpire);
 	void InitPlaces();
 	void ListPlaces();
+	void AddSectorPlaces(unordered_map<AuId, AuStarMapSector, AuIdHash>::const_iterator sectI,
+			const DgEmpire& personEmpire, QHash<quint32, QIcon>& empireFlagIcons,
+			const QIcon& sectorIcon, const QIcon& systemIcon, const QIcon& scannedSystemIcon, const QIcon& cityIcon);
 	void PostQuery(int what, GALAXY galaxy, const AuId& sectorId, quint16 range);
 	void SelectPlace(const AuId& id);
 	void SelectPlaces(const AuIdList& ids);

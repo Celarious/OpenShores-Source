@@ -20,8 +20,160 @@
 #include <QComboBox>
 #include <QMenu>
 #include <QPainter>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QOpenGLContext>
+#include <QResizeEvent>
+#include <QRunnable>
+#include <QThreadPool>
 #include <QTimer>
 #include <QWheelEvent>
+#include <atomic>
+#include <map>
+
+class AuStarMapGalaxyPreparation
+{
+public:
+	std::atomic<bool> ready;
+	QList<AuScPoint> spots;
+	QVector<GLfloat> positions, colors;
+	explicit AuStarMapGalaxyPreparation() : ready(false) {}
+};
+
+class AuStarMapIconPreparation
+{
+public:
+	std::atomic<bool> ready;
+	QVector<QImage> images;
+	AuStarMapIconPreparation() : ready(false) {}
+};
+
+namespace
+{
+struct StarMapIcon
+{
+	const char* id;
+	const char* path;
+	bool mipMap;
+	int clampEdges;
+};
+
+const StarMapIcon s_StarMapIcons[] =
+{
+	{"SunGlow", ":data/txSunGlow.bmp", false, 2},
+	{"LOmni", ":data/txLightOmni.png", false, 0},
+	{"StarSprite", ":data/Star.png", true, 2},
+	{"SpotScanned", ":data/SpotScanned.png", true, 2},
+	{"MyLoc1", ":data/MyLocBright.png", true, 2},
+	{"MyLoc2", ":data/MyLocDim.png", true, 2},
+	{"MShip", ":data/clMShip.png", true, 2},
+	{"FShip", ":data/clFShip.png", true, 2},
+	{"NShip", ":data/clNShip.png", true, 2},
+	{"EShip", ":data/clEShip.png", true, 2},
+	{"MStation", ":data/clMStation.png", true, 2},
+	{"FStation", ":data/clFStation.png", true, 2},
+	{"NStation", ":data/clNStation.png", true, 2},
+	{"EStation", ":data/clEStation.png", true, 2}
+};
+const int s_StarMapIconCount = sizeof(s_StarMapIcons) / sizeof(s_StarMapIcons[0]);
+
+class StarMapIconTask : public QRunnable
+{
+	std::shared_ptr<AuStarMapIconPreparation> m_Result;
+public:
+	explicit StarMapIconTask(const std::shared_ptr<AuStarMapIconPreparation>& result) : m_Result(result) {}
+	void run() override
+	{
+		for(int i=0; i<s_StarMapIconCount; ++i)
+			m_Result->images.append(QImage(s_StarMapIcons[i].path));
+		for(int i=0; i<16; ++i)
+			m_Result->images.append(QImage(QString(":data/Signal_%1.png").arg(i)));
+		m_Result->ready.store(true, std::memory_order_release);
+	}
+};
+
+std::shared_ptr<AuStarMapIconPreparation> PrepareStarMapIcons()
+{
+	static QMutex mutex;
+	static std::shared_ptr<AuStarMapIconPreparation> prepared;
+	QMutexLocker lock(&mutex);
+	if(!prepared)
+	{
+		prepared.reset(new AuStarMapIconPreparation);
+		QThreadPool::globalInstance()->start(new StarMapIconTask(prepared));
+	}
+	return prepared;
+}
+
+class StarMapGalaxyTask : public QRunnable
+{
+	GALAXY m_Galaxy;
+	std::shared_ptr<AuStarMapGalaxyPreparation> m_Result;
+public:
+	StarMapGalaxyTask(GALAXY galaxy, const std::shared_ptr<AuStarMapGalaxyPreparation>& result) :
+		m_Galaxy(galaxy), m_Result(result) {}
+	void run() override
+	{
+		// Same density, loop order, default dice and arithmetic as the original paintGL.
+		int density = 250;
+		float blendFact = density / 100.f;
+		if(blendFact < 1)
+			blendFact = 1;
+		else
+			blendFact *= blendFact;
+		blendFact *= 9;
+		float spriteSize = 5000;
+		DaGalaxy galaxy(m_Galaxy);
+		AuDice dice;
+		int pixelStep = galaxy.Radius()/density;
+		for(int ix=-galaxy.Radius(); ix<=galaxy.Radius(); ix+=pixelStep)
+			for(int iy=-galaxy.Radius(); iy<=galaxy.Radius(); iy+=pixelStep)
+				for(int iz=-galaxy.Radius()/10; iz<=galaxy.Radius()/10; iz+=pixelStep)
+				{
+					AuPoint sectorLoc(ix + dice.Roll(1,pixelStep*2+1,-(pixelStep+1)),
+							iy + dice.Roll(1,pixelStep*2+1,-(pixelStep+1)),
+							iz + dice.Roll(1,pixelStep*2+1,-(pixelStep+1)));
+					QColor color = galaxy.Color(sectorLoc);
+					if(color.alphaF() == 0)
+						continue;
+					color.setAlphaF(color.alphaF() / blendFact);
+					AuScPoint sl(AuPointTexN(sectorLoc,0,0,AuPoint(0,0,1)), 0, 0, spriteSize, color);
+					m_Result->spots.append(sl);
+				}
+		// Convert exactly as CreateForSpriteSizeColor, on this CPU worker.
+		for(QList<AuScPoint>::const_iterator it=m_Result->spots.constBegin(); it!=m_Result->spots.constEnd(); ++it)
+		{
+			m_Result->positions << (GLfloat)it->x << (GLfloat)it->y << (GLfloat)it->z << it->EffectIntensity();
+			m_Result->colors << (GLfloat)it->Glow().redF() << (GLfloat)it->Glow().greenF()
+					<< (GLfloat)it->Glow().blueF() << (GLfloat)it->Glow().alphaF();
+		}
+		m_Result->ready.store(true, std::memory_order_release);
+	}
+};
+
+std::shared_ptr<AuStarMapGalaxyPreparation> PrepareStarMapGalaxy(GALAXY galaxy)
+{
+	static QMutex mutex;
+	static std::map<int, std::shared_ptr<AuStarMapGalaxyPreparation> > prepared;
+	QMutexLocker lock(&mutex);
+	std::shared_ptr<AuStarMapGalaxyPreparation>& result = prepared[galaxy];
+	if(!result)
+	{
+		result.reset(new AuStarMapGalaxyPreparation);
+		QThreadPool::globalInstance()->start(new StarMapGalaxyTask(galaxy, result));
+	}
+	// Keep only two unused completed galaxies; live and in-flight work is retained.
+	for(std::map<int, std::shared_ptr<AuStarMapGalaxyPreparation> >::iterator it=prepared.begin();
+			prepared.size()>2 && it!=prepared.end();)
+	{
+		if(it->first!=galaxy && it->second.use_count()==1 && it->second->ready.load(std::memory_order_acquire))
+			it=prepared.erase(it);
+		else
+			++it;
+	}
+	return result;
+}
+}
 
 static QColor	s_AvatarColor(32,255,32);
 static QColor	s_AvatarColorDim(32/4,255/4,32/4);
@@ -2337,6 +2489,13 @@ AuStarMapGL::AuStarMapGL(QWidget* parent) : QOpenGLWidget(parent),
 	m_MM = new AuGLModelMaker(false),
 	m_ModelCache = new AuGLModelCache();
 	m_RenderInfo = 0;
+	m_IconPreparation = PrepareStarMapIcons();
+	m_PreparedGalaxy = GALAXY_Count;
+	m_IconPreparationIndex = 0;
+	m_GalaxyUploadStep = 0;
+	m_GalaxyUploadOffset = 0;
+	m_Preparing = false;
+	m_PreparationComplete = false;
 
 	m_CountSelected = 0;
 	m_FilterExplored = false;
@@ -2394,13 +2553,50 @@ AuStarMapGL::AuStarMapGL(QWidget* parent) : QOpenGLWidget(parent),
 
 	setCursor(m_Cursor);
 	setMouseTracking(true);
+
+	// Begin immutable CPU work while the remaining dock pages are constructed.
+	if(auApp->Frame() && auApp->Frame()->View())
+	{
+		DaPerson* person;
+		auApp->Frame()->View()->LockSceneAtom(&person);
+		GALAXY galaxy = person && person->FindParentGalaxy() ? person->FindParentGalaxy()->Galaxy() : GALAXY_Count;
+		auApp->Frame()->View()->UnlockSceneAtom();
+		if(galaxy < GALAXY_Count)
+			m_GalaxyPreparation = PrepareStarMapGalaxy(galaxy);
+	}
 }
 
 AuStarMapGL::~AuStarMapGL()
 {
-	delete m_RenderInfo;
+	ReleaseGLResources();
+	if(context())
+		disconnect(context(), 0, this, 0);
 	delete m_ModelCache;
 	delete m_MM;
+}
+
+void AuStarMapGL::ReleaseGLResources()
+{
+	if(!m_RenderInfo)
+		return;
+	makeCurrent();
+	if(m_AxesVAO.VAO())
+		m_AxesVAO.DeleteGL();
+	if(m_GalaxyVAO.VAO())
+		m_GalaxyVAO.DeleteGL();
+	m_RenderInfo->re->GLSL().DeleteStarMap();
+	delete m_RenderInfo;
+	m_RenderInfo = 0;
+	m_GalaxySpriteTex = m_MyLoc1Tex = m_MyLoc2Tex = m_ScannedSpriteTex = m_StarSpriteTex = m_SystemSpriteTex = 0;
+	for(int i=0; i<4; ++i)
+		m_ShipTex[i] = m_StationTex[i] = 0;
+	for(int i=0; i<16; ++i)
+		m_SignalTex[i] = 0;
+	m_PreparedGalaxy = GALAXY_Count;
+	m_IconPreparationIndex = 0;
+	m_GalaxyUploadStep = m_GalaxyUploadOffset = 0;
+	m_PreparationComplete = false;
+	doneCurrent();
 }
 
 void AuStarMapGL::initializeGL()
@@ -2409,10 +2605,12 @@ void AuStarMapGL::initializeGL()
 	if(m_RenderInfo)
 	{
 		//qWarning() << "error: AuStarMapGL::initializeGL called after it was already called";
-		delete m_RenderInfo;
+		ReleaseGLResources();
+		makeCurrent();
 	}
 	m_RenderInfo = new AuAtomRenderInfo(this, 0, *m_MM, *m_ModelCache, m_FontMedium);
-	m_RenderInfo->InitializeGL();
+	m_RenderInfo->InitializeGL(true);
+	connect(context(), &QOpenGLContext::aboutToBeDestroyed, this, &AuStarMapGL::ReleaseGLResources, Qt::DirectConnection);
 
 	// Configure for solid rendered display.
 	m_RenderInfo->re->glFrontFace(GL_CW);						// Front faces are those drawn clockwise.
@@ -2423,10 +2621,172 @@ void AuStarMapGL::initializeGL()
 	m_RenderInfo->re->glClearColor(0,0,0,1);
 }
 
+bool AuStarMapGL::PrepareGalaxyGeometry()
+{
+	if(Galaxy() >= GALAXY_Count)
+		return true;
+	if(m_PreparedGalaxy != Galaxy())
+	{
+		if(m_GalaxyVAO.VAO())
+			m_GalaxyVAO.DeleteGL();
+		m_SpotLocs.clear();
+		m_PreparedGalaxy = Galaxy();
+		m_GalaxyPreparation = PrepareStarMapGalaxy(Galaxy());
+		m_GalaxyUploadStep = 0;
+		m_GalaxyUploadOffset = 0;
+	}
+	if(!m_GalaxyPreparation->ready.load(std::memory_order_acquire))
+		return false;
+	if(m_SpotLocs.empty())
+		m_SpotLocs = m_GalaxyPreparation->spots;
+	if(m_GalaxyPreparation->positions.empty())
+		return true;
+	if(m_GalaxyUploadStep >= 4)
+		return true;
+
+	AuGLEffects& re = *m_RenderInfo->re;
+	if(!m_GalaxyVAO.VAO())
+		m_GalaxyVAO.CreateGL(re, m_SpotLocs.size(), 2);
+	m_GalaxyVAO.SelectGL();
+	if(m_GalaxyUploadStep < 2)
+	{
+		int buffer = m_GalaxyUploadStep;
+		re.glBindBuffer(GL_ARRAY_BUFFER, m_GalaxyVAO.Buffer(buffer));
+		re.glBufferData(GL_ARRAY_BUFFER, m_GalaxyPreparation->positions.size()*sizeof(GLfloat), 0, GL_STATIC_DRAW);
+		re.glVertexAttribPointer(buffer, 4, GL_FLOAT, GL_FALSE, 0, 0);
+		++m_GalaxyUploadStep;
+	}
+	else
+	{
+		int buffer = m_GalaxyUploadStep-2;
+		const QVector<GLfloat>& data = buffer ? m_GalaxyPreparation->colors : m_GalaxyPreparation->positions;
+		int count = qMin(65536, data.size()-m_GalaxyUploadOffset);
+		re.glBindBuffer(GL_ARRAY_BUFFER, m_GalaxyVAO.Buffer(buffer));
+		re.glBufferSubData(GL_ARRAY_BUFFER, m_GalaxyUploadOffset*sizeof(GLfloat), count*sizeof(GLfloat),
+				data.constData()+m_GalaxyUploadOffset);
+		m_GalaxyUploadOffset += count;
+		if(m_GalaxyUploadOffset == data.size())
+		{
+			m_GalaxyUploadOffset = 0;
+			++m_GalaxyUploadStep;
+		}
+	}
+	re.glBindBuffer(GL_ARRAY_BUFFER, 0);
+	m_GalaxyVAO.DeselectGL();
+	return m_GalaxyUploadStep >= 4;
+}
+
+bool AuStarMapGL::PrepareNextStep()
+{
+	if(m_PreparationComplete)
+		return true;
+	m_Preparing = true;
+	if(Galaxy() >= GALAXY_Count && auApp->Frame() && auApp->Frame()->View())
+	{
+		DaPerson* person;
+		auApp->Frame()->View()->LockSceneAtom(&person);
+		if(person && person->FindParentGalaxy())
+			m_Galaxy = person->FindParentGalaxy()->Galaxy();
+		auApp->Frame()->View()->UnlockSceneAtom();
+	}
+	if(Galaxy() < GALAXY_Count && m_PreparedGalaxy != Galaxy())
+	{
+		// Start CPU preparation before the first GL resource step.
+		m_GalaxyPreparation = PrepareStarMapGalaxy(Galaxy());
+	}
+	if(!context() || !context()->isValid() || !m_RenderInfo)
+	{
+		// Qt's base resize handler initializes a hidden widget in its final window
+		// and creates its FBO, without showing/reparenting or reading pixels back.
+		// The top-level native handle supplies Qt's shared composition context.
+		// Create it on the dock window only, never on this QOpenGLWidget.
+		if(!window()->windowHandle())
+			window()->winId();
+		if(size().isEmpty())
+			resize(size().expandedTo(QSize(1,1)));
+		QResizeEvent resized(size(), size());
+		QOpenGLWidget::resizeEvent(&resized);
+		if(!context() || !context()->isValid() || !m_RenderInfo)
+		{
+			// Leave Qt's normal first-show initialization available on GL failure.
+			m_Preparing = false;
+			m_PreparationComplete = true;
+			return true;
+		}
+		return false;
+	}
+	if(!m_IconPreparation->ready.load(std::memory_order_acquire))
+		return false;
+	makeCurrent();
+	if(m_IconPreparationIndex < s_StarMapIconCount+16)
+	{
+		int index = m_IconPreparationIndex++;
+		GLuint tex;
+		if(index < s_StarMapIconCount)
+		{
+			const StarMapIcon& icon = s_StarMapIcons[index];
+			tex = m_RenderInfo->re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, icon.id,
+					m_IconPreparation->images.at(index), GL_LINEAR, GL_LINEAR, icon.mipMap, icon.clampEdges);
+			if(index==0) m_GalaxySpriteTex=tex;
+			else if(index==1) m_SystemSpriteTex=tex;
+			else if(index==2) m_StarSpriteTex=tex;
+			else if(index==3) m_ScannedSpriteTex=tex;
+			else if(index==4) m_MyLoc1Tex=tex;
+			else if(index==5) m_MyLoc2Tex=tex;
+			else if(index<10) m_ShipTex[index-6]=tex;
+			else m_StationTex[index-10]=tex;
+		}
+		else
+		{
+			int signal = index-s_StarMapIconCount;
+			m_SignalTex[signal] = m_RenderInfo->re->CreateTextureFromBitmap(STATIC_TEXTURE_ID,
+					QString("Sig%1").arg(signal), m_IconPreparation->images.at(index), GL_LINEAR, GL_LINEAR, true, 2);
+		}
+		doneCurrent();
+		return false;
+	}
+	if(m_IconPreparationIndex < s_StarMapIconCount+21)
+	{
+		int index = m_IconPreparationIndex++ - (s_StarMapIconCount+16);
+		if(index == 0 && Galaxy() < GALAXY_Count && !m_AxesVAO.VAO())
+		{
+			const double radius = DaGalaxy::Radius(Galaxy());
+			AuPointArray verts;
+			verts.append(AuPoint(-radius,0));
+			verts.append(AuPoint(radius,0));
+			verts.append(AuPoint(0,-radius));
+			verts.append(AuPoint(0,radius));
+			verts.append(AuPoint(0,0,-radius/4));
+			verts.append(AuPoint(0,0,radius/4));
+			m_AxesVAO.CreateForLines(*m_RenderInfo->re, verts, false, GL_STATIC_DRAW);
+		}
+		else if(index > 0)
+		{
+			const QString labels[] = {tr("W"), tr("E"), tr("S"), tr("N")};
+			AuGLTextItem item;
+			m_RenderInfo->re->GetRenderTextItem(item, labels[index-1], m_RenderInfo->font,
+					Qt::AlignLeft|Qt::AlignBottom|Qt::TextSingleLine, 1);
+		}
+		doneCurrent();
+		return false;
+	}
+	bool ready = PrepareGalaxyGeometry();
+	doneCurrent();
+	if(ready)
+	{
+		m_Preparing = false;
+		m_PreparationComplete = true;
+		update();
+	}
+	return ready;
+}
+
 void AuStarMapGL::paintGL()
 {
 	//qDebug() << "AuStarMapGL::paintGL";
 	m_RenderInfo->re->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	if(m_Preparing)
+		return;
 	if(Galaxy() >= GALAXY_Count)
 		return;
 
@@ -2455,50 +2815,7 @@ void AuStarMapGL::paintGL()
 				m_GalaxySpriteTex = m_RenderInfo->re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "SunGlow", ":data/txSunGlow.bmp",
 						GL_LINEAR, GL_LINEAR, false, 2);
 
-			if(m_SpotLocs.empty())
-			{
-				if(m_GalaxyVAO.VAO())
-					m_GalaxyVAO.DeleteGL();
-
-				// Update spot locations cache.
-				int density = 250;	// Time to make the scene goes up geometrically with the increase of this value.
-				float blendFact = density / 100.f;
-				if(blendFact < 1)
-					blendFact = 1;
-				else
-					blendFact *= blendFact;
-				blendFact *= 9;				// Bigger is fainter
-				float spriteSize = 5000;
-				DaGalaxy galaxy(Galaxy());							// For star density calculations.
-				AuDice dice;										// For consistent random noise.
-				int pixelStep = galaxy.Radius()/density;
-				for(int ix=-galaxy.Radius(); ix<=galaxy.Radius(); ix+=pixelStep)
-					for(int iy=-galaxy.Radius(); iy<=galaxy.Radius(); iy+=pixelStep)
-						for(int iz=-galaxy.Radius()/10; iz<=galaxy.Radius()/10; iz+=pixelStep)
-						{
-							// Apply some noise to the sector location so we don't make a perfectly regular grid of dots.
-							AuPoint sectorLoc(ix + dice.Roll(1,pixelStep*2+1,-(pixelStep+1)),
-									iy + dice.Roll(1,pixelStep*2+1,-(pixelStep+1)),
-									iz + dice.Roll(1,pixelStep*2+1,-(pixelStep+1)));
-
-							// Determine color of spot.
-							AuGalaxySpot spot;
-							spot.m_Color = galaxy.Color(sectorLoc);
-							if(spot.m_Color.alphaF() == 0)
-								continue;
-
-							// Reduce blend of spots when there are lots of them.
-							spot.m_Color.setAlphaF(spot.m_Color.alphaF() / blendFact);
-
-							// Append non-zero sector location to my spot list.
-							AuScPoint sl(AuPointTexN(sectorLoc,0,0,AuPoint(0,0,1)), 0, 0, spriteSize, spot.m_Color);
-							m_SpotLocs.append(sl);
-						}
-				//qDebug() << "spotLocs" << m_SpotLocs.size();
-			}
-
-			if(!m_GalaxyVAO.VAO() && !m_SpotLocs.empty())
-				m_GalaxyVAO.CreateForSpriteSizeColor(*m_RenderInfo->re, m_SpotLocs, GL_STATIC_DRAW);
+			PrepareGalaxyGeometry();
 		}
 
 		// Render
@@ -2524,7 +2841,7 @@ void AuStarMapGL::paintGL()
 			m_RenderInfo->RenderText(p, mv, verts[3], tr("N"), s_AxisColor);
 		}
 
-		if(m_ShowGalaxy && m_GalaxyVAO.VAO() && m_GalaxySpriteTex)
+		if(m_ShowGalaxy && m_GalaxyUploadStep >= 4 && m_GalaxyVAO.VAO() && m_GalaxySpriteTex)
 		{
 			m_RenderInfo->re->GLSL().SpriteSizeColorShader().Select();
 			m_RenderInfo->re->GLSL().SpriteSizeColorShader().SetProjectionModelView(mvp);

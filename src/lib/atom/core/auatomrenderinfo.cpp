@@ -9,12 +9,77 @@
 #include "au3dsglsl.h"
 #include "auglmodel.h"
 #include "auglobal.h"
+#include "auether.h"
+#include "auglmodelmaker.h"
+#include "daatomlist.h"
 #include "ausound.h"
 #include "dacreature.h"
 #include "danpc.h"
 #include "daperson.h"
 #include "dasc.h"
 #include <cmath>
+#include <QElapsedTimer>
+#include <QScopedValueRollback>
+
+void AuAtomRenderInfo::ClearSceneDevicePreparation()
+{
+	m_DeviceRoot = AuId();
+	m_DeviceQueue.clear();
+	m_DeviceQueued.clear();
+}
+
+void AuAtomRenderInfo::QueueSceneDeviceChildren(const DaAtom& atom)
+{
+	DaAtomList children;
+	atom.ListNormalSubatoms(children);
+	for(const DaAtom* child : children)
+		if(!m_DeviceQueued.contains(child->Id()))
+		{
+			m_DeviceQueued.insert(child->Id());
+			m_DeviceQueue.enqueue(child->Id());
+		}
+}
+
+bool AuAtomRenderInfo::PrepareSceneDevices(DaAtom& root, AuEther& ether)
+{
+	if(m_DeviceRoot != root.Id()) ClearSceneDevicePreparation();
+	if(m_DeviceQueue.isEmpty())
+	{
+		m_DeviceRoot = root.Id();
+		m_DeviceQueued.clear();
+		m_DeviceQueued.insert(root.Id());
+		m_DeviceQueue.enqueue(root.Id());
+	}
+	QScopedValueRollback<bool> preparing(m_PreparingSceneDevices, true);
+	QSet<AuId> attempted;
+	QElapsedTimer budget;
+	budget.start();
+	re->BeginSceneDeviceFrame();
+	while(!m_DeviceQueue.isEmpty() && budget.nsecsElapsed() < 4000000)
+	{
+		const AuId id = m_DeviceQueue.head();
+		if(attempted.contains(id)) break; // Poll each pending resource at most once per frame.
+		m_DeviceQueue.dequeue();
+		attempted.insert(id);
+		DaAtom* atom = id == root.Id() ? &root : ether.FindNormalAtom(id);
+		if(!atom) continue;
+		// A queued child may have moved to a different environment since the last frame.
+		const DaAtom* ancestor = atom;
+		while(ancestor && ancestor != &root) ancestor = ancestor->Parent();
+		if(!ancestor) continue;
+		re->BeginSceneDeviceObject();
+		m_DeviceObjectPending = false;
+		atom->CreateDeviceObjects(*this);
+		const bool texturesReady = re->EndSceneDeviceObject();
+		if(!texturesReady || m_DeviceObjectPending) m_DeviceQueue.enqueue(id);
+	}
+	if(!m_DeviceQueue.isEmpty())
+	{
+		mm.DeferLegacySceneWork();
+		return false;
+	}
+	return true;
+}
 
 void AuAtomRenderInfo::BeginLegacyNpcFrame(const AuMatrix4x4& projection,
 	const AuMatrix4x4& camera, const DaPerson* scene)
@@ -129,7 +194,7 @@ AuAtomRenderInfo::~AuAtomRenderInfo()
 		delete re;
 }
 
-void AuAtomRenderInfo::InitializeGL()
+void AuAtomRenderInfo::InitializeGL(bool starMapOnly)
 {
 	if(!re)
 		re = new AuGLEffects;
@@ -153,7 +218,7 @@ void AuAtomRenderInfo::InitializeGL()
 	}
 	*/
 
-	re->InitializeGL(g_Au.MaxLights());
+	re->InitializeGL(g_Au.MaxLights(), starMapOnly);
 }
 
 void AuAtomRenderInfo::DragStart(const AuPoint& dragRef, const AuMatrix4x4& designPlane)

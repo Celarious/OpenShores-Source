@@ -44,6 +44,9 @@
 #include "dicontrolinput.h"
 #include "dprock.h"
 #include "hashpack.h"
+#include <QRunnable>
+#include <QThreadPool>
+#include <atomic>
 #include <QSqlError>
 #include <QSqlQuery>
 
@@ -1273,7 +1276,7 @@ void DaWorldGlobe::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtom
 			// Sea globe is not rendered when we do not have the low tessellation model or the polygon collisions look bad.
 			if(m_AtGlobe.m_Low.VAO())
 				RenderSea(projection, model, *ari.re, eyeUnderWater, cgUnderWater, fillum, ambientLight, fogDensity,
-						fogcol[0], fogcol[1], fogcol[2], ari.IsViewTopDown());
+						fogcol[0], fogcol[1], fogcol[2], ari.IsViewTopDown(), sceneAtom->InDesignEnvironment() ? nullptr : &ari.mm);
 		}
 		else
 		{
@@ -1282,7 +1285,7 @@ void DaWorldGlobe::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtom
 			// Sea globe is not rendered when we do not have the low tessellation model or the polygon collisions look bad.
 			if(m_byWater && (ari.IsViewTopDown() || !eyeUnderGround) && m_AtGlobe.m_Low.VAO())
 				RenderSea(projection, model, *ari.re, eyeUnderWater, cgUnderWater, fillum, ambientLight, fogDensity,
-						fogcol[0], fogcol[1], fogcol[2], ari.IsViewTopDown());
+						fogcol[0], fogcol[1], fogcol[2], ari.IsViewTopDown(), sceneAtom->InDesignEnvironment() ? nullptr : &ari.mm);
 
 			// Render non-ring satellites and ships in orbit.
 			DaAtomList rings;		// Save rings for last.
@@ -1543,335 +1546,311 @@ void DaWorldGlobe::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 			shadScRingworldFog);
 }
 
-// Render the sea surface.
-// Lights have already been set up.
-// View and World transforms have already been set up.
+// Only immutable input values and CPU buffers cross the worker boundary.
+struct AuSeaMesh
+{
+	QVector<GLfloat> positions, texCoords, tangents;
+	AuPoint minimum, maximum;
+	bool boundsValid = false;
+};
+
+struct AuSeaPreparation
+{
+	const double radius;
+	const int divisions, orbitZone;
+	const bool surface, undersea;
+	std::atomic<bool> ready;
+	AuSeaMesh meshes[2];
+	// Upload progress is used only by the rendering thread after publication.
+	int layer = 0, stage = 0, offset = 0;
+
+	AuSeaPreparation(double r, int d, int zone, bool upper, bool lower)
+		: radius(r), divisions(d), orbitZone(zone), surface(upper), undersea(lower), ready(false) {}
+};
+
+namespace
+{
+double UnderseaRadius(double radius, int orbitZone)
+{
+	switch(orbitZone)
+	{
+	case OZONE_Inferno: return radius - 4;
+	case OZONE_Inner:
+	case OZONE_Habitable:
+	case OZONE_Outer: return radius - 7;
+	case OZONE_Frigid: return radius - 5;
+	default: return radius;
+	}
+}
+
+void PrepareSeaMesh(AuSeaMesh& output, double radius, int divisions, int texreps, bool undersea)
+{
+	AuGlobeLLTriList seaTris;
+	seaTris.CreateGlobeTriangles(divisions);
+	QList<AuGlobeTriTex> tris;							// Triangles that make up this model.
+	for(AuGlobeLLTriList::const_iterator ti = seaTris.cbegin(); ti != seaTris.cend(); ti++)
+	{
+		//if(VirginTerrainAltitudeMSL((*ti).m_LL0) > 1 &&
+				//VirginTerrainAltitudeMSL((*ti).m_LL1) > 1 &&
+				//VirginTerrainAltitudeMSL((*ti).m_LL2) > 1)
+			//continue;
+
+		// Calculate triangle vertex coordinates.
+		AuPoint terCoord0 = (*ti).m_LL0.GlobeLocation(radius);
+		AuPoint terCoord1 = (*ti).m_LL1.GlobeLocation(radius);
+		AuPoint terCoord2 = (*ti).m_LL2.GlobeLocation(radius);
+
+		// Wrap texture properly at the seam.
+		float ll0long = (*ti).m_LL0.Longitude();
+		if(FuzzyEquals((float)(*ti).m_LL0.Longitude(), -PIf) && ((*ti).m_LL1.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
+			ll0long = PIf;
+		float ll1long = (*ti).m_LL1.Longitude();
+		if(FuzzyEquals((float)(*ti).m_LL1.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
+			ll1long = PIf;
+		float ll2long = (*ti).m_LL2.Longitude();
+		if(FuzzyEquals((float)(*ti).m_LL2.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL1.Longitude() > 0))
+			ll2long = PIf;
+
+		// Calculate texture coordinates.
+		QPointF terTex0;
+		terTex0.setX((ll0long)/(PIf*2) * texreps * cosf((*ti).m_LL0.Latitude()));
+		terTex0.setY(((*ti).m_LL0.Latitude() + PIf/2)/PIf * texreps);
+		QPointF terTex1;
+		terTex1.setX((ll1long)/(PIf*2) * texreps * cosf((*ti).m_LL1.Latitude()));
+		terTex1.setY(((*ti).m_LL1.Latitude() + PIf/2)/PIf * texreps);
+		QPointF terTex2;
+		terTex2.setX((ll2long)/(PIf*2) * texreps * cosf((*ti).m_LL2.Latitude()));
+		terTex2.setY(((*ti).m_LL2.Latitude() + PIf/2)/PIf * texreps);
+
+		// Construct a globe triangle.
+		AuGlobeTriTex tri;
+		tri.m_Vert0 = AuGlobeVertTex(terCoord0, terTex0);
+		tri.m_Vert1 = AuGlobeVertTex(terCoord1, terTex1);
+		tri.m_Vert2 = AuGlobeVertTex(terCoord2, terTex2);
+
+		// Append the globe triangle to the list.
+		tris.append(tri);
+	}
+
+	// Store count of triangles in the far globe vertex array object.
+	unsigned int vertices = tris.count()*3;
+
+	// Copy surface triangles into gl array buffers.
+	output.positions.resize(vertices*3);
+	GLfloat* globePos = output.positions.data();		// vertices for triangles that make up the model.
+	output.texCoords.resize(vertices*2);
+	GLfloat* globeTex = output.texCoords.data();		// texture coords for each of the vertices
+	output.tangents.resize(vertices*3);
+	GLfloat* globeTan = output.tangents.data();		// tangent vectors
+
+	unsigned int globePosIdx = 0;
+	unsigned int globeTexIdx = 0;
+	unsigned int globeTanIdx = 0;
+	for(QList<AuGlobeTriTex>::const_iterator vi = tris.cbegin(); vi != tris.cend(); vi++)
+	{
+		// Calculate tangent vectors.
+		AuPoint n0 = (*vi).m_Vert0.m_Loc;
+		n0.Unit();
+		AuPoint t0;
+		n0.ArbitraryAxis(t0);
+		AuPoint n1 = (*vi).m_Vert1.m_Loc;
+		n1.Unit();
+		AuPoint t1;
+		n1.ArbitraryAxis(t1);
+		AuPoint n2 = (*vi).m_Vert2.m_Loc;
+		n2.Unit();
+		AuPoint t2;
+		n2.ArbitraryAxis(t2);
+
+		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.x;
+		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.y;
+		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.z;
+
+		globeTex[globeTexIdx++] = (*vi).m_Vert0.m_TexCoord.x();
+		globeTex[globeTexIdx++] = (*vi).m_Vert0.m_TexCoord.y();
+
+		globeTan[globeTanIdx++] = (float)t0.x;
+		globeTan[globeTanIdx++] = (float)t0.y;
+		globeTan[globeTanIdx++] = (float)t0.z;
+
+		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.x;
+		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.y;
+		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.z;
+
+		globeTex[globeTexIdx++] = (*vi).m_Vert1.m_TexCoord.x();
+		globeTex[globeTexIdx++] = (*vi).m_Vert1.m_TexCoord.y();
+
+		globeTan[globeTanIdx++] = (float)t1.x;
+		globeTan[globeTanIdx++] = (float)t1.y;
+		globeTan[globeTanIdx++] = (float)t1.z;
+
+		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.x;
+		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.y;
+		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.z;
+
+		globeTex[globeTexIdx++] = (*vi).m_Vert2.m_TexCoord.x();
+		globeTex[globeTexIdx++] = (*vi).m_Vert2.m_TexCoord.y();
+
+		globeTan[globeTanIdx++] = (float)t2.x;
+		globeTan[globeTanIdx++] = (float)t2.y;
+		globeTan[globeTanIdx++] = (float)t2.z;
+	}
+	// SetBounds is a CPU scan; keep it with preparation rather than upload.
+	AuGLVAO bounds;
+	bounds.SetBounds(globePos, vertices, 3);
+	output.boundsValid = bounds.GetBounds(output.minimum, output.maximum);
+}
+
+class SeaPreparationTask : public QRunnable
+{
+	std::shared_ptr<AuSeaPreparation> m_Result;
+public:
+	explicit SeaPreparationTask(const std::shared_ptr<AuSeaPreparation>& result) : m_Result(result) {}
+	void run() override
+	{
+		if(m_Result->surface)
+			PrepareSeaMesh(m_Result->meshes[0], m_Result->radius, m_Result->divisions*6, m_Result->divisions*3, false);
+		if(m_Result->undersea)
+			PrepareSeaMesh(m_Result->meshes[1], UnderseaRadius(m_Result->radius, m_Result->orbitZone),
+					m_Result->divisions, m_Result->divisions, true);
+		m_Result->ready.store(true, std::memory_order_release);
+	}
+};
+
+class SeaPreparationDeleteTask : public QRunnable
+{
+	AuSeaPreparation* m_Result;
+public:
+	explicit SeaPreparationDeleteTask(AuSeaPreparation* result) : m_Result(result) {}
+	void run() override { delete m_Result; }
+};
+
+// One VAO creation, allocation, or <=1 MiB copy per call. The caller keeps
+// the VAO out of draw calls until every attribute buffer has been filled.
+bool UploadSeaMesh(AuGLEffects& re, AuGLVAO& vao, const AuSeaMesh& mesh, int& stage, int& offset, bool sliced)
+{
+	if(stage == 0)
+	{
+		vao.CreateGL(re, mesh.positions.size()/3, 3);
+		if(mesh.boundsValid) vao.SetBounds(mesh.minimum, mesh.maximum);
+		++stage;
+		if(sliced) return false;
+	}
+	vao.SelectGL();
+	const QVector<GLfloat>* buffers[] = {&mesh.positions, &mesh.texCoords, &mesh.tangents};
+	const GLint components[] = {3, 2, 3};
+	if(!sliced)
+	{
+		// Preserve the synchronous GL path for modern and designer callers.
+		for(int buffer=0; buffer<3; ++buffer)
+		{
+			re.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(buffer));
+			re.glBufferData(GL_ARRAY_BUFFER, buffers[buffer]->size()*sizeof(GLfloat), buffers[buffer]->constData(), GL_STATIC_DRAW);
+			re.glVertexAttribPointer(buffer, components[buffer], GL_FLOAT, GL_FALSE, 0, 0);
+		}
+		stage = 7;
+	}
+	else if(stage <= 3)
+	{
+		const int buffer = stage - 1;
+		re.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(buffer));
+		re.glBufferData(GL_ARRAY_BUFFER, buffers[buffer]->size()*sizeof(GLfloat), nullptr, GL_STATIC_DRAW);
+		re.glVertexAttribPointer(buffer, components[buffer], GL_FLOAT, GL_FALSE, 0, 0);
+		++stage;
+	}
+	else
+	{
+		const int buffer = stage - 4;
+		const QVector<GLfloat>& data = *buffers[buffer];
+		const int count = qMin(262144, data.size() - offset);
+		re.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(buffer));
+		re.glBufferSubData(GL_ARRAY_BUFFER, offset*sizeof(GLfloat), count*sizeof(GLfloat), data.constData()+offset);
+		offset += count;
+		if(offset == data.size()) { offset = 0; ++stage; }
+	}
+	re.glBindBuffer(GL_ARRAY_BUFFER, 0);
+	vao.DeselectGL();
+	return stage == 7;
+}
+}
+
+void DaWorldGlobe::DiscardSeaPreparation()
+{
+	if(!m_SeaPreparation) return;
+	if(m_SeaPreparation->surface && m_SeaGlobe.VAO()) m_SeaGlobe.DeleteGL();
+	if(m_SeaPreparation->undersea && m_UnderseaGlobe.VAO()) m_UnderseaGlobe.DeleteGL();
+	m_SeaPreparation.reset();
+}
+
+bool DaWorldGlobe::PrepareSeaGlobe(AuGLEffects& re, AuGLModelMaker& mm, bool bothLayers)
+{
+	const double radius = SeaLevelRadius();
+	const int divisions = SeaLevelEquatorDivisions(), zone = OrbitZone();
+	if(m_SeaPreparation && (m_SeaPreparation->radius != radius || m_SeaPreparation->divisions != divisions
+			|| m_SeaPreparation->orbitZone != zone))
+	{
+		// Forget only in-progress geometry if its captured world parameters changed.
+		DiscardSeaPreparation();
+	}
+	if(!m_SeaPreparation)
+	{
+		if(m_SeaGlobe.VAO() && (!bothLayers || m_UnderseaGlobe.VAO())) return true;
+		m_SeaPreparation = std::shared_ptr<AuSeaPreparation>(new AuSeaPreparation(radius, divisions, zone,
+				!m_SeaGlobe.VAO(), bothLayers && !m_UnderseaGlobe.VAO()), [](AuSeaPreparation* result) {
+			// Large CPU buffers are released off the UI thread too.
+			QThreadPool::globalInstance()->start(new SeaPreparationDeleteTask(result));
+		});
+		QThreadPool::globalInstance()->start(new SeaPreparationTask(m_SeaPreparation));
+	}
+	mm.DeferLegacySceneWork();
+	if(!m_SeaPreparation->ready.load(std::memory_order_acquire)) return false;
+	if(!mm.LegacyDecorationStep()) return false;
+	AuSeaPreparation& job = *m_SeaPreparation;
+	if(job.layer == 0 && !job.surface) job.layer = 1;
+	AuGLVAO& vao = job.layer == 0 ? m_SeaGlobe : m_UnderseaGlobe;
+	if(!UploadSeaMesh(re, vao, job.meshes[job.layer], job.stage, job.offset, true)) return false;
+	if(job.layer == 0 && job.undersea)
+	{
+		job.layer = 1;
+		job.stage = job.offset = 0;
+		return false;
+	}
+	m_SeaPreparation.reset();
+	// A later call may request the lower layer after starting an upper-only job.
+	return m_SeaGlobe.VAO() && (!bothLayers || m_UnderseaGlobe.VAO());
+}
+
+// Render the sea surface. Lighting and transforms have already been set up.
 // This model is only displayed when the viewer is in the atmosphere.
 void DaWorldGlobe::RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re,
 		bool bothLayers, float illumination, float ambientLight, bool showUndersideOfSurface, float fogDensity,
-		float fogR, float fogG, float fogB, bool topDownView)
+		float fogR, float fogG, float fogB, bool topDownView, AuGLModelMaker* mm)
 {
 	if(g_Au.m_DebugSwitches & 0x00000400)
 		return;
 
-	if(!m_SeaGlobe.VAO() || (bothLayers && !m_UnderseaGlobe.VAO()))
+	if(mm && g_Au.IsLegacyGeneration())
 	{
-		// We need to create one or both of the sea globe vertex array objects.
-		// Tessellate a globe for the sea surfaces. This tessellation only expresses latitude and longitude, not altitude of points.
-		//qDebug() << "DaWorldGlobe::RenderSeaGlobe" << Id() << Name() << "tessellating...";
-		AuGlobeLLTriList seaTris;
-		seaTris.CreateGlobeTriangles(SeaLevelEquatorDivisions()*6);
-		//qDebug() << "DaWorldGlobe::RenderSeaGlobe" << Id() << Name() << "done tessellating" << seaTris.count() << "tris";
-
-		double radius = SeaLevelRadius();
-
+		if(!PrepareSeaGlobe(re, *mm, bothLayers)) return;
+	}
+	else
+	{
+		// A caller switching out of staged scene rendering must not use a partial VAO.
+		DiscardSeaPreparation();
 		if(!m_SeaGlobe.VAO())
 		{
-			// Create the sea surface globe vertex array object.
-			int texreps = SeaLevelEquatorDivisions() * 3;			// More than the lower layer makes this layer move more quickly.
-
-			// Turn the globe tessellation into globe surface triangles with 3D coordinates and texture coordinates.
-			QList<AuGlobeTriTex> tris;							// Triangles that make up this model.
-			for(AuGlobeLLTriList::const_iterator ti = seaTris.cbegin(); ti != seaTris.cend(); ti++)
-			{
-				//if(VirginTerrainAltitudeMSL((*ti).m_LL0) > 1 &&
-						//VirginTerrainAltitudeMSL((*ti).m_LL1) > 1 &&
-						//VirginTerrainAltitudeMSL((*ti).m_LL2) > 1)
-					//continue;
-
-				// Calculate triangle vertex coordinates.
-				AuPoint terCoord0 = (*ti).m_LL0.GlobeLocation(radius);
-				AuPoint terCoord1 = (*ti).m_LL1.GlobeLocation(radius);
-				AuPoint terCoord2 = (*ti).m_LL2.GlobeLocation(radius);
-
-				// Wrap texture properly at the seam.
-				float ll0long = (*ti).m_LL0.Longitude();
-				if(FuzzyEquals((float)(*ti).m_LL0.Longitude(), -PIf) && ((*ti).m_LL1.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-					ll0long = PIf;
-				float ll1long = (*ti).m_LL1.Longitude();
-				if(FuzzyEquals((float)(*ti).m_LL1.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-					ll1long = PIf;
-				float ll2long = (*ti).m_LL2.Longitude();
-				if(FuzzyEquals((float)(*ti).m_LL2.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL1.Longitude() > 0))
-					ll2long = PIf;
-
-				// Calculate texture coordinates.
-				QPointF terTex0;
-				terTex0.setX((ll0long)/(PIf*2) * texreps * cosf((*ti).m_LL0.Latitude()));
-				terTex0.setY(((*ti).m_LL0.Latitude() + PIf/2)/PIf * texreps);
-				QPointF terTex1;
-				terTex1.setX((ll1long)/(PIf*2) * texreps * cosf((*ti).m_LL1.Latitude()));
-				terTex1.setY(((*ti).m_LL1.Latitude() + PIf/2)/PIf * texreps);
-				QPointF terTex2;
-				terTex2.setX((ll2long)/(PIf*2) * texreps * cosf((*ti).m_LL2.Latitude()));
-				terTex2.setY(((*ti).m_LL2.Latitude() + PIf/2)/PIf * texreps);
-
-				// Construct a globe triangle.
-				AuGlobeTriTex tri;
-				tri.m_Vert0 = AuGlobeVertTex(terCoord0, terTex0);
-				tri.m_Vert1 = AuGlobeVertTex(terCoord1, terTex1);
-				tri.m_Vert2 = AuGlobeVertTex(terCoord2, terTex2);
-
-				// Append the globe triangle to the list.
-				tris.append(tri);
-			}
-
-			// Store count of triangles in the far globe vertex array object.
-			unsigned int vertices = tris.count()*3;
-
-			// Copy surface triangles into gl array buffers.
-			GLfloat* globePos = new GLfloat[vertices*3];		// vertices for triangles that make up the model.
-			GLfloat* globeTex = new GLfloat[vertices*2];		// texture coords for each of the vertices
-			GLfloat* globeTan = new GLfloat[vertices*3];		// tangent vectors
-
-			unsigned int globePosIdx = 0;
-			unsigned int globeTexIdx = 0;
-			unsigned int globeTanIdx = 0;
-			for(QList<AuGlobeTriTex>::const_iterator vi = tris.cbegin(); vi != tris.cend(); vi++)
-			{
-				// Calculate tangent vectors.
-				AuPoint n0 = (*vi).m_Vert0.m_Loc;
-				n0.Unit();
-				AuPoint t0;
-				n0.ArbitraryAxis(t0);
-				AuPoint n1 = (*vi).m_Vert1.m_Loc;
-				n1.Unit();
-				AuPoint t1;
-				n1.ArbitraryAxis(t1);
-				AuPoint n2 = (*vi).m_Vert2.m_Loc;
-				n2.Unit();
-				AuPoint t2;
-				n2.ArbitraryAxis(t2);
-
-				globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.x;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.y;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.z;
-
-				globeTex[globeTexIdx++] = (*vi).m_Vert0.m_TexCoord.x();
-				globeTex[globeTexIdx++] = (*vi).m_Vert0.m_TexCoord.y();
-
-				globeTan[globeTanIdx++] = (float)t0.x;
-				globeTan[globeTanIdx++] = (float)t0.y;
-				globeTan[globeTanIdx++] = (float)t0.z;
-
-				globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.x;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.y;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.z;
-
-				globeTex[globeTexIdx++] = (*vi).m_Vert1.m_TexCoord.x();
-				globeTex[globeTexIdx++] = (*vi).m_Vert1.m_TexCoord.y();
-
-				globeTan[globeTanIdx++] = (float)t1.x;
-				globeTan[globeTanIdx++] = (float)t1.y;
-				globeTan[globeTanIdx++] = (float)t1.z;
-
-				globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.x;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.y;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.z;
-
-				globeTex[globeTexIdx++] = (*vi).m_Vert2.m_TexCoord.x();
-				globeTex[globeTexIdx++] = (*vi).m_Vert2.m_TexCoord.y();
-
-				globeTan[globeTanIdx++] = (float)t2.x;
-				globeTan[globeTanIdx++] = (float)t2.y;
-				globeTan[globeTanIdx++] = (float)t2.z;
-			}
-
-			// Generate vertex array(s) for this object. We only need one.
-			m_SeaGlobe.CreateGL(re, vertices, 3);
-			m_SeaGlobe.SetBounds(globePos, vertices, 3);
-
-			// Select vertex array to construct.
-			m_SeaGlobe.SelectGL();
-
-			// bind buffer for vertices and copy data into buffer.
-			re.glBindBuffer(GL_ARRAY_BUFFER, m_SeaGlobe.Buffer(0));
-			re.glBufferData(GL_ARRAY_BUFFER, globePosIdx*sizeof(GLfloat), globePos, GL_STATIC_DRAW);
-			re.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-			// bind buffer for colors and copy data into buffer.
-			re.glBindBuffer(GL_ARRAY_BUFFER, m_SeaGlobe.Buffer(1));
-			re.glBufferData(GL_ARRAY_BUFFER, globeTexIdx*sizeof(GLfloat), globeTex, GL_STATIC_DRAW);
-			re.glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-			// bind buffer for tangent vectors and copy data into buffer.
-			re.glBindBuffer(GL_ARRAY_BUFFER, m_SeaGlobe.Buffer(2));
-			re.glBufferData(GL_ARRAY_BUFFER, globeTanIdx*sizeof(GLfloat), globeTan, GL_STATIC_DRAW);
-			re.glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-			re.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-			// Disable the vertex array object.
-			m_SeaGlobe.DeselectGL();
-
-			delete [] globePos;
-			delete [] globeTex;
-			delete [] globeTan;
+			AuSeaMesh mesh;
+			PrepareSeaMesh(mesh, SeaLevelRadius(), SeaLevelEquatorDivisions()*6, SeaLevelEquatorDivisions()*3, false);
+			int stage = 0, offset = 0;
+			UploadSeaMesh(re, m_SeaGlobe, mesh, stage, offset, false);
 		}
-
-		// Sometimes we need to obscure the sea bottom.
-		// This is done by displaying an opaque darker smaller copy of the sea surface model.
 		if(bothLayers && !m_UnderseaGlobe.VAO())
 		{
-			// Create the undersea subsurface globe vertex array object.
-			seaTris.CreateGlobeTriangles(SeaLevelEquatorDivisions());
-			int texreps = SeaLevelEquatorDivisions();				// Less than the upper layer makes this layer move more slowly.
-
-			switch(OrbitZone())
-			{
-			case OZONE_Inferno:
-				// NOTE: This radius drop must always be at least the distance between the viewer's eye position and body cg.
-				radius -= 4;			// depth of opaque lower lava layer
-				break;
-			case OZONE_Inner:
-			case OZONE_Habitable:
-			case OZONE_Outer:
-				radius -= 7;			// depth of opaque lower water layer
-				break;
-			case OZONE_Frigid:
-				radius -= 5;			// depth of opaque lower liquid layer
-				break;
-			case OZONE_DeepSpace:
-				break;
-			}
-
-			// Turn the globe tessellation into globe surface triangles with 3D coordinates and texture coordinates.
-			QList<AuGlobeTriTex> tris;							// Triangles that make up this model.
-			for(AuGlobeLLTriList::const_iterator ti = seaTris.cbegin(); ti != seaTris.cend(); ti++)
-			{
-				//if(VirginTerrainAltitudeMSL((*ti).m_LL0) > 1 &&
-						//VirginTerrainAltitudeMSL((*ti).m_LL1) > 1 &&
-						//VirginTerrainAltitudeMSL((*ti).m_LL2) > 1)
-					//continue;
-
-				// Calculate triangle vertex coordinates.
-				AuPoint terCoord0 = (*ti).m_LL0.GlobeLocation(radius);
-				AuPoint terCoord1 = (*ti).m_LL1.GlobeLocation(radius);
-				AuPoint terCoord2 = (*ti).m_LL2.GlobeLocation(radius);
-
-				// Wrap texture properly at the seam.
-				float ll0long = (*ti).m_LL0.Longitude();
-				if(FuzzyEquals((float)(*ti).m_LL0.Longitude(), -PIf) && ((*ti).m_LL1.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-					ll0long = PIf;
-				float ll1long = (*ti).m_LL1.Longitude();
-				if(FuzzyEquals((float)(*ti).m_LL1.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-					ll1long = PIf;
-				float ll2long = (*ti).m_LL2.Longitude();
-				if(FuzzyEquals((float)(*ti).m_LL2.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL1.Longitude() > 0))
-					ll2long = PIf;
-
-				// Calculate texture coordinates.
-				QPointF terTex0;
-				terTex0.setX((ll0long)/(PIf*2) * texreps * cosf((*ti).m_LL0.Latitude()));
-				terTex0.setY(((*ti).m_LL0.Latitude() + PIf/2)/PIf * texreps);
-				QPointF terTex1;
-				terTex1.setX((ll1long)/(PIf*2) * texreps * cosf((*ti).m_LL1.Latitude()));
-				terTex1.setY(((*ti).m_LL1.Latitude() + PIf/2)/PIf * texreps);
-				QPointF terTex2;
-				terTex2.setX((ll2long)/(PIf*2) * texreps * cosf((*ti).m_LL2.Latitude()));
-				terTex2.setY(((*ti).m_LL2.Latitude() + PIf/2)/PIf * texreps);
-
-				// Construct a globe triangle.
-				AuGlobeTriTex tri;
-				tri.m_Vert0 = AuGlobeVertTex(terCoord0, terTex0);
-				tri.m_Vert1 = AuGlobeVertTex(terCoord1, terTex1);
-				tri.m_Vert2 = AuGlobeVertTex(terCoord2, terTex2);
-
-				// Append the globe triangle to the list.
-				tris.append(tri);
-			}
-
-			// Store count of triangles in the far globe vertex array object.
-			unsigned int vertices = tris.count()*3;
-
-			// Copy surface triangles into gl array buffers.
-			GLfloat* globePos = new GLfloat[vertices*3];		// vertices for triangles that make up the model.
-			GLfloat* globeTex = new GLfloat[vertices*2];		// texture coords for each of the vertices
-			GLfloat* globeTan = new GLfloat[vertices*3];		// tangent vectors
-
-			unsigned int globePosIdx = 0;
-			unsigned int globeTexIdx = 0;
-			unsigned int globeTanIdx = 0;
-			for(QList<AuGlobeTriTex>::const_iterator vi = tris.cbegin(); vi != tris.cend(); vi++)
-			{
-				// Calculate tangent vectors.
-				AuPoint n0 = (*vi).m_Vert0.m_Loc;
-				n0.Unit();
-				AuPoint t0;
-				n0.ArbitraryAxis(t0);
-				AuPoint n1 = (*vi).m_Vert1.m_Loc;
-				n1.Unit();
-				AuPoint t1;
-				n1.ArbitraryAxis(t1);
-				AuPoint n2 = (*vi).m_Vert2.m_Loc;
-				n2.Unit();
-				AuPoint t2;
-				n2.ArbitraryAxis(t2);
-
-				globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.x;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.y;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.z;
-
-				globeTex[globeTexIdx++] = (*vi).m_Vert0.m_TexCoord.x();
-				globeTex[globeTexIdx++] = (*vi).m_Vert0.m_TexCoord.y();
-
-				globeTan[globeTanIdx++] = (float)t0.x;
-				globeTan[globeTanIdx++] = (float)t0.y;
-				globeTan[globeTanIdx++] = (float)t0.z;
-
-				globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.x;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.y;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.z;
-
-				globeTex[globeTexIdx++] = (*vi).m_Vert1.m_TexCoord.x();
-				globeTex[globeTexIdx++] = (*vi).m_Vert1.m_TexCoord.y();
-
-				globeTan[globeTanIdx++] = (float)t1.x;
-				globeTan[globeTanIdx++] = (float)t1.y;
-				globeTan[globeTanIdx++] = (float)t1.z;
-
-				globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.x;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.y;
-				globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.z;
-
-				globeTex[globeTexIdx++] = (*vi).m_Vert2.m_TexCoord.x();
-				globeTex[globeTexIdx++] = (*vi).m_Vert2.m_TexCoord.y();
-
-				globeTan[globeTanIdx++] = (float)t2.x;
-				globeTan[globeTanIdx++] = (float)t2.y;
-				globeTan[globeTanIdx++] = (float)t2.z;
-			}
-
-			// Generate vertex array(s) for this object. We only need one.
-			m_UnderseaGlobe.CreateGL(re, vertices, 3);
-			m_UnderseaGlobe.SetBounds(globePos, vertices, 3);
-
-			// Select vertex array to construct.
-			m_UnderseaGlobe.SelectGL();
-
-			// bind buffer for vertices and copy data into buffer.
-			re.glBindBuffer(GL_ARRAY_BUFFER, m_UnderseaGlobe.Buffer(0));
-			re.glBufferData(GL_ARRAY_BUFFER, globePosIdx*sizeof(GLfloat), globePos, GL_STATIC_DRAW);
-			re.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-			// bind buffer for colors and copy data into buffer.
-			re.glBindBuffer(GL_ARRAY_BUFFER, m_UnderseaGlobe.Buffer(1));
-			re.glBufferData(GL_ARRAY_BUFFER, globeTexIdx*sizeof(GLfloat), globeTex, GL_STATIC_DRAW);
-			re.glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-			// bind buffer for colors and copy data into buffer.
-			re.glBindBuffer(GL_ARRAY_BUFFER, m_UnderseaGlobe.Buffer(2));
-			re.glBufferData(GL_ARRAY_BUFFER, globeTanIdx*sizeof(GLfloat), globeTan, GL_STATIC_DRAW);
-			re.glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-			re.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-			// Disable the vertex array object.
-			m_UnderseaGlobe.DeselectGL();
-
-			delete [] globePos;
-			delete [] globeTex;
-			delete [] globeTan;
+			AuSeaMesh mesh;
+			PrepareSeaMesh(mesh, UnderseaRadius(SeaLevelRadius(), OrbitZone()),
+					SeaLevelEquatorDivisions(), SeaLevelEquatorDivisions(), true);
+			int stage = 0, offset = 0;
+			UploadSeaMesh(re, m_UnderseaGlobe, mesh, stage, offset, false);
 		}
 	}
 
@@ -4404,59 +4383,65 @@ void DaWorldGlobe::CreateDeviceObjects(AuAtomRenderInfo& ari)
 	if(!(g_Au.m_DebugSwitches & 0x00000800))
 	{
 		if(!s_TexNoise)
-			s_TexNoise = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "TerNoise", ":data/TerNoise.png");
+			s_TexNoise = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "TerNoise", ":data/TerNoise.png");
 
 		// NOTE: 1 minus the alpha in this texture is treated as glow, for lava. e.g. Alpha .5 glows at .5. Alpha 1 does not glow.
-		if(!s_TexTerPalette[0])
-			for(int wt=0; wt<WORLDTEX_Count; wt++)
+		for(int wt=0; wt<WORLDTEX_Count; wt++)
+			if(!s_TexTerPalette[wt])
 				s_TexTerPalette[wt] = CreateTerrainTexture(*ari.re, (WORLDTEX_TYPE)wt, g_Au.GroundTextureSize());
 
-		if(g_Au.IsLegacyGeneration() && !s_TexLegacyPavement[0])
+		if(g_Au.IsLegacyGeneration())
 			for(int wt=0; wt<18; ++wt)
-				s_TexLegacyPavement[wt] = CreateTerrainTexture(*ari.re, WORLDTEX_TYPE(wt), g_Au.GroundTextureSize(), true);
+				if(!s_TexLegacyPavement[wt])
+					s_TexLegacyPavement[wt] = CreateTerrainTexture(*ari.re, WORLDTEX_TYPE(wt), g_Au.GroundTextureSize(), true);
 
 		// Create textures used for developments and rocks.
 		if(!s_TexRock)
-			s_TexRock = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "Rock", ":data/txRock.png");
+			s_TexRock = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "Rock", ":data/txRock.png");
 
 		// Create sea surface textures.
 		if(!s_texSea[OZONE_Inferno])
-			s_texSea[OZONE_Inferno] = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "SeaInferno", ":data/SeaMagma.png", GL_LINEAR,
+			s_texSea[OZONE_Inferno] = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "SeaInferno", ":data/SeaMagma.png", GL_LINEAR,
 					GL_LINEAR, true);
 		if(!s_texSea[OZONE_Inner])
-			s_texSea[OZONE_Inner] = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "SeaWater", ":data/SeaWater.png", GL_LINEAR,
+			s_texSea[OZONE_Inner] = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "SeaWater", ":data/SeaWater.png", GL_LINEAR,
 					GL_LINEAR, true);
 		if(!s_texSea[OZONE_Habitable])
-			s_texSea[OZONE_Habitable] = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "SeaWater", ":data/SeaWater.png", GL_LINEAR,
+			s_texSea[OZONE_Habitable] = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "SeaWater", ":data/SeaWater.png", GL_LINEAR,
 					GL_LINEAR, true);
 		if(!s_texSea[OZONE_Outer])
-			s_texSea[OZONE_Outer] = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "SeaWater", ":data/SeaWater.png", GL_LINEAR,
+			s_texSea[OZONE_Outer] = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "SeaWater", ":data/SeaWater.png", GL_LINEAR,
 					GL_LINEAR, true);
 		if(!s_texSea[OZONE_Frigid])
-			s_texSea[OZONE_Frigid] = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "SeaFrigid", ":data/SeaFrigid.png", GL_LINEAR,
+			s_texSea[OZONE_Frigid] = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "SeaFrigid", ":data/SeaFrigid.png", GL_LINEAR,
 					GL_LINEAR, true);
 
 		// Create sea surface bump maps.
 		if(g_Au.BumpMapSeas())
 		{
 			if(!s_texSeaN[OZONE_Inferno])
-				s_texSeaN[OZONE_Inferno] = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "NLava", ":data/N_Lava.png",
+				s_texSeaN[OZONE_Inferno] = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "NLava", ":data/N_Lava.png",
 						GL_LINEAR, GL_LINEAR, true);
 			if(!s_texSeaN[OZONE_Inner])
-				s_texSeaN[OZONE_Inner] = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "NWater", ":data/N_Water.png",
+				s_texSeaN[OZONE_Inner] = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "NWater", ":data/N_Water.png",
 						GL_LINEAR, GL_LINEAR, true);
 			if(!s_texSeaN[OZONE_Habitable])
-				s_texSeaN[OZONE_Habitable] = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "NWater", ":data/N_Water.png",
+				s_texSeaN[OZONE_Habitable] = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "NWater", ":data/N_Water.png",
 						GL_LINEAR, GL_LINEAR, true);
 			if(!s_texSeaN[OZONE_Outer])
-				s_texSeaN[OZONE_Outer] = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "NIce", ":data/N_Ice.png",
+				s_texSeaN[OZONE_Outer] = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "NIce", ":data/N_Ice.png",
 						GL_LINEAR, GL_LINEAR, true);
 			if(!s_texSeaN[OZONE_Frigid])
-				s_texSeaN[OZONE_Frigid] = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "NIce", ":data/N_Ice.png",
+				s_texSeaN[OZONE_Frigid] = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "NIce", ":data/N_Ice.png",
 						GL_LINEAR, GL_LINEAR, true);
 		}
 
 		// Grass texture is only needed if this world has grass growing wild in the environment.
+		if(ari.re->SceneTexturePending())
+		{
+			DaWorldSphere::CreateDeviceObjects(ari);
+			return;
+		}
 		// It is also used for the lawns of homes.
 		if(!m_glTexGrass && (CanHaveFlora() || BdHere()))
 			CreateGrassTexture(*ari.re, ari.mm);
@@ -4578,6 +4563,7 @@ void DaWorldGlobe::CreateDeviceObjects(AuAtomRenderInfo& ari)
 
 void DaWorldGlobe::DeleteDeviceObjects(AuAtomRenderInfo& ari)
 {
+	m_SeaPreparation.reset();
 	//qDebug("DaWorldGlobe::DeleteDeviceObjects - %d glModel %d", Id().GetID());
 	DaWorldSphere::DeleteDeviceObjects(ari);
 

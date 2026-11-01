@@ -34,11 +34,20 @@ private:
 	QTabBar*				m_Tabs;
 	AuLocatorMap*			m_WorldMap;
 
+private:
+	int m_InitializePage;
+
 public:
-	AuLocator(QWidget* parent=0);
+	AuLocator(QWidget* parent=0, bool staged=false);
 	~AuLocator();
+	bool InitializeNextPage();
+	bool IsInitialized() const { return m_InitializePage >= 6; }
 
 	virtual QSize sizeHint() const;
+
+	void SelectStarMap();
+	bool StarMapSelected() const;
+	bool PrepareNextStep();
 
 	void StarMapErased();
 
@@ -78,10 +87,10 @@ public:
 	AuLocator*							m_Locator;
 
 public:
-	AuLocatorDock(QWidget* parent) : AuDockWidget(":data/Locator.png", tr("<b>Locator</b>"), tr("Locator"), parent)
+	AuLocatorDock(QWidget* parent, bool staged=false) : AuDockWidget(":data/Locator.png", tr("<b>Locator</b>"), tr("Locator"), parent)
 	{
 		SetWikiTopic("Locator");
-		m_Locator = new AuLocator(this);
+		m_Locator = new AuLocator(this, staged);
 		setWidget(m_Locator);
 
 		int dockSides = g_Au.Settings().readNumEntry("Dock/LocatorAreas", (int)allowedAreas());

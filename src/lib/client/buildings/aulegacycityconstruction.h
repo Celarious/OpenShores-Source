@@ -86,24 +86,27 @@ class AUCLIENT_DLL AuLegacyCityLabor : public QWidget
 {
 	Q_OBJECT
 public:
-	explicit AuLegacyCityLabor(QWidget* parent = nullptr);
+	explicit AuLegacyCityLabor(QWidget* parent = nullptr, bool staged = false);
+	bool InitializeNextPage();
+	bool IsInitialized() const { return m_InitializeStage >= 6; }
 
 protected:
 	void showEvent(QShowEvent* event) override;
 	void hideEvent(QHideEvent* event) override;
 
 private:
-	AuBldConstruct* m_Labor;
-	AuLegacyCityManufacture* m_Manufacture;
-	AuLegacyCityBank* m_Bank;
-	AuLegacyCityDesignStudio* m_Studio;
-	AuBldHangar* m_Hangar;
+	AuBldConstruct* m_Labor = nullptr;
+	AuLegacyCityManufacture* m_Manufacture = nullptr;
+	AuLegacyCityBank* m_Bank = nullptr;
+	AuLegacyCityDesignStudio* m_Studio = nullptr;
+	AuBldHangar* m_Hangar = nullptr;
+	int m_InitializeStage = 0;
 	QStackedWidget* m_LaborPages;
 	QTabBar* m_LaborTabs;
 	bool m_DualPages = false;
-	QLabel* m_Info;
-	QTimer *m_Timer, *m_Timeout;
-	QTimer* m_StudioRequestTimer;
+	QLabel* m_Info = nullptr;
+	QTimer *m_Timer = nullptr, *m_Timeout = nullptr;
+	QTimer* m_StudioRequestTimer = nullptr;
 	QVector<AuLegacyCityProtocol::Entry> m_Entries;
 	int m_Selected = -1;
 	quint32 m_PendingToken = 0;
@@ -129,8 +132,11 @@ private:
 class AUCLIENT_DLL AuLegacyCityLaborDock : public AuDockWidget
 {
 public:
-	explicit AuLegacyCityLaborDock(QWidget* parent);
+	explicit AuLegacyCityLaborDock(QWidget* parent, bool staged = false);
+	AuLegacyCityLabor* Content() const { return m_Content; }
 	void UpdateTitleShortcut() override;
+private:
+	AuLegacyCityLabor* m_Content;
 };
 
 class AUCLIENT_DLL AuLegacyCityConstructionDock : public AuDockWidget

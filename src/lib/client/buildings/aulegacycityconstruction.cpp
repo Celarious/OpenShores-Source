@@ -674,7 +674,7 @@ void AuLegacyCityConstruction::hideEvent(QHideEvent* event)
 }
 
 
-AuLegacyCityLabor::AuLegacyCityLabor(QWidget* parent) : QWidget(parent)
+AuLegacyCityLabor::AuLegacyCityLabor(QWidget* parent, bool staged) : QWidget(parent)
 {
 	// AuLabor/AuLaborCity (2016, 0x1401bfdd0/0x1401ca750): a production
 	// building extending a level retains Construction and Manufacture tabs.
@@ -685,12 +685,38 @@ AuLegacyCityLabor::AuLegacyCityLabor(QWidget* parent) : QWidget(parent)
 	m_LaborTabs->addTab(QIcon(":data/HammerAndSickle.png"), tr("Manufacture"));
 	layout->addWidget(m_LaborTabs, 0, 0); m_LaborTabs->hide();
 	m_LaborPages = new QStackedWidget(this); layout->addWidget(m_LaborPages, 1, 0);
-	m_Labor = new AuBldConstruct(this, true); m_LaborPages->addWidget(m_Labor);
-	m_Manufacture = new AuLegacyCityManufacture(this); m_LaborPages->addWidget(m_Manufacture);
-	m_LaborPages->addWidget(m_Manufacture->SpacecraftPage());
-	m_Bank = new AuLegacyCityBank(this); m_LaborPages->addWidget(m_Bank);
-	m_Studio = new AuLegacyCityDesignStudio(this); m_LaborPages->addWidget(m_Studio);
-	m_Hangar = new AuBldHangar(this); m_LaborPages->addWidget(m_Hangar);
+	if(!staged)
+		while(!InitializeNextPage()) {}
+}
+
+bool AuLegacyCityLabor::InitializeNextPage()
+{
+	if(IsInitialized()) return true;
+	switch(m_InitializeStage)
+	{
+	case 0:
+		m_Labor = new AuBldConstruct(this, true); m_LaborPages->addWidget(m_Labor);
+		++m_InitializeStage; return false;
+	case 1:
+		m_Manufacture = new AuLegacyCityManufacture(this); m_LaborPages->addWidget(m_Manufacture);
+		m_LaborPages->addWidget(m_Manufacture->SpacecraftPage());
+		++m_InitializeStage; return false;
+	case 2:
+		m_Bank = new AuLegacyCityBank(this); m_LaborPages->addWidget(m_Bank);
+		++m_InitializeStage; return false;
+	case 3:
+		if(!m_Studio)
+		{
+			m_Studio = new AuLegacyCityDesignStudio(this, true); m_LaborPages->addWidget(m_Studio);
+			return false;
+		}
+		if(m_Studio->InitializeNextPanel()) ++m_InitializeStage;
+		return false;
+	case 4:
+		m_Hangar = new AuBldHangar(this); m_LaborPages->addWidget(m_Hangar);
+		++m_InitializeStage; return false;
+	}
+	// Connect controllers only once all their pages exist.
 	m_Info = new QLabel(tr("<html>Tips:<br><p>Use this window to use the buildings and roads in a city.</p>"
 		"<p>The contents of this window change based on the building or road site you occupy. "
 		"You do not have to be inside a building; stand anywhere at the site.</p><p><i>Tips</i></p>"
@@ -756,7 +782,9 @@ AuLegacyCityLabor::AuLegacyCityLabor(QWidget* parent) : QWidget(parent)
 	});
 	connect(auApp, &AuApp::LegacyCityReplyReceived, this, &AuLegacyCityLabor::ReceiveReply);
 	connect(auApp, &AuApp::LegacyScTransportReset, this, &AuLegacyCityLabor::ResetTransport);
+	++m_InitializeStage;
 	UpdateControls();
+	return true;
 }
 
 const AuLegacyCityProtocol::Entry* AuLegacyCityLabor::Selected() const
@@ -884,6 +912,7 @@ void AuLegacyCityLabor::ReceiveReply(QByteArray payload)
 
 void AuLegacyCityLabor::UpdateControls()
 {
+	if(!IsInitialized()) return;
 	const bool online = g_Au.IsLegacyGeneration() && !auApp->IsSingleUserMode() && auApp->IsSceneConnected();
 	const auto* entry = Selected();
 	const bool unfinished = entry && UnderConstruction(*entry);
@@ -981,13 +1010,16 @@ void AuLegacyCityLabor::ReportMessage(const QString& message)
 void AuLegacyCityLabor::showEvent(QShowEvent* event)
 {
 	QWidget::showEvent(event); QString error;
+	if(!IsInitialized()) return;
 	if(!AuLegacyCityCatalogue::LoadBuiltIn(error)) ReportMessage(error);
 	UpdateControls(); m_Timer->start(); Refresh();
 }
 
 void AuLegacyCityLabor::hideEvent(QHideEvent* event)
 {
-	m_Labor->StopWorking(); m_Timer->stop(); QWidget::hideEvent(event);
+	if(m_Labor) m_Labor->StopWorking();
+	if(m_Timer) m_Timer->stop();
+	QWidget::hideEvent(event);
 }
 
 AuLegacyCityConstructionDock::AuLegacyCityConstructionDock(QWidget* parent)
@@ -1003,10 +1035,10 @@ void AuLegacyCityConstructionDock::UpdateTitleShortcut()
 	SetTitle(binding.isEmpty() ? OriginalTitle() : OriginalTitle() + QStringLiteral(" (%1)").arg(binding));
 }
 
-AuLegacyCityLaborDock::AuLegacyCityLaborDock(QWidget* parent)
+AuLegacyCityLaborDock::AuLegacyCityLaborDock(QWidget* parent, bool staged)
 	: AuDockWidget(":data/MsgCity.png", tr("<b>City</b>"), tr("City"), parent)
 {
-	setObjectName(QStringLiteral("LegacyCityLabor")); setWidget(new AuLegacyCityLabor(this));
+	setObjectName(QStringLiteral("LegacyCityLabor")); m_Content = new AuLegacyCityLabor(this, staged); setWidget(m_Content);
 	connect(this, &QDockWidget::visibilityChanged, this, [this](bool visible) { if(visible && !g_Au.IsLegacyGeneration()) hide(); });
 }
 

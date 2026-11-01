@@ -15,6 +15,84 @@
 #include "austation.h"
 #include <cmath>
 #include <QMap>
+#include <QCache>
+#include <QDateTime>
+#include <QFileInfo>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QSet>
+#include <QWaitCondition>
+
+namespace
+{
+struct BodyTextureImages
+{
+	QMutex mutex;
+	QWaitCondition loaded;
+	QSet<QString> loading;
+	QCache<QString, QImage> images;
+	BodyTextureImages() : images(128 * 1024 * 1024) {}
+};
+
+QImage LoadBodyTextureImage(const QString& fileName)
+{
+	static BodyTextureImages cache;
+	const QFileInfo source(fileName);
+	// Runtime assets can be replaced during development. Resolve relative paths
+	// and include file metadata so a later request cannot reuse a stale image.
+	const QString key = QStringLiteral("%1:%2:%3").arg(source.absoluteFilePath())
+		.arg(source.size()).arg(source.lastModified().toMSecsSinceEpoch());
+	QImage image;
+	bool decode = false;
+	{
+		QMutexLocker lock(&cache.mutex);
+		while(cache.loading.contains(key)) cache.loaded.wait(&cache.mutex);
+		if(const QImage* cached = cache.images.object(key)) image = *cached;
+		else
+		{
+			cache.loading.insert(key);
+			decode = true;
+		}
+	}
+	if(decode)
+	{
+		try
+		{
+			// Decode outside the cache lock: unrelated textures can load in
+			// parallel, while a second request for this image waits for it.
+			image.load(fileName);
+			QMutexLocker lock(&cache.mutex);
+			const qint64 bytes = qint64(image.bytesPerLine()) * image.height();
+			if(!image.isNull() && bytes <= cache.images.maxCost())
+				cache.images.insert(key, new QImage(image), int(bytes));
+			cache.loading.remove(key);
+			cache.loaded.wakeAll();
+		}
+		catch(...)
+		{
+			QMutexLocker lock(&cache.mutex);
+			cache.loading.remove(key);
+			cache.loaded.wakeAll();
+			throw;
+		}
+	}
+	return image;
+}
+
+GLuint CreateBodyTexture(AuGLEffects& re, const QString& textureId, const QString& fileName)
+{
+	// Share the decoded image cache with the avatar preview, including in-flight work.
+	const GLuint existing = re.UseTexture(STATIC_TEXTURE_ID, textureId);
+	if(existing) return existing;
+	if(re.SceneDevicePreparation())
+		return re.PrepareSceneTexture(STATIC_TEXTURE_ID, textureId,
+			[fileName]() { return LoadBodyTextureImage(fileName); });
+	const QImage image = LoadBodyTextureImage(fileName);
+	if(image.isNull()) return 0;
+	// Reuse the original upload path, pixels and default sampling settings.
+	return re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, textureId, image);
+}
+}
 
 //-+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
@@ -923,55 +1001,47 @@ float DpBody::CGHeightStanding(bool toBottomOfFoot) const
 
 void DpBody::SelectTextures(AuGLEffects &re)
 {
+	// Clothing atlases are only sampled for ordinary clothes, never armor.
+	const bool needsClothes = m_eBodyClothesType != CID_Invalid && !HasBodyPowerArmorOn();
 	// Select skin/clothes texture
 	QString sSkinType = "";
 	if(m_DNA.SkinType == DhDNA::SKIN_DrySkin || m_DNA.SkinType == DhDNA::SKIN_WetSkin)
 	{
 		sSkinType = "Skin";
 		if(!m_glTexSkin[0])
-			m_glTexSkin[0] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::%1").arg(sSkinType), QString("tex/%1.png").arg(sSkinType));
-		if(!m_glTexClothes[0])
-			m_glTexClothes[0] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::%1Clothes").arg(sSkinType), QString("tex/%1Clothes.png").arg(sSkinType));
+			m_glTexSkin[0] = CreateBodyTexture(re, QString("DpBody::%1").arg(sSkinType), QString("tex/%1.png").arg(sSkinType));
+		if(needsClothes && !m_glTexClothes[0])
+			m_glTexClothes[0] = CreateBodyTexture(re, QString("DpBody::%1Clothes").arg(sSkinType), QString("tex/%1Clothes.png").arg(sSkinType));
 	}
 	else if(m_DNA.SkinType == DhDNA::SKIN_DryExoskeleton || m_DNA.SkinType == DhDNA::SKIN_WetExoskeleton)
 	{
 		sSkinType = "Exo";
 		if(!m_glTexSkin[1])
-			m_glTexSkin[1] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::%1").arg(sSkinType), QString("tex/%1.png").arg(sSkinType));
-		if(!m_glTexClothes[1])
-			m_glTexClothes[1] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::%1Clothes").arg(sSkinType), QString("tex/%1Clothes.png").arg(sSkinType));
+			m_glTexSkin[1] = CreateBodyTexture(re, QString("DpBody::%1").arg(sSkinType), QString("tex/%1.png").arg(sSkinType));
+		if(needsClothes && !m_glTexClothes[1])
+			m_glTexClothes[1] = CreateBodyTexture(re, QString("DpBody::%1Clothes").arg(sSkinType), QString("tex/%1Clothes.png").arg(sSkinType));
 	}
 	else if(m_DNA.SkinType == DhDNA::SKIN_DryScales || m_DNA.SkinType == DhDNA::SKIN_WetScales)
 	{
 		sSkinType = "Scales";
 		if(!m_glTexSkin[2])
-			m_glTexSkin[2] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::%1").arg(sSkinType), QString("tex/%1.png").arg(sSkinType));
-		if(!m_glTexClothes[2])
-			m_glTexClothes[2] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::%1Clothes").arg(sSkinType), QString("tex/%1Clothes.png").arg(sSkinType));
+			m_glTexSkin[2] = CreateBodyTexture(re, QString("DpBody::%1").arg(sSkinType), QString("tex/%1.png").arg(sSkinType));
+		if(needsClothes && !m_glTexClothes[2])
+			m_glTexClothes[2] = CreateBodyTexture(re, QString("DpBody::%1Clothes").arg(sSkinType), QString("tex/%1Clothes.png").arg(sSkinType));
 	}
 	else if(m_DNA.SkinType == DhDNA::SKIN_Fur || m_DNA.SkinType == DhDNA::SKIN_Feathers)
 	{
 		sSkinType = "FurFeathers";
 		if(!m_glTexSkin[3])
-			m_glTexSkin[3] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::%1").arg(sSkinType), QString("tex/%1.png").arg(sSkinType));
-		if(!m_glTexClothes[3])
-			m_glTexClothes[3] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::%1Clothes").arg(sSkinType), QString("tex/%1Clothes.png").arg(sSkinType));
+			m_glTexSkin[3] = CreateBodyTexture(re, QString("DpBody::%1").arg(sSkinType), QString("tex/%1.png").arg(sSkinType));
+		if(needsClothes && !m_glTexClothes[3])
+			m_glTexClothes[3] = CreateBodyTexture(re, QString("DpBody::%1Clothes").arg(sSkinType), QString("tex/%1Clothes.png").arg(sSkinType));
 	}
 
 	// Select wing texture
-	if(!m_glTexWings)
-		m_glTexWings = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, "DpBody::Wings", "tex/Wings.png");
+	if(m_DNA.HasWings() && !m_glTexWings)
+		m_glTexWings = CreateBodyTexture(re, "DpBody::Wings", "tex/Wings.png");
 
-	// Select armor textures
-	if(!m_glTexArmor[0])
-		m_glTexArmor[0] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::VacSuit"), QString("tex/VacSuit.png"));
-	if(!m_glTexArmor[1])
-		m_glTexArmor[1] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::PAMetal"), QString("tex/PAMetal.png"));
-	if(!m_glTexArmor[2])
-		m_glTexArmor[2] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::PAMagmium"), QString("tex/PAMagmium.png"));
-	if(!m_glTexArmor[3])
-		m_glTexArmor[3] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, QString("DpBody::PAVulcium"), QString("tex/PAVulcium.png"));
-	
 	// Select helmet texture
 	int iType = 0;
 	if(m_eHelmetClothesType == CID_MetalPowerArmorHelmet)
@@ -982,14 +1052,31 @@ void DpBody::SelectTextures(AuGLEffects &re)
 		iType = 2;
 	else if(m_eHelmetClothesType == CID_VacSuitHelmet)
 		iType = 3;
+	// Load only the equipped body armor, retaining the exact existing atlas IDs.
+	const char* armorNames[ArmorTexLim] = {"VacSuit", "PAMetal", "PAMagmium", "PAVulcium"};
+	const auto loadArmor = [this, &re, &armorNames](int index) {
+		if(!m_glTexArmor[index])
+			m_glTexArmor[index] = CreateBodyTexture(re,
+				QString("DpBody::%1").arg(armorNames[index]), QString("tex/%1.png").arg(armorNames[index]));
+	};
+	int bodyArmor = -1;
+	if(m_eBodyClothesType == CID_VacSuit) bodyArmor = 0;
+	else if(m_eBodyClothesType == CID_MetalPowerArmor) bodyArmor = 1;
+	else if(m_eBodyClothesType == CID_MagmiumPowerArmor) bodyArmor = 2;
+	else if(m_eBodyClothesType == CID_VulciumPowerArmor) bodyArmor = 3;
+	if(bodyArmor >= 0) loadArmor(bodyArmor);
+	// All six renderers use the helmet's index as a neck-atlas fallback when
+	// there is no body-armor texture. Preserve that mapping, including its
+	// different ordering from the body-armor array.
+	if(HasHelmetPowerArmorOn() && (bodyArmor < 0 || !m_glTexArmor[bodyArmor])) loadArmor(iType);
 	if(!m_glTexHelmet[m_DNA.SkinType][iType] && HasHelmetPowerArmorOn())
 	{
 		if(iType == 3)	// Vac Suit Helmet
-			m_glTexHelmet[m_DNA.SkinType][iType] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID,
+			m_glTexHelmet[m_DNA.SkinType][iType] = CreateBodyTexture(re,
 				QString("Vac%1Helmet.png").arg(m_DNA.SkinType),
 				QString("tex/Vac%1Helmet.png").arg(m_DNA.SkinType));
 		else
-			m_glTexHelmet[m_DNA.SkinType][iType] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID,
+			m_glTexHelmet[m_DNA.SkinType][iType] = CreateBodyTexture(re,
 				QString("PA%1Helmet%2.png").arg(m_DNA.SkinType).arg(iType),
 				QString("tex/PA%1Helmet%2.png").arg(m_DNA.SkinType).arg(iType));
 	}
@@ -1008,6 +1095,11 @@ void DpBody::CreateDeviceObjects(AuGLEffects& re, AuGLModelCache& mc, COMMODITYI
 		//qDebug("DpBody::CreateDeviceObjects %d %s", id.GetID(), (const char*)m_DNA.Description().toAscii());
 		SetClothesType(clothing);
 		SetHelmetType(helmet);
+		if(re.SceneDevicePreparation())
+		{
+			SelectTextures(re);
+			if(re.SceneTexturePending()) return;
+		}
 		DeleteBodyParts();
 		Init();
 		AnimatePose(false, speedEnc);		// Pose nu body parts to current pose.

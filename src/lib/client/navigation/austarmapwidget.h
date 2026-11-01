@@ -16,6 +16,7 @@
 #include <QIcon>
 #include <QOpenGLWidget>
 #include <QWidget>
+#include <memory>
 
 using namespace std;
 #include <unordered_map>
@@ -23,6 +24,8 @@ using namespace std;
 class AuAtomRenderInfo;
 class AuGLModelCache;
 class AuGLModelMaker;
+class AuStarMapGalaxyPreparation;
+class AuStarMapIconPreparation;
 class QKeyEvent;
 class QTimer;
 
@@ -426,6 +429,16 @@ private:
 	GLuint								m_StarSpriteTex;
 	GLuint								m_StationTex[4];
 	GLuint								m_SystemSpriteTex;
+	std::shared_ptr<AuStarMapGalaxyPreparation> m_GalaxyPreparation;
+	std::shared_ptr<AuStarMapIconPreparation> m_IconPreparation;
+	GALAXY m_PreparedGalaxy;
+	int m_IconPreparationIndex;
+	int m_GalaxyUploadStep;
+	int m_GalaxyUploadOffset;
+	bool m_Preparing;
+	bool m_PreparationComplete;
+	bool PrepareGalaxyGeometry();
+	void ReleaseGLResources();
 
 public:	// Constructors
 	AuStarMapGL(QWidget *parent=0);
@@ -434,6 +447,9 @@ public:	// Constructors
 
 public:
 	virtual void initializeGL();
+	// Call repeatedly during loading, after the dock reaches its final parent.
+	// Never waits for CPU workers; true means all initial map resources are ready.
+	bool PrepareNextStep();
 
 	virtual void paintGL();
 

@@ -2031,30 +2031,37 @@ void DaWorldGasGiant::CreateDeviceObjects(AuAtomRenderInfo& ari)
 {
 	//qDebug() << "DaWorldGasGiant::CreateDeviceObjects" << Id() << Name();
 	if(!s_TexGasGiant)
-		s_TexGasGiant = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "GasGiant", ":data/txGasGiants.png");
+		s_TexGasGiant = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "GasGiant", ":data/txGasGiants.png");
 
 	if(!s_TexNoise)
-		s_TexNoise = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "TerNoise", ":data/TerNoise.png");
+		s_TexNoise = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "TerNoise", ":data/TerNoise.png");
 
 	// Create textures used for developments and rocks.
 	if(!s_TexRock)
-		s_TexRock = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "Rock", ":data/txRock.png");
+		s_TexRock = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "Rock", ":data/txRock.png");
 
 	// Create sea surface textures.
-	s_texSea = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "SeaFrigid", ":data/SeaFrigid.png", GL_LINEAR, GL_LINEAR, true);
+	s_texSea = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "SeaFrigid", ":data/SeaFrigid.png", GL_LINEAR, GL_LINEAR, true);
 
 	// Create sea surface bump maps.
 	if(g_Au.BumpMapSeas())
-		s_texSeaN = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "NIce", ":data/N_Ice.png", GL_LINEAR, GL_LINEAR, true);
+		s_texSeaN = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "NIce", ":data/N_Ice.png", GL_LINEAR, GL_LINEAR, true);
 
 	// NOTE: 1 minus the alpha in this texture is treated as glow, for lava. e.g. Alpha .5 glows at .5. Alpha 1 does not glow.
-	if(!s_TexTerPalette[0])
-		for(int wt=0; wt<WORLDTEX_Count; wt++)
+	for(int wt=0; wt<WORLDTEX_Count; wt++)
+		if(!s_TexTerPalette[wt])
 			s_TexTerPalette[wt] = CreateTerrainTexture(*ari.re, (WORLDTEX_TYPE)wt, g_Au.GroundTextureSize());
 
-	if(g_Au.IsLegacyGeneration() && !s_TexLegacyPavement[0])
+	if(g_Au.IsLegacyGeneration())
 		for(int wt=0; wt<18; ++wt)
-			s_TexLegacyPavement[wt] = CreateTerrainTexture(*ari.re, WORLDTEX_TYPE(wt), g_Au.GroundTextureSize(), true);
+			if(!s_TexLegacyPavement[wt])
+				s_TexLegacyPavement[wt] = CreateTerrainTexture(*ari.re, WORLDTEX_TYPE(wt), g_Au.GroundTextureSize(), true);
+
+	if(ari.re->SceneTexturePending())
+	{
+		DaWorldSphere::CreateDeviceObjects(ari);
+		return;
+	}
 
 	// Grass texture is only needed if this world has grass growing wild in the environment.
 	// It is also used for the lawns of homes.

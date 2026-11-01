@@ -32,89 +32,119 @@ void AuLocatorDock::UpdateTitleShortcut()
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
-AuLocator::AuLocator(QWidget* parent) : QWidget(parent)
+AuLocator::AuLocator(QWidget* parent, bool staged) : QWidget(parent),
+	m_GPS(0), m_Pos(0), m_StarMap(0), m_SystemScan(0), m_WorldMap(0), m_InitializePage(0)
 {
 	m_Tabs = new QTabBar(this);
-
-	m_Pos = new AuLocatorPos(this);
-
-	QIcon posIcon(":data/Locator.png");
-	int itab = m_Tabs->insertTab(0, posIcon, "");
-	m_Tabs->setTabToolTip(itab, QString("<html><b>Compass</b><br>"
-				"Heading and location information."
-				"</html>"));
-
-	m_WorldMap = new AuLocatorMap(this);
-
-	QIcon mapIcon(":data/Map.png");
-	itab = m_Tabs->insertTab(1, mapIcon, "");
-	m_Tabs->setTabToolTip(itab, QString("<html><b>World Map</b><br>"
-				"Map of the world, when you are at a world.<br>"
-				"%1 Double-click the map to center on a location.<br>"
-				"%1 Double-click your flashing icon or the map margin to center on your location.<br>"
-				"%1 Mouse wheel or drag the magnifier to change magnification.<br>"
-				"%1 Click/drag to move the map.<br>"
-				"%1 Right-click for options."
-				"</html>").arg(g_Au.MiddleDotSymbol()));
-
-	m_SystemScan = new AuSystemScan(true, this);
-
-	QIcon sysIcon(":data/RangeSystem.png");
-	itab = m_Tabs->insertTab(2, sysIcon, "");
-	m_Tabs->setTabToolTip(itab, QString("<html><p><b>System Map</b><br>"
-				"Shows a map of your current solar system. "
-				"Data is limited if the system has not been surveyed by your empire. "
-				"</p>"
-				"<p>"
-				"To survey a system, do one of these things.<br>"
-				"%1 View detailed information about a sun or world on a sensor console.<br>"
-				"%1 Order crew to conduct a <i>Solar System Survey Scan</i>.<br>"
-				"%1 Build a city that has an observatory and a radar.<br>"
-				"</p>"
-				"</html>").arg(g_Au.MiddleDotSymbol()));
-
-	m_StarMap = new AuLocatorStarMap(this);
-
-	QIcon empireIcon(":data/RangeGalaxy.png");
-	itab = m_Tabs->insertTab(3, empireIcon, "");
-	m_Tabs->setTabToolTip(itab, QString("<html><b>Star Map</b><br>"
-				"Map of the stars known to your empire.<br>"
-				"%1 Click a place to select or deselect.<br>"
-				"%1 Double-click a place to center on its location.<br>"
-				"%1 Mouse wheel or drag the magnifier to change distance from eye to look point. "
-				"Shift key reduces wheel zoom increment.<br>"
-				"%1 Click/drag to look around.<br>"
-				"%1 W moves the look point forward.<br>"
-				"%1 S moves the look point backward.<br>"
-				"%1 A moves the look point left.<br>"
-				"%1 D moves the look point right.<br>"
-				"%1 C and Z rotate around the look point."
-				"%1 Right-click for options."
-				"</html>").arg(g_Au.MiddleDotSymbol()));
-
-	m_GPS = new AuLocatorGPS(this);
-
-	QIcon gpsIcon(":data/SensorScan.png");
-	itab = m_Tabs->insertTab(4, gpsIcon, "");
-	m_Tabs->setTabToolTip(itab, QString("<html><b>GPS</b><br>"
-				"Galactic positioning system coordinates."
-				"</html>"));
-
-	// Do this after signal/slot connections so the compass size updates correctly.
 	m_Pages = new QStackedLayout;
-	m_Pages->insertWidget(0, m_Pos);
-	m_Pages->insertWidget(1, m_WorldMap);
-	m_Pages->insertWidget(2, m_SystemScan);
-	m_Pages->insertWidget(3, m_StarMap);
-	m_Pages->insertWidget(4, m_GPS);
-	connect(m_Tabs, SIGNAL(currentChanged(int)), m_Pages, SLOT(setCurrentIndex(int)));
+	if(!staged)
+		while(!InitializeNextPage()) {}
+}
 
-	QVBoxLayout* lay = new QVBoxLayout;
-	lay->addWidget(m_Tabs);
-	lay->addLayout(m_Pages);
-	lay->setMargin(2);
-	lay->setSpacing(0);
-	setLayout(lay);
+bool AuLocator::InitializeNextPage()
+{
+	if(IsInitialized()) return true;
+	int itab;
+	switch(m_InitializePage++)
+	{
+	case 0:
+	{
+		m_Pos = new AuLocatorPos(this);
+
+		QIcon posIcon(":data/Locator.png");
+		itab = m_Tabs->insertTab(0, posIcon, "");
+		m_Tabs->setTabToolTip(itab, QString("<html><b>Compass</b><br>"
+					"Heading and location information."
+					"</html>"));
+		m_Pages->insertWidget(0, m_Pos);
+	}
+	break;
+	case 1:
+	{
+		m_WorldMap = new AuLocatorMap(this);
+
+		QIcon mapIcon(":data/Map.png");
+		itab = m_Tabs->insertTab(1, mapIcon, "");
+		m_Tabs->setTabToolTip(itab, QString("<html><b>World Map</b><br>"
+					"Map of the world, when you are at a world.<br>"
+					"%1 Double-click the map to center on a location.<br>"
+					"%1 Double-click your flashing icon or the map margin to center on your location.<br>"
+					"%1 Mouse wheel or drag the magnifier to change magnification.<br>"
+					"%1 Click/drag to move the map.<br>"
+					"%1 Right-click for options."
+					"</html>").arg(g_Au.MiddleDotSymbol()));
+		m_Pages->insertWidget(1, m_WorldMap);
+	}
+	break;
+	case 2:
+	{
+		m_SystemScan = new AuSystemScan(true, this);
+
+		QIcon sysIcon(":data/RangeSystem.png");
+		itab = m_Tabs->insertTab(2, sysIcon, "");
+		m_Tabs->setTabToolTip(itab, QString("<html><p><b>System Map</b><br>"
+					"Shows a map of your current solar system. "
+					"Data is limited if the system has not been surveyed by your empire. "
+					"</p>"
+					"<p>"
+					"To survey a system, do one of these things.<br>"
+					"%1 View detailed information about a sun or world on a sensor console.<br>"
+					"%1 Order crew to conduct a <i>Solar System Survey Scan</i>.<br>"
+					"%1 Build a city that has an observatory and a radar.<br>"
+					"</p>"
+					"</html>").arg(g_Au.MiddleDotSymbol()));
+		m_Pages->insertWidget(2, m_SystemScan);
+	}
+	break;
+	case 3:
+	{
+		m_StarMap = new AuLocatorStarMap(this);
+
+		QIcon empireIcon(":data/RangeGalaxy.png");
+		itab = m_Tabs->insertTab(3, empireIcon, "");
+		m_Tabs->setTabToolTip(itab, QString("<html><b>Star Map</b><br>"
+					"Map of the stars known to your empire.<br>"
+					"%1 Click a place to select or deselect.<br>"
+					"%1 Double-click a place to center on its location.<br>"
+					"%1 Mouse wheel or drag the magnifier to change distance from eye to look point. "
+					"Shift key reduces wheel zoom increment.<br>"
+					"%1 Click/drag to look around.<br>"
+					"%1 W moves the look point forward.<br>"
+					"%1 S moves the look point backward.<br>"
+					"%1 A moves the look point left.<br>"
+					"%1 D moves the look point right.<br>"
+					"%1 C and Z rotate around the look point."
+					"%1 Right-click for options."
+					"</html>").arg(g_Au.MiddleDotSymbol()));
+		m_Pages->insertWidget(3, m_StarMap);
+	}
+	break;
+	case 4:
+	{
+		m_GPS = new AuLocatorGPS(this);
+
+		QIcon gpsIcon(":data/SensorScan.png");
+		itab = m_Tabs->insertTab(4, gpsIcon, "");
+		m_Tabs->setTabToolTip(itab, QString("<html><b>GPS</b><br>"
+					"Galactic positioning system coordinates."
+					"</html>"));
+		m_Pages->insertWidget(4, m_GPS);
+	}
+	break;
+	case 5:
+	{
+		connect(m_Tabs, SIGNAL(currentChanged(int)), m_Pages, SLOT(setCurrentIndex(int)));
+
+		QVBoxLayout* lay = new QVBoxLayout;
+		lay->addWidget(m_Tabs);
+		lay->addLayout(m_Pages);
+		lay->setMargin(2);
+		lay->setSpacing(0);
+		setLayout(lay);
+	}
+	break;
+	}
+	return IsInitialized();
 }
 
 AuLocator::~AuLocator()
@@ -124,6 +154,21 @@ AuLocator::~AuLocator()
 QSize AuLocator::sizeHint() const
 {
 	return QSize(800,230);
+}
+
+void AuLocator::SelectStarMap()
+{
+	m_Tabs->setCurrentIndex(m_Pages->indexOf(m_StarMap));
+}
+
+bool AuLocator::StarMapSelected() const
+{
+	return m_Pages->currentWidget() == m_StarMap;
+}
+
+bool AuLocator::PrepareNextStep()
+{
+	return m_StarMap->PrepareNextStep();
 }
 
 void AuLocator::RestoreSettings()
@@ -136,7 +181,7 @@ void AuLocator::RestoreSettings()
 	m_WorldMap->SetCompassLoc(QPoint(compx, compy));
 	*/
 
-	m_StarMap->RestoreSettings();
+	if(m_StarMap) m_StarMap->RestoreSettings();
 }
 
 void AuLocator::SaveSettings()
@@ -147,7 +192,7 @@ void AuLocator::SaveSettings()
 	g_Au.Settings().writeEntry("Widget/Locator/CompassY", m_WorldMap->CompassLoc().y());
 	*/
 
-	m_StarMap->SaveSettings();
+	if(m_StarMap) m_StarMap->SaveSettings();
 }
 
 void AuLocator::showEvent(QShowEvent* event)

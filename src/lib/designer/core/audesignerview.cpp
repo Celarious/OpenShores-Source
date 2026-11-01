@@ -2232,7 +2232,9 @@ int AuDesignerView::SceneInterfaceWidth()
 
 void AuDesignerView::paintGL()
 {
-	bool showWait = m_bWaitingForScene || m_SceneAtomTransition || !auApp->IsSceneConnected();
+	const AuDesignerFrame* frame = qobject_cast<AuDesignerFrame*>(auApp->Frame());
+	bool showWait = m_bWaitingForScene || m_SceneAtomTransition || !auApp->IsSceneConnected()
+		|| (frame && !frame->DockWidgetsReady());
 	if(showWait) m_WaitingForScenery = true;
 
 	//qDebug() << "AuDesignerView::paintGL";
@@ -2295,8 +2297,9 @@ void AuDesignerView::RenderScene()
 	if(StartScene(&sceneAtom))						// Prepare devices for scene rendering and lock the scene atom.
 	{
 		// We have a scene atom.
-		CreateDeviceObjects(sceneAtom);				// Tell atoms to create scene data they need.
-		RenderScene(sceneAtom);						// Render the objects in the scene.
+		const bool devicesReady = CreateDeviceObjects(sceneAtom);
+		// Keep painting the loading UI while initial resources are incomplete.
+		if(devicesReady) RenderScene(sceneAtom);
 		if(m_WaitingForScenery)
 		{
 			const DaWorldLL* world = sceneAtom->FindParentWorldInEnv();
@@ -2305,8 +2308,9 @@ void AuDesignerView::RenderScene()
 			if(stagesReady && !m_RenderInfo->mm.LegacySceneWorkPending() && !m_RenderInfo->mm.IsBusy())
 				m_WaitingForScenery = false;
 		}
-		FinishScene();								// Unlock the scene atom.
-		ShowOrderLoc();
+		if(devicesReady) FinishScene();
+		else UnlockSceneAtom();
+		if(devicesReady) ShowOrderLoc();
 	}
 }
 
@@ -3100,20 +3104,27 @@ void AuDesignerView::SetSceneAtom(const AuId& idScene)
 	OnViewResetCamera();
 }
 
-void AuDesignerView::CreateDeviceObjects(DaPerson* sceneAtom)
+bool AuDesignerView::CreateDeviceObjects(DaPerson* sceneAtom)
 {
 	if(!s_Create)
-		return;
+		return true;
 
 	// Create environment device objects, which includes the scene atom.
 	DaAtom *pEnvironment = sceneAtom->FindEnvironmentAtom();
-	if(pEnvironment)
-		pEnvironment->CreateDeviceObjects(*m_RenderInfo);
+	DaAtom* root = pEnvironment ? pEnvironment : sceneAtom;
+	if(g_Au.IsLegacyGeneration() && m_WaitingForScenery && !sceneAtom->InDesignEnvironment())
+	{
+		if(!m_RenderInfo->PrepareSceneDevices(*root, m_SceneEther)) return false;
+	}
 	else
-		sceneAtom->CreateDeviceObjects(*m_RenderInfo);
+	{
+		m_RenderInfo->ClearSceneDevicePreparation();
+		root->CreateDeviceObjects(*m_RenderInfo);
+	}
 
 	if(Command())
 		Command()->CreateDeviceObjects(*m_RenderInfo->re);
+	return true;
 }
 
 /*

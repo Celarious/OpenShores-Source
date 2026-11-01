@@ -37,10 +37,13 @@ private:
 	// Widgets
 	QStackedLayout*			m_Pages;
 	QTabBar*				m_Tabs;
+	int m_InitializePage;
 
 public:
-	AuBioPages(QWidget* parent=0);
+	AuBioPages(QWidget* parent=0, bool staged=false);
 	virtual ~AuBioPages();
+	bool InitializeNextPage();
+	bool IsInitialized() const { return m_InitializePage >= 7; }
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
@@ -51,10 +54,10 @@ public:
 	AuBioPages*						m_Bio;
 
 public:
-	AuBioDock(QWidget* parent) : AuDockWidget(":data/c_VacSuitHelmet.png", tr("<b>Bio</b>"), tr("Bio"), parent)
+	AuBioDock(QWidget* parent, bool staged=false) : AuDockWidget(":data/c_VacSuitHelmet.png", tr("<b>Bio</b>"), tr("Bio"), parent)
 	{
 		SetWikiTopic("Bio");
-		m_Bio = new AuBioPages(this);
+		m_Bio = new AuBioPages(this, staged);
 		setWidget(m_Bio);
 
 		int dockSides = g_Au.Settings().readNumEntry("Dock/BioAreas", (int)allowedAreas());

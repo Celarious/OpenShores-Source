@@ -25,10 +25,13 @@ private:
 	AuOrdnanceTransfer*		m_OrdPage;
 	QStackedLayout*			m_Pages;
 	QTabBar*				m_Tabs;
+	int m_InitializePage;
 
 public:
-	AuCargoDialog(bool freeAvatar, QWidget* parent=0);
+	AuCargoDialog(bool freeAvatar, QWidget* parent=0, bool staged=false);
 	virtual ~AuCargoDialog();
+	bool InitializeNextPage();
+	bool IsInitialized() const { return m_InitializePage >= 4; }
 
 	void OrdnanceReceived(const QByteArray& ba);
 
@@ -43,9 +46,9 @@ public:
 	AuCargoDialog*						m_Cargo;
 
 public:
-	AuCargoDock(QWidget* parent) : AuDockWidget(":data/c_Crate.png", tr("<b>Cargo</b>"), tr("Cargo"), parent)
+	AuCargoDock(QWidget* parent, bool staged=false) : AuDockWidget(":data/c_Crate.png", tr("<b>Cargo</b>"), tr("Cargo"), parent)
 	{
-		m_Cargo = new AuCargoDialog(false, this);
+		m_Cargo = new AuCargoDialog(false, this, staged);
 		setWidget(m_Cargo);
 
 		int dockSides = g_Au.Settings().readNumEntry("Dock/CargoAreas", (int)allowedAreas());
@@ -74,9 +77,9 @@ public:
 	AuCargoDialog*						m_Cargo;
 
 public:
-	AuCargoDockFree(QWidget* parent) : AuDockWidget(":data/c_Crate.png", tr("<b>Cargo</b>"), tr("Cargo"), parent)
+	AuCargoDockFree(QWidget* parent, bool staged=false) : AuDockWidget(":data/c_Crate.png", tr("<b>Cargo</b>"), tr("Cargo"), parent)
 	{
-		m_Cargo = new AuCargoDialog(true, this);
+		m_Cargo = new AuCargoDialog(true, this, staged);
 		setWidget(m_Cargo);
 
 		int dockSides = g_Au.Settings().readNumEntry("Dock/CargoAreas", (int)allowedAreas());

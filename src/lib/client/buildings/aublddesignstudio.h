@@ -13,6 +13,7 @@
 class DaAtom;
 class QScrollArea;
 class QTimer;
+class QVBoxLayout;
 
 class AUCLIENT_DLL AuBldDesignStudioPanel : public QWidget
 {
@@ -70,9 +71,14 @@ class AUCLIENT_DLL AuLegacyCityDesignStudio : public QWidget
 	quint32 m_DevelopmentId;
 	int m_StudioCount;
 	AuBldDesignStudioPanel* m_Panels[16];
+	QWidget* m_PanelContent;
+	QVBoxLayout* m_PanelLayout;
+	int m_InitializedPanels;
 
 public:
-	AuLegacyCityDesignStudio(QWidget* parent=0);
+	AuLegacyCityDesignStudio(QWidget* parent=0, bool staged=false);
+	bool InitializeNextPanel();
+	bool IsInitialized() const { return m_InitializedPanels == 16; }
 	void SetTarget(quint32 cityId, quint32 developmentId, int completedLevels);
 	void SetOccupied(int studioIndex, bool occupied);
 

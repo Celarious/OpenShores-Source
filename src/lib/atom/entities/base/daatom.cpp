@@ -1965,6 +1965,11 @@ DaAtom *DaAtom::FindClosestAtom(const QPoint &pxFind,
 // Called before the first scene is rendered that contains this object.
 void DaAtom::CreateDeviceObjects(AuAtomRenderInfo& ari)
 {
+	if(ari.PreparingSceneDevices())
+	{
+		ari.QueueSceneDeviceChildren(*this);
+		return;
+	}
 	// Recurse.
 	DaAtomList subs;
 	ListNormalSubatoms(subs);

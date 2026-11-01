@@ -38,6 +38,176 @@
 #include <qsqlquery.h>
 #include <QVariant>
 #include <QVector>
+#include <QRunnable>
+#include <QThreadPool>
+#include <atomic>
+#include <vector>
+
+namespace
+{
+struct StarSphereMesh
+{
+	std::vector<GLfloat> positions, texture;
+};
+
+// The six star sphere builders share tessellation, seam correction and packing.
+// textureMode: 0 = untextured core, 1 = ordinary sphere, 2 = photon sphere.
+StarSphereMesh PrepareStarSphere(const AuGlobeLLTriList& triangles, double radius, int textureMode)
+{
+	StarSphereMesh result;
+	result.positions.reserve(size_t(triangles.count()) * 9);
+	if(textureMode) result.texture.reserve(size_t(triangles.count()) * 6);
+	for(const auto& triangle : triangles)
+	{
+		const AuGlobeLL* ll[3] = { &triangle.m_LL0, &triangle.m_LL1, &triangle.m_LL2 };
+		for(int vertex = 0; vertex < 3; ++vertex)
+		{
+			const AuPoint location = ll[vertex]->GlobeLocation(radius);
+			result.positions.push_back(float(location.x));
+			result.positions.push_back(float(location.y));
+			result.positions.push_back(float(location.z));
+			if(!textureMode) continue;
+			float longitude = ll[vertex]->Longitude();
+			if(FuzzyEquals(float(ll[vertex]->Longitude()), -PIf)
+				&& (ll[(vertex + 1) % 3]->Longitude() > 0 || ll[(vertex + 2) % 3]->Longitude() > 0))
+				longitude = PIf;
+			const double x = textureMode == 2 ? longitude / (PIf * 2) : longitude / (PIf * 2) + .5f;
+			const double y = textureMode == 2 ? (ll[vertex]->Latitude() + PIf / 2) / PIf
+				: ll[vertex]->Latitude() / PIf + .5f;
+			result.texture.push_back(float(x));
+			result.texture.push_back(float(y));
+		}
+	}
+	return result;
+}
+
+void UploadStarSphere(AuOpenGLFunctions& gl, AuGLVAO& vao, const StarSphereMesh& mesh)
+{
+	const bool textured = !mesh.texture.empty();
+	vao.CreateGL(gl, GLuint(mesh.positions.size() / 3), textured ? 2 : 1);
+	vao.SelectGL();
+	gl.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(0));
+	gl.glBufferData(GL_ARRAY_BUFFER, mesh.positions.size() * sizeof(GLfloat), mesh.positions.data(), GL_STATIC_DRAW);
+	gl.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+	if(textured)
+	{
+		gl.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(1));
+		gl.glBufferData(GL_ARRAY_BUFFER, mesh.texture.size() * sizeof(GLfloat), mesh.texture.data(), GL_STATIC_DRAW);
+		gl.glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);
+	}
+	gl.glBindBuffer(GL_ARRAY_BUFFER, 0);
+	vao.DeselectGL();
+}
+}
+
+struct AuStarGeometryPreparation
+{
+	const double coreRadius, outerRadius;
+	const int kind;
+	std::atomic<bool> ready;
+	StarSphereMesh meshes[2];
+	int layer = 0, stage = 0;
+	size_t offset = 0;
+	AuStarGeometryPreparation(double core, double outer, int starKind)
+		: coreRadius(core), outerRadius(outer), kind(starKind), ready(false) {}
+};
+
+namespace
+{
+class StarGeometryTask : public QRunnable
+{
+	std::shared_ptr<AuStarGeometryPreparation> m_Result;
+public:
+	explicit StarGeometryTask(const std::shared_ptr<AuStarGeometryPreparation>& result) : m_Result(result) {}
+	void run() override
+	{
+		AuGlobeLLTriList triangles;
+		triangles.CreateGlobeTriangles(200);
+		m_Result->meshes[0] = PrepareStarSphere(triangles, m_Result->coreRadius, m_Result->kind == 1 ? 0 : 1);
+		m_Result->meshes[1] = PrepareStarSphere(triangles, m_Result->outerRadius, m_Result->kind == 1 ? 2 : 1);
+		m_Result->ready.store(true, std::memory_order_release);
+	}
+};
+
+bool UploadStarSphereStep(AuOpenGLFunctions& gl, AuGLVAO& vao, AuStarGeometryPreparation& job)
+{
+	const StarSphereMesh& mesh = job.meshes[job.layer];
+	const bool textured = !mesh.texture.empty();
+	if(job.stage == 0)
+	{
+		vao.CreateGL(gl, GLuint(mesh.positions.size() / 3), textured ? 2 : 1);
+		++job.stage;
+		return false;
+	}
+	vao.SelectGL();
+	if(job.stage <= 2)
+	{
+		const int attribute = job.stage - 1;
+		const size_t size = attribute ? mesh.texture.size() : mesh.positions.size();
+		gl.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(attribute));
+		gl.glBufferData(GL_ARRAY_BUFFER, size * sizeof(GLfloat), nullptr, GL_STATIC_DRAW);
+		gl.glVertexAttribPointer(attribute, attribute ? 2 : 3, GL_FLOAT, GL_FALSE, 0, 0);
+		++job.stage;
+		if(!textured) job.stage = 3;
+	}
+	else
+	{
+		const int attribute = job.stage - 3;
+		const auto& data = attribute ? mesh.texture : mesh.positions;
+		const size_t bytes = data.size() * sizeof(GLfloat);
+		const size_t count = qMin(size_t(1024 * 1024), bytes - job.offset);
+		gl.glBindBuffer(GL_ARRAY_BUFFER, vao.Buffer(attribute));
+		gl.glBufferSubData(GL_ARRAY_BUFFER, job.offset, count,
+			reinterpret_cast<const char*>(data.data()) + job.offset);
+		job.offset += count;
+		if(job.offset == bytes)
+		{
+			job.offset = 0;
+			++job.stage;
+			if(!textured) job.stage = 5;
+		}
+	}
+	gl.glBindBuffer(GL_ARRAY_BUFFER, 0);
+	vao.DeselectGL();
+	return job.stage == 5;
+}
+}
+
+bool DaStar::PrepareSceneGeometry(AuAtomRenderInfo& ari)
+{
+	const int kind = IsAnyBlackHole() ? 1 : (IsNeutronStar() ? 2 : 0);
+	const double core = kind ? Radius() : Radius() - 1000;
+	const double outer = kind == 1 ? PhotonSphereRadius() : (kind == 2 ? NeutronSphereRadius() : Radius());
+	if(!m_GeometryPreparation)
+	{
+		if(m_CoreSphere.VAO() && m_CoronaSphere.VAO()) return true;
+		m_GeometryPreparation.reset(new AuStarGeometryPreparation(core, outer, kind));
+		QThreadPool::globalInstance()->start(new StarGeometryTask(m_GeometryPreparation));
+	}
+	auto job = m_GeometryPreparation;
+	if(job->coreRadius != core || job->outerRadius != outer || job->kind != kind)
+	{
+		if(m_CoreSphere.VAO()) m_CoreSphere.DeleteGL();
+		if(m_CoronaSphere.VAO()) m_CoronaSphere.DeleteGL();
+		m_GeometryPreparation.reset();
+		ari.DeferSceneDeviceObject();
+		return false;
+	}
+	if(job->ready.load(std::memory_order_acquire))
+	{
+		if(UploadStarSphereStep(*ari.re, job->layer ? m_CoronaSphere : m_CoreSphere, *job))
+		{
+			if(++job->layer == 2)
+			{
+				m_GeometryPreparation.reset();
+				return true;
+			}
+			job->stage = 0;
+		}
+	}
+	ari.DeferSceneDeviceObject();
+	return false;
+}
 
 DaStar::DaStar()
 {
@@ -2384,183 +2554,18 @@ void DaStar::CreateStarModel(AuOpenGLFunctions& GLf)
 
 void DaStar::CreateBlackHoleSphereModel(AuOpenGLFunctions& GLf)
 {
-	if(m_CoreSphere.VAO())
-		return;
-
-	// Create a vertex array object to be used for our black hole sphere.
-	// Tessellate a globe for the atmosphere. This tessellation only expresses latitude and longitude, not altitude of points.
-	AuGlobeLLTriList psTris;
-	psTris.CreateGlobeTriangles(200);
-
-	// Turn the globe tessellation into globe surface triangles with 3D coordinates.
-	double rad = Radius();
-	QList<AuGlobeTriTex> tris;							// Triangles that make up this model.
-	for(AuGlobeLLTriList::const_iterator ti = psTris.cbegin(); ti != psTris.cend(); ti++)
-	{
-		// Calculate triangle vertex coordinates.
-		AuPoint terCoord0 = (*ti).m_LL0.GlobeLocation(rad);		// Location at black hole sphere radius.
-		AuPoint terCoord1 = (*ti).m_LL1.GlobeLocation(rad);		// Location at black hole sphere radius.
-		AuPoint terCoord2 = (*ti).m_LL2.GlobeLocation(rad);		// Location at black hole sphere radius.
-
-		// Construct a globe triangle.
-		AuGlobeTriTex tri;
-		tri.m_Vert0 = AuGlobeVertTex(terCoord0, QPointF(0,0));
-		tri.m_Vert1 = AuGlobeVertTex(terCoord1, QPointF(0,0));
-		tri.m_Vert2 = AuGlobeVertTex(terCoord2, QPointF(0,0));
-
-		// Append the globe triangle to the list.
-		tris.append(tri);
-	}
-
-	// Store count of triangles in the black hole sphere vertex array object.
-	GLuint vertices = tris.count()*3;
-
-	// Copy surface triangles into gl array buffers.
-	GLfloat* globePos = new GLfloat[vertices*3];			// vertices for triangles that make up the model.
-
-	unsigned int globePosIdx = 0;
-	for(QList<AuGlobeTriTex>::const_iterator vi = tris.cbegin(); vi != tris.cend(); vi++)
-	{
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.z;
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.z;
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.z;
-	}
-
-	// Generate vertex array(s) for this object. We only need one.
-	m_CoreSphere.CreateGL(GLf, vertices, 1);
-
-	// Select vertex array to construct.
-	m_CoreSphere.SelectGL();
-
-	// bind buffer for vertices and copy data into buffer.
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, m_CoreSphere.Buffer(0));
-	GLf.glBufferData(GL_ARRAY_BUFFER, globePosIdx*sizeof(GLfloat), globePos, GL_STATIC_DRAW);
-	GLf.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	// Disable the vertex array object.
-	m_CoreSphere.DeselectGL();
-
-	delete [] globePos;
+	if(m_CoreSphere.VAO()) return;
+	AuGlobeLLTriList triangles;
+	triangles.CreateGlobeTriangles(200);
+	UploadStarSphere(GLf, m_CoreSphere, PrepareStarSphere(triangles, Radius(), 0));
 }
 
 void DaStar::CreatePhotonSphereModel(AuOpenGLFunctions& GLf)
 {
-	if(m_CoronaSphere.VAO())
-		return;
-
-	// Create a vertex array object to be used for our photon sphere.
-	// Tessellate a globe for the atmosphere. This tessellation only expresses latitude and longitude, not altitude of points.
-	AuGlobeLLTriList psTris;
-	psTris.CreateGlobeTriangles(200);
-
-	// Turn the globe tessellation into globe surface triangles with 3D coordinates and texture coordinates.
-	double rad = PhotonSphereRadius();
-	QList<AuGlobeTriTex> tris;							// Triangles that make up this model.
-	for(AuGlobeLLTriList::const_iterator ti = psTris.cbegin(); ti != psTris.cend(); ti++)
-	{
-		// Calculate triangle vertex coordinates.
-		AuPoint terCoord0 = (*ti).m_LL0.GlobeLocation(rad);		// Location at photon sphere radius.
-		AuPoint terCoord1 = (*ti).m_LL1.GlobeLocation(rad);		// Location at photon sphere radius.
-		AuPoint terCoord2 = (*ti).m_LL2.GlobeLocation(rad);		// Location at photon sphere radius.
-
-		// Wrap texture properly at the seam.
-		float ll0long = (*ti).m_LL0.Longitude();			// Range is -PI to PI
-		if(FuzzyEquals((float)(*ti).m_LL0.Longitude(), -PIf) && ((*ti).m_LL1.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-			ll0long = PIf;
-		float ll1long = (*ti).m_LL1.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL1.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-			ll1long = PIf;
-		float ll2long = (*ti).m_LL2.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL2.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL1.Longitude() > 0))
-			ll2long = PIf;
-
-		// Calculate texture coordinates.
-		QPointF terTex0;
-		terTex0.setX(ll0long/(PIf*2));						// Range is -.5 to .5. -.5 is -PI, 0 is 0, .5 is PI.
-		terTex0.setY(((*ti).m_LL0.Latitude() + PIf/2)/PIf);	// Range is 1 to 0. 1 is at the north pole, 0 is at the south pole.
-		QPointF terTex1;
-		terTex1.setX(ll1long/(PIf*2));
-		terTex1.setY(((*ti).m_LL1.Latitude() + PIf/2)/PIf);
-		QPointF terTex2;
-		terTex2.setX(ll2long/(PIf*2));
-		terTex2.setY(((*ti).m_LL2.Latitude() + PIf/2)/PIf);
-
-		// Construct a globe triangle with texture coordinates.
-		AuGlobeTriTex tri;
-		tri.m_Vert0 = AuGlobeVertTex(terCoord0, terTex0);
-		tri.m_Vert1 = AuGlobeVertTex(terCoord1, terTex1);
-		tri.m_Vert2 = AuGlobeVertTex(terCoord2, terTex2);
-
-		// Append the globe triangle to the list.
-		tris.append(tri);
-	}
-
-	// Store count of triangles in the photon sphere vertex array object.
-	GLuint vertices = tris.count()*3;
-
-	// Copy surface triangles into gl array buffers.
-	GLfloat* globePos = new GLfloat[vertices*3];			// vertices for triangles that make up the model.
-	GLfloat* globeTex = new GLfloat[vertices*2];			// texture coords for each of the vertices
-
-	unsigned int globePosIdx = 0;
-	unsigned int globeTexIdx = 0;
-	for(QList<AuGlobeTriTex>::const_iterator vi = tris.cbegin(); vi != tris.cend(); vi++)
-	{
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.z;
-
-		globeTex[globeTexIdx++] = (*vi).m_Vert0.m_TexCoord.x();
-		globeTex[globeTexIdx++] = (*vi).m_Vert0.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.z;
-
-		globeTex[globeTexIdx++] = (*vi).m_Vert1.m_TexCoord.x();
-		globeTex[globeTexIdx++] = (*vi).m_Vert1.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.z;
-
-		globeTex[globeTexIdx++] = (*vi).m_Vert2.m_TexCoord.x();
-		globeTex[globeTexIdx++] = (*vi).m_Vert2.m_TexCoord.y();
-	}
-
-	// Generate vertex array(s) for this object. We only need one.
-	m_CoronaSphere.CreateGL(GLf, vertices, 2);
-
-	// Select vertex array to construct.
-	m_CoronaSphere.SelectGL();
-
-	// bind buffer for vertices and copy data into buffer.
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, m_CoronaSphere.Buffer(0));
-	GLf.glBufferData(GL_ARRAY_BUFFER, globePosIdx*sizeof(GLfloat), globePos, GL_STATIC_DRAW);
-	GLf.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	// bind buffer for colors and copy data into buffer.
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, m_CoronaSphere.Buffer(1));
-	GLf.glBufferData(GL_ARRAY_BUFFER, globeTexIdx*sizeof(GLfloat), globeTex, GL_STATIC_DRAW);
-	GLf.glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	// Disable the vertex array object.
-	m_CoronaSphere.DeselectGL();
-
-	delete [] globePos;
-	delete [] globeTex;
+	if(m_CoronaSphere.VAO()) return;
+	AuGlobeLLTriList triangles;
+	triangles.CreateGlobeTriangles(200);
+	UploadStarSphere(GLf, m_CoronaSphere, PrepareStarSphere(triangles, PhotonSphereRadius(), 2));
 }
 
 float DaStar::NeutronStarOutput() const
@@ -2662,13 +2667,16 @@ void DaStar::CreateDeviceObjects(AuAtomRenderInfo& ari)
 	DaAtom::CreateDeviceObjects(ari);
 	if(!m_SolarDisk.VAO())
 	{
+		const bool geometryReady = !ari.PreparingSceneDevices() || PrepareSceneGeometry(ari);
 		CreateRenderTexture(*ari.re);	// Create the render texture cache objects.
+		if(!geometryReady || ari.re->SceneTexturePending()) return;
 		CreateStarModel(*ari.re);		// Star model.
 	}
 }
 
 void DaStar::DeleteDeviceObjects(AuAtomRenderInfo& ari)
 {
+	m_GeometryPreparation.reset();
 	DaAtom::DeleteDeviceObjects(ari);
 
 	if(m_CoreSphere.VAO())
@@ -2690,7 +2698,7 @@ void DaStar::DeleteDeviceObjects(AuAtomRenderInfo& ari)
 // Create a texture map for the surface rendering.
 void DaStar::CreateRenderTexture(AuGLEffects& re)
 {
-	Q_ASSERT(!m_TexSun);
+	Q_ASSERT(!m_TexSun || re.SceneDevicePreparation());
 	if(IsAnyBlackHole())
 	{
 		m_TexSun = re.UseTexture(Id().GetID(), "BlackHole");
@@ -2761,15 +2769,15 @@ void DaStar::CreateRenderTexture(AuGLEffects& re)
 	else if(IsNeutronStar())
 	{
 		// Load texture used for glow around a neutron star.
-		m_TexSun = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, "SunGlow", ":data/txSunGlow.bmp", GL_LINEAR, GL_LINEAR, false, 2);
+		m_TexSun = re.PrepareSceneTexture(STATIC_TEXTURE_ID, "SunGlow", ":data/txSunGlow.bmp", GL_LINEAR, GL_LINEAR, false, 2);
 
-		m_TexLightning = re.CreateTextureFromBitmap(Id().GetID(), "NeutronSphere", ":data/LightningSeamless.png",
+		m_TexLightning = re.PrepareSceneTexture(Id().GetID(), "NeutronSphere", ":data/LightningSeamless.png",
 				GL_LINEAR, GL_LINEAR, false, 2);
 	}
 	else
 	{
 		// Load texture used for glow around a star.
-		m_TexSun = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, "SunGlow", ":data/txSunGlow.bmp", GL_LINEAR, GL_LINEAR, false, 2);
+		m_TexSun = re.PrepareSceneTexture(STATIC_TEXTURE_ID, "SunGlow", ":data/txSunGlow.bmp", GL_LINEAR, GL_LINEAR, false, 2);
 
 		// Load textures used for cloudy corona around stars.
 		GLuint tex[8] = {0,0,0,0,0,0,0,0};
@@ -2777,7 +2785,7 @@ void DaStar::CreateRenderTexture(AuGLEffects& re)
 		{
 			QString stid = QString("Sun%1").arg(i);
 			QString sfile = QString(":data/txSun%1.bmp").arg(i);
-			tex[i] = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, stid, sfile, GL_LINEAR, GL_LINEAR, false, 2);
+			tex[i] = re.PrepareSceneTexture(STATIC_TEXTURE_ID, stid, sfile, GL_LINEAR, GL_LINEAR, false, 2);
 		}
 
 		// Decide which of the corona textures this star uses, and in what order.
@@ -2791,15 +2799,17 @@ void DaStar::CreateRenderTexture(AuGLEffects& re)
 	m_TexNoise = re.UseTexture(Id().GetID(), "NoiseRep");
 	if(!m_TexNoise)
 	{
-		QImage terNoise(":data/TerNoise.png");
-		QImage texPS(terNoise.width()*2, terNoise.height(), QImage::Format_ARGB32);
-		QPainter ps(&texPS);
-		ps.drawImage(0,0, terNoise);
-		ps.translate(terNoise.width()*2,0);
-		ps.scale(-1,1);
-		ps.drawImage(0,0, terNoise);
-		ps.end();
-		m_TexNoise = re.CreateTextureFromBitmap(Id().GetID(), "NoiseRep", texPS);
+		m_TexNoise = re.PrepareSceneTexture(Id().GetID(), "NoiseRep", []() {
+			QImage terNoise(":data/TerNoise.png");
+			QImage texPS(terNoise.width()*2, terNoise.height(), QImage::Format_ARGB32);
+			QPainter ps(&texPS);
+			ps.drawImage(0,0, terNoise);
+			ps.translate(terNoise.width()*2,0);
+			ps.scale(-1,1);
+			ps.drawImage(0,0, terNoise);
+			ps.end();
+			return texPS;
+		});
 	}
 }
 
@@ -5699,448 +5709,34 @@ void DaStar::InitNeutronStarZones()
 
 void DaStar::CreateStarSphereModel(AuOpenGLFunctions& GLf)
 {
-	if(m_CoreSphere.VAO())
-		return;
-
-	// Create a vertex array object to be used for our black hole sphere.
-	// Tessellate a globe for the atmosphere. This tessellation only expresses latitude and longitude, not altitude of points.
-	AuGlobeLLTriList psTris;
-	psTris.CreateGlobeTriangles(200);
-
-	// Turn the globe tessellation into globe surface triangles with 3D coordinates.
-	double rad = Radius() - 1000;
-	QList<AuGlobeTriTex> tris;							// Triangles that make up this model.
-	for(AuGlobeLLTriList::const_iterator ti = psTris.cbegin(); ti != psTris.cend(); ti++)
-	{
-		// Calculate triangle vertex coordinates.
-		AuPoint terCoord0 = (*ti).m_LL0.GlobeLocation(rad);		// Location at neutron star core sphere radius.
-		AuPoint terCoord1 = (*ti).m_LL1.GlobeLocation(rad);		// Location at neutron star core sphere radius.
-		AuPoint terCoord2 = (*ti).m_LL2.GlobeLocation(rad);		// Location at neutron star core sphere radius.
-
-		// Wrap texture properly at the seam.
-		float ll0long = (*ti).m_LL0.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL0.Longitude(), -PIf) && ((*ti).m_LL1.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-			ll0long = PIf;
-		float ll1long = (*ti).m_LL1.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL1.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-			ll1long = PIf;
-		float ll2long = (*ti).m_LL2.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL2.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL1.Longitude() > 0))
-			ll2long = PIf;
-
-		// Calculate texture coordinates.
-		QPointF terTex0;
-		terTex0.setX(ll0long/(PIf*2) + .5f);
-		terTex0.setY((*ti).m_LL0.Latitude()/PIf + .5f);
-		QPointF terTex1;
-		terTex1.setX(ll1long/(PIf*2) + .5f);
-		terTex1.setY((*ti).m_LL1.Latitude()/PIf + .5f);
-		QPointF terTex2;
-		terTex2.setX(ll2long/(PIf*2) + .5f);
-		terTex2.setY((*ti).m_LL2.Latitude()/PIf + .5f);
-
-		// Construct a globe triangle with texture coordinates.
-		AuGlobeTriTex tri;
-		tri.m_Vert0 = AuGlobeVertTex(terCoord0, terTex0);
-		tri.m_Vert1 = AuGlobeVertTex(terCoord1, terTex1);
-		tri.m_Vert2 = AuGlobeVertTex(terCoord2, terTex2);
-
-		// Append the globe triangle to the list.
-		tris.append(tri);
-	}
-
-	// Store count of triangles in the black hole sphere vertex array object.
-	GLuint vertices = tris.count()*3;
-
-	// Copy surface triangles into gl array buffers.
-	GLfloat* texCoord = new GLfloat[vertices*2];
-	GLfloat* globePos = new GLfloat[vertices*3];			// vertices for triangles that make up the model.
-
-	unsigned int tidx = 0;
-	unsigned int globePosIdx = 0;
-	for(QList<AuGlobeTriTex>::const_iterator vi = tris.cbegin(); vi != tris.cend(); vi++)
-	{
-		// Vertex 0
-		texCoord[tidx++] = (float)(*vi).m_Vert0.m_TexCoord.x();
-		texCoord[tidx++] = (float)(*vi).m_Vert0.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.z;
-
-		// Vertex 1
-		texCoord[tidx++] = (float)(*vi).m_Vert1.m_TexCoord.x();
-		texCoord[tidx++] = (float)(*vi).m_Vert1.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.z;
-
-		// Vertex 2
-		texCoord[tidx++] = (float)(*vi).m_Vert2.m_TexCoord.x();
-		texCoord[tidx++] = (float)(*vi).m_Vert2.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.z;
-	}
-
-	// Generate vertex array(s) for this object. We only need one.
-	m_CoreSphere.CreateGL(GLf, vertices, 2);
-
-	// Select vertex array to construct.
-	m_CoreSphere.SelectGL();
-
-	// bind buffer for vertices and copy data into buffer.
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, m_CoreSphere.Buffer(0));
-	GLf.glBufferData(GL_ARRAY_BUFFER, globePosIdx*sizeof(GLfloat), globePos, GL_STATIC_DRAW);
-	GLf.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	// bind buffer for tex coords and copy data into buffer.
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, m_CoreSphere.Buffer(1));
-	GLf.glBufferData(GL_ARRAY_BUFFER, tidx*sizeof(GLfloat), texCoord, GL_STATIC_DRAW);
-	GLf.glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	// Disable the vertex array object.
-	m_CoreSphere.DeselectGL();
-
-	delete [] globePos;
-	delete [] texCoord;
+	if(m_CoreSphere.VAO()) return;
+	AuGlobeLLTriList triangles;
+	triangles.CreateGlobeTriangles(200);
+	UploadStarSphere(GLf, m_CoreSphere, PrepareStarSphere(triangles, Radius() - 1000, 1));
 }
 
 void DaStar::CreateNeutronStarSphereModel(AuOpenGLFunctions& GLf)
 {
-	if(m_CoreSphere.VAO())
-		return;
-
-	// Create a vertex array object to be used for our black hole sphere.
-	// Tessellate a globe for the atmosphere. This tessellation only expresses latitude and longitude, not altitude of points.
-	AuGlobeLLTriList psTris;
-	psTris.CreateGlobeTriangles(200);
-
-	// Turn the globe tessellation into globe surface triangles with 3D coordinates.
-	double rad = Radius();
-	QList<AuGlobeTriTex> tris;							// Triangles that make up this model.
-	for(AuGlobeLLTriList::const_iterator ti = psTris.cbegin(); ti != psTris.cend(); ti++)
-	{
-		// Calculate triangle vertex coordinates.
-		AuPoint terCoord0 = (*ti).m_LL0.GlobeLocation(rad);		// Location at neutron star core sphere radius.
-		AuPoint terCoord1 = (*ti).m_LL1.GlobeLocation(rad);		// Location at neutron star core sphere radius.
-		AuPoint terCoord2 = (*ti).m_LL2.GlobeLocation(rad);		// Location at neutron star core sphere radius.
-
-		// Wrap texture properly at the seam.
-		float ll0long = (*ti).m_LL0.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL0.Longitude(), -PIf) && ((*ti).m_LL1.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-			ll0long = PIf;
-		float ll1long = (*ti).m_LL1.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL1.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-			ll1long = PIf;
-		float ll2long = (*ti).m_LL2.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL2.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL1.Longitude() > 0))
-			ll2long = PIf;
-
-		// Calculate texture coordinates.
-		QPointF terTex0;
-		terTex0.setX(ll0long/(PIf*2) + .5f);
-		terTex0.setY((*ti).m_LL0.Latitude()/PIf + .5f);
-		QPointF terTex1;
-		terTex1.setX(ll1long/(PIf*2) + .5f);
-		terTex1.setY((*ti).m_LL1.Latitude()/PIf + .5f);
-		QPointF terTex2;
-		terTex2.setX(ll2long/(PIf*2) + .5f);
-		terTex2.setY((*ti).m_LL2.Latitude()/PIf + .5f);
-
-		// Construct a globe triangle with texture coordinates.
-		AuGlobeTriTex tri;
-		tri.m_Vert0 = AuGlobeVertTex(terCoord0, terTex0);
-		tri.m_Vert1 = AuGlobeVertTex(terCoord1, terTex1);
-		tri.m_Vert2 = AuGlobeVertTex(terCoord2, terTex2);
-
-		// Append the globe triangle to the list.
-		tris.append(tri);
-	}
-
-	// Store count of triangles in the black hole sphere vertex array object.
-	GLuint vertices = tris.count()*3;
-
-	// Copy surface triangles into gl array buffers.
-	GLfloat* texCoord = new GLfloat[vertices*2];
-	GLfloat* globePos = new GLfloat[vertices*3];			// vertices for triangles that make up the model.
-
-	unsigned int tidx = 0;
-	unsigned int globePosIdx = 0;
-	for(QList<AuGlobeTriTex>::const_iterator vi = tris.cbegin(); vi != tris.cend(); vi++)
-	{
-		// Vertex 0
-		texCoord[tidx++] = (float)(*vi).m_Vert0.m_TexCoord.x();
-		texCoord[tidx++] = (float)(*vi).m_Vert0.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.z;
-
-		// Vertex 1
-		texCoord[tidx++] = (float)(*vi).m_Vert1.m_TexCoord.x();
-		texCoord[tidx++] = (float)(*vi).m_Vert1.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.z;
-
-		// Vertex 2
-		texCoord[tidx++] = (float)(*vi).m_Vert2.m_TexCoord.x();
-		texCoord[tidx++] = (float)(*vi).m_Vert2.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.z;
-	}
-
-	// Generate vertex array(s) for this object. We only need one.
-	m_CoreSphere.CreateGL(GLf, vertices, 2);
-
-	// Select vertex array to construct.
-	m_CoreSphere.SelectGL();
-
-	// bind buffer for vertices and copy data into buffer.
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, m_CoreSphere.Buffer(0));
-	GLf.glBufferData(GL_ARRAY_BUFFER, globePosIdx*sizeof(GLfloat), globePos, GL_STATIC_DRAW);
-	GLf.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	// bind buffer for tex coords and copy data into buffer.
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, m_CoreSphere.Buffer(1));
-	GLf.glBufferData(GL_ARRAY_BUFFER, tidx*sizeof(GLfloat), texCoord, GL_STATIC_DRAW);
-	GLf.glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	// Disable the vertex array object.
-	m_CoreSphere.DeselectGL();
-
-	delete [] globePos;
-	delete [] texCoord;
+	if(m_CoreSphere.VAO()) return;
+	AuGlobeLLTriList triangles;
+	triangles.CreateGlobeTriangles(200);
+	UploadStarSphere(GLf, m_CoreSphere, PrepareStarSphere(triangles, Radius(), 1));
 }
 
 void DaStar::CreateCoronaSphereModel(AuOpenGLFunctions& GLf)
 {
-	if(m_CoronaSphere.VAO())
-		return;
-
-	// Create a vertex array object to be used for our neutron sphere.
-	// Tessellate a globe for the atmosphere. This tessellation only expresses latitude and longitude, not altitude of points.
-	AuGlobeLLTriList psTris;
-	psTris.CreateGlobeTriangles(200);
-
-	// Turn the globe tessellation into globe surface triangles with 3D coordinates and texture coordinates.
-	double rad = Radius();
-	QList<AuGlobeTriTex> tris;							// Triangles that make up this model.
-	for(AuGlobeLLTriList::const_iterator ti = psTris.cbegin(); ti != psTris.cend(); ti++)
-	{
-		// Calculate triangle vertex coordinates.
-		AuPoint terCoord0 = (*ti).m_LL0.GlobeLocation(rad);		// Location at neutron sphere radius.
-		AuPoint terCoord1 = (*ti).m_LL1.GlobeLocation(rad);		// Location at neutron sphere radius.
-		AuPoint terCoord2 = (*ti).m_LL2.GlobeLocation(rad);		// Location at neutron sphere radius.
-
-		// Wrap texture properly at the seam.
-		float ll0long = (*ti).m_LL0.Longitude();			// Range is -PI to PI
-		if(FuzzyEquals((float)(*ti).m_LL0.Longitude(), -PIf) && ((*ti).m_LL1.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-			ll0long = PIf;
-		float ll1long = (*ti).m_LL1.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL1.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-			ll1long = PIf;
-		float ll2long = (*ti).m_LL2.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL2.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL1.Longitude() > 0))
-			ll2long = PIf;
-
-		// Calculate texture coordinates.
-		QPointF terTex0;
-		terTex0.setX(ll0long/(PIf*2) + .5f);
-		terTex0.setY((*ti).m_LL0.Latitude()/PIf + .5f);
-		QPointF terTex1;
-		terTex1.setX(ll1long/(PIf*2) + .5f);
-		terTex1.setY((*ti).m_LL1.Latitude()/PIf + .5f);
-		QPointF terTex2;
-		terTex2.setX(ll2long/(PIf*2) + .5f);
-		terTex2.setY((*ti).m_LL2.Latitude()/PIf + .5f);
-
-		// Construct a globe triangle with texture coordinates.
-		AuGlobeTriTex tri;
-		tri.m_Vert0 = AuGlobeVertTex(terCoord0, terTex0);
-		tri.m_Vert1 = AuGlobeVertTex(terCoord1, terTex1);
-		tri.m_Vert2 = AuGlobeVertTex(terCoord2, terTex2);
-
-		// Append the globe triangle to the list.
-		tris.append(tri);
-	}
-
-	// Store count of triangles in the photon sphere vertex array object.
-	GLuint vertices = tris.count()*3;
-
-	// Copy surface triangles into gl array buffers.
-	GLfloat* globePos = new GLfloat[vertices*3];			// vertices for triangles that make up the model.
-	GLfloat* globeTex = new GLfloat[vertices*2];			// texture coords for each of the vertices
-
-	unsigned int globePosIdx = 0;
-	unsigned int globeTexIdx = 0;
-	for(QList<AuGlobeTriTex>::const_iterator vi = tris.cbegin(); vi != tris.cend(); vi++)
-	{
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.z;
-
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert0.m_TexCoord.x();
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert0.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.z;
-
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert1.m_TexCoord.x();
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert1.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.z;
-
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert2.m_TexCoord.x();
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert2.m_TexCoord.y();
-	}
-
-	// Generate vertex array(s) for this object. We only need one.
-	m_CoronaSphere.CreateGL(GLf, vertices, 2);
-
-	// Select vertex array to construct.
-	m_CoronaSphere.SelectGL();
-
-	// bind buffer for vertices and copy data into buffer.
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, m_CoronaSphere.Buffer(0));
-	GLf.glBufferData(GL_ARRAY_BUFFER, globePosIdx*sizeof(GLfloat), globePos, GL_STATIC_DRAW);
-	GLf.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	// bind buffer for colors and copy data into buffer.
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, m_CoronaSphere.Buffer(1));
-	GLf.glBufferData(GL_ARRAY_BUFFER, globeTexIdx*sizeof(GLfloat), globeTex, GL_STATIC_DRAW);
-	GLf.glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	// Disable the vertex array object.
-	m_CoronaSphere.DeselectGL();
-
-	delete [] globePos;
-	delete [] globeTex;
+	if(m_CoronaSphere.VAO()) return;
+	AuGlobeLLTriList triangles;
+	triangles.CreateGlobeTriangles(200);
+	UploadStarSphere(GLf, m_CoronaSphere, PrepareStarSphere(triangles, Radius(), 1));
 }
 
 void DaStar::CreateNeutronSphereModel(AuOpenGLFunctions& GLf)
 {
-	if(m_CoronaSphere.VAO())
-		return;
-
-	// Create a vertex array object to be used for our neutron sphere.
-	// Tessellate a globe for the atmosphere. This tessellation only expresses latitude and longitude, not altitude of points.
-	AuGlobeLLTriList psTris;
-	psTris.CreateGlobeTriangles(200);
-
-	// Turn the globe tessellation into globe surface triangles with 3D coordinates and texture coordinates.
-	double rad = NeutronSphereRadius();
-	QList<AuGlobeTriTex> tris;							// Triangles that make up this model.
-	for(AuGlobeLLTriList::const_iterator ti = psTris.cbegin(); ti != psTris.cend(); ti++)
-	{
-		// Calculate triangle vertex coordinates.
-		AuPoint terCoord0 = (*ti).m_LL0.GlobeLocation(rad);		// Location at neutron sphere radius.
-		AuPoint terCoord1 = (*ti).m_LL1.GlobeLocation(rad);		// Location at neutron sphere radius.
-		AuPoint terCoord2 = (*ti).m_LL2.GlobeLocation(rad);		// Location at neutron sphere radius.
-
-		// Wrap texture properly at the seam.
-		float ll0long = (*ti).m_LL0.Longitude();			// Range is -PI to PI
-		if(FuzzyEquals((float)(*ti).m_LL0.Longitude(), -PIf) && ((*ti).m_LL1.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-			ll0long = PIf;
-		float ll1long = (*ti).m_LL1.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL1.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL2.Longitude() > 0))
-			ll1long = PIf;
-		float ll2long = (*ti).m_LL2.Longitude();
-		if(FuzzyEquals((float)(*ti).m_LL2.Longitude(), -PIf) && ((*ti).m_LL0.Longitude() > 0 || (*ti).m_LL1.Longitude() > 0))
-			ll2long = PIf;
-
-		// Calculate texture coordinates.
-		QPointF terTex0;
-		terTex0.setX(ll0long/(PIf*2) + .5f);
-		terTex0.setY((*ti).m_LL0.Latitude()/PIf + .5f);
-		QPointF terTex1;
-		terTex1.setX(ll1long/(PIf*2) + .5f);
-		terTex1.setY((*ti).m_LL1.Latitude()/PIf + .5f);
-		QPointF terTex2;
-		terTex2.setX(ll2long/(PIf*2) + .5f);
-		terTex2.setY((*ti).m_LL2.Latitude()/PIf + .5f);
-
-		// Construct a globe triangle with texture coordinates.
-		AuGlobeTriTex tri;
-		tri.m_Vert0 = AuGlobeVertTex(terCoord0, terTex0);
-		tri.m_Vert1 = AuGlobeVertTex(terCoord1, terTex1);
-		tri.m_Vert2 = AuGlobeVertTex(terCoord2, terTex2);
-
-		// Append the globe triangle to the list.
-		tris.append(tri);
-	}
-
-	// Store count of triangles in the photon sphere vertex array object.
-	GLuint vertices = tris.count()*3;
-
-	// Copy surface triangles into gl array buffers.
-	GLfloat* globePos = new GLfloat[vertices*3];			// vertices for triangles that make up the model.
-	GLfloat* globeTex = new GLfloat[vertices*2];			// texture coords for each of the vertices
-
-	unsigned int globePosIdx = 0;
-	unsigned int globeTexIdx = 0;
-	for(QList<AuGlobeTriTex>::const_iterator vi = tris.cbegin(); vi != tris.cend(); vi++)
-	{
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert0.m_Loc.z;
-
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert0.m_TexCoord.x();
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert0.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert1.m_Loc.z;
-
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert1.m_TexCoord.x();
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert1.m_TexCoord.y();
-
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.x;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.y;
-		globePos[globePosIdx++] = (float)(*vi).m_Vert2.m_Loc.z;
-
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert2.m_TexCoord.x();
-		globeTex[globeTexIdx++] = (float)(*vi).m_Vert2.m_TexCoord.y();
-	}
-
-	// Generate vertex array(s) for this object. We only need one.
-	m_CoronaSphere.CreateGL(GLf, vertices, 2);
-
-	// Select vertex array to construct.
-	m_CoronaSphere.SelectGL();
-
-	// bind buffer for vertices and copy data into buffer.
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, m_CoronaSphere.Buffer(0));
-	GLf.glBufferData(GL_ARRAY_BUFFER, globePosIdx*sizeof(GLfloat), globePos, GL_STATIC_DRAW);
-	GLf.glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	// bind buffer for colors and copy data into buffer.
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, m_CoronaSphere.Buffer(1));
-	GLf.glBufferData(GL_ARRAY_BUFFER, globeTexIdx*sizeof(GLfloat), globeTex, GL_STATIC_DRAW);
-	GLf.glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);		// Describe the data in the buffer.
-
-	GLf.glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	// Disable the vertex array object.
-	m_CoronaSphere.DeselectGL();
-
-	delete [] globePos;
-	delete [] globeTex;
+	if(m_CoronaSphere.VAO()) return;
+	AuGlobeLLTriList triangles;
+	triangles.CreateGlobeTriangles(200);
+	UploadStarSphere(GLf, m_CoronaSphere, PrepareStarSphere(triangles, NeutronSphereRadius(), 1));
 }
 
 void DaStar::RenderNeutronStar(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re)

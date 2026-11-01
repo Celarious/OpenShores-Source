@@ -36,7 +36,60 @@
 #include <QOpenGLFunctions_4_4_Core>
 #include <QOpenGLFunctions_4_5_Compatibility>
 #include <QOpenGLFunctions_4_5_Core>
+#include <QRunnable>
+#include <QThreadPool>
+#include <atomic>
+#include <vector>
 //#include <QOpenGLFunctions_ES2>
+
+namespace
+{
+// Preserve the original bottom-to-top, unpremultiplied RGBA conversion.
+void BitmapPixels(const QImage& image, AuGLRGBA* destination)
+{
+	for(int iy = image.height() - 1; iy >= 0; --iy)
+		for(int ix = 0; ix < image.width(); ++ix)
+			(destination++)->SetColor(image.pixel(ix, iy));
+}
+}
+
+struct AuSceneTexturePreparation
+{
+	std::atomic<bool> ready;
+	int width = 0, height = 0, uploadedRows = 0;
+	std::vector<AuGLRGBA> pixels;
+	std::unique_ptr<AuGLTexture> texture;
+	bool allocated = false;
+	AuSceneTexturePreparation() : ready(false) {}
+};
+
+namespace
+{
+class SceneTextureTask : public QRunnable
+{
+	std::shared_ptr<AuSceneTexturePreparation> m_Result;
+	std::function<QImage()> m_Prepare;
+public:
+	SceneTextureTask(const std::shared_ptr<AuSceneTexturePreparation>& result,
+		const std::function<QImage()>& prepare) : m_Result(result), m_Prepare(prepare) {}
+	void run() override
+	{
+		try
+		{
+			const QImage image = m_Prepare();
+			m_Result->width = image.width();
+			m_Result->height = image.height();
+			m_Result->pixels.resize(size_t(image.width()) * image.height());
+			if(!image.isNull()) BitmapPixels(image, m_Result->pixels.data());
+		}
+		catch(...)
+		{
+			m_Result->width = m_Result->height = 0;
+		}
+		m_Result->ready.store(true, std::memory_order_release);
+	}
+};
+}
 
 static bool								s_Initializing = false;	// True during InitializeGL
 
@@ -981,7 +1034,7 @@ AuGLEffects::~AuGLEffects()
 }
 
 // Must be called while GL context is current.
-void AuGLEffects::InitializeGL(unsigned int maxLights)
+void AuGLEffects::InitializeGL(unsigned int maxLights, bool starMapOnly)
 {
 	if(s_Initializing)
 		return;
@@ -1017,7 +1070,10 @@ void AuGLEffects::InitializeGL(unsigned int maxLights)
 		exit(-1);
 	}
 
-	m_GLSL.Initialize(*this, maxLights);
+	if(starMapOnly)
+		m_GLSL.InitializeStarMap(*this, maxLights);
+	else
+		m_GLSL.Initialize(*this, maxLights);
 
 	s_Initializing = false;
 }
@@ -1249,6 +1305,88 @@ GLuint AuGLEffects::CreateTextureFromBitmap(unsigned int uiUserId, const QString
 	return 0;
 }
 
+GLuint AuGLEffects::PrepareSceneTexture(unsigned int userId, const QString& textureId, const QString& fileName,
+	GLint magFilter, GLint minFilter, bool mipMap, int clampEdges)
+{
+	if(!m_SceneDevicePreparation)
+		return CreateTextureFromBitmap(userId, textureId, fileName, magFilter, minFilter, mipMap, clampEdges);
+	return PrepareSceneTexture(userId, textureId, [fileName]() { return QImage(fileName); },
+		magFilter, minFilter, mipMap, clampEdges);
+}
+
+GLuint AuGLEffects::PrepareSceneTexture(unsigned int userId, const QString& textureId,
+	const std::function<QImage()>& prepare, GLint magFilter, GLint minFilter, bool mipMap, int clampEdges)
+{
+	const GLuint existing = UseTexture(userId, textureId);
+	if(existing) return existing;
+	if(!m_SceneDevicePreparation || !userId)
+		return CreateTextureFromBitmap(userId, textureId, prepare(), magFilter, minFilter, mipMap, clampEdges);
+
+	auto& slot = m_SceneTextures[textureId];
+	if(!slot)
+	{
+		slot.reset(new AuSceneTexturePreparation);
+		slot->texture.reset(new AuGLTexture(userId, textureId));
+		QThreadPool::globalInstance()->start(new SceneTextureTask(slot, prepare));
+	}
+	const auto job = slot;
+	job->texture->AddUser(userId);
+	if(!job->ready.load(std::memory_order_acquire))
+	{
+		m_SceneTexturePending = true;
+		return 0;
+	}
+	if(!job->width || !job->height)
+	{
+		// A missing/failed image follows the existing zero-texture behavior.
+		return 0;
+	}
+	if(m_SceneTextureUploadUsed)
+	{
+		m_SceneTexturePending = true;
+		return 0;
+	}
+	m_SceneTextureUploadUsed = true;
+	if(!job->allocated) job->texture->NameAndBind(*this, mipMap, magFilter, minFilter);
+	else glBindTexture(GL_TEXTURE_2D, job->texture->GlName());
+	if(clampEdges == 1 || clampEdges == 2)
+	{
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	}
+	if(!job->allocated)
+	{
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, job->width, job->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		job->allocated = true;
+	}
+	else if(job->uploadedRows < job->height)
+	{
+		// At most 1 MiB per frame, except a single exceptionally wide row.
+		const int rows = qMin(job->height - job->uploadedRows,
+			qMax(1, (1024 * 1024) / (job->width * int(sizeof(AuGLRGBA)))));
+		GLint alignment;
+		glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, job->uploadedRows, job->width, rows,
+			GL_RGBA, GL_UNSIGNED_BYTE, job->pixels.data() + size_t(job->uploadedRows) * job->width);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+		job->uploadedRows += rows;
+	}
+	else
+	{
+		if(mipMap) glGenerateMipmap(GL_TEXTURE_2D);
+		const GLuint result = job->texture->GlName();
+		m_muTextures.lock();
+		m_Textures.append(job->texture.release());
+		m_muTextures.unlock();
+		m_SceneTextures.remove(textureId);
+		return result;
+	}
+	// Keep the partial GL name private until all rows and mipmaps are complete.
+	m_SceneTexturePending = true;
+	return 0;
+}
+
 // Create a texture map from an array of floating point triplets.
 GLuint AuGLEffects::CreateTextureFromFloats(unsigned int uiUserId, const QString &sTextureId, const float* data, unsigned int width,
 		unsigned int height, bool mipMap, int clampEdges, GLenum format)
@@ -1308,6 +1446,12 @@ GLuint AuGLEffects::CreateTextureFromFloats(unsigned int uiUserId, const QString
 
 void AuGLEffects::DeleteTexture(unsigned int uiUserId, const QString &sTextureId)
 {
+	auto pending = m_SceneTextures.find(sTextureId);
+	if(pending != m_SceneTextures.end() && pending.value()->texture->RemoveUser(uiUserId))
+	{
+		pending.value()->texture->Delete(*this);
+		m_SceneTextures.erase(pending);
+	}
 	AuGLTexture *pTex = FindTexture(sTextureId);
 	if (pTex && pTex->RemoveUser(uiUserId))
 	{
@@ -1336,6 +1480,15 @@ void AuGLEffects::DeleteTexture(unsigned int uiUserId, const QString &sTextureId
 // ALL textures used by 'uiUserId'.
 void AuGLEffects::DeleteTextures(unsigned int uiUserId)
 {
+	for(auto pending = m_SceneTextures.begin(); pending != m_SceneTextures.end();)
+	{
+		if(pending.value()->texture->RemoveUser(uiUserId))
+		{
+			pending.value()->texture->Delete(*this);
+			pending = m_SceneTextures.erase(pending);
+		}
+		else ++pending;
+	}
 	m_muTextures.lock();
 	QVector<AuGLTexture*>::iterator it = m_Textures.begin();
 	while(it != m_Textures.end())
@@ -3937,15 +4090,7 @@ bool AuGLTexture::CreateFromBitmap(AuOpenGLFunctions& GLf, const QImage &bm, boo
 	if(!ptex)
 		return false;
 
-	AuGLRGBA* pDest = ptex;
-	for(int iy=bm.height()-1; iy>=0; iy--)
-	{
-		for(int ix=0; ix<bm.width(); ix++)
-		{
-			pDest->SetColor(bm.pixel(ix,iy));
-			pDest++;
-		}
-	}
+	BitmapPixels(bm, ptex);
 
 	bool success = CreateFromRGB(GLf, (const unsigned char*)ptex, bm.width(), bm.height(), GL_RGBA, GL_UNSIGNED_BYTE, mipMap);
 

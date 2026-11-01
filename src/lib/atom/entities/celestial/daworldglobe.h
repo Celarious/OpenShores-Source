@@ -9,9 +9,12 @@
 
 #include "auweather.h"
 #include "daworldsphere.h"
+#include <memory>
 
 class Au3dsGLSLModelInstance;
 class AuFogOfWar;
+class AuGLModelMaker;
+struct AuSeaPreparation;
 class AuZoneResource;
 class DaBd;
 class DePlanetFauna;
@@ -85,6 +88,9 @@ private:
 	Au3dsGLSLModelInstance*				m_HengeRock;
 	AuGLVAO								m_NearGlobe;			// Vertex array object of the globe model as seen from orbit.
 	AuGLVAO								m_SeaGlobe;				// Vertex array object of the sea surface.
+	std::shared_ptr<AuSeaPreparation> m_SeaPreparation;
+	bool PrepareSeaGlobe(AuGLEffects& re, AuGLModelMaker& mm, bool bothLayers);
+	void DiscardSeaPreparation();
 	AuElapsedTimer						m_TerrainCleanupTime;
 	AuGLVAO								m_UnderseaGlobe;		// Vertex array object of the sea subsurface.
 	bool								m_ViewerNear;			// Near surface texture is updated while this is true.
@@ -1185,7 +1191,7 @@ protected:
 
 	inline void RenderSea(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, bool eyeUnderWater,
 			bool cgUnderWater, float illumination, float ambientLight, float fogDensity, float fogR, float fogG, float fogB,
-			bool viewTopDown)
+			bool viewTopDown, AuGLModelMaker* mm=nullptr)
 	{
 		if(eyeUnderWater)
 		{
@@ -1193,20 +1199,20 @@ protected:
 			// Must reverse cull direction because eye is under the water.
 			re.glFrontFace(GL_CCW);
 			RenderSeaGlobe(projection, model, re, false, illumination, ambientLight, cgUnderWater, fogDensity, fogR, fogG, fogB,
-					viewTopDown);
+					viewTopDown, mm);
 			re.glFrontFace(GL_CW);
 		}
 		else
 		{
 			// Render both sea surface models to hide the bottom.
 			RenderSeaGlobe(projection, model, re, true, illumination, ambientLight, cgUnderWater, fogDensity, fogR, fogG, fogB,
-					viewTopDown);
+					viewTopDown, mm);
 		}
 	}
 
 	void RenderSeaGlobe(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, bool bothLayers,
 			float illumination, float ambientLight, bool showUndersideOfSurface, float fogDensity, float fogR, float fogG,
-			float fogB, bool viewTopDown);
+			float fogB, bool viewTopDown, AuGLModelMaker* mm=nullptr);
 
 	// Returns the commodity id of significant rock outcroppings at 'll'.
 	// Returns CID_Invalid if no significant rocks are present at 'll'.

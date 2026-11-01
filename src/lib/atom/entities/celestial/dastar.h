@@ -10,6 +10,9 @@
 #include "augl.h"
 #include "austargate.h"
 #include "daatom.h"
+#include <memory>
+
+struct AuStarGeometryPreparation;
 
 class AuDice;
 class AuMatrix4x4;
@@ -89,6 +92,8 @@ private:
 
 private:
 	// OpenGL
+	std::shared_ptr<AuStarGeometryPreparation> m_GeometryPreparation;
+	bool PrepareSceneGeometry(AuAtomRenderInfo& ari);
 	AuGLVAO								m_CoreSphere;			// Vertex array object of the core sphere.
 	AuGLVAO								m_CoronaSphere;			// Vertex array object of the corona sphere.
 	float								m_fRotation[4];			// Texture rotation. DUAL PURPOSE! Holds a temp value during create.

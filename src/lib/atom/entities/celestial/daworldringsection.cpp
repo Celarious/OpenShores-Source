@@ -4693,13 +4693,20 @@ void DaWorldRingSection::CreateDeviceObjects(AuAtomRenderInfo& ari)
 		s_TexNoise = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "TerNoise", ":data/TerNoise.png");
 
 	// NOTE: 1 minus the alpha in this texture is treated as glow, for lava. e.g. Alpha .5 glows at .5. Alpha 1 does not glow.
-	if(!s_TexTerPalette[0])
-		for(int wt=0; wt<WORLDTEX_Count; wt++)
+	for(int wt=0; wt<WORLDTEX_Count; wt++)
+		if(!s_TexTerPalette[wt])
 			s_TexTerPalette[wt] = CreateTerrainTexture(*ari.re, (WORLDTEX_TYPE)wt, g_Au.GroundTextureSize());
 
-	if(g_Au.IsLegacyGeneration() && !s_TexLegacyPavement[0])
+	if(g_Au.IsLegacyGeneration())
 		for(int wt=0; wt<18; ++wt)
-			s_TexLegacyPavement[wt] = CreateTerrainTexture(*ari.re, WORLDTEX_TYPE(wt), g_Au.GroundTextureSize(), true);
+			if(!s_TexLegacyPavement[wt])
+				s_TexLegacyPavement[wt] = CreateTerrainTexture(*ari.re, WORLDTEX_TYPE(wt), g_Au.GroundTextureSize(), true);
+
+	if(ari.re->SceneTexturePending())
+	{
+		DaWorldLL::CreateDeviceObjects(ari);
+		return;
+	}
 
 	// Create textures used for developments and rocks.
 	if(!s_TexRock)

@@ -2365,6 +2365,10 @@ GLuint DaWorldLL::CreateTerrainTexture(AuGLEffects& re, WORLDTEX_TYPE worldTexTy
 	const QString texName = QStringLiteral("Terrain.%1.%2").arg(tileSize).arg(textureFile);
 	texId = re.UseTexture(STATIC_TEXTURE_ID, texName);
 	if(texId) return texId;
+	if(re.SceneDevicePreparation())
+		return re.PrepareSceneTexture(STATIC_TEXTURE_ID, texName, [textureFile, tileSize]() {
+			return QImage(textureFile).scaled(tileSize, tileSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+		}, GL_LINEAR, GL_LINEAR, true);
 	QImage imgTile(textureFile);
 	if(!imgTile.isNull())
 	{
@@ -11654,7 +11658,7 @@ void DaWorldLL::CreateDeviceObjects(AuAtomRenderInfo& ari)
 	if(!m_ConcreteTex)
 		m_ConcreteTex = CreateTerrainTexture(*ari.re, WORLDTEX_ConcreteHeavy, g_Au.GroundTextureSize());
 	if(!s_TexConstruction)
-		s_TexConstruction = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "CSign", ":data/ConstructionSign.png");
+		s_TexConstruction = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "CSign", ":data/ConstructionSign.png");
 }
 
 bool DaWorldLL::EnemyUnitBlocksConstruction(const AuMatrix4x4& mBld, const AuPoint& siteBoxRadius, quint32 empireId) const

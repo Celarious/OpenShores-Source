@@ -25,6 +25,8 @@
 #include <QMainWindow>
 #include <QMutex>
 #include <QPointer>
+#include <deque>
+#include <functional>
 
 class AuAgentDialog;
 class AuBdExchangeDock;
@@ -67,7 +69,6 @@ class AuLegacyStudioSession;
 class AuLocatorCompassDock;
 class AuLocatorDock;
 class AuLocatorGPSDock;
-class AuLocatorStarMapDock;
 class AuLocatorSystemScanDock;
 class AuLocatorWorldMapDock;
 class AuLogin;
@@ -179,7 +180,6 @@ private:
 	AuLocatorDock*						m_LocatorDock;
 	AuLocatorCompassDock*				m_LocatorCompassDock;
 	AuLocatorGPSDock*					m_LocatorGPSDock;
-	AuLocatorStarMapDock*				m_LocatorStarMapDock;
 	AuLocatorSystemScanDock*			m_LocatorSystemScanDock;
 	AuLocatorWorldMapDock*				m_LocatorWorldMapDock;
 	AuMailDock*							m_MailDock;
@@ -495,6 +495,7 @@ public:
 	AuDesignerFrame(QWidget *parent=0);
 	virtual ~AuDesignerFrame();
 	void OpenLegacyDesign(const QString& fileName);
+	bool DockWidgetsReady() const { return m_DockWidgetsReady; }
 
 	virtual void DisableAFK();
 
@@ -896,6 +897,12 @@ protected:
 
 private:
 	void CreateModernBuildingDock();
+	void ContinueDockInitialization();
+	std::deque<std::function<bool()> > m_DockInitSteps;
+	bool m_DockWidgetsReady = false;
+	bool m_DockInitRunning = false;
+	QList<AuShipment> m_StartupShipments;
+	bool m_StartupShipmentsCleared = false;
 };
 
 #endif // AuDesignerFrame_H

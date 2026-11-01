@@ -13,6 +13,8 @@
 #include "dbcommodity.h"
 #include <QOpenGLWidget>
 #include <QHash>
+#include <QQueue>
+#include <QSet>
 
 class Au3dsGLSLModelDefinition;
 class Au3dsGLSLModelInstance;
@@ -20,6 +22,8 @@ class AuGLModelInstance;
 class AuGLModelMaker;
 class AuGLModelCache;
 class AuSound;
+class AuEther;
+class DaAtom;
 class DaCreature;
 class DaPerson;
 class DaSc;
@@ -67,7 +71,18 @@ private:
 	struct NpcResult { AuMatrix4x4 transform; bool visible = true; };
 	mutable QHash<const DaSc*, NpcView> m_NpcViews;
 	mutable QHash<const DaCreature*, NpcResult> m_NpcResults;
+	AuId m_DeviceRoot;
+	QQueue<AuId> m_DeviceQueue;
+	QSet<AuId> m_DeviceQueued;
+	bool m_PreparingSceneDevices = false;
+	bool m_DeviceObjectPending = false;
 public:
+	// Called with the scene lock held; only IDs survive between frames.
+	bool PrepareSceneDevices(DaAtom& root, AuEther& ether);
+	bool PreparingSceneDevices() const { return m_PreparingSceneDevices; }
+	void DeferSceneDeviceObject() { m_DeviceObjectPending = true; }
+	void QueueSceneDeviceChildren(const DaAtom& atom);
+	void ClearSceneDevicePreparation();
 	// Set after positioning the camera; refresh again before rendering.
 	void BeginLegacyNpcFrame(const AuMatrix4x4& projection, const AuMatrix4x4& camera, const DaPerson* scene);
 	void DisableLegacyNpcFrame() { m_NpcScene = nullptr; }
@@ -252,7 +267,7 @@ public:
 		return m_DragPart;
 	}
 
-	void InitializeGL();
+	void InitializeGL(bool starMapOnly=false);
 
 	// Returns true during a drag operation.
 	inline bool IsDragging() const

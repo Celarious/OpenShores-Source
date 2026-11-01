@@ -255,31 +255,39 @@ void AuBldDesignStudio::UpdateContents()
 		m_Panels[pidx]->hide();
 }
 
-AuLegacyCityDesignStudio::AuLegacyCityDesignStudio(QWidget* parent) : QWidget(parent),
-	m_CityId(0), m_DevelopmentId(0), m_StudioCount(0)
+AuLegacyCityDesignStudio::AuLegacyCityDesignStudio(QWidget* parent, bool staged) : QWidget(parent),
+	m_CityId(0), m_DevelopmentId(0), m_StudioCount(0), m_InitializedPanels(0)
 {
-	QWidget* panels = new QWidget;
-	QVBoxLayout* layout = new QVBoxLayout;
+	m_PanelContent = new QWidget;
+	m_PanelLayout = new QVBoxLayout;
 	for(int pidx=0; pidx<16; pidx++)
-	{
-		m_Panels[pidx] = new AuBldDesignStudioPanel(pidx, panels, true);
-		connect(m_Panels[pidx], SIGNAL(LegacyEnter(int, QString)), SLOT(EnterDesignerPushed(int, QString)));
-		layout->addWidget(m_Panels[pidx]);
-		m_Panels[pidx]->hide();
-	}
-	layout->addStretch(1);
-	layout->setSpacing(2);
-	layout->setMargin(2);
-	panels->setLayout(layout);
+		m_Panels[pidx] = nullptr;
+	m_PanelLayout->addStretch(1);
+	m_PanelLayout->setSpacing(2);
+	m_PanelLayout->setMargin(2);
+	m_PanelContent->setLayout(m_PanelLayout);
 
 	QScrollArea* scroller = new AuBldScrollArea(this);
-	scroller->setWidget(panels);
+	scroller->setWidget(m_PanelContent);
 	scroller->setWidgetResizable(true);
 	QVBoxLayout* pageLayout = new QVBoxLayout;
 	pageLayout->addWidget(scroller);
 	pageLayout->setSpacing(2);
 	pageLayout->setMargin(0);
 	setLayout(pageLayout);
+	if(!staged)
+		while(!InitializeNextPanel()) {}
+}
+
+bool AuLegacyCityDesignStudio::InitializeNextPanel()
+{
+	if(IsInitialized()) return true;
+	const int pidx = m_InitializedPanels++;
+	m_Panels[pidx] = new AuBldDesignStudioPanel(pidx, m_PanelContent, true);
+	connect(m_Panels[pidx], SIGNAL(LegacyEnter(int, QString)), SLOT(EnterDesignerPushed(int, QString)));
+	m_PanelLayout->insertWidget(pidx, m_Panels[pidx]);
+	m_Panels[pidx]->setVisible(pidx < m_StudioCount);
+	return IsInitialized();
 }
 
 void AuLegacyCityDesignStudio::SetTarget(quint32 cityId, quint32 developmentId, int completedLevels)
@@ -290,6 +298,7 @@ void AuLegacyCityDesignStudio::SetTarget(quint32 cityId, quint32 developmentId, 
 	m_StudioCount = cityId && developmentId ? qBound(0, completedLevels, 16) : 0;
 	for(int pidx=0; pidx<16; pidx++)
 	{
+		if(!m_Panels[pidx]) continue;
 		if(changed)
 		{
 			QLineEdit* password = m_Panels[pidx]->findChild<QLineEdit*>("Password");
@@ -303,7 +312,7 @@ void AuLegacyCityDesignStudio::SetTarget(quint32 cityId, quint32 developmentId, 
 
 void AuLegacyCityDesignStudio::SetOccupied(int studioIndex, bool occupied)
 {
-	if(studioIndex >= 0 && studioIndex < m_StudioCount)
+	if(studioIndex >= 0 && studioIndex < m_StudioCount && m_Panels[studioIndex])
 		m_Panels[studioIndex]->SetOccupied(occupied);
 }
 

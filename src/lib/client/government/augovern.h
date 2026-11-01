@@ -38,12 +38,15 @@ private:
 	AuGovTaxes*							m_Taxes;
 	AuGovernTabs*						m_Tabs;
 	int									m_PatentsTabIndex;
+	int m_InitializePage;
 
 	void UpdatePatentPage();
 
 public:
-	AuGovern(QWidget* parent=0);
+	AuGovern(QWidget* parent=0, bool staged=false);
 	~AuGovern();
+	bool InitializeNextPage();
+	bool IsInitialized() const { return m_InitializePage >= 8; }
 
 	virtual QSize sizeHint() const;
 
@@ -65,10 +68,10 @@ public:
 	AuGovern*								m_Govern;
 
 public:
-	AuGovernDock(QWidget* parent) : AuDockWidget(":data/CommGovernment.png", tr("<b>Governance</b>"), tr("Govern"), parent)
+	AuGovernDock(QWidget* parent, bool staged=false) : AuDockWidget(":data/CommGovernment.png", tr("<b>Governance</b>"), tr("Govern"), parent)
 	{
 		SetWikiTopic("Governance");
-		m_Govern = new AuGovern(this);
+		m_Govern = new AuGovern(this, staged);
 		setWidget(m_Govern);
 
 		int dockSides = g_Au.Settings().readNumEntry("Dock/GovernanceAreas", (int)allowedAreas());
