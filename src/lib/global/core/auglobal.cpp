@@ -266,6 +266,7 @@ void AuGlobal::Init(MODE mode, const QString& appName, const QString& company, D
 		m_SkyBoxPaneSize = 1024;
 	m_DrawWeatherEffects = m_Settings.readBoolEntry("/Settings/DrawWeatherEffects", true);
 	m_FrustumCulling = m_Settings.readBoolEntry("/Settings/FrustumCulling", true);
+	m_CrosshairSmoothing = m_Settings.readBoolEntry("/Settings/CrosshairSmoothing", true);
 	m_UseClassicLoadingAnimation = m_Settings.readBoolEntry("/Settings/UseClassicLoadingAnimation", false);
 
 	m_FramedPictureSize = m_Settings.readNumEntry("/Settings/FramedPictureSize", 512);
@@ -2741,6 +2742,12 @@ void AuGlobal::SetFrustumCulling(bool frustumCulling)
 {
 	m_FrustumCulling = frustumCulling;
 	m_Settings.writeEntry("/Settings/FrustumCulling", m_FrustumCulling);
+}
+
+void AuGlobal::SetCrosshairSmoothing(bool crosshairSmoothing)
+{
+	m_CrosshairSmoothing = crosshairSmoothing;
+	m_Settings.writeEntry("/Settings/CrosshairSmoothing", m_CrosshairSmoothing);
 }
 
 void AuGlobal::SetUseClassicLoadingAnimation(bool useClassicLoadingAnimation)

@@ -897,6 +897,8 @@ AuGLEffects::AuGLEffects()
 	m_FrustumCulling = false;
 	m_EyePos = AuPoint(0,0);
 	m_HUDItemsTexture = 0;
+	m_CrosshairSpread = 1.f;
+	m_CrosshairSmoothing = true;
 }
 
 void AuGLEffects::CullSprites(const AuMatrix4x4& clip, QList<AuPointAlpha>& vertices) const
@@ -3604,9 +3606,29 @@ void AuGLEffects::RenderCrosshair(const QRect& clientRect, float xpos, float ypo
 	m_CrosshairDot.DrawGL();
 	m_CrosshairDot.DeselectGL();
 
+	// Target acquisition updates every 200 ms. Smooth only the displayed spread
+	// at render frequency, using elapsed time so the response is independent of FPS.
+	targetLevel = qBound(0.f, targetLevel, 1.f);
+	if(m_CrosshairSmoothing && m_CrosshairFrameTimer.isValid())
+	{
+		const double seconds = m_CrosshairFrameTimer.nsecsElapsed() / 1000000000.;
+		if(seconds < .25)
+		{
+			const float blend = float(1. - exp(-seconds / .06));
+			m_CrosshairSpread += (targetLevel - m_CrosshairSpread) * blend;
+			if(fabs(m_CrosshairSpread - targetLevel) < .0001f)
+				m_CrosshairSpread = targetLevel;
+		}
+		else
+			m_CrosshairSpread = targetLevel;	// Resume after the crosshair was hidden or rendering paused.
+	}
+	else
+		m_CrosshairSpread = targetLevel;
+	m_CrosshairFrameTimer.start();
+
 	// Draw four bars.
 	const float mtl = .3f;	// Max dist from center
-	const float tl = targetLevel * mtl;	// Dist from center
+	const float tl = m_CrosshairSpread * mtl;	// Dist from center
 
 	m_CrosshairBar.SelectGL();
 

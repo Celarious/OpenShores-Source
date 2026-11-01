@@ -138,6 +138,13 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 		"When unchecked, the helmet HUD is not drawn when scene elements are hidden.</html>"));
 	connect(ckdrawhelmethud, SIGNAL(stateChanged(int)), SLOT(SetDrawHelmetHUDAlways(int)));
 
+	QCheckBox* crosshairSmoothing = new QCheckBox(tr("Smooth Crosshair Lock Animation"));
+	crosshairSmoothing->setChecked(g_Au.CrosshairSmoothing());
+	crosshairSmoothing->setToolTip(tr("<html>Animate crosshair lock and unlock transitions smoothly.<br>"
+			"Uncheck to use the original stepped animation. Target acquisition and weapon accuracy are unchanged.<br>"
+			"Changes take effect immediately.</html>"));
+	connect(crosshairSmoothing, SIGNAL(stateChanged(int)), SLOT(SetCrosshairSmoothing(int)));
+
 	QCheckBox* classicLoadingAnimation = new QCheckBox(tr("Use classic loading animation"));
 	classicLoadingAnimation->setChecked(g_Au.UseClassicLoadingAnimation());
 	classicLoadingAnimation->setToolTip(tr("<html>Use the classic star animation during loading and warp travel.<br>"
@@ -613,6 +620,7 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	cklay->addWidget(ckdrawprecip);
 	cklay->addWidget(frustumCulling);
 	cklay->addWidget(ckdrawhelmethud);
+	cklay->addWidget(crosshairSmoothing);
 	cklay->addWidget(classicLoadingAnimation);
 
 	QVBoxLayout* infolay = new QVBoxLayout;
@@ -703,6 +711,11 @@ void AuSetRender::SetDrawWeatherEffects(int value)
 void AuSetRender::SetFrustumCulling(int value)
 {
 	g_Au.SetFrustumCulling(value ? true : false);
+}
+
+void AuSetRender::SetCrosshairSmoothing(int value)
+{
+	g_Au.SetCrosshairSmoothing(value ? true : false);
 }
 
 void AuSetRender::SetDrawHelmetHUDAlways(int value)

@@ -3169,6 +3169,8 @@ void AuDesignerView::FinishScene()
 
 void AuDesignerView::RenderScene(DaPerson* sceneAtom)
 {
+	m_RenderInfo->re->SetCrosshairSmoothing(g_Au.CrosshairSmoothing());
+
 	// Setup scene projection matrices.
 	SetupProjection();
 	m_RenderInfo->BeginLegacyNpcFrame(m_tProjection, m_tCamera.Inverse(), sceneAtom);

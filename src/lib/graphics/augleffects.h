@@ -647,6 +647,9 @@ private:
 	AuGLVAO								m_BarVAO;				// For rendering horizontal status bars: health, damage, etc.
 	AuGLVAO								m_CrosshairBar;			// For rendering crosshair.
 	AuGLVAO								m_CrosshairDot;			// For rendering crosshair.
+	AuElapsedTimer m_CrosshairFrameTimer;
+	bool m_CrosshairSmoothing;
+	float m_CrosshairSpread;								// Displayed spread, independent of target acquisition.
 	AuGLSL								m_GLSL;					// Contains all GLSL shaders.
 	AuGLVAO								m_HeadingVAO;			// For rendering heading tape on HUD.
 	AuGLVAO								m_HUDBaseVAO;			// For rendering HUD.
@@ -778,6 +781,8 @@ public:
 	// This function sets up it's own shaders.
 	void RenderBar(const QRect& clientRect, float left, float bottom, float barwid, float barht, float value, int whichBar,
 			float rleft, float gleft, float bleft, float rright, float gright, float bright, float alpha=1.f);
+
+	void SetCrosshairSmoothing(bool enabled) { m_CrosshairSmoothing = enabled; }
 
 	// 'targetLevel' is clamped to the range 0 to 1.
 	// This function sets up it's own shaders.
