@@ -501,14 +501,22 @@ quint32 DaWorld::GenSeed() const
 				m_GenSeed = 0;
 			}
 		}
+#if defined(Q_OS_MACOS)
+		m_GenSeed += (quint32)(qint64)(FROUND(m_OrbitRadius, .001) * FeetPerAu());
+#else
 		m_GenSeed += (quint32)(FROUND(m_OrbitRadius, .001) * FeetPerAu());
+#endif
 		m_GenSeed += 123456 * OrbitIndex();
 
 		// Use noise to select a GenSeed value for this world.
 		do
 		{
 			double noise = AuNoise::IntegerNoise(m_OrbitZone, m_GenSeed);
+#if defined(Q_OS_MACOS)
+			m_GenSeed += (quint32)(qint64)(noise * 0xffffffff);
+#else
 			m_GenSeed += (quint32)(noise * 0xffffffff);
+#endif
 		}
 		while(!m_GenSeed);
 

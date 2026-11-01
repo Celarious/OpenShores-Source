@@ -4574,7 +4574,11 @@ quint32 DaStar::GenSeed(quint32 systemGenSeed, int starNumber) const
 		{
 			// The starNumber is used to select the noise algorithm so the GenSeed for both companions is not identical.
 			double noise = AuNoise::IntegerNoise(starNumber, genSeed);
+#if defined(Q_OS_MACOS)
+			genSeed += (quint32)(qint64)(noise * 0xffffffff);
+#else
 			genSeed += (quint32)(noise * 0xffffffff);
+#endif
 		}
 		while(!genSeed);
 		break;

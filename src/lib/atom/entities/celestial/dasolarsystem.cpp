@@ -965,7 +965,11 @@ DaWorldGlobe* DaSolarSystem::CreateHomeWorld()
 			do
 			{
 				double noise = AuNoise::IntegerNoise(randFunc, m_GenSeed);
+#if defined(Q_OS_MACOS)
+				m_GenSeed += (quint32)(qint64)(noise * 0xffffffff);
+#else
 				m_GenSeed += (quint32)(noise * 0xffffffff);
+#endif
 			}
 			while(!m_GenSeed);
 		}
