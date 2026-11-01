@@ -41,6 +41,8 @@
 #include <dgdata.h>
 #include <qsettings.h>
 #include <qsqldatabase.h>
+#include <QHash>
+#include <QSet>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStringList>
@@ -690,14 +692,14 @@ void DtDb::LoadScDesigns()
 	AuScDesignHash designs;
 
 	// Load spacecraft designs by specified architects.
-	QList<quint32> justLoaded;
+	QSet<quint32> justLoaded;
 	for(QList<AuId>::const_iterator it = archDesignsNeeded.cbegin(); it != archDesignsNeeded.cend(); it++)
 	{
 		// Load all the spaceship design records created by the architect from the database.
 		AuScDesignHash archdesigns;
 		archdesigns.LoadArchitect(*it);
 		for(AuScDesignHash::const_iterator dit = archdesigns.cbegin(); dit != archdesigns.cend(); dit++)
-			justLoaded.append((*dit).second.Id());
+			justLoaded.insert((*dit).second.Id());
 
 		// Collect designs that were loaded.
 		AuScDesignHash::iterator desit = archdesigns.begin();
@@ -783,14 +785,14 @@ void DtDb::LoadItDesigns()
 	AuItDesignHash designs;
 
 	// Load spacecraft designs by specified architects.
-	QList<quint32> justLoaded;
+	QSet<quint32> justLoaded;
 	for(QList<AuId>::const_iterator it = archDesignsNeeded.cbegin(); it != archDesignsNeeded.cend(); it++)
 	{
 		// Load all the spaceship design records created by the architect from the database.
 		AuItDesignHash archdesigns;
 		archdesigns.LoadArchitect(*it);
 		for(AuItDesignHash::const_iterator dit = archdesigns.cbegin(); dit != archdesigns.cend(); dit++)
-			justLoaded.append((*dit).second.Id());
+			justLoaded.insert((*dit).second.Id());
 
 		// Collect designs that were loaded.
 		AuItDesignHash::iterator desit = archdesigns.begin();
@@ -865,14 +867,14 @@ void DtDb::LoadBdDesigns()
 	AuBdDesignHash designs;
 
 	// Load spacecraft designs by specified architects.
-	QList<quint32> justLoaded;
+	QSet<quint32> justLoaded;
 	for(QList<AuId>::const_iterator it = archDesignsNeeded.cbegin(); it != archDesignsNeeded.cend(); it++)
 	{
 		// Load all the spaceship design records created by the architect from the database.
 		AuBdDesignHash archdesigns;
 		archdesigns.LoadArchitect(*it);
 		for(AuBdDesignHash::const_iterator dit = archdesigns.cbegin(); dit != archdesigns.cend(); dit++)
-			justLoaded.append((*dit).second.Id());
+			justLoaded.insert((*dit).second.Id());
 
 		// Collect designs that were loaded.
 		AuBdDesignHash::iterator desit = archdesigns.begin();
@@ -1165,7 +1167,8 @@ void DtDb::StoreScDesigns(QSqlDatabase& db, QList<quint32>& designsDeactivated)
 	// We grab copies of the affected records so we can release the mutex as quickly as
 	// possible. Then we can take our time about saving the data, which takes a long
 	// time.
-	QList<AuScDesign> designs;
+	// Keep the first snapshot for each ID, matching the previous list lookup.
+	QHash<quint32, AuScDesign> designs;
 	for(QList<AuDesignTransaction>::const_iterator tit = transactions.cbegin(); tit != transactions.cend(); tit++)
 	{
 		switch((*tit).m_Action)
@@ -1179,8 +1182,8 @@ void DtDb::StoreScDesigns(QSqlDatabase& db, QList<quint32>& designsDeactivated)
 			if(sdd.ScDesignIsLoaded((*tit).m_idDesign))
 			{
 				AuScDesign design;
-				if(sdd.ScDesign((*tit).m_idDesign, design))
-					designs.append(design);		// Found the design record.
+				if(sdd.ScDesign((*tit).m_idDesign, design) && !designs.contains(design.Id()))
+					designs.insert(design.Id(), design);		// Found the design record.
 			}
 			break;
 		case D_DesignDelete:
@@ -1212,24 +1215,26 @@ void DtDb::StoreScDesigns(QSqlDatabase& db, QList<quint32>& designsDeactivated)
 			}
 			break;
 		case D_DesignAdd:
-			for(QList<AuScDesign>::const_iterator it = designs.cbegin(); it != designs.cend(); it++)
-				if((*it).Id() == (*tit).m_idDesign)
+			{
+				QHash<quint32, AuScDesign>::const_iterator it = designs.constFind((*tit).m_idDesign);
+				if(it != designs.cend())
 				{
 					// Insert the added record into the database.
-					(*it).Insert(db);
+					it.value().Insert(db);
 					a++;
-					break;
 				}
+			}
 			break;
 		case D_DesignChange:
-			for(QList<AuScDesign>::const_iterator it = designs.cbegin(); it != designs.cend(); it++)
-				if((*it).Id() == (*tit).m_idDesign)
+			{
+				QHash<quint32, AuScDesign>::const_iterator it = designs.constFind((*tit).m_idDesign);
+				if(it != designs.cend())
 				{
 					// Update the changed record into the database.
-					(*it).Update(db);
+					it.value().Update(db);
 					c++;
-					break;
 				}
+			}
 			break;
 		case D_DesignDelete:
 			{
@@ -1432,7 +1437,8 @@ void DtDb::StoreItDesigns(QSqlDatabase& db, QList<quint32>& designsDeactivated)
 	// We grab copies of the affected records so we can release the mutex as quickly as
 	// possible. Then we can take our time about saving the data, which takes a long
 	// time.
-	QList<AuItDesign> designs;
+	// Keep the first snapshot for each ID, matching the previous list lookup.
+	QHash<quint32, AuItDesign> designs;
 	for(QList<AuDesignTransaction>::const_iterator tit = transactions.cbegin(); tit != transactions.cend(); tit++)
 	{
 		switch((*tit).m_Action)
@@ -1446,8 +1452,8 @@ void DtDb::StoreItDesigns(QSqlDatabase& db, QList<quint32>& designsDeactivated)
 			if(sdd.ItDesignIsLoaded((*tit).m_idDesign))
 			{
 				AuItDesign design;
-				if(sdd.ItDesign((*tit).m_idDesign, design))
-					designs.append(design);		// Found the design record.
+				if(sdd.ItDesign((*tit).m_idDesign, design) && !designs.contains(design.Id()))
+					designs.insert(design.Id(), design);		// Found the design record.
 			}
 			break;
 		case D_DesignDelete:
@@ -1479,24 +1485,26 @@ void DtDb::StoreItDesigns(QSqlDatabase& db, QList<quint32>& designsDeactivated)
 			}
 			break;
 		case D_DesignAdd:
-			for(QList<AuItDesign>::const_iterator it = designs.cbegin(); it != designs.cend(); it++)
-				if((*it).Id() == (*tit).m_idDesign)
+			{
+				QHash<quint32, AuItDesign>::const_iterator it = designs.constFind((*tit).m_idDesign);
+				if(it != designs.cend())
 				{
 					// Insert the added record into the database.
-					(*it).Insert(db);
+					it.value().Insert(db);
 					a++;
-					break;
 				}
+			}
 			break;
 		case D_DesignChange:
-			for(QList<AuItDesign>::const_iterator it = designs.cbegin(); it != designs.cend(); it++)
-				if((*it).Id() == (*tit).m_idDesign)
+			{
+				QHash<quint32, AuItDesign>::const_iterator it = designs.constFind((*tit).m_idDesign);
+				if(it != designs.cend())
 				{
 					// Update the changed record into the database.
-					(*it).Update(db);
+					it.value().Update(db);
 					c++;
-					break;
 				}
+			}
 			break;
 		case D_DesignDelete:
 			{
@@ -1572,7 +1580,8 @@ void DtDb::StoreBdDesigns(QSqlDatabase& db, QList<quint32>& designsDeactivated)
 	// We grab copies of the affected records so we can release the mutex as quickly as
 	// possible. Then we can take our time about saving the data, which takes a long
 	// time.
-	QList<AuBdDesign> designs;
+	// Keep the first snapshot for each ID, matching the previous list lookup.
+	QHash<quint32, AuBdDesign> designs;
 	for(QList<AuDesignTransaction>::const_iterator tit = transactions.cbegin(); tit != transactions.cend(); tit++)
 	{
 		switch((*tit).m_Action)
@@ -1586,8 +1595,8 @@ void DtDb::StoreBdDesigns(QSqlDatabase& db, QList<quint32>& designsDeactivated)
 			if(sdd.BdDesignIsLoaded((*tit).m_idDesign))
 			{
 				AuBdDesign design;
-				if(sdd.BdDesign((*tit).m_idDesign, design))
-					designs.append(design);		// Found the design record.
+				if(sdd.BdDesign((*tit).m_idDesign, design) && !designs.contains(design.Id()))
+					designs.insert(design.Id(), design);		// Found the design record.
 			}
 			break;
 		case D_DesignDelete:
@@ -1619,24 +1628,26 @@ void DtDb::StoreBdDesigns(QSqlDatabase& db, QList<quint32>& designsDeactivated)
 			}
 			break;
 		case D_DesignAdd:
-			for(QList<AuBdDesign>::const_iterator it = designs.cbegin(); it != designs.cend(); it++)
-				if((*it).Id() == (*tit).m_idDesign)
+			{
+				QHash<quint32, AuBdDesign>::const_iterator it = designs.constFind((*tit).m_idDesign);
+				if(it != designs.cend())
 				{
 					// Insert the added record into the database.
-					(*it).Insert(db);
+					it.value().Insert(db);
 					a++;
-					break;
 				}
+			}
 			break;
 		case D_DesignChange:
-			for(QList<AuBdDesign>::const_iterator it = designs.cbegin(); it != designs.cend(); it++)
-				if((*it).Id() == (*tit).m_idDesign)
+			{
+				QHash<quint32, AuBdDesign>::const_iterator it = designs.constFind((*tit).m_idDesign);
+				if(it != designs.cend())
 				{
 					// Update the changed record into the database.
-					(*it).Update(db);
+					it.value().Update(db);
 					c++;
-					break;
 				}
+			}
 			break;
 		case D_DesignDelete:
 			{
