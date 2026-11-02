@@ -8771,6 +8771,49 @@ void DaPerson::Respawn(bool forceLocal)
 		}
 	}
 
+	// Legacy fallback order matches the scene server: capital before random city.
+	// Keep the existing modern order by sharing this attempt at its two call sites.
+	const auto tryUniverseCapital = [&]() -> bool {
+		if(capitolU.IsNull() || capitolU == SpawnCity() || capitolU == capitolG) return false;
+		if(g_Au.m_LogMessages & LOG_Spawn)
+			qDebug() << "DaPerson::Respawn" << *this << "trying universe capitol" << capitolU;
+		DaAtom* capatom = system->FindIdRecursive(capitolU);
+		if(capatom)
+		{
+			if(finishLegacyCitySpawn(capatom, nullptr)) return true;
+			DaBd* bd = dynamic_cast<DaBd*>(capatom);
+			if(bd)
+			{
+				if(g_Au.m_LogMessages & LOG_Spawn)
+					qDebug() << "DaPerson::Respawn" << *this << "found bd" << *bd;
+				if(bd->EmpireId() == EmpireId())
+				{
+					DaWorld* planet = bd->FindParentPlanetInEnv();
+					if(planet)
+					{
+						ForcePosStop(AuAtomPos(planet->Id(), AuMatrix4x4()));
+						FinishSpawn(bd->RandomSpawnLoc());
+					}
+					return true;
+				}
+			}
+			else if(!g_Au.IsLegacyGeneration() || !dynamic_cast<DaLegacyCity*>(capatom))
+				qWarning() << "error: DaPerson::Respawn" << *this << "capatom" << *capatom << "is not a building";
+		}
+		else if(!forceLocal)
+		{
+			if(g_Au.m_LogMessages & LOG_Spawn)
+				qDebug() << "DaPerson::Respawn" << *this << "spawning elsewhere to find universe capitol" << capitolU;
+			SetTraveling();
+			SetGeneralPose(AuPose::Spawn);
+			SyncController(AuSyncPose(AuPose::Spawn, 0, 0, 0));
+			emit Spawn(Id(), EmpireId(), capitolU, AuId(0), AuId(0), galaxy);
+			return true;
+		}
+		return false;
+	};
+	if(g_Au.IsLegacyGeneration() && tryUniverseCapital()) return;
+
 	// Try to spawn in any random city in the person's empire, except the capital or their spawn city.
 	AuId randomCity;
 	if(forceLocal)
@@ -8858,55 +8901,8 @@ void DaPerson::Respawn(bool forceLocal)
 		}
 	}
 
-	// Try to spawn in the person's universe capital city, unless it's their home city or galaxy capital which were already checked.
-	if(!capitolU.IsNull() && capitolU != SpawnCity() && capitolU != capitolG)
-	{
-		// Locate the universe/empire capital city in the local atom data.
-		if(g_Au.m_LogMessages & LOG_Spawn)
-			qDebug() << "DaPerson::Respawn" << *this << "trying universe capitol" << capitolU;
-		DaAtom* capatom = system->FindIdRecursive(capitolU);
-		if(capatom)
-		{
-			if(finishLegacyCitySpawn(capatom, nullptr)) return;
-			DaBd* bd = dynamic_cast<DaBd*>(capatom);
-			if(bd)
-			{
-				// The building was found.
-				if(g_Au.m_LogMessages & LOG_Spawn)
-					qDebug() << "DaPerson::Respawn" << *this << "found bd" << *bd;
-				// Is the capitol building controlled by this person's empire.
-				if(bd->EmpireId() == EmpireId())
-				{
-					// Respawn in the town square.
-					DaWorld* planet = bd->FindParentPlanetInEnv();
-					if(planet)
-					{
-						ForcePosStop(AuAtomPos(planet->Id(), AuMatrix4x4()));
-						FinishSpawn(bd->RandomSpawnLoc());
-					}
-					return;
-				}
-				// The capitol building is no longer friendly to the player.
-			}
-			else if(!g_Au.IsLegacyGeneration() || !dynamic_cast<DaLegacyCity*>(capatom))
-				qWarning() << "error: DaPerson::Respawn" << *this << "capatom" << *capatom << "is not a building";
-		}
-		else
-		{
-			// The universe/empire capital city was not found in the local data.
-			if(!forceLocal)
-			{
-				if(g_Au.m_LogMessages & LOG_Spawn)
-					qDebug() << "DaPerson::Respawn" << *this << "spawning elsewhere to find universe capitol" << capitolG;
-				// Pass the respawn request up the chain because the capital city must be on another server.
-				SetTraveling();
-				SetGeneralPose(AuPose::Spawn);
-				SyncController(AuSyncPose(AuPose::Spawn, 0, 0, 0));
-				emit Spawn(Id(), EmpireId(), capitolU, AuId(0), AuId(0), galaxy);
-				return;
-			}
-		}
-	}
+	// Modern cities retain their existing capital attempt after the random city.
+	if(!g_Au.IsLegacyGeneration() && tryUniverseCapital()) return;
 
 	// We only get here when we know none of the person's "tied" spawn points or any empire city exists.
 	// This may be a nu player/emperor who has not planted their first flag yet.
