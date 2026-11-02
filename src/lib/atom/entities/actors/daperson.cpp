@@ -7572,6 +7572,9 @@ void DaPerson::Tock(const AuTime& last, const AuTime& now, const AuScripts& scri
 	if(!IsNormal())
 		return;
 
+	if(last.ElapsedSecTicks(now) > 0)
+		ClearDeletedLegacyHome(FindParentSolarSystem());
+
 	// Watch for requirement for immediate respawn.
 	if(Actions() & (ACT_SpawnAnywhere|ACT_SpawnLocal))
 	{
@@ -8497,6 +8500,64 @@ void DaPerson::Reward(double fReward, REWARDTYPE rewardType)
 	SetModified();
 }
 
+void DaPerson::ClearDeletedLegacyHome(const DaSolarSystem* system, QSqlDatabase* db)
+{
+	if(!g_Au.IsLegacyGeneration() || (!g_Au.IsSceneWorker() && !g_Au.IsSceneSolo())) return;
+	const AuId cityId = SpawnCity();
+	if(cityId.IsNull()) return;
+	const AuGlobeLLF home = SpawnDevLL();
+	const auto hasHome = [&home](const AuLegacyCity::State& state) -> bool {
+		for(const auto& development : state.developments)
+			if(!development.demolished && development.industryId && development.industryId != 2
+				&& development.location.Longitude() == home.Longitude()
+				&& development.location.Latitude() == home.Latitude()) return true;
+		return false;
+	};
+	bool exists = false;
+	if(db)
+	{
+		// Character loads can precede other worlds in the same system. Use the
+		// saved city here, rather than treating a partly loaded system as empty.
+		QSqlQuery query(*db);
+		query.prepare(QStringLiteral("SELECT stateVersion,stateData FROM a_LegacyCity WHERE id=?"));
+		query.addBindValue(cityId.GetID());
+		if(!query.exec())
+		{
+			qWarning() << "Legacy home validation failed:" << cityId << query.lastError().text();
+			return;
+		}
+		exists = query.next();
+		if(!exists && query.lastError().isValid())
+		{
+			qWarning() << "Legacy home validation failed:" << cityId << query.lastError().text();
+			return;
+		}
+		if(exists)
+		{
+			AuLegacyCity::State state; QString error;
+			if(!AuLegacyCity::SupportedStateVersion(query.value(0).toUInt())
+				|| !AuLegacyCity::DecodeState(query.value(1).toByteArray(), state, error))
+			{
+				qWarning() << "Legacy home validation could not read city:" << cityId << error;
+				return;
+			}
+			exists = hasHome(state);
+		}
+	}
+	else
+	{
+		if(!system || system->IsOnlyStarFieldLoaded() || system->Id() != SpawnCitySystem()) return;
+		const auto* city = dynamic_cast<const DaLegacyCity*>(system->FindIdRecursive(cityId));
+		if(city && !city->IsNormal() && !city->IsDead()) return;
+		exists = city && !city->IsDead() && hasHome(city->Snapshot());
+	}
+	if(!exists)
+	{
+		ClearSpawnCity();
+		SetModified();
+	}
+}
+
 void DaPerson::Respawn(bool forceLocal)
 {
 	if(g_Au.m_LogMessages & LOG_Spawn)
@@ -8546,6 +8607,8 @@ void DaPerson::Respawn(bool forceLocal)
 		emit Spawn(Id(), EmpireId(), SpawnCity(), SpawnShip(), ArenaExitParent(), galaxy);
 		return;
 	}
+
+	ClearDeletedLegacyHome(system);
 
 	// Try to spawn at the arena exit.
 	if(!ArenaExitParent().IsNull())
@@ -11639,6 +11702,10 @@ DaPerson* DaPerson::LoadSubatoms(AuEther& ether, QSqlDatabase& db, const AuId& p
 			pnu->RestorePose(curPose, stationId);				// Restore console after adding to my parent atom.
 			pnu->StartThinking();
 			pnu->SetNormal();	// New atom is ready for normal thread processing. This must be done before loading subatoms.
+
+			// Also clears homes deleted while this character was offline, including
+			// homes on worlds that are not loaded by this worker.
+			pnu->ClearDeletedLegacyHome(nullptr, &db);
 
 			// Load subatoms of the nu atom AFTER adding it to its pnu parent.
 			// Person can be carrying other people or animals.

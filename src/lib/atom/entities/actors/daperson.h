@@ -31,10 +31,12 @@ class AuStories;
 class AuStory;
 class DaCapsule;
 class DaCitizen;
+class DaSolarSystem;
 class DaVessel;
 class DaWorldLL;
 class PsEntity;
 class PsWeather;
+class QSqlDatabase;
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // AuGearKeyPos is used to associate a gear item in a particular usage slot and mode with a hot-key.
@@ -442,6 +444,11 @@ public:
 protected:
 	DaPerson(const DaPerson &rhs);
 
+private:
+	// A loaded home system or a database lookup can confirm deletion. Absence
+	// from another worker's loaded system must not clear a valid remote home.
+	void ClearDeletedLegacyHome(const DaSolarSystem* system, QSqlDatabase* db = nullptr);
+
 public:	// Operators
 	virtual void operator>>(QDataStream& out) const;
 
@@ -566,6 +573,7 @@ public:
 		m_SpawnBdName = QString();
 		m_SpawnBdSystem = AuId();
 		m_SpawnBdSystemName = QString();
+		m_SpawnDevLL = AuGlobeLLF();
 		m_tmSpawnChange.Set();
 		m_PersonLock.unlock();
 	}

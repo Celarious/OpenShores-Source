@@ -5196,11 +5196,18 @@ bool AuAtomInterface::ReportCityLast(const AuId& cityId, bool& haveReport, AuCit
 			AuId selected(cityId);
 			if(selected.IsNull())
 			{ selected = person->LockEnvironmentQuery()->LegacyCityId(); person->UnlockEnvironmentQuery(); }
-			const auto* city = dynamic_cast<const DaLegacyCity*>(person->Ether()->FindNormalAtom(selected));
+			auto* city = dynamic_cast<DaLegacyCity*>(person->Ether()->FindNormalAtom(selected));
 			foundCity = city != nullptr;
 			if(city && (personHasAgentPower || (personEmpire && personEmpire == city->EmpireId())))
 			{
 				AuCityReportHistory history;
+				if(person->HasArchitectPower() && city->ReportCurrent(report))
+				{
+					haveReport = true;
+					havePrevReport = city->ReportHistory(history) && !history.IsEmpty();
+					if(havePrevReport) prevReport = history.Last();
+					UnlockAvatar(); return foundCity;
+				}
 				if(city->ReportHistory(history))
 				{
 					report = history.Last(); haveReport = true; havePrevReport = history.Count() > 1;

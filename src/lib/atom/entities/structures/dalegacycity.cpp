@@ -2958,7 +2958,12 @@ void DaLegacyCity::Tock(const AuTime& last, const AuTime& now, const AuScripts& 
 		g_Au.MonitorChannel(AuCommStdChannel::TradeChannelName(), Id());
 		g_Au.MonitorChannel(AuCommStdChannel::HailChannelName(), Id());
 	}
-	TockEconomy(last.MSecsSinceEpoch(), QDateTime::currentMSecsSinceEpoch());
+	// DaAtom::Tock advances the atom clock even when the one-second economy
+	// gate skips this call. Retain the last actual economy time so minute
+	// boundaries still reach the six-minute broker/service import schedule.
+	const AuTime previousEconomy = m_LastEconomyTock.IsNull() ? last : m_LastEconomyTock;
+	m_LastEconomyTock = now;
+	TockEconomy(previousEconomy.MSecsSinceEpoch(), now.MSecsSinceEpoch());
 	if(last.IsNewPeriod(now, 5000, Id().GetID())) TockHospitalPatients();
 }
 

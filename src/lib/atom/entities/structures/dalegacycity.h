@@ -78,6 +78,8 @@ public:
 	void RegisterEmpireVisit(quint32 empireId, qint64 now);
 	// Newly authored shared display envelope; no 2016 database binary import.
 	bool ReportHistory(AuCityReportHistory& result) const;
+	// Diagnostic snapshot only: no population cycle, stock consumption or history mutation.
+	bool ReportCurrent(AuCityReport& report);
 	static bool ReadReportHistory(const QByteArray& bytes, AuCityReportHistory& result);
 	static bool WriteReportHistory(const AuCityReportHistory& history, QByteArray& bytes, QString& error);
 	// Gather world/global facts before the city transaction. Completion reads
@@ -254,6 +256,7 @@ private:
 	quint64 m_CityRevision = 1;
 	QHash<quint32, qint64> m_ConstructionLaborTimes;
 	bool m_TradeMonitored = false;
+	AuTime m_LastEconomyTock;
 	QHash<QByteArray, QPair<quint32, qint64>> m_ShopPrices;
 	quint32 CachedShopPrice(const AuLegacyCityCatalogue& catalogue, const AuLegacyCity::State& state,
 		const AuItemHash& inventory, const AuLegacyCity::ProductionState& production, const AuItem& item, quint8 industry);

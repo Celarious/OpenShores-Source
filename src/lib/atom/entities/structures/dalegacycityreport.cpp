@@ -4,6 +4,8 @@
 #include "aulegacycityinfrastructure.h"
 #include "aulegacycitypopulationruntime.h"
 #include "aulegacycityproduction.h"
+#include "aulegacycityinventory.h"
+#include "aulegacycitycommerce.h"
 #include "auglobal.h"
 #include "auspecies.h"
 #include "dagalaxy.h"
@@ -16,6 +18,39 @@
 #include <limits>
 
 using namespace AuLegacyCity;
+
+bool DaLegacyCity::ReportCurrent(AuCityReport& report)
+{
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	auto* world = dynamic_cast<DaWorldLL*>(Parent());
+	if(!g_Au.IsLegacyGeneration() || !catalogue || !world || !IsNormal()) return false;
+	const auto state = Snapshot();
+	AuItemHash inventory; ProductionState production; AccountingState accounting; QString error;
+	if(!ReadCityInventory(state.inventory, *catalogue, inventory, error)
+		|| !DecodeProductionState(*catalogue, state.manufacturing, production, error)
+		|| !DecodeAccounting(state.accounting, accounting, error))
+	{ qWarning() << "Legacy current city report:" << Id() << error; return false; }
+	auto facts = GatherPopulationFacts(*this, *world, state);
+	facts.context.isolated = QueryCityConnections(*this, *world, state).isEmpty();
+	report = GatherCityReport(state, facts);
+	PopulationRuntimeReport population;
+	population.occupied = state.controllingEmpire != state.allegianceEmpire;
+	population.allegianceEmpire = state.allegianceEmpire;
+	population.loyalPopulation = state.loyalPopulation;
+	population.reportedLastTribute = accounting.lastTribute;
+	population.troopsAtCity = quint16(std::min(65535, int(state.garrisonTroops) + facts.assignedTroops));
+	QHash<quint32, quint32> enabled;
+	for(const auto& process : production.processes) if(process.enabled) ++enabled[process.developmentId];
+	auto developments = state.developments;
+	const auto employment = EmployCitizens(*catalogue, developments, enabled,
+		quint32(std::max(0, state.population)), facts.context.needsEnclosure, false);
+	// Complete the normal report envelope from copies. Do not run meals,
+	// migration, salaries or advance lastPopulationCycle just to inspect stock.
+	if(!CompleteCityReport(report, state, inventory, inventory, production, accounting,
+		population, employment, AuTime::CurrentMSecsSinceEpoch(), error))
+	{ qWarning() << "Legacy current city report:" << Id() << error; return false; }
+	return true;
+}
 
 AuCityReport DaLegacyCity::GatherCityReport(const State& state, const PopulationRuntimeFacts& facts) const
 {
