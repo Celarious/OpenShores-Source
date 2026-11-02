@@ -11,6 +11,7 @@
 
 #include <QDataStream>
 #include <QHash>
+#include <QLineF>
 #include <QPoint>
 #include <algorithm>
 #include <cmath>
@@ -61,6 +62,8 @@ struct Builder
 	int vertices = 0;
 	bool hasBounds = false;
 	bool noCollision = false;
+	QString textureFile;
+	float shininess = 0;
 	void Warning(const QString& text)
 	{
 		if(!mesh.warnings.contains(text)) mesh.warnings.append(text);
@@ -78,8 +81,8 @@ struct Builder
 		QVector3D normal = QVector3D::crossProduct(b - a, c - a);
 		if(normal.lengthSquared() < 1e-12f) return;
 		normal.normalize();
-		const QString key = QStringLiteral("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10/%11")
-			.arg(slot).arg(deck).arg(interior).arg(doorId).arg(detailId).arg(twoSided).arg(stairs).arg(collisionOnly).arg(depthOnly).arg(equipment).arg(noCollision);
+		const QString key = QStringLiteral("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10/%11/%12/%13")
+			.arg(slot).arg(deck).arg(interior).arg(doorId).arg(detailId).arg(twoSided).arg(stairs).arg(collisionOnly).arg(depthOnly).arg(equipment).arg(noCollision).arg(textureFile).arg(shininess);
 		int index = batchIndices.value(key, -1);
 		if(index < 0)
 		{
@@ -90,6 +93,8 @@ struct Builder
 			batch.stairs = stairs;
 			batch.collisionOnly = collisionOnly;
 			batch.noCollision = noCollision;
+			batch.textureFile = textureFile;
+			batch.shininess = shininess;
 			batch.depthOnly = depthOnly;
 			mesh.batches.append(batch);
 		}
@@ -178,6 +183,7 @@ struct Builder
 };
 
 #include "aulegacybuildingturrets.inc"
+#include "aulegacybuildingenclosure.inc"
 
 struct Opening
 {
@@ -991,6 +997,18 @@ Mesh Build(const Design& design, const Options& options)
 			if(detail.detailType == 100) FlagPole(out, location, detail.deck);
 			else if(detail.detailType == 142) StreetLight(out, location, detail.deck);
 		}
+	return std::move(out.mesh);
+}
+
+Mesh BuildEnclosure(const EnclosureOptions& options)
+{
+	Builder out;
+	// IsPathBlockedByEnclosure 0x29bb00 finishes with false even when its
+	// boundary lookup succeeds. Do not turn the recovered frame into a cage
+	// that traps people, vehicles or spacecraft inside otherwise open sites.
+	out.noCollision = true;
+	EnclosureGeometry(out, options);
+	for(auto& batch : out.mesh.batches) batch.enclosure = true;
 	return std::move(out.mesh);
 }
 

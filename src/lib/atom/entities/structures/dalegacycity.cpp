@@ -15,6 +15,7 @@
 #include "aulegacybiodome.h"
 #include "aulegacybuildinggeometry.h"
 #include "aulegacycitycatalogue.h"
+#include "aulegacycityenclosure.h"
 #include "aulegacycityprotocol.h"
 #include "aulegacycityinventory.h"
 #include "aulegacyconstructionmaterials.h"
@@ -626,22 +627,6 @@ void InitializeConstruction(AuLegacyCity::Development& dev, quint32 labor, quint
 	}
 }
 
-quint8 ConstructionEnvironment(const DaWorldLL& world, const AuLegacyCity::Development& dev)
-{
-	if(dev.industryId == 2)
-	{
-		// LockAddRoad 0x5253d0 classifies the final endpoint grades, so a
-		// level causeway above submerged terrain uses surface requirements.
-		if(world.Hydrographics() && dev.roadStartAltitudeMSL <= -32 && dev.roadEndAltitudeMSL <= -32) return 4;
-	}
-	else
-	{
-		AuTerrainInfo terrain; world.QueryTerrain(terrain, dev.location);
-		if(terrain.IsWater() && world.SurfaceAltitudeMSL(dev.location)<=-32) return 4;
-	}
-	return world.HasBreathableAtmosphere() ? 1 : 2;
-}
-
 quint32 SitePreparationLabor(const DaWorldLL& world, const AuLegacyCity::Development& dev)
 {
 	const auto* recipe = ConstructionRecipe(dev.industryId, dev.constructionProcessId);
@@ -779,6 +764,7 @@ struct DaLegacyCity::Runtime
 	struct Building
 	{
 		AuLegacyCity::Development state;
+		QByteArray enclosureKey;
 		AuLegacyBd::Geometry::Mesh mesh;
 		QSharedPointer<AuLegacyScGeometry::CollisionWorld> collision;
 		AuLegacyBd::Paths::Graph paths;
@@ -791,6 +777,8 @@ struct DaLegacyCity::Runtime
 		quint64 revision = 0;
 		AuId worldId;
 		QVector<AuLegacyCity::Development> developments;
+		QVector<AuLegacyCity::Development> domes;
+		int enclosure = 0;
 		QVector<Site> sites;
 		QVector<Building> previous, result;
 		bool succeeded = false;
@@ -839,6 +827,8 @@ struct DaLegacyCity::Runtime
 	QHash<quint32, qint64> weaponLastFired;
 	bool asynchronous = false;
 	bool asyncBuildAllowed = false;
+	int enclosure = -1;
+	QVector<AuLegacyCity::Development> geometryDomes;
 	quint64 requestedRevision = 0, builtRevision = 0;
 	QSharedPointer<Job> job;
 	quint64 revision = 0, drawRevision = 0;
@@ -1022,22 +1012,28 @@ struct DaLegacyCity::Runtime
 	void Ensure(const DaLegacyCity& city)
 	{
 		const auto* world=dynamic_cast<const DaWorldLL*>(city.Parent());
+		// Dome completion/removal in another city must invalidate this city's
+		// frames too. Snapshot worlds/cities before taking the city state lock.
+		const auto domes = asynchronous && world ? AuLegacyCity::CompletedBiodomes(*world) : QVector<AuLegacyCity::Development>();
+		const int pressure = asynchronous && world ? AuLegacyCity::EnclosureNeeded(*world, city.Location()) : 0;
+		const bool enclosureChanged = enclosure != pressure || !SameTerrainSites(geometryDomes, domes);
 		QVector<AuLegacyCity::Development> developments;
 		{
 			QReadLocker stateLock(&city.m_CityLock);
 			// Terrain and geometry must describe the same state even if a network
 			// update arrives while this snapshot is being taken.
 			if(world) EnsureSites(city.m_City.developments, city.m_CityRevision, *world);
-			if(sourceRevision == city.m_CityRevision && (builtRevision == requestedRevision
+			if(!enclosureChanged && sourceRevision == city.m_CityRevision && (builtRevision == requestedRevision
 				|| (job && !job->finished.load(std::memory_order_acquire)))) return;
 			developments = city.m_City.developments;
-			if(sourceRevision != city.m_CityRevision)
+			if(enclosureChanged || sourceRevision != city.m_CityRevision)
 			{
 				sourceRevision = city.m_CityRevision;
-				if(!requestedRevision || geometryEmpire != city.m_City.controllingEmpire
+				if(enclosureChanged || !requestedRevision || geometryEmpire != city.m_City.controllingEmpire
 					|| !SameGeometry(geometryState, developments))
 				{
 					geometryState = developments; geometryEmpire = city.m_City.controllingEmpire;
+					geometryDomes = domes; enclosure = pressure;
 					++requestedRevision;
 					if(job) job->cancelled.store(true, std::memory_order_release);
 				}
@@ -1065,6 +1061,7 @@ struct DaLegacyCity::Runtime
 			{
 				job.reset(new Job);
 				job->revision = requestedRevision; job->developments = developments;
+				job->domes = domes; job->enclosure = pressure;
 				job->previous = buildings; job->sites = sites;
 				if(world) job->worldId = world->Id();
 				QThreadPool::globalInstance()->start(new BuildTask(job), 0);
@@ -1075,7 +1072,7 @@ struct DaLegacyCity::Runtime
 			// Authority still needs collision/path data immediately. Its work is
 			// independent of the scene replica and never holds the city state lock.
 			const auto previous = buildings;
-			Build(developments, world, previous, nullptr, false);
+			Build(developments, world, previous, nullptr, false, pressure, domes);
 			builtRevision = requestedRevision; ++revision;
 		}
 		QHash<quint32, const AuLegacyCity::Development*> latest;
@@ -1143,7 +1140,7 @@ struct DaLegacyCity::Runtime
 						}
 						chunk.vertices.texCoordShine.append(inset.x() + vertex.uv.x() * (1 - 2 * inset.x()));
 						chunk.vertices.texCoordShine.append(inset.y() + vertex.uv.y() * (1 - 2 * inset.y()));
-						chunk.vertices.texCoordShine.append(0);
+						chunk.vertices.texCoordShine.append(batch.shininess);
 					}
 				result->draws.append(std::move(chunk));
 			}
@@ -1151,13 +1148,100 @@ struct DaLegacyCity::Runtime
 		return result;
 	}
 
+	void AppendEnclosure(Building& building, const QVector<AuLegacyCity::Development>& developments,
+		const DaWorldLL& world, int pressure, const QVector<AuLegacyCity::Development>& domes)
+	{
+		using namespace AuLegacyBd::Geometry;
+		const auto eligible = [&](const AuLegacyCity::Development& site) {
+			if(!site.constructed || site.demolished) return false;
+			return site.industryId == 2 ? site.constructionProcessId == 7 && site.components.isEmpty()
+				: pressure && site.industryId != 129 && !AuLegacyCity::InsideBiodome(world, site.location, domes);
+		};
+		const auto& dev = building.state;
+		if(!eligible(dev)) return;
+		const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+		if(!catalogue) return;
+		AuMatrix4x4 placement;
+		world.BuildingConstructionTransform(world.LocOfLL(dev.location, dev.altitudeMSL), dev.facingRadians,
+			nullptr, AuPoint(), placement);
+		const auto footprint = [&](const AuLegacyCity::Development& site) {
+			EnclosureSite result; result.owner = site.id;
+			const auto* recipe = catalogue->ConstructionProcess(AuLegacyCity::ConstructionProcessId(site.constructionProcessId));
+			if(!recipe) return result;
+			const double margin = site.industryId == 2 ? 16.4041994750656 : 1.64041994750656;
+			const double x = (site.industryId == 2 ? site.roadWidthMeters * .5 : recipe->buildRadius) * FeetPerMeter() + margin;
+			const double y = (site.industryId == 2 ? site.roadLengthMeters * .5 : recipe->buildRadius) * FeetPerMeter() + margin;
+			AuMatrix4x4 sitePlacement;
+			world.BuildingConstructionTransform(world.LocOfLL(site.location, site.altitudeMSL), site.facingRadians,
+				nullptr, AuPoint(), sitePlacement);
+			const auto toLocal = placement.Inverse() * sitePlacement;
+			for(const auto& point : {AuPoint(-x, -y, 0), AuPoint(-x, y, 0), AuPoint(x, y, 0), AuPoint(x, -y, 0)})
+			{
+				const auto local = toLocal.Project(point); result.boundary.append(QPointF(local.x, local.y));
+			}
+			return result;
+		};
+		EnclosureOptions options; options.site = footprint(dev);
+		options.road = dev.industryId == 2; options.undersea = pressure == 2;
+		options.roofHeight = qMax(48, (MaximumDesignDeck(dev.industryId, dev.materialId) + 3) * 8);
+		const auto reach = [catalogue](const AuLegacyCity::Development& site) {
+			if(site.industryId == 2) return std::hypot(site.roadWidthMeters * .5 + 5, site.roadLengthMeters * .5 + 5) * FeetPerMeter();
+			const auto* recipe = catalogue->ConstructionProcess(AuLegacyCity::ConstructionProcessId(site.constructionProcessId));
+			return recipe ? std::sqrt(2.0) * (recipe->buildRadius + .5) * FeetPerMeter() : 0.0;
+		};
+		for(const auto& other : developments)
+		{
+			if(other.id == dev.id || !eligible(other)) continue;
+			// Avoid projecting the opposite side of a curved world into this site.
+			const double range = 2 * (reach(dev) + reach(other));
+			if(world.LocOfLL(dev.location, dev.altitudeMSL).Distance2(world.LocOfLL(other.location, other.altitudeMSL)) > range * range) continue;
+			options.neighbors.append(footprint(other));
+		}
+		const auto grade = [&dev](const QPointF& xy) {
+			return dev.industryId == 2 ? dev.roadStartAltitudeMSL - dev.altitudeMSL
+				+ (dev.roadEndAltitudeMSL - dev.roadStartAltitudeMSL)
+				* qBound(0.0, xy.y() / ((dev.roadLengthMeters + 10) * FeetPerMeter()) + .5, 1.0) : 0.0;
+		};
+		options.project = [&world, &dev, placement, grade](const QPointF& xy, double height) {
+			AuGlobeLL ll;
+			if(!world.LLOfLoc(ll, placement.Project(AuPoint(xy.x(), xy.y(), 0)))) return QVector3D();
+			const auto p = placement.UnProject(world.LocOfLL(ll, dev.altitudeMSL + grade(xy) + height));
+			return QVector3D(float(p.x), float(p.y), float(p.z));
+		};
+		options.altitude = [&dev, grade](const QPointF& xy) { return dev.altitudeMSL + grade(xy); };
+		options.terrain = [this, &world, &dev, placement, grade](const QPointF& xy) {
+			AuGlobeLL ll;
+			if(!world.LLOfLoc(ll, placement.Project(AuPoint(xy.x(), xy.y(), 0)))) return 0.0;
+			WORLDTEX_TYPE pavement = WORLDTEX_Count; AuTime newest;
+			double altitude = world.VirginTerrainAltitudeMSL(ll, pavement, newest);
+			int leveled = 0, grass = 0; bool rocks = false, shrubs = false, trees = false;
+			if(pavement == WORLDTEX_Count) altitude = AdjustTerrain(world, altitude, ll, leveled, rocks, grass, shrubs, trees, pavement);
+			return altitude - dev.altitudeMSL - grade(xy);
+		};
+		auto frame = BuildEnclosure(options);
+		if(frame.batches.isEmpty()) return;
+		const bool empty = building.mesh.batches.isEmpty();
+		for(int axis = 0; axis < 3; ++axis)
+		{
+			building.mesh.minimum[axis] = empty ? frame.minimum[axis] : qMin(building.mesh.minimum[axis], frame.minimum[axis]);
+			building.mesh.maximum[axis] = empty ? frame.maximum[axis] : qMax(building.mesh.maximum[axis], frame.maximum[axis]);
+		}
+		building.mesh.batches += frame.batches; building.mesh.warnings += frame.warnings;
+	}
+
 	void Build(const QVector<AuLegacyCity::Development>& developments, const DaWorldLL* world,
-		const QVector<Building>& previous, const std::atomic<bool>* cancelled, bool prepareRender)
+		const QVector<Building>& previous, const std::atomic<bool>* cancelled, bool prepareRender,
+		int pressure, const QVector<AuLegacyCity::Development>& domes)
 	{
 		QHash<quint32, const Building*> old;
 		QVector<AuLegacyCity::Development> oldStates;
 		for(const auto& building : previous) { old.insert(building.state.id, &building); oldStates.append(building.state); }
 		const bool reuseTerrainGeometry = SameTerrainSites(oldStates, developments);
+		const bool hasEnclosures = prepareRender && (pressure || std::any_of(developments.cbegin(), developments.cend(),
+			[](const AuLegacyCity::Development& dev) { return dev.industryId == 2 && dev.constructionProcessId == 7; }));
+		QByteArray enclosureKey; QDataStream enclosureStream(&enclosureKey, QIODevice::WriteOnly);
+		enclosureStream.setVersion(QDataStream::Qt_4_1); enclosureStream << qint32(pressure);
+		for(const auto& dome : domes) enclosureStream << dome.location << dome.altitudeMSL << dome.biodomeRadiusMeters;
 		QHash<quint16, QImage> atlases;
 		QHash<QString, QImage> textures;
 		buildings.clear();
@@ -1166,6 +1250,7 @@ struct DaLegacyCity::Runtime
 			if(cancelled && cancelled->load(std::memory_order_acquire)) return;
 			const auto found = old.constFind(dev.id);
 			if(found != old.cend() && SameBuildingGeometry((*found)->state, dev)
+				&& (*found)->enclosureKey == enclosureKey && (!hasEnclosures || reuseTerrainGeometry)
 				&& ((dev.industryId != 129 && dev.industryId != 2) || reuseTerrainGeometry)
 				&& (!prepareRender || (*found)->render))
 			{
@@ -1176,6 +1261,7 @@ struct DaLegacyCity::Runtime
 			if(!design && dev.designId) continue; // Loader rejects unknown authored designs.
 			Building building;
 			building.state = dev;
+			building.enclosureKey = enclosureKey;
 			if(design && dev.constructed && !dev.demolished) building.stations = BuildingStations(*design, dev);
 			AuLegacyBd::Geometry::Options options;
 			options.minimumDeck = dev.minimumDeck; options.maximumDeck = dev.maximumDeck;
@@ -1311,6 +1397,7 @@ struct DaLegacyCity::Runtime
 					QString error;
 					if(!building.paths.Build(*design, pathOptions, error)) building.mesh.warnings.append(error);
 				}
+			if(prepareRender && world) AppendEnclosure(building, developments, *world, pressure, domes);
 			AuLegacyShip::Rendering::Mesh collisionMesh;
 			for(const auto& batch : building.mesh.batches)
 			{
@@ -1413,10 +1500,10 @@ struct DaLegacyCity::Runtime
 
 void DaLegacyCity::Runtime::BuildTask::run()
 {
-	// Only roads and biodomes need world projection/terrain during generation.
+	// Roads, biodomes and enclosure frames need world projection/terrain.
 	// Clone it on the worker under the existing ether lifetime guard. No task
 	// retains a live city, runtime or world pointer after that brief snapshot.
-	bool needsWorld = false;
+	bool needsWorld = job->enclosure != 0;
 	for(const auto& dev : job->developments) needsWorld |= dev.industryId == 2 || dev.industryId == 129;
 	AuEther ether("Legacy city geometry worker");
 	DaWorldLL* world = nullptr;
@@ -1436,7 +1523,7 @@ void DaLegacyCity::Runtime::BuildTask::run()
 		Runtime result;
 		result.sites = job->sites;
 		result.BuildSiteIndex();
-		result.Build(job->developments, world, job->previous, &job->cancelled, true);
+		result.Build(job->developments, world, job->previous, &job->cancelled, true, job->enclosure, job->domes);
 		job->result.swap(result.buildings);
 		job->succeeded = !job->cancelled.load(std::memory_order_acquire);
 	}
@@ -2220,7 +2307,7 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 	dev.selectedManufacturingRecipe = manufacturingRecipe;
 	dev.manufacturingCitizenEnabled = manufactureCitizen;
 	ConstructedDecks(dev);
-	InitializeConstruction(dev, SitePreparationLabor(*world,dev), ConstructionEnvironment(*world,dev));
+	InitializeConstruction(dev, SitePreparationLabor(*world,dev), AuLegacyCity::ConstructionEnvironment(*world,dev));
 	QWriteLocker lock(&m_CityLock);
 	if(m_City.developments.size() >= AuLegacyCity::MaximumDevelopments)
 	{ error = QStringLiteral("The city has reached its development limit."); return false; }
@@ -2288,7 +2375,7 @@ bool DaLegacyCity::ExtendConstruction(DaPerson& person, quint32 id, quint8 level
 		dev.targetLevels = quint8(dev.completedLevels+levels);
 		dev.selectedManufacturingRecipe = manufacturingRecipe;
 		dev.manufacturingCitizenEnabled = manufactureCitizen;
-		InitializeConstruction(dev,SitePreparationLabor(*world,dev),ConstructionEnvironment(*world,dev));
+		InitializeConstruction(dev,SitePreparationLabor(*world,dev),AuLegacyCity::ConstructionEnvironment(*world,dev));
 		return ReplaceFinishedDevelopment(dev,expectedProcess,dev.completedLevels,error);
 	}
 	error = QStringLiteral("The development no longer exists."); return false;
@@ -2434,7 +2521,7 @@ bool DaLegacyCity::ChangeRoadConstruction(DaPerson& person, quint32 id, quint8 p
 		dev.constructionProcessId=process; dev.materialId=process==3 ? 23 : 76;
 		dev.completedLevels=0; dev.targetLevels=1; dev.constructed=false; dev.halted=false;
 		const quint32 pavement=AuLegacyCityCatalogue::RoadPavementQuantity(dev.roadLengthMeters*FeetPerMeter(),dev.roadWidthMeters*FeetPerMeter());
-		InitializeConstruction(dev,qMin(quint32(65535),(pavement+1)/2+4),ConstructionEnvironment(*world,dev));
+		InitializeConstruction(dev,qMin(quint32(65535),(pavement+1)/2+4),AuLegacyCity::ConstructionEnvironment(*world,dev));
 		return ReplaceFinishedDevelopment(dev,expectedProcess,expectedLevels,error);
 	}
 	error=QStringLiteral("The road no longer exists."); return false;
@@ -2454,7 +2541,7 @@ AuLegacyCity::CitizenConstructionFacts DaLegacyCity::GatherCitizenConstructionFa
 	{ facts.blocked = true; return facts; }
 	facts.blocked = !materialsOnly && ConstructionThreat(*world, Id(), development, state.controllingEmpire) != 0;
 	facts.ringworld = OnRingworld();
-	facts.environment = ConstructionEnvironment(*world, development);
+	facts.environment = AuLegacyCity::ConstructionEnvironment(*world, development);
 	AuGlobeLL cityLL;
 	if(world->LLOfLoc(cityLL, Location()))
 		world->QueryNaturalResources(facts.natural, world->ResourceZone(cityLL.Longitude()));
@@ -2623,7 +2710,7 @@ bool DaLegacyCity::OperateConstruction(DaPerson* person, quint32 id, bool fetch,
 	AuGlobeLL cityLL;
 	if(!world->LLOfLoc(cityLL,Location())) return false;
 	AuZoneResource natural; world->QueryNaturalResources(natural,world->ResourceZone(cityLL.Longitude()));
-	const quint8 environment = ConstructionEnvironment(*world,*original);
+	const quint8 environment = AuLegacyCity::ConstructionEnvironment(*world,*original);
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn(); if(!catalogue) return false;
 	const bool ringworld = OnRingworld();
 	quint16 completionRecipe = 0;
@@ -3112,7 +3199,7 @@ DaAtom* DaLegacyCity::SightTarget(const DaAtom* observer, const AuPoint& eye,
 		for(const auto& batch : building.mesh.batches)
 		{
 			// Sight uses visible triangles; walking ramps are movement proxies.
-			if(batch.collisionOnly || batch.doorId || batch.empireFlag || batch.depthOnly || batch.surfaceOverlay) continue;
+			if(batch.collisionOnly || batch.doorId || batch.empireFlag || batch.depthOnly || batch.surfaceOverlay || batch.enclosure) continue;
 			for(int i=0; i+2<batch.vertices.size(); i+=3)
 			{
 				const AuTriangle triangle(Point(batch.vertices[i].position), Point(batch.vertices[i+1].position), Point(batch.vertices[i+2].position));
@@ -3238,8 +3325,8 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 	if(!world || !g_Au.IsLegacyGeneration()) return;
 	// EnclosureNeeded 0x28f190 depends on the city's origin and world, without
 	// a power gate. Resolve these world properties before taking the mesh lock.
-	const bool undersea=world->Hydrographics() && world->AltitudeMSL(Transform().Translation())<=-32;
-	const int enclosure=undersea ? 2 : world->HasBreathableAtmosphere() ? 0 : 1;
+	const int enclosure = AuLegacyCity::EnclosureNeeded(*world, Transform().Translation());
+	const bool undersea = enclosure == 2;
 	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
 	bool hasFarm=false;
 	for(const auto& building : m_Runtime->buildings)
@@ -3918,8 +4005,7 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 	{ QReadLocker stateLock(&m_CityLock); flags = m_City.flags; powered = m_City.capacitor > 0; }
 	powered = powered || world->AtomType() == ATOM_WorldRingSection;
 	// DaCity::EnclosureNeeded 0x28f190, also used by CreateDeviceObjects.
-	const bool enclosureNeeded = (world->Hydrographics() && world->AltitudeMSL(Transform().Translation()) <= -32)
-		|| !world->HasBreathableAtmosphere();
+	const bool enclosureNeeded = AuLegacyCity::EnclosureNeeded(*world, Transform().Translation()) != 0;
 	const bool terrainReady = ari.mm.LegacyTerrainReady(world->Id());
 	const bool decorationsReady = ari.mm.LegacyDecorationsReady(world->Id());
 	QMutexLocker lock(&m_Runtime->lock);

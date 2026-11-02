@@ -35,6 +35,7 @@ struct Batch
 	bool stairs = false;
 	bool collisionOnly = false;
 	bool noCollision = false; // Streetlights remain visible without blocking movement.
+	bool enclosure = false; // City frame, not an authored building aiming surface.
 	bool depthOnly = false; // Original AuBuildingTri window effect 4: terrain mask.
 	bool surfaceOverlay = false; // Road paint/pavement follows terrain; visual only.
 	bool empireFlag = false;
@@ -45,6 +46,7 @@ struct Batch
 	QString textureFile;
 	QVector4D tint = QVector4D(1, 1, 1, 1);
 	float selfIllumination = 0;
+	float shininess = 0;
 };
 
 struct FloorState
@@ -99,6 +101,24 @@ using RoadFixtureHeight = std::function<RoadFixtureGround(const QVector3D&)>;
 // Counterclockwise convex occluders preserve later sites' pavement ownership.
 AUDATA_DLL Mesh BuildProcedural(const AuLegacyCity::Development& development,
 	const RoadFixtureHeight& roadFixtureHeight = {}, const QVector<QPolygonF>& roadSurfaceOccluders = {});
+struct EnclosureSite
+{
+	quint32 owner = 0;
+	QPolygonF boundary; // In the receiving building's local XY frame.
+};
+struct EnclosureOptions
+{
+	EnclosureSite site;
+	QVector<EnclosureSite> neighbors;
+	bool road = false, undersea = false;
+	double roofHeight = 48;
+	// Project onto the original world's curved altitude surface. Heights are
+	// relative to this site's stored MSL, including a road's interpolated grade.
+	std::function<QVector3D(const QPointF&, double)> project;
+	std::function<double(const QPointF&)> terrain;
+	std::function<double(const QPointF&)> altitude;
+};
+AUDATA_DLL Mesh BuildEnclosure(const EnclosureOptions& options);
 AUDATA_DLL QString MaterialAtlas(quint16 originalCommodity);
 // Original 18-entry terrain pavement palette. These slots are
 // used only in Legacy universes; they are not modern WORLDTEX material IDs.

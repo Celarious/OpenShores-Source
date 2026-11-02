@@ -14,6 +14,7 @@
 #include "auid.h"
 #include "aulegacybd.h"
 #include "aulegacycitycatalogue.h"
+#include "aulegacycityenclosure.h"
 #include "autoolbutton.h"
 #include "auview.h"
 #include "daperson.h"
@@ -130,7 +131,7 @@ bool UnderConstruction(const AuLegacyCityProtocol::Entry& entry)
 	return entry.targetLevels > entry.completedLevels || entry.siteLaborRemaining || entry.levelLaborRemaining;
 }
 
-quint8 ConstructionEnvironment(bool& flammableMaterialsAllowed)
+quint8 ConstructionEnvironment(bool& flammableMaterialsAllowed, quint8 industry)
 {
 	flammableMaterialsAllowed = true; quint8 environment = 1;
 	auto* view = auApp->Frame() ? auApp->Frame()->View() : nullptr; if(!view) return environment;
@@ -139,10 +140,14 @@ quint8 ConstructionEnvironment(bool& flammableMaterialsAllowed)
 		if(const auto* world = dynamic_cast<const DaWorldLL*>(person->FindParentPlanetInEnv()))
 		{
 			flammableMaterialsAllowed = world->OrbitZone() != OZONE_Inferno;
-			if(!world->HasBreathableAtmosphere()) environment = 2;
 			AuMatrix4x4 transform;
-			if(person->GetTransformRelativeToParent(transform, world) && world->AltitudeMSL(transform.Translation()) < -32)
-				environment = 4;
+			if(person->GetTransformRelativeToParent(transform, world))
+			{
+				AuLegacyCity::Development site; site.industryId = industry;
+				world->LLOfLoc(site.location, transform.Translation());
+				site.roadStartAltitudeMSL = site.roadEndAltitudeMSL = world->AltitudeMSL(transform.Translation());
+				environment = AuLegacyCity::ConstructionEnvironment(*world, site);
+			}
 		}
 	view->UnlockSceneAtom(); return environment;
 }
@@ -376,7 +381,7 @@ void AuLegacyCityConstruction::DescribeRecipe()
 {
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn(); if(!catalogue || !m_Process) return;
 	const auto* process = catalogue->ConstructionProcess(AuLegacyCity::ConstructionProcessId(m_Process)); if(!process) return;
-	bool flammable = true; const quint8 environment = ConstructionEnvironment(flammable);
+	bool flammable = true; const quint8 environment = ConstructionEnvironment(flammable, m_Industry);
 	const quint16 material = m_Industry == 2 ? (m_Process == 3 ? 23 : 76) : m_Material;
 	m_LevelLimit = catalogue->ConstructionLevelLimit(process->id, AuLegacyCity::CommodityId(material), flammable);
 	// AuTabBuild::ListConstructionMaterials, 2016 executable 0x2c13b0.
