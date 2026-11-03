@@ -6383,7 +6383,19 @@ void AuDesignerView::SetCursor(DaPerson* sceneAtom)
 	bool grab = false;
 	if(Command())
 	{
+#if defined(Q_OS_MACOS)
+		// Per-frame scene cursor updates must not replace the cursor over UI windows.
+		if(QWidget::mouseGrabber() == this || QApplication::widgetAt(QCursor::pos()) == this)
+		{
+			// Sidebar icons and their submenus are drawn inside the scene widget.
+			if(m_ViewButtonAt != AuViewButton::VB_Invalid)
+				setCursor(Qt::ArrowCursor);
+			else
+				Command()->SetCursor(m_tCamera, sceneAtom, m_MouseLast);
+		}
+#else
 		Command()->SetCursor(m_tCamera, sceneAtom, m_MouseLast);
+#endif
 		m_Cursor = CURSOR_Unknown;
 	}
 	else if(IsDesignMode())

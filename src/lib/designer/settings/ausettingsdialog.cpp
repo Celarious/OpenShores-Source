@@ -20,6 +20,11 @@
 #include <QKeyEvent>
 #include <QStackedLayout>
 #include <QTabBar>
+#if defined(Q_OS_MACOS)
+#include <QScreen>
+#include <QScrollArea>
+#include <QSizeGrip>
+#endif
 
 AuSettingsDialog::AuSettingsDialog(bool showF12, QWidget* parent) : AuDialog(parent)
 {
@@ -114,13 +119,43 @@ AuSettingsDialog::AuSettingsDialog(bool showF12, QWidget* parent) : AuDialog(par
 			"Program settings affect the way the program runs."
 			"</html>"));
 
+#if defined(Q_OS_MACOS)
+	// Each page can scroll independently without its minimum size forcing the
+	// entire dialog beyond the display. Keep the tab bar outside the viewport.
+	for(int i=0; i<m_Pages->count(); i++)
+	{
+		QWidget* page = m_Pages->widget(i);
+		m_Pages->removeWidget(page);
+		QScrollArea* scroll = new QScrollArea(this);
+		scroll->setWidgetResizable(true);
+		scroll->setFrameShape(QFrame::NoFrame);
+		scroll->setWidget(page);
+		m_Pages->insertWidget(i, scroll);
+	}
+	m_Pages->setCurrentIndex(m_Tabs->currentIndex());
+	m_Tabs->setUsesScrollButtons(true);
+	m_Tabs->setElideMode(Qt::ElideRight);
+#endif
+
 	// Layout the widgets.
 	QGridLayout* lay = new QGridLayout();
 	lay->addWidget(m_Tabs, 0, 0);
 	lay->addLayout(m_Pages, 1, 0);
+#if defined(Q_OS_MACOS)
+	lay->addWidget(new QSizeGrip(this), 2, 0, Qt::AlignRight);
+	lay->setRowStretch(1, 1);
+#endif
 	lay->setMargin(2);
 	lay->setSpacing(2);
 	setAuDlgLayout(lay);
+#if defined(Q_OS_MACOS)
+	// Use logical screen coordinates, including on Retina displays.
+	QScreen* targetScreen = parent ? parent->screen() : screen();
+	QSize initialSize(1000, 760);
+	if(targetScreen)
+		initialSize = initialSize.boundedTo(targetScreen->availableGeometry().size() - QSize(40, 40));
+	resize(initialSize);
+#endif
 }
 
 AuSettingsDialog::~AuSettingsDialog()

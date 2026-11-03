@@ -11,6 +11,11 @@
 #include "audockwidget.h"
 #include "auglobal.h"
 #include "aushipment.h"
+#if defined(Q_OS_MACOS)
+#include <QScrollArea>
+#include <QSizeGrip>
+#include <QVBoxLayout>
+#endif
 
 class AuBldBroker;
 class AuBldCapitol;
@@ -145,7 +150,25 @@ public:
 	{
 		SetWikiTopic("Category:Colonization");
 		m_Labor = new AuBld(this);
+#if defined(Q_OS_MACOS)
+		// Keep large building pages reachable without imposing their minimum size on the dock.
+		QScrollArea* scroll = new QScrollArea(this);
+		scroll->setWidgetResizable(true);
+		scroll->setFrameShape(QFrame::NoFrame);
+		scroll->setWidget(m_Labor);
+		QWidget* contents = new QWidget(this);
+		QVBoxLayout* layout = new QVBoxLayout(contents);
+		layout->setContentsMargins(0, 0, 0, 0);
+		layout->setSpacing(0);
+		layout->addWidget(scroll);
+		QSizeGrip* grip = new QSizeGrip(contents);
+		layout->addWidget(grip, 0, Qt::AlignRight);
+		grip->setVisible(isFloating());
+		connect(this, &QDockWidget::topLevelChanged, grip, &QWidget::setVisible);
+		setWidget(contents);
+#else
 		setWidget(m_Labor);
+#endif
 
 		int dockSides = g_Au.Settings().readNumEntry("Dock/BuildingAreas", (int)allowedAreas());
 		setAllowedAreas((Qt::DockWidgetAreas)dockSides);

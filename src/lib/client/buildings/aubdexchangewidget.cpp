@@ -40,7 +40,12 @@ AuBdExchangeWidget::AuBdExchangeWidget(QWidget* parent) : QTableWidget(0,10, par
 
 	QHeaderView* hhdr = horizontalHeader();
 	hhdr->setSectionResizeMode(0, QHeaderView::Interactive);
+#if defined(Q_OS_MACOS)
+	// Stretch sections cannot be resized by dragging the header divider.
+	hhdr->setSectionResizeMode(1, QHeaderView::Interactive);
+#else
 	hhdr->setSectionResizeMode(1, QHeaderView::Stretch);
+#endif
 	hhdr->setSectionResizeMode(2, QHeaderView::Interactive);
 	hhdr->setSectionResizeMode(3, QHeaderView::Interactive);
 	hhdr->setSectionResizeMode(4, QHeaderView::Interactive);

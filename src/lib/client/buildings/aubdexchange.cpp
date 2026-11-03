@@ -77,6 +77,9 @@ AuBdExchange::AuBdExchange(QWidget* parent) : QWidget(parent)
 
 	m_DesignThumb = new AuPictureWidget(false, this);
 	m_DesignThumb->SetScale(scale);
+#if defined(Q_OS_MACOS)
+	m_DesignThumb->SetFitToView(true);
+#endif
 	connect(m_DesignThumb, SIGNAL(ScaleChanged(float)), SLOT(ImageScaleChanged(float)));
 
 	m_DesignReport = new QTextBrowser(this);
@@ -197,8 +200,10 @@ AuBdExchange::AuBdExchange(QWidget* parent) : QWidget(parent)
 
 	for(int col=0; col<m_Exchange->columnCount(); col++)
 	{
+#if !defined(Q_OS_MACOS)
 		if(col == 1)
 			continue;	// skip the automatically sized column
+#endif
 		int colwid = g_Au.Settings().readNumEntry(QString("Widget/BdExchange/ColumnWid%1").arg(col),-123);
 		if(colwid != -123)
 			m_Exchange->setColumnWidth(col, colwid);
