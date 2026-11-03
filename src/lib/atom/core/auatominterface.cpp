@@ -9465,6 +9465,9 @@ void AuAtomInterface::SetHairStyle(AuHairStyle::STYLE haircut, AuHairStyle::SHAV
 
 void AuAtomInterface::SetDNA(const AuDNA& dna)
 {
+	if(g_Au.IsLegacyGeneration())
+		return;
+
 	DaPerson* person = LockAvatar();
 	if(person)
 	{

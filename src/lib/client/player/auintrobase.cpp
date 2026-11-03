@@ -364,8 +364,15 @@ void AuIntroAvatarWidget::Clear()
 	}
 	m_Name->hide();
 	m_NewDNA3->show();
-	m_NewDNA4->show();
+	UpdateGeneration();
 	SetCurrent(false);
+}
+
+void AuIntroAvatarWidget::UpdateGeneration()
+{
+	const bool allowDNA4 = !g_Au.IsLegacyGeneration();
+	m_NewDNA4->setEnabled(allowDNA4);
+	m_NewDNA4->setVisible(allowDNA4 && m_UnitId.IsNull());
 }
 
 void AuIntroAvatarWidget::SetAvatar(const AuId& id, const QString& name, const AuDNABase& dna, AuDNABase::CHROMATID chroma,
@@ -521,6 +528,9 @@ void AuIntroAvatarWidget::SelectDNA3()
 
 void AuIntroAvatarWidget::SelectDNA4()
 {
+	if(g_Au.IsLegacyGeneration())
+		return;
+
 	auApp->StopClientSounds();
 	emit NewDNA4(m_UnitIndex);
 }
@@ -939,6 +949,9 @@ void AuIntroChooseAvatar::AvatarNewDNA4(int index)
 
 void AuIntroChooseAvatar::UpdateGL()
 {
+	for(int av=0; av<6; av++)
+		m_Avatar[av]->UpdateGeneration();
+
 	if(m_AvatarSampleRendered >= 2)
 		m_AvatarSample->Animate();
 	else
@@ -1350,6 +1363,9 @@ void AuIntroSoloAvatar::AvatarNewDNA4(int index)
 
 void AuIntroSoloAvatar::UpdateGL()
 {
+	for(int av=0; av<6; av++)
+		m_Avatar[av]->UpdateGeneration();
+
 	if(m_AvatarSampleRendered >= 2)
 		m_AvatarSample->Animate();
 	else

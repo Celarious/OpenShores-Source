@@ -255,7 +255,8 @@ void AuBioBiology::UpdateContents()
 	lbhandedness->setText(handedness);
 	lbgender->setText(gender);
 	pbnamebaby->setVisible(preg);
-	m_UpgradeDNA->setVisible(dnaVersion == 3);
+	m_UpgradeDNA->setEnabled(!g_Au.IsLegacyGeneration());
+	m_UpgradeDNA->setVisible(dnaVersion == 3 && !g_Au.IsLegacyGeneration());
 	lbweight->setText(weight);
 	lbstam->setText(sstam);
 	lbhunger->setText(shunger);
@@ -272,6 +273,9 @@ void AuBioBiology::UpdateContents()
 
 void AuBioBiology::UpgradeDNA()
 {
+	if(g_Au.IsLegacyGeneration())
+		return;
+
 	QString lastFile = g_Au.Settings().readEntry("Settings/LastDNAFile", "");
 	if(lastFile.isEmpty())
 		lastFile = QDir::currentPath();

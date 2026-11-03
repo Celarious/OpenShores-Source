@@ -7006,7 +7006,8 @@ DaNpc* DaWorldLL::CreateIndigenous(NPC_ROLE role, GROWTHSTAGE stage, const AuSpe
 	// Create an indigenous native citizen.
 	AuDNABase::CHROMATID chroma = (AuDNABase::CHROMATID)g_Au.Dice().Roll(1,2,-1);
 	HANDEDNESS hand = (HANDEDNESS)g_Au.Dice().Roll(1,2,-1);
-	DaNpc* ind = new DaNpc(role, species, chroma, hand, g_Au.Dice().RandomPersonName());
+	AuSpecies indigenousSpecies = g_Au.IsLegacyGeneration() ? species.ForGameGeneration() : species;
+	DaNpc* ind = new DaNpc(role, indigenousSpecies, chroma, hand, g_Au.Dice().RandomPersonName());
 	ind->SetHomeWorld(this);
 	if(stage == Juvenile)
 		ind->InitTimeToFullGrown();
@@ -7037,7 +7038,7 @@ DaNpc* DaWorldLL::CreateIndigenous(NPC_ROLE role, GROWTHSTAGE stage, const AuSpe
 	ind->TickTock();
 
 	if(g_Au.m_LogMessages & (LOG_AtomCreate|LOG_AnimalEncounter))
-		qDebug() << "DaWorldLL::CreateIndigenous" << Id() << Name() << "dna" << species.Description()
+		qDebug() << "DaWorldLL::CreateIndigenous" << Id() << Name() << "dna" << indigenousSpecies.Description()
 			<< "indigenous" << ind->Id() << ind->Name() << "role" << role;
 	return ind;
 }

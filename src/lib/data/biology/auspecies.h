@@ -64,6 +64,9 @@ public:	// Methods
 	// Creates DNA from this species without randomizing.
 	AuDNABase* CreateTypicalDNA() const;
 
+	// Uses the current generation's default human when this population species is unavailable or unsupported.
+	AuSpecies ForGameGeneration() const;
+
 	QString Description() const;
 
 	ECOROLE EcoRole() const;

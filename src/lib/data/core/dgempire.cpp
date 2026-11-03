@@ -8,7 +8,6 @@
 //
 #include "aucity.h"
 #include "auglobal.h"
-#include "audna.h"
 #include "austylesheet.h"
 #include "dhdna.h"
 #include "hashpack.h"
@@ -2188,13 +2187,7 @@ AuId DgEmpire::CityFounder(const AuId& cityId) const
 
 AuSpecies DgEmpire::CapitolSpecies() const
 {
-	if(!m_capitolSpecies.IsNull())
-		return m_capitolSpecies;
-
-	// Return default human species.
-	AuDNA dna;
-	dna.InitDefaultHuman();
-	return dna.Species();
+	return m_capitolSpecies.ForGameGeneration();
 }
 
 void DgEmpire::ListIndustryPatents(AuKnownPatents& patents, INDUSTRYID industryId, const DgData& gd) const
@@ -2620,10 +2613,7 @@ AuSpecies DgEmpireHash::CapitolSpecies(quint32 empireId) const
 	if(it != cend())
 		return (*it).second.CapitolSpecies();
 
-	// Return default human species.
-	AuDNA dna;
-	dna.InitDefaultHuman();
-	return dna.Species();
+	return AuSpecies().ForGameGeneration();
 }
 
 AuSpecies DgEmpireHash::RandomSpecies() const
@@ -2637,10 +2627,7 @@ AuSpecies DgEmpireHash::RandomSpecies() const
 			return (*ei).second.CapitolSpecies();
 	}
 
-	// Return default human species.
-	AuDNA dna;
-	dna.InitDefaultHuman();
-	return dna.Species();
+	return AuSpecies().ForGameGeneration();
 }
 
 AuBdPref DgEmpireHash::PreferredBlueprints(quint32 empireId, INDUSTRYID industryId) const

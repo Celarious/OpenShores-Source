@@ -104,6 +104,7 @@ public:
 	virtual ~AuIntroAvatarWidget();
 
 	void Clear();
+	void UpdateGeneration();
 
 	// Can be 0.
 	inline const AuDNABase* DNA() const

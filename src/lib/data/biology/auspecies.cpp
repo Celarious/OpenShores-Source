@@ -7,6 +7,7 @@
 #include "auspecies.h"
 //
 #include "audna.h"
+#include "auglobal.h"
 #include "dgdata.h"
 #include "dhdna.h"
 
@@ -74,6 +75,24 @@ AuDNABase* AuSpecies::CreateDNA() const
 		return dna4.Clone();
 	}
 	return 0;
+}
+
+AuSpecies AuSpecies::ForGameGeneration() const
+{
+	if(g_Au.IsLegacyGeneration())
+	{
+		DhDNA dna;
+		if(dna.FromSpecies(*this))
+			return *this;
+		dna.InitDefaultHuman();
+		return dna.Species();
+	}
+	if(!IsNull())
+		return *this;
+
+	AuDNA dna;
+	dna.InitDefaultHuman();
+	return dna.Species();
 }
 
 QString AuSpecies::Name() const

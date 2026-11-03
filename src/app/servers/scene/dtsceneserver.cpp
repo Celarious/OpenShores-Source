@@ -2588,7 +2588,7 @@ quint8 DtSceneServer::CreateAvatar(const QString& charname, const AuDNABase* dna
 		const AuId& idHomeWorld, SCENARIO scenario, const AuTime& asteroidImpact, quint32 joinEmpire,
 		const QByteArray& joinPassCrypt)
 {
-	if(!dna)
+	if(!dna || (g_Au.IsLegacyGeneration() && dna->Version() != 3))
 		return 19;
 
 	m_idUnit = AuId(0);		// Init to null until successful.
