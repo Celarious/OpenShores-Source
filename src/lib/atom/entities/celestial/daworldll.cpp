@@ -8715,6 +8715,36 @@ void DaWorldLL::UpdateRoadOverlaySprites(const AuPoint& worldLoc)
 		}
 	}
 	UnlockGeologicalFeatures();
+	if(g_Au.IsLegacyGeneration())
+	{
+		DaAtomList cities; ListNormalSubatoms(cities);
+		for(const auto* atom : cities)
+			if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+			{
+				if(city->IsDead()) continue;
+				const auto state = city->Snapshot();
+				for(const auto& development : state.developments)
+				{
+					if(development.demolished || development.industryId != 2) continue;
+					ROADMAT material;
+					switch(development.constructionProcessId)
+					{
+					case 2: material = ROADMAT_Dirt; break;
+					case 3: material = ROADMAT_Asphalt; break;
+					case 4: material = ROADMAT_Concrete; break;
+					case 5: material = ROADMAT_GradedArea; break;
+					case 7: material = ROADMAT_Pressurized; break;
+					case 74: material = ROADMAT_Irrigation; break;
+					case 80: material = ROADMAT_Defoliant; break;
+					case 81: material = ROADMAT_Clearing; break;
+					default: continue;
+					}
+					const AuPoint center = LocOfLL(development.location, development.altitudeMSL);
+					m_OverlayRoads.insert(center, AuRoadSprite(development.IsLandscaper(), development.roadSlab,
+						material, !development.constructed || !development.components.isEmpty()));
+				}
+			}
+	}
 }
 
 void DaWorldLL::InvalidateTerrainInfoSprites() const

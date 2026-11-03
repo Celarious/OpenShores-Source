@@ -13,6 +13,8 @@
 #include "austation.h"
 #include "daworld.h"
 #include "deconstructionprocess.h"
+#include <QVector4D>
+#include <limits>
 
 #define PLANT_VAOS						4						// VAO varieties of each plant specie.
 
@@ -1073,6 +1075,11 @@ public:
 	AuGlobeVertAltVegNPave				m_Vert0;
 	AuGlobeVertAltVegNPave				m_Vert1;
 	AuGlobeVertAltVegNPave				m_Vert2;
+	// Rendering only, not part of the terrain cache format. Coordinates share
+	// one road frame per triangle: lateral feet, along feet, length, signed
+	// half width (negative for asphalt). Zero width means no road paint.
+	QVector4D m_RoadPaint[3];
+	double m_RoadPaintDistance = std::numeric_limits<double>::max();
 
 public:
 	void operator<<(QDataStream& in)
@@ -2561,7 +2568,7 @@ public:
 	// Original building interiors and stairwell depth masks precede terrain.
 	void RenderLegacyCityInteriors(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom);
-	void InvalidateBuildingOverlaySprites() const { m_OverlayBuildings.clear(); }
+	void InvalidateCityOverlaySprites() const { m_OverlayBuildings.clear(); m_OverlayRoads.clear(); }
 
 	// Renders things on the world that use the Sc shader. e.g. claim flag, road pavement.
 	virtual void RenderScWorld(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuAtomRenderInfo& ari,

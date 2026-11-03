@@ -3654,6 +3654,7 @@ AuGLTriVAO AuGlobeModelTri::VAO(AuOpenGLFunctions& GLf)
 {
 	if(!IsDoneRunning())
 		return AuGLTriVAO();
+	const bool legacyRoadPaint = g_Au.IsLegacyGeneration();
 
 	if(!m_VAO.VAO() && !m_GlobeTris.isEmpty())
 	{
@@ -3735,7 +3736,7 @@ AuGLTriVAO AuGlobeModelTri::VAO(AuOpenGLFunctions& GLf)
 			}
 
 			// Generate vertex array(s) for this object. We only need one.
-			m_VAO.CreateGL(GLf, vertices, 4);
+			m_VAO.CreateGL(GLf, vertices, legacyRoadPaint ? 5 : 4);
 			m_VAO.SetBounds(globePos, vertices, 4);
 
 			// Select vertex array to construct.
@@ -3842,7 +3843,7 @@ AuGLTriVAO AuGlobeModelTri::VAO(AuOpenGLFunctions& GLf)
 			}
 
 			// Generate vertex array(s) for this object. We only need one.
-			m_VAO.CreateGL(GLf, vertices, 4);
+			m_VAO.CreateGL(GLf, vertices, legacyRoadPaint ? 5 : 4);
 
 			// Select vertex array to construct.
 			m_VAO.SelectGLNoTime();
@@ -3879,6 +3880,19 @@ AuGLTriVAO AuGlobeModelTri::VAO(AuOpenGLFunctions& GLf)
 			delete [] city;
 		}
 
+		if(legacyRoadPaint)
+		{
+			QVector<QVector4D> paint; paint.reserve(vertices);
+			for(const auto& triangle : m_GlobeTris)
+				for(int corner = 0; corner < 3; ++corner) paint.append(triangle.m_RoadPaint[corner]);
+			static_assert(sizeof(QVector4D) == 4 * sizeof(GLfloat), "Road paint attributes must be packed float4 values.");
+			m_VAO.SelectGLNoTime();
+			GLf.glBindBuffer(GL_ARRAY_BUFFER, m_VAO.Buffer(4));
+			GLf.glBufferData(GL_ARRAY_BUFFER, paint.size() * sizeof(QVector4D), paint.constData(), GL_STATIC_DRAW);
+			GLf.glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 0, 0);
+			GLf.glBindBuffer(GL_ARRAY_BUFFER, 0);
+			m_VAO.DeselectGL();
+		}
 		// These triangles are no longer needed after the VAO has been created.
 		m_GlobeTris.clear();
 	}
@@ -3954,7 +3968,15 @@ void AuGlobeModelTri::run()
 			clonedWorld = CloneTerrainWorldSnapshot(*world, tempEther);
 		g_Au.UnlockEtheriumDelete();
 		if(clonedWorld)
+		{
 			clonedWorld->CreateAtTerrainTriangles(m_GlobeTris, m_TerrainTri, m_Killed);
+			if(g_Au.IsLegacyGeneration() && !m_Killed)
+			{
+				DaAtomList cities; clonedWorld->ListNormalSubatoms(cities);
+				for(const auto* atom : cities)
+					if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom)) city->AddRoadPaint(*clonedWorld, m_GlobeTris);
+			}
+		}
 
 		// Store result in cache.
 		/*

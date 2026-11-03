@@ -1012,8 +1012,7 @@ Mesh BuildEnclosure(const EnclosureOptions& options)
 	return std::move(out.mesh);
 }
 
-Mesh BuildProcedural(const AuLegacyCity::Development& dev, const RoadFixtureHeight& roadFixtureHeight,
-	const QVector<QPolygonF>& roadSurfaceOccluders)
+Mesh BuildProcedural(const AuLegacyCity::Development& dev, const RoadFixtureHeight& roadFixtureHeight)
 {
 	if(dev.industryId == 129) return AuLegacyBd::Biodome::Build(dev);
 	Builder out;
@@ -1046,87 +1045,6 @@ Mesh BuildProcedural(const AuLegacyCity::Development& dev, const RoadFixtureHeig
 	{
 		const float halfWidth=float(dev.roadWidthMeters*FeetPerMeter()/2)+8.f;
 		const float length=float(dev.roadLengthMeters*FeetPerMeter());
-		if(dev.constructed && dev.components.isEmpty() && !dev.roadSlab && length > 0
-			&& (dev.constructionProcessId == 3 || dev.constructionProcessId == 4))
-		{
-			// Restore the older streets' yellow dashed center line. A separate
-			// visual surface keeps its width fixed for every road width and lets
-			// asphalt be darker without changing slabs or other terrain paving.
-			const auto surfacePoint = [&](float x, float along, float lift) {
-				const float grade=float(dev.roadStartAltitudeMSL-dev.altitudeMSL
-					+(dev.roadEndAltitudeMSL-dev.roadStartAltitudeMSL)*(along/length));
-				const QVector3D p(x,along-length/2,grade);
-				return QVector3D(x,p.y(),float(roadFixtureHeight ? roadFixtureHeight(p).altitude : grade)+lift);
-			};
-			// Match the existing terrain sampler at intersections and subdivide
-			// for globe curvature. The runtime projects these vertices onto MSL.
-			// Include both paint edges and every dash endpoint in the pavement
-			// grid, so the paint cannot sink into its own surface on a slope.
-			const int sideCount=std::max(1,int(std::ceil((halfWidth-.25f)/15.f)));
-			QVector<float> columns;
-			for(int x=0;x<=sideCount;++x) columns.append(-halfWidth+(halfWidth-.25f)*x/sideCount);
-			for(int x=0;x<=sideCount;++x) columns.append(.25f+(halfWidth-.25f)*x/sideCount);
-			const int across=columns.size()-1;
-			const int alongCount=std::max(1,int(std::ceil(length/10.f)));
-			QVector<QVector3D> surface;
-			surface.reserve((across+1)*(alongCount+1));
-			for(int y=0;y<=alongCount;++y)
-				for(int x=0;x<=across;++x)
-					surface.append(surfacePoint(columns[x],std::min(length,y*10.f),.04f));
-			const auto appendSurface = [&](int slot, const QVector3D& a, const QVector3D& b,
-				const QVector3D& c, const QVector3D& d, float lift) {
-				QPolygonF polygon;
-				for(const QVector3D& p : {a,b,c,d}) polygon.append(QPointF(p.x(),p.y()));
-				QVector<QPolygonF> pieces = {polygon};
-				bool clipped=false;
-				for(const QPolygonF& boundary : roadSurfaceOccluders)
-				{
-					if(!polygon.boundingRect().intersects(boundary.boundingRect())) continue;
-					QVector<QPolygonF> remainder;
-					for(const QPolygonF& piece : pieces) ClipConvexPolygon(piece,boundary,remainder);
-					pieces.swap(remainder); clipped=true;
-					if(pieces.isEmpty()) return;
-				}
-				const auto uv = [length](const QVector3D& p) { return QVector2D(p.x()/15.f,(p.y()+length/2)/15.f); };
-				if(!clipped)
-				{ out.Quad(slot,0,false,a,b,c,d,uv(a),uv(b),uv(c),uv(d)); return; }
-				for(const QPolygonF& piece : pieces)
-					for(int i=1;i+1<piece.size();++i)
-					{
-						const QVector3D p=surfacePoint(float(piece[0].x()),float(piece[0].y())+length/2,lift);
-						const QVector3D q=surfacePoint(float(piece[i].x()),float(piece[i].y())+length/2,lift);
-						const QVector3D r=surfacePoint(float(piece[i+1].x()),float(piece[i+1].y())+length/2,lift);
-						out.Triangle(slot,0,false,p,q,r,uv(p),uv(q),uv(r));
-					}
-			};
-			for(int y=0;y<alongCount;++y)
-			{
-				for(int x=0;x<across;++x)
-				{
-					const int first=y*(across+1)+x,next=first+across+1;
-					appendSurface(-3,surface[first],surface[first+1],surface[next+1],surface[next],.04f);
-				}
-			}
-			// Six-inch stripe, ten-foot dashes and twenty-foot gaps. x == 0 is
-			// the authored road center, independent of pavement width/margins.
-			for(int y=0;y<alongCount;y+=3)
-			{
-				const int first=y*(across+1)+sideCount,next=first+across+1;
-				const QVector3D lift(0,0,.02f);
-				appendSurface(-4,surface[first]+lift,surface[first+1]+lift,surface[next+1]+lift,surface[next]+lift,.06f);
-			}
-			for(auto& batch : out.mesh.batches)
-			{
-				if(batch.textureSlot == -3)
-				{
-					batch.surfaceOverlay=true;
-					batch.textureFile=SiteTextureFile(dev.constructionProcessId == 3 ? 4 : 3);
-					if(dev.constructionProcessId == 3) batch.tint=QVector4D(.35f,.35f,.35f,1);
-				}
-				else if(batch.textureSlot == -4)
-				{ batch.surfaceOverlay=true; batch.tint=QVector4D(.95f,.72f,.08f,1); }
-			}
-		}
 		if(dev.constructed && (dev.constructionProcessId == 3 || dev.constructionProcessId == 4 || dev.constructionProcessId == 7))
 		{
 			// DpGlobeRoad::CreateVAO 0x6531f0. Paved roads alternate street

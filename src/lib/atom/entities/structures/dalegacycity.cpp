@@ -1267,7 +1267,6 @@ struct DaLegacyCity::Runtime
 			options.minimumDeck = dev.minimumDeck; options.maximumDeck = dev.maximumDeck;
 			options.materialCommodity = dev.materialId; options.constructed = dev.constructed;
 			AuLegacyBd::Geometry::RoadFixtureHeight roadFixtureHeight;
-			QVector<QPolygonF> roadSurfaceOccluders;
 			if(world && dev.industryId==2)
 			{
 				AuMatrix4x4 placement;
@@ -1285,54 +1284,9 @@ struct DaLegacyCity::Runtime
 					// terrain interpolation at site edges; keep lamps at surface height.
 					return RoadFixtureGround(altitude-dev.altitudeMSL, altitude-dev.altitudeMSL-10);
 				};
-				if(dev.constructed && dev.components.isEmpty() && !dev.demolished && !dev.roadSlab
-					&& (dev.constructionProcessId == 3 || dev.constructionProcessId == 4))
-				{
-					// Terrain paving uses the last qualifying site. Cut this visual
-					// overlay away wherever a later site owns the pavement, including
-					// slabs and road materials that retain their terrain rendering.
-					const double halfWidth=dev.roadWidthMeters*FeetPerMeter()/2+8;
-					const double halfLength=dev.roadLengthMeters*FeetPerMeter()/2;
-					const QRectF roadBounds(-halfWidth,-halfLength,2*halfWidth,2*halfLength);
-					bool afterCurrent=false;
-					for(const auto& site : sites)
-					{
-						if(site.state.id == dev.id) { afterCurrent=true; continue; }
-						if(!afterCurrent) continue;
-						const auto& later=site.state;
-						if(later.industryId == 2 ? RoadPavementType(later) == WORLDTEX_Count
-							: AuLegacyBd::Geometry::SiteTextureSlot(later.materialId,
-								later.constructed && later.components.isEmpty()) < 0) continue;
-						// Reject distant sites before projecting their footprints; tangent
-						// projections alone can also overlap sites across the globe.
-						const double range=2*(std::max(halfWidth,halfLength)+site.radius+32.8084);
-						if(placement.Translation().Distance2(site.placement.Translation()) > range*range) continue;
-						QPolygonF footprint;
-						for(const QPointF& corner : {QPointF(-site.halfWidth,-site.halfLength),
-							QPointF(site.halfWidth,-site.halfLength),QPointF(site.halfWidth,site.halfLength),
-							QPointF(-site.halfWidth,site.halfLength)})
-						{
-							AuGlobeLL ll;
-							if(!world->LLOfLoc(ll,site.placement.Project(AuPoint(corner.x(),corner.y(),0))))
-							{ footprint.clear(); break; }
-							const AuPoint local=placement.UnProject(world->LocOfLL(ll,dev.altitudeMSL));
-							footprint.append(QPointF(local.x,local.y));
-						}
-						if(footprint.size() != 4 || !roadBounds.intersects(footprint.boundingRect())) continue;
-						double signedArea=0;
-						for(int i=0;i<footprint.size();++i)
-						{
-							const QPointF& a=footprint[i]; const QPointF& b=footprint[(i+1)%footprint.size()];
-							signedArea+=a.x()*b.y()-a.y()*b.x();
-						}
-						if(std::abs(signedArea) < 1e-8) continue;
-						if(signedArea < 0) std::reverse(footprint.begin(),footprint.end());
-						roadSurfaceOccluders.append(footprint);
-					}
-				}
 			}
 			building.mesh = design ? AuLegacyBd::Geometry::Build(*design, options)
-				: AuLegacyBd::Geometry::BuildProcedural(dev,roadFixtureHeight,roadSurfaceOccluders);
+				: AuLegacyBd::Geometry::BuildProcedural(dev,roadFixtureHeight);
 			if(world && dev.industryId==129)
 			{
 				AuMatrix4x4 placement;
@@ -1403,7 +1357,7 @@ struct DaLegacyCity::Runtime
 			{
 				// Original building doorways and hatches are always open. Their
 				// textured frame quads must never become solid collision panels.
-				if(batch.doorId || batch.empireFlag || batch.depthOnly || batch.surfaceOverlay || batch.noCollision) continue;
+				if(batch.doorId || batch.empireFlag || batch.depthOnly || batch.noCollision) continue;
 				// Match legacy spacecraft: collide with the smooth walking
 				// supports, leaving individual rendered risers/treads visual only.
 				if(batch.stairs && !batch.collisionOnly) continue;
@@ -1787,6 +1741,58 @@ bool DaLegacyCity::SitePavementEdgeDistance(const DaWorldLL& world, const AuGlob
 	return m_Runtime->PavementEdgeDistance(world,ll,dist);
 }
 
+void DaLegacyCity::AddRoadPaint(const DaWorldLL& world, QList<AuGlobeTriAltVegNPave>& triangles) const
+{
+	if(!g_Au.IsLegacyGeneration() || IsDead()) return;
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->EnsureSites(*this, world);
+	QVector<const Runtime::Site*> roads;
+	for(const auto& site : m_Runtime->sites)
+	{
+		const auto& dev = site.state;
+		if(dev.industryId == 2 && !dev.demolished && dev.constructed && dev.components.isEmpty()
+			&& !dev.roadSlab && (dev.constructionProcessId == 3 || dev.constructionProcessId == 4)) roads.append(&site);
+	}
+	if(roads.isEmpty()) return;
+	for(auto& triangle : triangles)
+	{
+		const AuPoint positions[] = {triangle.m_Vert0.m_Loc, triangle.m_Vert1.m_Loc, triangle.m_Vert2.m_Loc};
+		const AuPoint center = (positions[0] + positions[1] + positions[2]) / 3;
+		const double altitude = world.AltitudeMSL(center);
+		double radius = 0;
+		AuGlobeLL locations[3]; bool valid = true;
+		for(int corner = 0; corner < 3; ++corner)
+		{
+			valid &= world.LLOfLoc(locations[corner], positions[corner]);
+			radius = qMax(radius, center.Distance(positions[corner]));
+		}
+		if(!valid) continue;
+		for(const auto* site : roads)
+		{
+			const auto& dev = site->state;
+			const double reach = 2 * (site->radius + 32.8084) + radius + std::abs(altitude - dev.altitudeMSL);
+			if(center.Distance2(site->placement.Translation()) > reach * reach) continue;
+			AuPoint local[3];
+			for(int corner = 0; corner < 3; ++corner)
+				local[corner] = site->inverse.Project(world.LocOfLL(locations[corner], dev.altitudeMSL));
+			const AuPoint minimum = local[0].Min(local[1]).Min(local[2]);
+			const AuPoint maximum = local[0].Max(local[1]).Max(local[2]);
+			if(maximum.x < -site->halfWidth || minimum.x > site->halfWidth
+				|| maximum.y < -site->halfLength || minimum.y > site->halfLength) continue;
+			// Keep a single coordinate frame across all three corners. Near a
+			// junction, the nearest road centreline supplies this triangle's paint.
+			const AuPoint middle = (local[0] + local[1] + local[2]) / 3;
+			const double pastEnd = qMax(0.0, std::abs(middle.y) - site->halfLength);
+			const double distance = middle.x * middle.x + pastEnd * pastEnd;
+			if(distance >= triangle.m_RoadPaintDistance) continue;
+			triangle.m_RoadPaintDistance = distance;
+			const float width = dev.constructionProcessId == 3 ? -site->halfWidth : site->halfWidth;
+			for(int corner = 0; corner < 3; ++corner)
+				triangle.m_RoadPaint[corner] = QVector4D(float(local[corner].x),
+					float(local[corner].y + site->halfLength), 2 * site->halfLength, width);
+		}
+	}
+}
+
 void DaLegacyCity::RemoveInteriorRocks(const DaWorldLL& world, QMap<AuResKey, AuGlobeRock>& rocks) const
 {
 	if(!g_Au.IsLegacyGeneration() || IsDead() || rocks.isEmpty()) return;
@@ -1856,13 +1862,21 @@ double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altit
 	int& levelSites, bool& hideRocks, int& hideGrass, bool& hideShrubs,
 	bool& hideTrees, WORLDTEX_TYPE& pavementType) const
 {
-	const auto candidates = NearbySites(world, ll);
+	auto candidates = NearbySites(world, ll);
+	// DaCity::AdjustAltMSLForDevelopmentsBuildingsLocked (0x26f030/0x26f2c0)
+	// samples all roads before buildings, then skips buildings if an ordinary
+	// road owns this point. Preserve authored order within each group.
+	std::stable_partition(candidates.begin(), candidates.end(), [this](int index) {
+		return sites[index].state.industryId == 2;
+	});
+	bool roadControlsTerrain = false;
 	for(const int index : candidates)
 	{
 		const Site& site = sites[index];
 		// The original projects at the site's altitude, not the incoming terrain
 		// altitude. This keeps its square boundary stable on slopes and globes.
 		const auto& dev = site.state;
+		if(dev.industryId != 2 && roadControlsTerrain) break;
 		const AuPoint worldLocation = world.LocOfLL(ll, dev.altitudeMSL);
 		if(!SiteInRange(site, worldLocation)) continue;
 		if(dev.industryId == 2)
@@ -1896,6 +1910,7 @@ double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altit
 				++levelSites;
 				if(dev.constructionProcessId != 5)
 				{
+					roadControlsTerrain = true;
 					hideGrass = 1;
 					hideRocks = hideShrubs = hideTrees = true;
 				}
@@ -1966,8 +1981,8 @@ void DaLegacyCity::UpdateSiteTerrain(AuAtomRenderInfo& ari, bool removed)
 		{
 			m_Runtime->overlayRevision = m_CityRevision;
 			// Construction can change levels without changing site terrain.
-			// Refresh only building sprites, including while standing still.
-			world->InvalidateBuildingOverlaySprites();
+			// Refresh building and road sprites, including while standing still.
+			world->InvalidateCityOverlaySprites();
 		}
 	}
 	if(!removed && m_Runtime->terrainDrawRevision == m_Runtime->terrainRevision) return;
@@ -3204,7 +3219,7 @@ DaAtom* DaLegacyCity::SightTarget(const DaAtom* observer, const AuPoint& eye,
 		for(const auto& batch : building.mesh.batches)
 		{
 			// Sight uses visible triangles; walking ramps are movement proxies.
-			if(batch.collisionOnly || batch.doorId || batch.empireFlag || batch.depthOnly || batch.surfaceOverlay || batch.enclosure) continue;
+			if(batch.collisionOnly || batch.doorId || batch.empireFlag || batch.depthOnly || batch.enclosure) continue;
 			for(int i=0; i+2<batch.vertices.size(); i+=3)
 			{
 				const AuTriangle triangle(Point(batch.vertices[i].position), Point(batch.vertices[i+1].position), Point(batch.vertices[i+2].position));

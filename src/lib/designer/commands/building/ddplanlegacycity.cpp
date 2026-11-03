@@ -1037,15 +1037,41 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 		AuGLVAO vao; vao.CreateForSprites(effects, vertices, GL_STREAM_DRAW);
 		if(vao.VAO()) { vao.SelectGL(); vao.DrawGL(GL_LINES); vao.DeselectGL(); vao.DeleteGL(); }
 	}
-	if(m_Request.action == AuLegacyCityProtocol::Build && m_ConflictWorld == world->Id().GetID()
-		&& !m_ConflictingPerimeters.isEmpty())
+	QList<AuPointAlpha> sitePerimeters;
+	if(m_ConflictWorld == world->Id().GetID()) sitePerimeters = m_ConflictingPerimeters;
+	AuLegacyCity::Development selected;
+	selected.industryId = m_Request.industryId; selected.constructionProcessId = m_Request.processId;
+	if(m_Request.action == AuLegacyCityProtocol::Build && selected.IsLandscaper())
+	{
+		// Show existing grades and vegetation work before the first click and
+		// while dragging. These are reference outlines, not placement blockers.
+		DaAtomList cities; world->ListNormalSubatoms(cities);
+		for(const auto* atom : cities)
+			if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+			{
+				if(city->IsDead()) continue;
+				const auto state = city->Snapshot();
+				for(const auto& existing : state.developments)
+				{
+					if(existing.demolished || !existing.IsLandscaper()) continue;
+					const AuPoint center = world->LocOfLL(existing.location, existing.altitudeMSL);
+					const double range = g_Au.DetailedTerrainRangeFt()
+						+ (existing.roadLengthMeters + existing.roadWidthMeters) * FeetPerMeter() / 2;
+					if(center.Distance2(point) > range * range) continue;
+					ClearTarget hit; hit.development = existing;
+					world->BuildingConstructionTransform(center, existing.facingRadians, nullptr, AuPoint(), hit.placement);
+					ClearOutline(*world, hit, sitePerimeters, ground, true);
+				}
+			}
+	}
+	if(m_Request.action == AuLegacyCityProtocol::Build && !sitePerimeters.isEmpty())
 	{
 		// Site outlines are already in world coordinates, unlike the proposed
 		// building mesh. Draw their perimeters in amber over the scenery.
 		effects.GLSL().LineShader().SetProjectionModelView(projection * worldModel);
 		effects.GLSL().LineShader().SetColor(1.f, .7f, .05f, 1.f);
 		effects.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		AuGLVAO vao; vao.CreateForSprites(effects, m_ConflictingPerimeters, GL_STREAM_DRAW);
+		AuGLVAO vao; vao.CreateForSprites(effects, sitePerimeters, GL_STREAM_DRAW);
 		if(vao.VAO()) { vao.SelectGL(); vao.DrawGL(GL_LINES); vao.DeselectGL(); vao.DeleteGL(); }
 	}
 	effects.glDisable(GL_BLEND); effects.GLSL().LineShader().Deselect();

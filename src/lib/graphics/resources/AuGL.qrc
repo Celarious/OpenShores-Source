@@ -5,8 +5,11 @@
 <qresource prefix="/legacy-surface-shaders">
 	<file alias="LegacyPavement.glsl">shaders/LegacyPavement.glsl</file>
 	<file alias="TerrainLit.f.glsl">shaders/TerrainLit.f.glsl</file>
+	<file alias="TerrainLit.v.glsl">shaders/TerrainLit.v.glsl</file>
 	<file alias="TerrainLitFlora.f.glsl">shaders/TerrainLitFlora.f.glsl</file>
+	<file alias="TerrainLitFlora.v.glsl">shaders/TerrainLitFlora.v.glsl</file>
 	<file alias="RingworldTerrainLitFlora.f.glsl">shaders/RingworldTerrainLitFlora.f.glsl</file>
+	<file alias="RingworldTerrainLitFlora.v.glsl">shaders/RingworldTerrainLitFlora.v.glsl</file>
 	<file alias="ModelTexColor.f.glsl">shaders/ModelTexColor.f.glsl</file>
 	<file alias="ModelTexColor.v.glsl">shaders/ModelTexColor.v.glsl</file>
 	<file alias="Sc.f.glsl">shaders/Sc.f.glsl</file>

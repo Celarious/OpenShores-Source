@@ -116,6 +116,18 @@ static void LoadLegacyTerrainShaders()
 		const int end = shader.indexOf("\n\t// ", start + 4) + 1;
 		if(start < 0 || end <= start) continue;
 		shader.replace(start, end - start, block);
+		shader.replace("#version 150", "#version 150\nin vec4 vertRoadPaint;");
+		s_GLSLProgramSrc.insert(QStringLiteral("Legacy") + fileName, qCompress(shader));
+	}
+	const char* vertices[] = {"TerrainLit.v.glsl", "TerrainLitFlora.v.glsl", "RingworldTerrainLitFlora.v.glsl"};
+	for(const char* name : vertices)
+	{
+		const QString fileName = QString::fromLatin1(name);
+		QFile source(QStringLiteral(":/legacy-surface-shaders/") + fileName);
+		if(!source.open(QIODevice::ReadOnly)) continue;
+		QByteArray shader = source.readAll().replace("\r\n", "\n");
+		shader.replace("#version 150", "#version 150\nin vec4 roadPaint;\nout vec4 vertRoadPaint;");
+		shader.replace("void main()\n{", "void main()\n{\n\tvertRoadPaint = roadPaint;");
 		s_GLSLProgramSrc.insert(QStringLiteral("Legacy") + fileName, qCompress(shader));
 	}
 }
@@ -3680,7 +3692,7 @@ void AuGLSLTerrainLit::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt
 	m_Program = m_GLf->glCreateProgram();
 
 	// Load and compile source code for individual shaders that comprise the shader program.
-	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "TerrainLit.v", opt.MaxLights());
+	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, QString(m_PavementCount == 18 ? "LegacyTerrainLit.v" : "TerrainLit.v"), opt.MaxLights());
 	m_GLf->glAttachShader(m_Program, vs.Id());
 
 	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, QString(m_PavementCount == 18 ? "LegacyTerrainLit.f" : "TerrainLit.f"));
@@ -3691,6 +3703,7 @@ void AuGLSLTerrainLit::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt
 	m_GLf->glBindAttribLocation(m_Program, 1, "normal");
 	m_GLf->glBindAttribLocation(m_Program, 2, "texCoordAltVeg");
 	m_GLf->glBindAttribLocation(m_Program, 3, "paveCity");
+	if(m_PavementCount == 18) m_GLf->glBindAttribLocation(m_Program, 4, "roadPaint");
 
 	// Bind user defined 'out' variable to data buffer.
 	m_GLf->glBindFragDataLocation(m_Program, 0, "fragColor");
@@ -3813,7 +3826,7 @@ void AuGLSLTerrainLitFlora::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt
 	m_Program = m_GLf->glCreateProgram();
 
 	// Load and compile source code for individual shaders that comprise the shader program.
-	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "TerrainLitFlora.v", opt.MaxLights());
+	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, QString(m_PavementCount == 18 ? "LegacyTerrainLitFlora.v" : "TerrainLitFlora.v"), opt.MaxLights());
 	m_GLf->glAttachShader(m_Program, vs.Id());
 
 	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, QString(m_PavementCount == 18 ? "LegacyTerrainLitFlora.f" : "TerrainLitFlora.f"));
@@ -3824,6 +3837,7 @@ void AuGLSLTerrainLitFlora::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt
 	m_GLf->glBindAttribLocation(m_Program, 1, "normal");
 	m_GLf->glBindAttribLocation(m_Program, 2, "texCoordAltVeg");
 	m_GLf->glBindAttribLocation(m_Program, 3, "paveCity");
+	if(m_PavementCount == 18) m_GLf->glBindAttribLocation(m_Program, 4, "roadPaint");
 
 	// Bind user defined 'out' variable to data buffer.
 	m_GLf->glBindFragDataLocation(m_Program, 0, "fragColor");
@@ -3951,7 +3965,7 @@ void AuGLSLRingworldTerrainLitFlora::Build(AuOpenGLFunctions& GLf, const AuGLSLP
 	m_Program = m_GLf->glCreateProgram();
 
 	// Load and compile source code for individual shaders that comprise the shader program.
-	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "RingworldTerrainLitFlora.v", opt.MaxLights());
+	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, QString(m_PavementCount == 18 ? "LegacyRingworldTerrainLitFlora.v" : "RingworldTerrainLitFlora.v"), opt.MaxLights());
 	m_GLf->glAttachShader(m_Program, vs.Id());
 
 	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, QString(m_PavementCount == 18 ? "LegacyRingworldTerrainLitFlora.f" : "RingworldTerrainLitFlora.f"));
@@ -3962,6 +3976,7 @@ void AuGLSLRingworldTerrainLitFlora::Build(AuOpenGLFunctions& GLf, const AuGLSLP
 	m_GLf->glBindAttribLocation(m_Program, 1, "normal");
 	m_GLf->glBindAttribLocation(m_Program, 2, "texCoordAltVeg");
 	m_GLf->glBindAttribLocation(m_Program, 3, "paveCity");
+	if(m_PavementCount == 18) m_GLf->glBindAttribLocation(m_Program, 4, "roadPaint");
 
 	// Bind user defined 'out' variable to data buffer.
 	m_GLf->glBindFragDataLocation(m_Program, 0, "fragColor");

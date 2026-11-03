@@ -37,7 +37,6 @@ struct Batch
 	bool noCollision = false; // Streetlights remain visible without blocking movement.
 	bool enclosure = false; // City frame, not an authored building aiming surface.
 	bool depthOnly = false; // Original AuBuildingTri window effect 4: terrain mask.
-	bool surfaceOverlay = false; // Road paint/pavement follows terrain; visual only.
 	bool empireFlag = false;
 	// Identifies an always-open door/hatch frame. Render its alpha-cutout art,
 	// but omit the full frame quad from collision and sight obstruction.
@@ -94,13 +93,12 @@ struct RoadFixtureGround
 	double altitude, foundationAltitude; // Feet relative to the road site's MSL.
 	RoadFixtureGround(double height, double foundation) : altitude(height), foundationAltitude(foundation) {}
 };
-// Sample pavement/fixture height and the bottom of a buried fixture support.
+// Sample fixture height and the bottom of a buried fixture support.
 // Terrain triangles can cut below the point sample near a leveled site's edge.
 // Without a sampler, previews retain the stored road grade.
 using RoadFixtureHeight = std::function<RoadFixtureGround(const QVector3D&)>;
-// Counterclockwise convex occluders preserve later sites' pavement ownership.
 AUDATA_DLL Mesh BuildProcedural(const AuLegacyCity::Development& development,
-	const RoadFixtureHeight& roadFixtureHeight = {}, const QVector<QPolygonF>& roadSurfaceOccluders = {});
+	const RoadFixtureHeight& roadFixtureHeight = {});
 struct EnclosureSite
 {
 	quint32 owner = 0;

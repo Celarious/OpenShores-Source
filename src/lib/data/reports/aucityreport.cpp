@@ -3554,7 +3554,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 	for(AuCityIndustryHash::const_iterator ii = m_Industries.cbegin(); ii != m_Industries.cend(); ii++)
 	{
 		// Don't show zeros. Shouldn't exist any more now that it's a hash and not an array.
-		if((*ii).Levels() == 0)
+		if((*ii).Levels() == 0 || (legacyFormat && ii.key() == IID_Road))
 			continue;
 		const DgData& gd = g_Au.LockDataForRead();
 		QString ind = gd.IndustryName(ii.key());
