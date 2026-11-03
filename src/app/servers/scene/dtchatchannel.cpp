@@ -8234,6 +8234,11 @@ void DtChatChannel::SendCityLastReport(const AuId& cityId, const AuCityReport& r
 	}
 	else
 		out << (quint8)0;
+	if(out.status() != QDataStream::Ok)
+	{
+		qWarning() << "City status report serialization failed:" << cityId;
+		return;
+	}
 	SendPacket(ba);
 }
 
@@ -8272,6 +8277,11 @@ void DtChatChannel::SendCityReportHistory(const AuId& cityId, const AuCityReport
 	out << (quint8)1;					// 1 = city report history.
 	out << cityId;
 	out << report;
+	if(out.status() != QDataStream::Ok)
+	{
+		qWarning() << "City report history serialization failed:" << cityId;
+		return;
+	}
 	SendPacket(ba);
 }
 

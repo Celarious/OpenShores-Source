@@ -44,6 +44,13 @@ bool DaLegacyCity::ReportCurrent(AuCityReport& report)
 	auto developments = state.developments;
 	const auto employment = EmployCitizens(*catalogue, developments, enabled,
 		quint32(std::max(0, state.population)), facts.context.needsEnclosure, false);
+	// A snapshot represents no population or morale change. The report codec
+	// checks the starting population against the reported result; leaving the
+	// result at its default zero makes every populated city's snapshot invalid.
+	population.reportedChange.population = state.population;
+	population.reportedChange.unemployed = int(employment.unemployed);
+	population.reportedChange.satisfaction = state.population ? state.satisfaction : 1;
+	population.change = population.reportedChange;
 	// Complete the normal report envelope from copies. Do not run meals,
 	// migration, salaries or advance lastPopulationCycle just to inspect stock.
 	if(!CompleteCityReport(report, state, inventory, inventory, production, accounting,

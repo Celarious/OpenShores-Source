@@ -563,15 +563,20 @@ bool DtClientChat::ReadPacket(const QByteArray& ba, QTcpSocket& /*tcpSocket*/)
 					AuId cityId;
 					AuCityReport report;
 					AuCityReport prevReport;
-					bool hasPrevReport;
+					bool hasPrevReport = false;
 
 					block >> cityId;
 					block >> report;
 					block >> hasPrevReport;
 					if(hasPrevReport)
-					{
 						block >> prevReport;
-
+					if(block.status() != QDataStream::Ok)
+					{
+						qWarning() << "Invalid city status report packet:" << cityId;
+						break;
+					}
+					if(hasPrevReport)
+					{
 						AuCityReportHistory rcomb;
 						rcomb.Append(prevReport);
 						rcomb.Append(report);
@@ -587,6 +592,11 @@ bool DtClientChat::ReadPacket(const QByteArray& ba, QTcpSocket& /*tcpSocket*/)
 					AuCityReportHistory report;
 					block >> cityId;
 					block >> report;
+					if(block.status() != QDataStream::Ok)
+					{
+						qWarning() << "Invalid city report history packet:" << cityId;
+						break;
+					}
 					emit CityHistoryReportReady(cityId, report);
 				}
 				break;
