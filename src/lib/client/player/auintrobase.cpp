@@ -370,9 +370,20 @@ void AuIntroAvatarWidget::Clear()
 
 void AuIntroAvatarWidget::UpdateGeneration()
 {
-	const bool allowDNA4 = !g_Au.IsLegacyGeneration();
-	m_NewDNA4->setEnabled(allowDNA4);
-	m_NewDNA4->setVisible(allowDNA4 && m_UnitId.IsNull());
+	if (g_Au.IsLegacyGeneration()) { // Hides gen 4 buttons if the server says it's in legacy mode
+		m_NewDNA4->setEnabled(false);
+		m_NewDNA4->setVisible(false);
+		m_NewDNA3->setText(tr("New avatar"));
+		m_NewDNA3->setToolTip(tr
+			(
+				"<html>"
+				"<p>"
+				"Open the character creator and make a new avatar."
+				"</p>"
+				"</html>"
+			)
+		);
+	}
 }
 
 void AuIntroAvatarWidget::SetAvatar(const AuId& id, const QString& name, const AuDNABase& dna, AuDNABase::CHROMATID chroma,
