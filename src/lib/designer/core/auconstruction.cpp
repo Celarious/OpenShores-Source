@@ -29,6 +29,10 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QStackedLayout>
+#if defined(Q_OS_MACOS)
+#include "auconstructionpreview.h"
+#include <QScrollArea>
+#endif
 #include <QTimer>
 
 void AuConstructionDock::UpdateTitleShortcut()
@@ -466,7 +470,10 @@ AuConstructButton::AuConstructButton(const char* imageName, QWidget* receiver, Q
 void AuConstructButton::mouseMoveEvent(QMouseEvent *e)
 {
 	QPushButton::mouseMoveEvent(e);
+#if !defined(Q_OS_MACOS)
+	// On Mac, native hover still shows tooltips; only mousePressEvent selects a construction item.
 	emit mouseMove(idi, cpid);
+#endif
 }
 
 void AuConstructButton::mousePressEvent(QMouseEvent *e)
@@ -1333,7 +1340,11 @@ AuConstructionWidget::AuConstructionWidget(QWidget* parent) : QWidget(parent)
 				"</p>"
 				"</html>").arg(AuCityReport::WorldBuildingCountLimit()));
 
+#if defined(Q_OS_MACOS)
+	m_Image = new AuConstructionPreview(this);
+#else
 	m_Image = new QLabel(this);
+#endif
 
 	QHBoxLayout* mlay = new QHBoxLayout();
 	mlay->addWidget(m_Roads);
@@ -1385,6 +1396,10 @@ AuConstructionWidget::AuConstructionWidget(QWidget* parent) : QWidget(parent)
 	bplay->setSpacing(2);
 
 	m_ckGrid = new QCheckBox(tr("Grid"), this);
+#if defined(Q_OS_MACOS)
+	// Reserve the full checkbox rect; native Mac layout margins crowd the dropdown.
+	m_ckGrid->setAttribute(Qt::WA_LayoutUsesWidgetRect);
+#endif
 	m_ckGrid->setChecked(g_AuClient.BuildGrid());
 	m_ckGrid->setToolTip(tr("<html><b>Construction Grid</b><br>"
 			"Shows a grid on the ground while placing buildings, street lights, roads, fences and walls.<br>"
@@ -1416,6 +1431,10 @@ AuConstructionWidget::AuConstructionWidget(QWidget* parent) : QWidget(parent)
 	connect(m_GridSize, SIGNAL(activated(int)), SLOT(ViewTakesKeys()), Qt::QueuedConnection);
 
 	QHBoxLayout* rlay = new QHBoxLayout();
+#if defined(Q_OS_MACOS)
+	// This nested row otherwise inherits the outer layout's two-pixel spacing.
+	rlay->setSpacing(8);
+#endif
 	rlay->addWidget(m_RoundAngle);
 	rlay->addSpacing(8);
 	rlay->addWidget(m_ckGrid);
@@ -1445,7 +1464,20 @@ AuConstructionWidget::AuConstructionWidget(QWidget* parent) : QWidget(parent)
 	lay->addStretch(10);
 	lay->setMargin(2);
 	lay->setSpacing(2);
+#if defined(Q_OS_MACOS)
+	// Blueprint thumbnails can make the contents taller than the available dock.
+	QWidget* contents = new QWidget;
+	contents->setLayout(lay);
+	QScrollArea* scroll = new QScrollArea(this);
+	scroll->setWidgetResizable(true);
+	scroll->setFrameShape(QFrame::NoFrame);
+	scroll->setWidget(contents);
+	QVBoxLayout* outer = new QVBoxLayout(this);
+	outer->setContentsMargins(0, 0, 0, 0);
+	outer->addWidget(scroll);
+#else
 	setLayout(lay);
+#endif
 }
 
 AuConstructionWidget::~AuConstructionWidget()

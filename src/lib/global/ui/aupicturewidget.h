@@ -21,6 +21,10 @@ private:
 	QPointF								m_MiddlePixel;			// Pixel in m_Image that is centered in the widget.
 	QPoint								m_MouseDownPt;
 	float								m_Scale;
+#if defined(Q_OS_MACOS)
+	bool m_FitToView;
+	float ImageScale() const;
+#endif
 
 public:
 	AuPictureWidget(bool autoScale, QWidget* parent=0);
@@ -34,6 +38,9 @@ public:
 	void SetBackgroundColor(const QColor& bgcol);
 
 	void SetImage(const QImage& image);
+#if defined(Q_OS_MACOS)
+	void SetFitToView(bool fit);
+#endif
 
 	virtual QSize sizeHint() const;
 

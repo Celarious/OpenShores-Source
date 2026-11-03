@@ -15,6 +15,9 @@ AuPictureWidget::AuPictureWidget(bool autoScale, QWidget* parent) : QWidget(pare
 	m_BackgroundColor = QColor(0,0,0);
 	m_LeftButtonMode = 0;
 	m_Scale = 1;
+#if defined(Q_OS_MACOS)
+	m_FitToView = false;
+#endif
 
 	setAttribute(Qt::WA_OpaquePaintEvent, true);
 	if(!m_Auto)
@@ -53,18 +56,22 @@ void AuPictureWidget::paintEvent(QPaintEvent* pe)
 		}
 		else
 		{
+			float scale = m_Scale;
+#if defined(Q_OS_MACOS)
+			scale = ImageScale();
+#endif
 			// Determine target rectangle for the image.
 			QRectF rc(m_Image.rect());
-			if(m_Scale != 1)
+			if(scale != 1)
 			{
 				// Scale the rectangle.
-				rc.setWidth(rc.width() * m_Scale);
-				rc.setHeight(rc.height() * m_Scale);
+				rc.setWidth(rc.width() * scale);
+				rc.setHeight(rc.height() * scale);
 			}
 
 			// Translate the rectangle so the middle pixel is in the middle of the window.
-			float offx = width()/2.f - m_MiddlePixel.x() * m_Scale;
-			float offy = height()/2.f - m_MiddlePixel.y() * m_Scale;
+			float offx = width()/2.f - m_MiddlePixel.x() * scale;
+			float offy = height()/2.f - m_MiddlePixel.y() * scale;
 			rc = rc.translated(offx, offy);
 
 			// Draw the image so it looks as nice as possible.
@@ -103,8 +110,12 @@ void AuPictureWidget::mouseMoveEvent(QMouseEvent* e)
 		return;
 	if(m_LeftButtonMode == 1)
 	{
-		float x = m_MiddlePixel.x() - (float)(e->pos().x() - m_MouseDownPt.x()) / m_Scale;
-		float y = m_MiddlePixel.y() - (float)(e->pos().y() - m_MouseDownPt.y()) / m_Scale;
+		float scale = m_Scale;
+#if defined(Q_OS_MACOS)
+		scale = ImageScale();
+#endif
+		float x = m_MiddlePixel.x() - (float)(e->pos().x() - m_MouseDownPt.x()) / scale;
+		float y = m_MiddlePixel.y() - (float)(e->pos().y() - m_MouseDownPt.y()) / scale;
 		m_MiddlePixel.setX(x);
 		m_MiddlePixel.setY(y);
 		m_MouseDownPt = e->pos();
@@ -153,6 +164,10 @@ void AuPictureWidget::SetScale(float scale)
 	if(scale < 1 || scale > 10)
 		return;
 	m_Scale = scale;
+#if defined(Q_OS_MACOS)
+	if(m_FitToView && scale == 1)
+		m_MiddlePixel = QPointF(m_Image.width()/2.f, m_Image.height()/2.f);
+#endif
 	update();
 	emit ScaleChanged(scale);
 }
@@ -166,8 +181,30 @@ void AuPictureWidget::SetImage(const QImage& image)
 {
 	m_Image = image;
 	m_MiddlePixel = QPointF(m_Image.width()/2.f, m_Image.height()/2.f);
+#if defined(Q_OS_MACOS)
+	if(m_FitToView)
+		m_Scale = 1;
+#endif
 	update();
 }
+
+#if defined(Q_OS_MACOS)
+float AuPictureWidget::ImageScale() const
+{
+	if(!m_FitToView || m_Image.isNull())
+		return m_Scale;
+	return m_Scale * qMin(qMax(1, width()) / float(m_Image.width()),
+		qMax(1, height()) / float(m_Image.height()));
+}
+
+void AuPictureWidget::SetFitToView(bool fit)
+{
+	m_FitToView = fit;
+	m_Scale = 1;
+	m_MiddlePixel = QPointF(m_Image.width()/2.f, m_Image.height()/2.f);
+	update();
+}
+#endif
 
 void AuPictureWidget::SetBackgroundColor(const QColor& bgcol)
 {
