@@ -1602,7 +1602,7 @@ bool DbCommodity::IsObsolete(COMMODITYID cid)
 		cid == CID_VulciumHullModule ||					// Hull modules are conceptual. They do not actually exist.
 		cid == CID_AdamantineHullModule ||				// Hull modules are conceptual. They do not actually exist.
 		cid == CID_CommercialShip ||	// Never implemented
-		cid == CID_NavalShip ||			// Never implemented
+		cid == CID_NavalShip;			// Never implemented
 }
 
 //static

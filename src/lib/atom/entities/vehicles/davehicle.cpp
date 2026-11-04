@@ -6044,6 +6044,7 @@ const double s_SpaceTransportAccel = 600.;
 const double s_SubmarineAccel = VEHICLE_ACCELERATION(35, 15);
 const double s_SUVAccel = VEHICLE_ACCELERATION(60, 10.5);
 const double s_TankAccel = VEHICLE_ACCELERATION(40, 12);
+const double s_MineMachineryAccel = VEHICLE_ACCELERATION(100, 10);
 
 // Some vehicle max speeds are limited by gearing, not by air resistance.
 const double s_APCMaxSpeed = 120. * 5280./3600.;
@@ -6061,6 +6062,9 @@ const double s_SUVMaxSpeedUnderWater = 5. * 5280./3600.;
 const double s_TankMaxSpeed = 40. * 5280./3600.;
 const double s_TankMaxSpeedInWater = 4. * 5280./3600.;
 const double s_TankMaxSpeedUnderWater = 2. * 5280./3600.;
+const double s_MineMachineryMaxSpeed = 25. * 5280./3600.;
+const double s_MineMachineryMaxSpeedInWater = s_FarmMachineryMaxSpeed/5.;
+const double s_MineMachineryMaxSpeedUnderWater = 2. * 5280./3600.;
 
 // Nominal Friction Force
 // Friction force in ideal movement environment for vehicle.
@@ -6078,6 +6082,7 @@ const double s_SpaceTransportFric = 1;
 const double s_SubmarineFric = 3;
 const double s_SUVFric = 5;
 const double s_TankFric = 5;
+const double s_MineMachineryFric = 5;
 
 // Drag Force in a fluid.
 //
