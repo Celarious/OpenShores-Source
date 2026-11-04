@@ -402,6 +402,7 @@ public:
 		case CID_SUV:
 		case CID_APC:
 		case CID_FarmMachinery:
+		case CID_MineMachinery:
 			fuelMax = 60;
 			break;
 		case CID_SailBoat:
@@ -422,6 +423,7 @@ public:
 		case CID_APC:
 		case CID_Tank:
 		case CID_FarmMachinery:
+		case CID_MineMachinery:
 		case CID_Helicopter:
 			return CID_Gasoline;
 		case CID_SailBoat:
@@ -765,6 +767,7 @@ public:
 		case CID_Tank:
 		case CID_APC:
 		case CID_FarmMachinery:
+		case CID_MineMachinery:
 		case CID_SpaceFighter:
 		case CID_AdvSpaceFighter:
 		case CID_SpaceRocket:
@@ -1133,6 +1136,7 @@ public:
 			return 200;
 		case CID_Submarine:
 		case CID_FarmMachinery:
+		case CID_MineMachinery:
 			return 300;
 		case CID_SUV:
 			return 250;
@@ -1345,7 +1349,8 @@ public:
 
 		case CID_SUV:
 		case CID_FarmMachinery:
-			// SUV requires forward or backward movement to turn
+		case CID_MineMachinery:
+			// These require forward or backward movement to turn
 			if(fabs(ForwardSpeed()) > 1)
 				return true;
 			break;
@@ -1377,6 +1382,7 @@ public:
 		case CID_Tank:
 		case CID_APC:
 		case CID_FarmMachinery:
+		case CID_MineMachinery:
 			return true;
 		default:
 			return false;
@@ -1399,6 +1405,7 @@ public:
 		case CID_Submarine:
 		case CID_SUV:
 		case CID_Tank:
+		case CID_MineMachinery:
 		case CID_APC:
 			return true;
 		default:
@@ -1620,10 +1627,10 @@ public:
 			return 2500.f * (float)PoundsPerKilogram();
 		case CID_SUV:
 		case CID_FarmMachinery:
-			// From Wikipedia weight and dimensions for H2.
 			return 2903.f * (float)PoundsPerKilogram();
 
 		case CID_APC:
+		case CID_MineMachinery:
 			return 30000.f * (float)PoundsPerKilogram();
 
 		case CID_Tank:

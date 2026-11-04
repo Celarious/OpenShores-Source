@@ -211,7 +211,7 @@ INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVec
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, health) VALUES (51,'Metal',':data/c_Metal.png',':data/mMetal.3dsN',0.1,1,0,0,8192+257,2,1,10, 15);
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, food,newcond) VALUES (52,'Milk',':data/c_Milk.png',':data/mMilk.3dsN',0.55,0,0,1,20480+3,1,1,1, 20,2);
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt) VALUES (53,'Minerals',':data/c_Minerals.png',':data/mMinerals.3dsN',0.0,0,0,1,1,2,2,10);
-INSERT INTO b_Commodity (id,name,iconPath,modelPath) VALUES (54,'Mine Machinery',':data/c_MineMachinery.png',':data/mMineMachinery.3dsX');
+INSERT INTO b_Commodity (id,name,iconPath,modelPath) VALUES (54,'Mine Machinery',':data/c_MineMachinery.png',':data/mMineMachinery.3ds');
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, ammo1Type,wpn1Effect1,wpn1Damage1,wpn1DamageMod1,wpn1Radius1,wpn1Range)
   VALUES (55,'Small Missile Bl Zipper',':data/c_MissileSm.png',':data/mMissileSm.3dsN',0.1,1,0,0,8192+1,1,8,50, 7,8,126,24,15,2500);
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, ammo1Type,wpn1Effect1,wpn1Damage1,wpn1DamageMod1,wpn1Radius1,wpn1Range)
@@ -262,7 +262,7 @@ INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVec
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, food,newcond) VALUES (100,'Fish Meat',':data/c_FishMeat.png',':data/mFishMeat.3dsN',0.15,0,0,1,20480+3,1,1,1, 15,2);
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, food,newcond) VALUES (101,'Vodka',':data/c_Vodka.png',':data/mVodka.3dsN',0.75,0,0,1,16384+5,1,2,1, 2,4);
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt) VALUES (102,'Heavy Weapon',':data/c_HeavyWeapon.png',':data/mTurretGun.3dsN',1.4,0,0,1,8192+1,3,20,100);
-INSERT INTO b_Commodity (id,name,iconPath,modelPath) VALUES (103,'Tank',':data/c_Tank.png',':data/mTank.3dsX');
+INSERT INTO b_Commodity (id,name,iconPath,modelPath) VALUES (103,'Tank',':data/c_Tank.png',':data/mTank.3ds');
 INSERT INTO b_Commodity (id,name,iconPath,modelPath) VALUES (104,'APC',':data/c_APC.png',':data/mAT.3dsN');
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, armorSpec, newcond,bitsWear) VALUES (105,'Metal Helmet',':data/c_MetalHelmet.png',':data/mMetalHelmet.3dsN',0.0,0,0,1,8192+1,2,2,1, 15, 12,16);
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, armorSpec, newcond,bitsWear) VALUES (106,'Metal EV Helmet',':data/c_PowerArmorHelmet.png',':data/mPowerArmorHelmet.3dsN',0.0,0,0,1,8192+1,2,2,1, 7, 25,16);

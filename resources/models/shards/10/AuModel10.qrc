@@ -4,5 +4,7 @@
 	<file>data/mSUV.png</file>
 	<file>data/mTank.3ds</file>
 	<file>data/mTank.png</file>
+	<file>data/mMineMachinery.3ds</file>
+	<file>data/mMineMachinery.png</file>
 </qresource>
 </RCC>

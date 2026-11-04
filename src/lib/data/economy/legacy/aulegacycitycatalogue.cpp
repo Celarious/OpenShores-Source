@@ -627,7 +627,8 @@ void AuLegacyCityCatalogue::BuildCrosswalk()
 		m_fromRuntime.insert(runtime, id);
 		DbCommodity descriptor(record.descriptor);
 		descriptor.m_id = COMMODITYID(runtime);
-		if(id == 103) { descriptor.m_modelPath = QStringLiteral(":data/mTank.3ds"); } // Our new Tank model 
+		if(id == 103) { descriptor.m_modelPath = QStringLiteral(":data/mTank.3ds"); } // Our new Tank model
+		if(id == 54) { descriptor.m_modelPath = QStringLiteral(":data/mMineMachinery.3ds"); } // Ikkir's Mine Machinery model
 		m_runtimeDescriptors.insert(runtime, descriptor);
 		m_runtimeIds.append(runtime);
 	}

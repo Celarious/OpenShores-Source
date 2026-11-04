@@ -2013,6 +2013,7 @@ void DaVehicle::DecayMoveActions()
 	case CID_DirtBike:
 	case CID_SUV:
 	case CID_Tank:
+	case CID_MineMachinery:
 	case CID_APC:
 	case CID_FarmMachinery:
 		// Decay throttle after it has not been held for a bit.
@@ -2631,6 +2632,7 @@ float DaVehicle::TurnRate() const
 			return 75.f * DEG2RADf;
 		break;
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 		if(WaterDepth() > 1.f)
 		{
 			if(IsOnWater())
@@ -2762,6 +2764,7 @@ double DaVehicle::OrientationSpeed() const
 		return PI/3;
 
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 	case CID_SailBoat:
 	case CID_Submarine:
 	case CID_AdvSpaceFighter:
@@ -3482,6 +3485,7 @@ void DaVehicle::RenderHud(float sightXpos, float sightYpos, int hudIntensity, Au
 	case CID_DirtBike:
 	case CID_SUV:
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 		// Speed indicated with a speedometer.
 		{
 			// Gauge size
@@ -3671,6 +3675,7 @@ void DaVehicle::SensorScan(AuSensorBlipList& blips, const AuPoint& scannerLoc, c
 	case CID_Tank:
 	case CID_APC:
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 		blips.Add(AuBlipGroundVehicle(CommodityId(), Quality(), IsNew(), EmpireId(), stance, Id(), EnvLocation()));
 		break;
 	case CID_SailBoat:
@@ -4448,6 +4453,7 @@ void DaVehicle::ConfigureControls(const DiControlInputArray &aAllControls)
 	case CID_Tank:
 	case CID_SUV:
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 		myControls = &s_SUVControls;
 		break;
 	}
@@ -4511,6 +4517,7 @@ void DaVehicle::RestoreDefaultControls()
 	case CID_APC:
 	case CID_Tank:
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 		s_SUVControls.clear();
 		for(int ic=0; ic<s_NumSUVDefaults; ic++)
 			s_SUVControls.append(s_SUVDefaults[ic]);
@@ -4577,6 +4584,7 @@ void DaVehicle::LoadControls() const
 	case CID_Tank:
 	case CID_APC:
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 		settingsSection = "Controls/SUV";
 		s_SUVControls.clear();
 		for(int ic=0; ic<s_NumSUVDefaults; ic++)
@@ -4629,6 +4637,7 @@ void DaVehicle::SaveControls() const
 	case CID_Tank:
 	case CID_APC:
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 		settingsSection = "Controls/SUV";
 		myControls = &s_SUVControls;
 		break;
@@ -4670,6 +4679,7 @@ void DaVehicle::EnumControlInputs(DiControlInputArray& aAllControls) const
 	case CID_Tank:
 	case CID_APC:
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 		myControls = &s_SUVControls;
 		break;
 	}
@@ -4885,6 +4895,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 					if(m_Throttle < 10)
 					{
 						if(m_Throttle < 9)
@@ -4922,6 +4933,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 					break;
 				case CID_SpaceFighter:
 				case CID_SpaceTransport:
@@ -4955,6 +4967,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 					if(m_Throttle > -9)
 						m_Throttle--;
 					break;
@@ -5010,6 +5023,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 					break;
 				default:
 					break;
@@ -5038,6 +5052,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 					if(m_Throttle < -9)
 						m_Throttle = -9;
 					else if(m_Throttle > 10)
@@ -5105,6 +5120,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 					if(m_ThrustLong < 10)
 					{
 						if(m_ThrustLong < 9)
@@ -5145,6 +5161,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 					if(m_ThrustLong > -9)
 					{
 						m_ThrustLong--;
@@ -5226,6 +5243,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 				default:
 					break;
 				}
@@ -5278,6 +5296,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 				default:
 					break;
 				}
@@ -5330,6 +5349,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 				default:
 					break;
 				}
@@ -5382,6 +5402,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 				default:
 					break;
 				}
@@ -5409,6 +5430,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 					m_wActions |= ACT_Brake;
 					tt = true;
 					break;
@@ -5441,6 +5463,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_Tank:
 				case CID_APC:
 				case CID_FarmMachinery:
+				case CID_MineMachinery:
 				default:
 					break;
 				}
@@ -5842,6 +5865,32 @@ void DaVehicle::RenderAudioSources(const DaPerson* sceneAtom, const AuMatrix4x4&
 					pitch = 2.f;
 			}
 		break;
+		case CID_MineMachinery:
+			if(!IsEngineOn())
+				break;
+			engineSnd = SOUND_Tank_Idle;
+			gain *= 4;
+			if(!IsFuzzyZero(vec.y))
+			{
+				// Lots of transmission choices for this guy from 4 to 6 speeds.
+				// Last gearSpeed entry is "top" speed.
+				float mph = fabs(vec.y * 3600.f/5280.f);
+				const int gearSpeeds[] = {0, 12, 28, 43, 90};
+				const int gears = sizeof(gearSpeeds)/sizeof(int);
+				for(int ig=1; ig<gears; ig++)
+				{
+					if(mph <= gearSpeeds[ig])
+					{
+						pitch = (mph - gearSpeeds[ig-1]) /	// offset into range
+							(gearSpeeds[ig] - gearSpeeds[ig-1]);	// the range
+						break;
+					}
+				}
+				pitch += .95f;
+				if(pitch > 2.f)
+					pitch = 2.f;
+			}
+		break;
 		case CID_DirtBike:
 			if(!IsEngineOn())
 				break;
@@ -6078,6 +6127,8 @@ float DaVehicle::DragCoefficient() const
 		return DRAG_COEFFICIENT((float)s_TankAccel, (float)s_TankFric, .05f, 60, (float)s_TankMaxSpeed*4);
 	case CID_FarmMachinery:
 		return DRAG_COEFFICIENT((float)s_FarmMachineryAccel, (float)s_FarmMachineryFric, .05f, 55,	(float)s_FarmMachineryMaxSpeed*4);
+	case CID_MineMachinery:
+		return DRAG_COEFFICIENT((float)s_MineMachineryAccel, (float)s_MineMachineryFric, .05f, 55,	(float)s_MineMachineryMaxSpeed*4);
 	default:
 		return DaAtom::DragCoefficient();
 	}
@@ -6108,6 +6159,7 @@ AuPoint DaVehicle::CrossSectionalArea() const
 	case CID_APC:
 		return AuPoint(208,60,153);
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 		return AuPoint(208,55,153);
 	default:
 		return DaAtom::CrossSectionalArea();
@@ -6291,6 +6343,40 @@ AuPoint DaVehicle::Acceleration() const
 				//applyGravity = 2;
 		}
 		break;
+	case CID_MineMachinery:
+		if(!IsEngineOn())
+			break;
+		if(IsOnGround() || WaterDepth() > 1.f)
+		{
+			// Maximum speed on the ground is limited by gearing, not by
+			// air resistance. Reduce acceleration when approaching max speed.
+			double power = 1;
+			if((vec.y >= 0 && ThrustLongitudinal() > 0) ||
+					(vec.y <= 0 && ThrustLongitudinal() < 0))
+			{
+				// Moving forward and accelerating forward or
+				// moving backward and accelerating backward.
+				if(IsInWater() && (IsCGUnderWater() || IsOnWater()))
+					power = 1. -fabs(vec.y) / s_FarmMachineryMaxSpeedUnderWater;
+				else if(WaterDepth() > 1.f)
+					power = 1. -fabs(vec.y) / s_FarmMachineryMaxSpeedInWater;
+				else
+					power = 1. -fabs(vec.y) / s_FarmMachineryMaxSpeed;
+				if(power < 0)
+					power = 0;
+			}
+
+			// This floater can move in water.
+			if(ThrustLongitudinal() >= 0)
+				accel.y = s_FarmMachineryAccel * power * engineThrust[ThrustLongitudinal()];
+			else
+				accel.y = s_FarmMachineryAccel * power * -engineThrust[-ThrustLongitudinal()];
+
+			// Weaken gravity while touching a road so going up and down steep road hills is easy.
+			//if(IsTouchingGround() && InIndustry() == IID_Road)
+				//applyGravity = 2;
+		}
+	break;
 	case CID_DirtBike:
 		if(!IsEngineOn())
 			break;
@@ -7264,6 +7350,100 @@ AuPoint DaVehicle::Friction() const
 			break;
 		}
 		break;
+	case CID_MineMachinery:
+		if(WaterDepth() > 1.f)
+		{
+			if(IsOnWater() || IsCGSubmerged())
+			{
+				// Floating induces a lot of drag.
+				if(IsOnWater())
+				{
+					fricFwd = 15;
+					fricLat = 25;
+				}
+
+				// Allow minimal movement on land out of water so the sub can get back into the water.
+				if(IsEngineOn() && ThrustLongitudinal() && fabs(vec.y) < 2)
+				{
+					fricFwd = s_MineMachineryFric;
+					break;	// No more drag due to ground or I can't move.
+				}
+			}
+			else
+			{
+				// In water induces some drag.
+				fricFwd = 5;
+				fricLat = 5;
+			}
+			fricVrt = 5;
+		}
+
+		// Automatic parking brake when engine is off or not moving with no throttle.
+		if(!IsEngineOn() || (!ThrustLongitudinal() && fabs(vec.y) < 1))
+			brake = true;
+
+		// Add drag induced by rolling across the terrain and also braking.
+		switch(OnGround())
+		{
+		case OG_None:	// Not on the ground so no additional drag from environment or brakes.
+		case OG_WaterSoundOnly:	// Not really returned by OnGround().
+			break;
+		case OG_Forest:
+			fricFwd += s_MineMachineryFric + 5;
+			if(brake)
+				fricFwd += 20;
+			fricLat += 30;
+			break;
+		case OG_Snow:
+			fricFwd += s_MineMachineryFric + 6;
+			if(brake)
+				fricFwd += 20;
+			fricLat += 30;
+			break;
+		case OG_HardFloor:
+			fricFwd += s_MineMachineryFric;
+			if(brake)
+				fricFwd += 40;
+			fricLat += 60;
+			break;
+		case OG_Metal:
+			fricFwd += s_MineMachineryFric;
+			if(brake)
+				fricFwd += 40;
+			fricLat += 60;
+			break;
+		case OG_Pavement:
+			fricFwd += s_MineMachineryFric;
+			if(brake)
+				fricFwd += 40;
+			fricLat += 60;
+			break;
+		case OG_WoodFloor:
+			fricFwd += s_MineMachineryFric;
+			if(brake)
+				fricFwd += 40;
+			fricLat += 60;
+			break;
+		case OG_Rock:
+			fricFwd += s_MineMachineryFric + 4;
+			if(brake)
+				fricFwd += 35;
+			fricLat += 80;
+			break;
+		case OG_Sand:
+			fricFwd += s_MineMachineryFric + 2;
+			if(brake)
+				fricFwd += 30;
+			fricLat += 40;
+			break;
+		case OG_Savanna:
+			fricFwd += s_MineMachineryFric + 3;
+			if(brake)
+				fricFwd += 25;
+			fricLat += 50;
+			break;
+		}
+	break;
 	case CID_DirtBike:
 		if(WaterDepth() > 6.f/12.f)
 		{
@@ -7627,7 +7807,10 @@ void DaVehicle::GetRenderLightsRecursive(const DaPerson& person, const AuMatrix4
 		case CID_APC:
 		case CID_FarmMachinery:
 			lpos = model.Project(0, max.y, 2);
-			break;
+		break;
+		case CID_MineMachinery:
+			lpos = model.Project(0, max.y-1., 2);
+		break;
 		case CID_Tank:
 			// Centered just ahead of the hull, three feet above its base.
 			lpos = model.Project(0, 10.75, 3.0);
@@ -7681,11 +7864,12 @@ void DaVehicle::GetRenderLightsRecursive(const DaPerson& person, const AuMatrix4
 		case CID_Tank:
 		case CID_APC:
 		case CID_FarmMachinery:
+		case CID_MineMachinery:
 			lvec = model.ProjectVector(AuPoint(0,1,0));
 			colLight = QColor(AuGLLight::ColorHalogen());
 			kQ = 1.f/(float)(SUVLight * SUVLight);
 			kL = .004f;	// Stronger light because we are simulating two headlights
-			if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank)
+			if(m_cid == CID_Tank)
 			{
 				// Four times the light contribution for low-angle illumination of slabs.
 				const float tankLightRadius = 240.f * (float)FeetPerMeter();
@@ -7793,12 +7977,9 @@ float DaVehicle::Density() const
 	case CID_Submarine:
 		return (float)DensityOfWater();	// so it neither sinks nor floats
 	case CID_SUV:
-		// From Wikipedia weight and dimensions for H2.
-		return Mass(m_cid)/(2.f*(float)CubicFeetPerCubicMeter());
 	case CID_FarmMachinery:
-		return Mass(m_cid)/(2.f*(float)CubicFeetPerCubicMeter());
+	case CID_MineMachinery:
 	case CID_APC:
-		return Mass(m_cid)/(2.f*(float)CubicFeetPerCubicMeter());
 	case CID_Tank:
 		return Mass(m_cid)/(2.f*(float)CubicFeetPerCubicMeter());	
 	default:
@@ -8169,6 +8350,9 @@ float DaVehicle::HullStress() const
 		maxSpeed = 750;
 		break;
 	case CID_FarmMachinery:
+		maxSpeed = 450;
+		break;
+	case CID_MineMachinery:
 		maxSpeed = 450;
 		break;
 	default:
@@ -8839,7 +9023,7 @@ void DaVehicle::CombatArmorEffectiveness(WEAPONMODE mode, WEAPONEFFECT effect, b
 
 int DaVehicle::WeaponCount() const
 {
-	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank)
+	if(m_cid == CID_Tank)
 		return m_Model ? 2 : 0;
 	if(m_Model)
 		return m_Model->WeaponCount();
@@ -10746,12 +10930,13 @@ bool DaVehicle::CanBdFetch(VEHICLE_SPOT_TYPE spotType, const DaBd* fetcher) cons
 		return !fetcher->IsMilitary();	// Civilian only.
 	case CID_FarmMachinery:
 		return fetcher->IndustryId() == IID_Farm || fetcher->IndustryId() == IID_Orchard;
+	case CID_MineMachinery:
+		return fetcher->IndustryId() == IID_Mine;
 	case CID_SpaceRocket:
 	case CID_Submarine:
 		return true;					// Ok for military or civilians.
 	default:
 	case CID_CommercialShip:
-	case CID_MineMachinery:
 	case CID_NavalShip:
 		return false;					// Not implemented.
 	}
@@ -10808,9 +10993,9 @@ bool DaVehicle::CanFetch(VEHICLE_SPOT_TYPE spotType) const
 	case CID_Tank:
 		break;
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 		return false;					// Not wanted.
 	case CID_CommercialShip:
-	case CID_MineMachinery:
 	case CID_NavalShip:
 		return false;					// Not implemented.
 	}
@@ -10851,6 +11036,7 @@ bool DaVehicle::RepairDamage(COMMODITYID tool)
 	case CID_Tank:
 	case CID_APC:
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 	case CID_Helicopter:
 		// Hammer, Glue Gun, Wrench, Torque Wrench
 		if(tool != CID_Hammer && tool != CID_GlueGun && tool != CID_Wrench && tool != CID_TorqueWrench)
@@ -11103,7 +11289,7 @@ void DaVehicle::FindClosestShipThreatRecursive(const AuId& shipId, int shipDomai
 
 bool DaVehicle::HasWeapon() const
 {
-	if(g_Au.IsLegacyGeneration() && m_cid == CID_Tank)
+	if(m_cid == CID_Tank)
 		return true;
 	switch(m_cid)
 	{
@@ -11139,6 +11325,7 @@ AuSkill::SKILL DaVehicle::DriverSkill() const
 	case CID_APC:
 	case CID_DirtBike:
 	case CID_FarmMachinery:
+	case CID_MineMachinery:
 	case CID_SailBoat:
 	case CID_SUV:
 		return AuSkill::VehicleDriver;	// 2D movement

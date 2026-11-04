@@ -21123,6 +21123,8 @@ void DaBd::RunManufacturingProcesses(bool canOperate)
 			case CID_DirtBike:
 			case CID_FarmMachinery:
 			case CID_Helicopter:
+			case CID_Tank:
+			case CID_MineMachinery:
 			case CID_SUV:
 			case CID_SailBoat:
 			case CID_SpaceFighter:
@@ -21135,9 +21137,7 @@ void DaBd::RunManufacturingProcesses(bool canOperate)
 				break;
 
 			case CID_CommercialShip:
-			case CID_MineMachinery:
 			case CID_NavalShip:
-			case CID_Tank:
 				spawned = 3;	//DHH Vehicle can't spawn. Don't consume components or add to inv
 				break;
 

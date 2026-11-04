@@ -285,12 +285,9 @@ void AuOrdnanceTransfer::UpdateContents()
 				m_WeaponCID = vehicle->CommodityId();
 				break;
 			case CID_Tank:
-				if(g_Au.IsLegacyGeneration())
-				{
 					m_MyPic->setPixmap(QPixmap(":data/c_Tank.png"));
 					m_GunPic->setPixmap(QPixmap(":data/c_Tank.png"));
 					m_WeaponCID = vehicle->CommodityId();
-				}
 				break;
 			default:
 				break;
