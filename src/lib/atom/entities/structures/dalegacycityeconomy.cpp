@@ -1069,7 +1069,6 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 					}
 					else switch(output.commodityId)
 					{
-					case 54: // Mine machinery
 					case 70: // Commercial ship
 						// DpBuilding::Tick 0x5f22c0 registers these without
 						// spawning an atom, then consumes their applied inputs.
@@ -1077,12 +1076,6 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 						ConsumeProductionComponents(process);
 						break;
 					case 71:  // Naval ship
-					case 103: // Tank
-						// The original registers these too, but retains inputs
-						// and reports -99 instead of completing the output.
-						if(!production.vehicles.contains(output.commodityId)) production.vehicles.append(output.commodityId);
-						process.lastQuantity = -99;
-						break;
 					default:
 						process.lastQuantity = -99;
 						break;

@@ -837,6 +837,8 @@ void RunwayLight(Builder& out, const QPointF& location, float foundationDepth = 
 {
 	// DpDevelopment::CreateRunwayLight 0x64bc40: eight-sided one-foot
 	// fixture, 1/6-foot stem and half-foot light cap (BuildingTexture 38).
+	const bool previousNoCollision = out.noCollision;
+	out.noCollision = true;
 	out.mesh.exteriorLights.append({Position(location, 1), true});
 	for(int i=0;i<8;++i)
 	{
@@ -848,6 +850,7 @@ void RunwayLight(Builder& out, const QPointF& location, float foundationDepth = 
 		out.Quad(38,0,false,p(a,1.f/6,2.f/3),p(b,1.f/6,2.f/3),p(b,.5f,5.f/6),p(a,.5f,5.f/6));
 		out.Triangle(38,0,false,p(a,.5f,5.f/6),p(b,.5f,5.f/6),Position(location,1));
 	}
+	out.noCollision = previousNoCollision;
 }
 }
 

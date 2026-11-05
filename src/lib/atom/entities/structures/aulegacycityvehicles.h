@@ -22,8 +22,8 @@ AUATOM_DLL bool ProductionRoadEndpoints(const DaWorldLL& world, const Developmen
 AUATOM_DLL bool ProductionRoadContains(const DaWorldLL& world, const Development& road, const AuGlobeLLF& point);
 AUATOM_DLL AuPoint ProductionSpawnOffset(int index);
 
-// Original physical vehicle outputs; virtual mine/commercial/naval/tank
-// registrations remain separate from these slab and water spawns.
+// Physical vehicle outputs, including restored Mine Machinery and Tanks.
+// Land vehicles and aircraft use slabs; boats use water spawns.
 AUATOM_DLL bool IsSpawnedProductionVehicle(quint16 commodity);
 
 // Gather terrain, obstructions and unpublished vehicle geometry before taking

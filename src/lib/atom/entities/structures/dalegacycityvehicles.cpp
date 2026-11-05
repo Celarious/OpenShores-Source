@@ -12,6 +12,7 @@
 #include "aulegacycitystate.h"
 #include "auordnance.h"
 #include "auqueryenvironment.h"
+#include "daatomlist.h"
 #include "dalegacycity.h"
 #include "daperson.h"
 #include "dbindustry.h"
@@ -85,13 +86,52 @@ AuBox SpawnBounds(DaWorldLL& world, const AuPoint& location)
 	const AuPoint extent = (x + y + up) * SpawnRadius;
 	return AuBox(location - extent, location + extent);
 }
+
+bool LandSpawnFits(const DaWorldLL& world, const AuLegacyCityCatalogue& catalogue,
+	const Development& slab, const AuBox& occupied, const QVector<Development>& buildings)
+{
+	// The whole vehicle, including aircraft parked on land, must fit on the
+	// slab. A centre-only test can leave long vehicles hanging over a building.
+	for(const auto& corner : occupied.m_fCorners)
+	{
+		AuGlobeLLF ll;
+		if(!world.LLOfLoc(ll, corner) || !ProductionRoadContains(world, slab, ll)) return false;
+	}
+	AuPoint worldMinimum, worldMaximum; occupied.GetMinMax(worldMinimum, worldMaximum);
+	const AuPoint center = (worldMinimum + worldMaximum) / 2;
+	const double altitude = world.AltitudeMSL(center);
+	const double vehicleRadius = worldMinimum.Distance(worldMaximum) / 2;
+	for(const auto& building : buildings)
+	{
+		if(building.demolished || !building.designId || building.industryId == 2 || building.industryId == 129) continue;
+		const auto* recipe = building.constructionProcessId
+			? catalogue.ConstructionProcess(ConstructionProcessId(building.constructionProcessId))
+			: catalogue.ConstructionProcessForIndustry(IndustryId(building.industryId));
+		if(!recipe) return false;
+		const double radius = recipe->buildRadius * FeetPerMeter();
+		const double reach = std::sqrt(2.0) * radius + vehicleRadius;
+		// Compare at the same altitude before tangent projection, so sites
+		// on the opposite side of a globe cannot masquerade as overlapping.
+		if(world.LocOfLL(building.location, altitude).Distance2(center) > reach * reach) continue;
+		AuMatrix4x4 placement;
+		world.BuildingConstructionTransform(world.LocOfLL(building.location, building.altitudeMSL),
+			building.facingRadians, nullptr, AuPoint(), placement);
+		AuBox local(occupied); local.Transform(placement.Inverse());
+		AuPoint minimum, maximum; local.GetMinMax(minimum, maximum);
+		// Reject the footprint regardless of height: a roof is never a
+		// production parking spot, even if a slab extends under the building.
+		if(maximum.x >= -radius && minimum.x <= radius
+			&& maximum.y >= -radius && minimum.y <= radius) return false;
+	}
+	return true;
+}
 }
 
 bool IsSpawnedProductionVehicle(quint16 commodity)
 {
 	switch(commodity)
 	{
-	case 6: case 7: case 8: case 9: case 28: case 77:
+	case 6: case 7: case 8: case 9: case 28: case 54: case 77:
 	case 82: case 103: case 104: case 132: case 133: case 231: return true;
 	default: return false;
 	}
@@ -150,7 +190,6 @@ bool VehicleProductionBatch::Apply(quint32 development, quint16 slot, const Prod
 			}
 			if(blocked) continue;
 			attempt.selected = candidate;
-			attempt.selected.placement.RotateZ(g_Au.Dice().Roll(1, 360, -1) * DEG2RAD);
 			attempt.vehicle->RoughExtents(attempt.occupied);
 			attempt.occupied.Transform(attempt.selected.placement);
 			const COMMODITYID fuel = attempt.vehicle->FuelType();
@@ -199,6 +238,11 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 	VehicleProductionBatch batch;
 	batch.m_Data->world = &world;
 	QVector<Development> roads;
+	QVector<Development> buildings = state.developments;
+	DaAtomList cities; world.ListNormalSubatoms(cities);
+	for(const auto* atom : cities)
+		if(const auto* other = dynamic_cast<const DaLegacyCity*>(atom))
+			if(other != &city) buildings += other->Snapshot().developments;
 	for(const auto& development : state.developments)
 		if(development.industryId == 2 && !development.demolished && development.completedLevels) roads.append(development);
 	std::stable_sort(roads.begin(), roads.end(), [](const Development& a, const Development& b) { return a.location < b.location; });
@@ -224,6 +268,14 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 		if(!FinishProduction(*catalogue, preview, resources.value(found->id), now, result)) continue;
 		VehicleProductionBatch::Data::Attempt attempt;
 		attempt.development = found->id; attempt.slot = process.slot; attempt.commodity = result.commodityId;
+		attempt.vehicle.reset(new DaVehicle(COMMODITYID(runtime), result.quality));
+		attempt.vehicle->Create(); // Geometry is needed to validate the complete parking footprint.
+		AuBox vehicleBounds;
+		if(!attempt.vehicle->RoughExtents(vehicleBounds)) continue;
+		AuPoint minimum, maximum; vehicleBounds.GetMinMax(minimum, maximum);
+		if(maximum.x <= minimum.x || maximum.y <= minimum.y || maximum.z <= minimum.z) continue;
+		const float height = attempt.vehicle->GroundHeightAboveCG();
+		const double facing = g_Au.Dice().Roll(1, 360, -1) * DEG2RAD;
 		const bool boat = result.commodityId == 77 || result.commodityId == 132;
 		const AuPoint center = world.LocOfLL(found->location, boat ? 0 : found->altitudeMSL);
 		AuMatrix4x4 building;
@@ -253,6 +305,7 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 			AuGlobeLLF ll;
 			if(!world.LLOfLoc(ll, proposed)) continue;
 			VehicleProductionBatch::Data::Candidate candidate;
+			const Development* parkingSlab = nullptr;
 			if(boat)
 			{
 				if(!world.Hydrographics()) continue;
@@ -269,10 +322,23 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 			else
 			{
 				const auto road = std::find_if(roads.cbegin(), roads.cend(),
-					[&world, &ll](const Development& value) { return ProductionRoadContains(world, value, ll); });
-				if(road == roads.cend() || !road->roadSlab) continue;
+					[&world, &ll](const Development& value) { return value.roadSlab && ProductionRoadContains(world, value, ll); });
+				if(road == roads.cend()) continue;
+				parkingSlab = &*road;
 				candidate.slab = road->id;
-				candidate.ground = world.GetSurfaceLocation(ll);
+				candidate.ground = world.LocOfLL(ll, road->roadStartAltitudeMSL);
+			}
+			candidate.placement.Translate(candidate.ground);
+			candidate.placement *= AuPoint(0, 0, 1).GetAlignmentTransform(-world.GravityDir(candidate.ground));
+			candidate.placement.Translate(0, 0, height);
+			candidate.placement.RotateZ(facing);
+			if(attempt.vehicle->LandingOrientation() == LORI_Tail)
+				candidate.placement.RotateX(PI / 2); // Rockets park on their tail, not their belly.
+			if(!boat)
+			{
+				AuBox occupied(vehicleBounds); occupied.Transform(candidate.placement);
+				if(!parkingSlab || !LandSpawnFits(world, *catalogue, *parkingSlab, occupied, buildings)) continue;
+				candidate.bounds = occupied;
 			}
 			// Land vehicles retain the original four qualifying slab limit.
 			// Keep boat alternatives for simultaneous production; Apply picks
@@ -280,18 +346,8 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 			if(!boat && ++tried > 4) break;
 			candidate.obstructed = world.IsSpawnAreaObstructed(candidate.ground, SpawnRadius);
 			if(boat && candidate.obstructed) continue;
-			candidate.bounds = SpawnBounds(world, candidate.ground);
-			candidate.placement.Translate(candidate.ground);
-			candidate.placement *= AuPoint(0, 0, 1).GetAlignmentTransform(-world.GravityDir(candidate.ground));
+			if(boat) candidate.bounds = SpawnBounds(world, candidate.ground);
 			attempt.candidates.append(candidate);
-		}
-		if(std::any_of(attempt.candidates.cbegin(), attempt.candidates.cend(),
-			[](const VehicleProductionBatch::Data::Candidate& candidate) { return !candidate.obstructed; }))
-		{
-			attempt.vehicle.reset(new DaVehicle(COMMODITYID(runtime), result.quality));
-			attempt.vehicle->Create(); // Identity/model only; no insertion or callbacks.
-			const float height = attempt.vehicle->GroundHeightAboveCG();
-			for(auto& candidate : attempt.candidates) candidate.placement.Translate(0, 0, height);
 		}
 		batch.m_Data->attempts.push_back(std::move(attempt));
 	}
