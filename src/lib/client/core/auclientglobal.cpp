@@ -8,6 +8,7 @@
 //
 #include "aubdreport.h"
 #include "auapp.h"
+#include "autransitiontrace.h"
 #include "audesign.h"
 #include "audossier.h"
 #include "aufilever.h"
@@ -31,6 +32,8 @@ AuSyncItem::AuSyncItem(TYPE type, const DaAtom* atom)
 {
 	Q_ASSERT(type == AtomAdded || type == AtomChanged || type == AtomParentChanged);
 	m_Type = type;
+	AuTransitionTrace trace("sync.clone", QString("kind=%1 atom=%2 type=%3")
+		.arg(int(type)).arg(atom->Id().GetID()).arg(atom->AtomTypeName()));
 	m_Atom = atom->Clone();
 	//DHH do view atoms ever emit signals? m_Atom->ConnectSignals();
 }
@@ -1566,6 +1569,7 @@ void AuClientGlobal::SyncAtomsCleared()
 
 unsigned int AuClientGlobal::SyncAtomCount() const
 {
+	AuTransitionTrace trace("sync.queueCountLock");
 	m_SceneSyncLock.lock();
 	unsigned int count = m_Sync.size();
 	m_SceneSyncLock.unlock();
@@ -1574,6 +1578,7 @@ unsigned int AuClientGlobal::SyncAtomCount() const
 
 void AuClientGlobal::TakeSyncQueue(QList<AuSyncItem>& sync)
 {
+	AuTransitionTrace trace("sync.takeQueueLock");
 	m_SceneSyncLock.lock();
 	sync = m_Sync;
 	m_Sync.clear();
@@ -1582,6 +1587,7 @@ void AuClientGlobal::TakeSyncQueue(QList<AuSyncItem>& sync)
 
 AuEther& AuClientGlobal::LockEtheriumDelete()
 {
+	AuTransitionTrace trace("client.etherLock");
 	if(IsSceneClient())
 		m_EtheriumLock.lock();
 	m_Etherium->LockDelete();

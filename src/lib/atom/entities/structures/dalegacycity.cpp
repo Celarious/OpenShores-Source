@@ -1,4 +1,5 @@
 #include "dalegacycity.h"
+#include "autransitiontrace.h"
 #include "auatomrenderinfo.h"
 #include "auether.h"
 #include "auglmodel.h"
@@ -67,6 +68,7 @@
 #include <QPainter>
 #include <QRunnable>
 #include <QThreadPool>
+#include <QThread>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <algorithm>
@@ -110,6 +112,48 @@ bool TransporterPadsActive(const DaAtom& source, const AuMatrix4x4& padFrame, co
 // 8 matches the road's paving border; increase for more clearance, or use 0
 // to restore the original placement spacing. Shared by server and client preview.
 const double RoadBuildingPlacementClearanceFeet = 5.0;
+
+// Keep CPU preparation from occupying every core used by movement/networking.
+// Graphics retain their existing pool; collision jobs never wait for graphics.
+QThreadPool& CityCollisionPool()
+{
+	struct Pool : QThreadPool
+	{
+		Pool() { setMaxThreadCount(qBound(1, QThread::idealThreadCount() - 2, 2)); }
+	};
+	static Pool pool;
+	return pool;
+}
+
+// Slab test over the complete segment, including segments with both endpoints
+// outside the box. Expanding the box by body offsets gives a swept-body test.
+bool SweepCityBounds(const AuPoint& from, const AuPoint& to, const AuPoint& minimum,
+	const AuPoint& maximum, double& fraction, AuPoint& normal)
+{
+	double entry = 0, exit = 1;
+	normal = AuPoint();
+	for(int axis = 0; axis < 3; ++axis)
+	{
+		const double start = axis == 0 ? from.x : axis == 1 ? from.y : from.z;
+		const double end = axis == 0 ? to.x : axis == 1 ? to.y : to.z;
+		const double low = axis == 0 ? minimum.x : axis == 1 ? minimum.y : minimum.z;
+		const double high = axis == 0 ? maximum.x : axis == 1 ? maximum.y : maximum.z;
+		const double motion = end - start;
+		if(std::abs(motion) < 1e-12) { if(start < low || start > high) return false; continue; }
+		double first = (low - start) / motion, last = (high - start) / motion;
+		const double sign = motion > 0 ? -1 : 1;
+		if(first > last) std::swap(first, last);
+		if(first >= entry)
+		{
+			entry = first; normal = AuPoint();
+			if(axis == 0) normal.x = sign; else if(axis == 1) normal.y = sign; else normal.z = sign;
+		}
+		exit = std::min(exit, last);
+		if(entry > exit) return false;
+	}
+	fraction = entry;
+	return true;
+}
 
 AuPoint Point(const QVector3D& p) { return AuPoint(p.x(), p.y(), p.z()); }
 
@@ -775,7 +819,8 @@ struct DaLegacyCity::Runtime
 	{
 		std::atomic<bool> cancelled{false}, finished{false};
 		quint64 revision = 0;
-		AuId worldId;
+		AuId worldId, cityId;
+		bool prepareRender = true;
 		QVector<AuLegacyCity::Development> developments;
 		QVector<AuLegacyCity::Development> domes;
 		int enclosure = 0;
@@ -792,7 +837,14 @@ struct DaLegacyCity::Runtime
 	struct RetireTask : QRunnable
 	{
 		QSharedPointer<Job> job;
-		void run() override { job.reset(); }
+		QVector<Building> buildings;
+		void run() override { job.reset(); buildings.clear(); }
+	};
+	struct CollisionProxy
+	{
+		AuLegacyCity::Development state;
+		AuMatrix4x4 placement;
+		AuPoint minimum, maximum; // Conservative world-space bounds, no triangles.
 	};
 	struct Upload
 	{
@@ -830,6 +882,7 @@ struct DaLegacyCity::Runtime
 	int enclosure = -1;
 	QVector<AuLegacyCity::Development> geometryDomes;
 	quint64 requestedRevision = 0, builtRevision = 0;
+	quint64 builtRenderRevision = 0;
 	QSharedPointer<Job> job;
 	quint64 revision = 0, drawRevision = 0;
 	quint64 sourceRevision = 0;
@@ -837,6 +890,7 @@ struct DaLegacyCity::Runtime
 	quint32 geometryEmpire = 0;
 	QVector<AuLegacyCity::Development> geometryState;
 	QVector<Building> buildings;
+	QHash<quint32, int> buildingIndex;
 	QVector<DrawBatch> drawBatches;
 	QHash<quint32, QSharedPointer<const RenderData>> drawnModels;
 	QHash<quint32, Upload> uploads;
@@ -851,10 +905,151 @@ struct DaLegacyCity::Runtime
 	QVector<int> siteOrder;
 	QVector<SiteNode> siteNodes;
 	double minimumSiteAltitude = 0, maximumSiteAltitude = 0;
+	quint64 collisionBoundsRevision = 0;
+	const DaWorldLL* collisionBoundsWorld = nullptr;
+	QVector<AuLegacyCity::Development> collisionBoundsState;
+	QVector<CollisionProxy> collisionProxies;
+	QHash<quint32, int> collisionProxyIndex;
+	AuPoint collisionMinimum, collisionMaximum;
+	quint64 fallbackChecks = 0, fallbackContacts = 0;
 	~Runtime()
 	{
 		if(job) job->cancelled.store(true, std::memory_order_release);
 		if(minePostJob) minePostJob->cancelled.store(true, std::memory_order_release);
+		if(job || !buildings.isEmpty())
+		{
+			auto* retire = new RetireTask;
+			retire->job.swap(job); retire->buildings.swap(buildings);
+			CityCollisionPool().start(retire, -1);
+		}
+	}
+
+	void EnsureCollisionBounds(const DaLegacyCity& city, const DaWorldLL& world)
+	{
+		AuTransitionTrace trace("physics.cityBounds", QStringLiteral("city=%1").arg(city.Id().GetID()));
+		QReadLocker stateLock(&city.m_CityLock);
+		if(collisionBoundsWorld == &world && collisionBoundsRevision == city.m_CityRevision) return;
+		collisionBoundsRevision = city.m_CityRevision;
+		if(collisionBoundsWorld == &world && SameGeometry(collisionBoundsState, city.m_City.developments)) return;
+		collisionBoundsWorld = &world; collisionBoundsState = city.m_City.developments;
+		collisionProxies.clear(); collisionProxyIndex.clear();
+		for(const auto& dev : collisionBoundsState)
+		{
+			if(dev.demolished) continue;
+			CollisionProxy proxy; proxy.state = dev;
+			world.BuildingConstructionTransform(world.LocOfLL(dev.location, dev.altitudeMSL),
+				dev.facingRadians, nullptr, AuPoint(), proxy.placement);
+			const auto* recipe = ConstructionRecipe(dev.industryId, dev.constructionProcessId);
+			double width = recipe ? recipe->buildRadius * FeetPerMeter() : 0;
+			double length = width;
+			double bottom = (dev.minimumDeck - 1) * AuLegacyBd::DeckHeight;
+			double top = (dev.maximumDeck + 2) * AuLegacyBd::DeckHeight;
+			if(!dev.constructed) bottom = std::min(bottom, 0.0);
+			if(dev.industryId == 1 || dev.industryId == 10) top = std::max(top, 32.0);
+			if(dev.industryId == 2)
+			{
+				width = dev.roadWidthMeters * FeetPerMeter() / 2 + 8;
+				length = dev.roadLengthMeters * FeetPerMeter() / 2;
+				bottom = std::min(dev.roadStartAltitudeMSL, dev.roadEndAltitudeMSL) - dev.altitudeMSL - 32;
+				top = std::max(dev.roadStartAltitudeMSL, dev.roadEndAltitudeMSL) - dev.altitudeMSL + 32;
+			}
+			else if(dev.industryId == 129)
+			{
+				width = length = dev.biodomeRadiusMeters * FeetPerMeter() + AuLegacyBd::Biodome::RingHalfWidth;
+				top = AuLegacyBd::Biodome::RoofHeight(dev.biodomeRadiusMeters * FeetPerMeter(), 0);
+			}
+			// Authored rooms can extend beyond the industry's nominal site. Read
+			// their boundaries, not rasterized floors, resource meshes or BVHs.
+			if(const auto design = AuLegacyBd::Catalog::BuiltIn().Find(dev.designId))
+			{
+				for(const auto& room : design->rooms)
+				{
+					if(!dev.constructed ? room.deck != 0 : (room.deck < dev.minimumDeck || room.deck > dev.maximumDeck + 1)) continue;
+					const QRectF bounds = AuLegacyShip::RoomBoundary(room).boundingRect();
+					width = std::max(width, std::max(std::abs(bounds.left()), std::abs(bounds.right())));
+					length = std::max(length, std::max(std::abs(bounds.top()), std::abs(bounds.bottom())));
+					top = std::max(top, room.deck * AuLegacyBd::DeckHeight
+						+ std::hypot(bounds.width(), bounds.height()) / 6);
+				}
+				for(const auto& detail : design->details)
+				{
+					if(detail.deck < dev.minimumDeck || detail.deck > dev.maximumDeck + 1) continue;
+					const auto point = AuLegacyShip::DecodePoint(detail.packedXY);
+					// The cold proxy deliberately includes space around equipment;
+					// it is replaced by the shared triangle solver after publication.
+					width = std::max(width, std::abs(point.x()) + 64);
+					length = std::max(length, std::abs(point.y()) + 64);
+					top = std::max(top, detail.deck * AuLegacyBd::DeckHeight + 64);
+					bottom = std::min(bottom, detail.deck * AuLegacyBd::DeckHeight - 64);
+				}
+			}
+			const double padding = AuLegacyShip::CoordinateSpacing;
+			// Include curved road/dome projections below their tangent plane.
+			if(dev.industryId == 2 || dev.industryId == 129) bottom -= 2 * (width + length);
+			AuBox box(AuPoint(-width-padding, -length-padding, bottom-padding),
+				AuPoint(width+padding, length+padding, top+padding));
+			box.Transform(proxy.placement); box.GetMinMax(proxy.minimum, proxy.maximum);
+			collisionMinimum = collisionProxies.isEmpty() ? proxy.minimum : collisionMinimum.Min(proxy.minimum);
+			collisionMaximum = collisionProxies.isEmpty() ? proxy.maximum : collisionMaximum.Max(proxy.maximum);
+			collisionProxyIndex.insert(dev.id, collisionProxies.size());
+			collisionProxies.append(proxy);
+		}
+	}
+
+	bool CollisionInRange(const DaLegacyCity& city, const DaWorldLL& world,
+		const AuPoint& from, const AuPoint& to, double reach)
+	{
+		EnsureCollisionBounds(city, world);
+		if(collisionProxies.isEmpty()) return false;
+		const AuPoint margin(reach, reach, reach);
+		double fraction; AuPoint normal;
+		if(!SweepCityBounds(from, to, collisionMinimum-margin, collisionMaximum+margin, fraction, normal)) return false;
+		for(const auto& proxy : collisionProxies)
+			if(SweepCityBounds(from, to, proxy.minimum-margin, proxy.maximum+margin, fraction, normal)) return true;
+		return false;
+	}
+
+	const Building* CurrentBuilding(const CollisionProxy& proxy) const
+	{
+		const auto found = buildingIndex.constFind(proxy.state.id);
+		if(found == buildingIndex.cend()) return nullptr;
+		const auto& building = buildings.at(found.value());
+		return SameBuildingGeometry(building.state, proxy.state) ? &building : nullptr;
+	}
+
+	bool CurrentCollision(const Building& building) const
+	{
+		const auto found = collisionProxyIndex.constFind(building.state.id);
+		return found != collisionProxyIndex.cend()
+			&& SameBuildingGeometry(building.state, collisionProxies.at(found.value()).state);
+	}
+
+	bool ColdCollision(const AuId& cityId, const AuPoint& from, const AuPoint& to, const AuBox& body,
+		AuPoint& hit, AuPoint& normal)
+	{
+		++fallbackChecks;
+		AuPoint bodyMinimum, bodyMaximum; body.GetMinMax(bodyMinimum, bodyMaximum);
+		double closest = 2; bool blocked = false;
+		for(const auto& proxy : collisionProxies)
+		{
+			if(CurrentBuilding(proxy)) continue;
+			double fraction; AuPoint candidateNormal;
+			if(!SweepCityBounds(from, to, proxy.minimum-bodyMaximum, proxy.maximum-bodyMinimum,
+				fraction, candidateNormal) || candidateNormal.IsZero() || fraction >= closest) continue;
+			// Preserve an actor spawned inside a cold envelope: do not push it
+			// out or stop all movement while its actual room is being prepared.
+			closest = fraction; normal = candidateNormal; blocked = true;
+		}
+		if(blocked)
+		{
+			const double skin = (to-from).Length() > 1e-12 ? .01 / (to-from).Length() : 0;
+			hit = from + (to-from) * std::max(0.0, closest-skin);
+			++fallbackContacts;
+			if(fallbackContacts == 1)
+				AuTransitionTrace::Event("physics.cityColdContact", QStringLiteral("city=%1 pending=%2 buildings=%3")
+					.arg(cityId.GetID()).arg(bool(job)).arg(collisionProxies.size()));
+		}
+		return blocked;
 	}
 	double AdjustTerrain(const DaWorldLL& world, double altitudeMSL, const AuGlobeLL& ll,
 		int& levelSites, bool& hideRocks, int& hideGrass, bool& hideShrubs,
@@ -1009,9 +1204,12 @@ struct DaLegacyCity::Runtime
 		++terrainRevision;
 	}
 
-	void Ensure(const DaLegacyCity& city)
+	void Ensure(const DaLegacyCity& city, bool collisionDemand = false)
 	{
+		AuTransitionTrace trace("physics.cityPrepare", QStringLiteral("city=%1 collision=%2")
+			.arg(city.Id().GetID()).arg(collisionDemand));
 		const auto* world=dynamic_cast<const DaWorldLL*>(city.Parent());
+		const bool prepareRender = asynchronous && !collisionDemand;
 		// Dome completion/removal in another city must invalidate this city's
 		// frames too. Snapshot worlds/cities before taking the city state lock.
 		const auto domes = asynchronous && world ? AuLegacyCity::CompletedBiodomes(*world) : QVector<AuLegacyCity::Development>();
@@ -1023,7 +1221,8 @@ struct DaLegacyCity::Runtime
 			// Terrain and geometry must describe the same state even if a network
 			// update arrives while this snapshot is being taken.
 			if(world) EnsureSites(city.m_City.developments, city.m_CityRevision, *world);
-			if(!enclosureChanged && sourceRevision == city.m_CityRevision && (builtRevision == requestedRevision
+			if(!enclosureChanged && sourceRevision == city.m_CityRevision && ((builtRevision == requestedRevision
+				&& (!prepareRender || builtRenderRevision == requestedRevision))
 				|| (job && !job->finished.load(std::memory_order_acquire)))) return;
 			developments = city.m_City.developments;
 			if(enclosureChanged || sourceRevision != city.m_CityRevision)
@@ -1039,7 +1238,10 @@ struct DaLegacyCity::Runtime
 				}
 			}
 		}
-		if(asynchronous)
+		// Movement, environment and path validation poll immutable worker output,
+		// independently of graphics. Retain immediate authority service/spawn
+		// semantics for callers which are not collision queries.
+		if(asynchronous || collisionDemand || job)
 		{
 			// Poll only. A job owns its snapshots and outlives a departing city;
 			// neither render nor environment/collision queries wait for it.
@@ -1049,30 +1251,43 @@ struct DaLegacyCity::Runtime
 					&& !job->cancelled.load(std::memory_order_acquire))
 				{
 					buildings.swap(job->result); builtRevision = requestedRevision; ++revision;
+					buildingIndex.clear();
+					for(int i = 0; i < buildings.size(); ++i) buildingIndex.insert(buildings.at(i).state.id, i);
+					builtRenderRevision = job->prepareRender ? requestedRevision : 0;
+					AuTransitionTrace::Event("physics.cityPrepared", QStringLiteral("city=%1 revision=%2 buildings=%3 render=%4 fallback_checks=%5 fallback_contacts=%6")
+						.arg(city.Id().GetID()).arg(builtRevision).arg(buildings.size()).arg(job->prepareRender)
+						.arg(fallbackChecks).arg(fallbackContacts));
+					fallbackChecks = fallbackContacts = 0;
 				}
 				// Reclaim obsolete meshes/BVHs on a worker too. Transfer the last
 				// runtime reference before scheduling, so cleanup cannot race ahead
 				// and leave the render thread doing the final deletion.
 				auto* retire = new RetireTask;
 				retire->job.swap(job);
-				QThreadPool::globalInstance()->start(retire, -1);
+				CityCollisionPool().start(retire, -1);
 			}
-			if(asyncBuildAllowed && !job && builtRevision != requestedRevision)
+			if((!prepareRender || asyncBuildAllowed) && !job
+				&& (builtRevision != requestedRevision || (prepareRender && builtRenderRevision != requestedRevision)))
 			{
 				job.reset(new Job);
+				job->cityId = city.Id(); job->prepareRender = prepareRender;
 				job->revision = requestedRevision; job->developments = developments;
 				job->domes = domes; job->enclosure = pressure;
 				job->previous = buildings; job->sites = sites;
 				if(world) job->worldId = world->Id();
-				QThreadPool::globalInstance()->start(new BuildTask(job), 0);
+				AuTransitionTrace::Event("physics.cityPrepareQueued", QStringLiteral("city=%1 world=%2 revision=%3 buildings=%4 render=%5 active=%6 queued_pool_max=%7")
+					.arg(city.Id().GetID()).arg(job->worldId.GetID()).arg(requestedRevision).arg(developments.size())
+					.arg(prepareRender).arg(CityCollisionPool().activeThreadCount()).arg(CityCollisionPool().maxThreadCount()));
+				if(prepareRender) QThreadPool::globalInstance()->start(new BuildTask(job), 0);
+				else CityCollisionPool().start(new BuildTask(job), 0);
 			}
 		}
 		else if(builtRevision != requestedRevision)
 		{
-			// Authority still needs collision/path data immediately. Its work is
-			// independent of the scene replica and never holds the city state lock.
 			const auto previous = buildings;
 			Build(developments, world, previous, nullptr, false, pressure, domes);
+			buildingIndex.clear();
+			for(int i = 0; i < buildings.size(); ++i) buildingIndex.insert(buildings.at(i).state.id, i);
 			builtRevision = requestedRevision; ++revision;
 		}
 		QHash<quint32, const AuLegacyCity::Development*> latest;
@@ -1248,13 +1463,16 @@ struct DaLegacyCity::Runtime
 		for(const auto& dev : developments)
 		{
 			if(cancelled && cancelled->load(std::memory_order_acquire)) return;
+			AuTransitionTrace buildingTrace("city.building", QStringLiteral("development=%1 industry=%2 design=%3 render=%4")
+				.arg(dev.id).arg(dev.industryId).arg(dev.designId).arg(prepareRender));
 			const auto found = old.constFind(dev.id);
 			if(found != old.cend() && SameBuildingGeometry((*found)->state, dev)
 				&& (*found)->enclosureKey == enclosureKey && (!hasEnclosures || reuseTerrainGeometry)
 				&& ((dev.industryId != 129 && dev.industryId != 2) || reuseTerrainGeometry)
-				&& (!prepareRender || (*found)->render))
+				&& (!prepareRender || (*found)->render || !hasEnclosures))
 			{
 				Building building = **found; building.state = dev;
+				if(prepareRender && !building.render) building.render = PrepareRender(building, atlases, textures);
 				buildings.append(std::move(building)); continue;
 			}
 			const auto design = AuLegacyBd::Catalog::BuiltIn().Find(dev.designId);
@@ -1368,7 +1586,12 @@ struct DaLegacyCity::Runtime
 					: AuLegacyShip::Rendering::Material::HullWall;
 				collisionMesh.batches.append(imported);
 			}
-			building.collision.reset(new AuLegacyScGeometry::CollisionWorld(collisionMesh));
+			{
+				AuTransitionTrace indexTrace("city.collisionIndex", QStringLiteral("development=%1").arg(dev.id));
+				building.collision.reset(new AuLegacyScGeometry::CollisionWorld(collisionMesh));
+				indexTrace.SetDetail(QStringLiteral("development=%1 triangles=%2")
+					.arg(dev.id).arg(building.collision->TriangleCount()));
+			}
 			if(prepareRender) building.render = PrepareRender(building, atlases, textures);
 			buildings.append(std::move(building));
 		}
@@ -1454,6 +1677,9 @@ struct DaLegacyCity::Runtime
 
 void DaLegacyCity::Runtime::BuildTask::run()
 {
+	AuTransitionTrace trace(job->prepareRender ? "worker.cityGraphics" : "worker.cityCollision",
+		QStringLiteral("city=%1 world=%2 revision=%3 buildings=%4")
+			.arg(job->cityId.GetID()).arg(job->worldId.GetID()).arg(job->revision).arg(job->developments.size()), 0);
 	// Roads, biodomes and enclosure frames need world projection/terrain.
 	// Clone it on the worker under the existing ether lifetime guard. No task
 	// retains a live city, runtime or world pointer after that brief snapshot.
@@ -1463,6 +1689,8 @@ void DaLegacyCity::Runtime::BuildTask::run()
 	DaWorldLL* world = nullptr;
 	if(needsWorld && !job->cancelled.load(std::memory_order_acquire))
 	{
+		AuTransitionTrace snapshot("worker.cityWorldSnapshot", QStringLiteral("city=%1 world=%2")
+			.arg(job->cityId.GetID()).arg(job->worldId.GetID()));
 		const AuEther& live = g_Au.LockEtheriumDelete();
 		if(const auto* source = dynamic_cast<const DaWorldLL*>(live.FindNormalAtom(job->worldId)))
 		{
@@ -1477,10 +1705,13 @@ void DaLegacyCity::Runtime::BuildTask::run()
 		Runtime result;
 		result.sites = job->sites;
 		result.BuildSiteIndex();
-		result.Build(job->developments, world, job->previous, &job->cancelled, true, job->enclosure, job->domes);
+		result.Build(job->developments, world, job->previous, &job->cancelled, job->prepareRender, job->enclosure, job->domes);
 		job->result.swap(result.buildings);
 		job->succeeded = !job->cancelled.load(std::memory_order_acquire);
 	}
+	trace.SetDetail(QStringLiteral("city=%1 world=%2 revision=%3 requested=%4 prepared=%5 completed=%6 cancelled=%7")
+		.arg(job->cityId.GetID()).arg(job->worldId.GetID()).arg(job->revision).arg(job->developments.size())
+		.arg(job->result.size()).arg(job->succeeded).arg(job->cancelled.load(std::memory_order_acquire)));
 	job->finished.store(true, std::memory_order_release);
 }
 
@@ -1544,15 +1775,14 @@ void DaLegacyCity::Runtime::MinePostTask::run()
 	job->finished.store(true, std::memory_order_release);
 }
 
-// Model cities supply movement collision without ever being rendered. Keep
-// their queries synchronous; only scene replicas may wait for render readiness.
+// Model cities prepare collision independently of scene/render readiness.
 DaLegacyCity::DaLegacyCity() : m_Runtime(new Runtime) {}
 DaLegacyCity::~DaLegacyCity() = default;
 DaLegacyCity::DaLegacyCity(const DaLegacyCity& city) : DaAtom(city), m_Runtime(new Runtime)
 {
 	QReadLocker lock(&city.m_CityLock); m_City = city.m_City;
-	// Scene replicas are separate from solo authority. LoadSubatoms copies a
-	// detached row, so its authoritative solo city keeps synchronous queries.
+	// Scene replicas also prepare draw data. Root/solo authority needs only
+	// collision/path snapshots and does not depend on graphics readiness.
 	m_Runtime->asynchronous = g_Au.IsSceneClient() || (g_Au.IsSceneApp() && city.Ether());
 }
 DaAtom* DaLegacyCity::Clone() const { return new DaLegacyCity(*this); }
@@ -1980,6 +2210,8 @@ double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altit
 
 void DaLegacyCity::UpdateSiteTerrain(AuAtomRenderInfo& ari, bool removed)
 {
+	AuTransitionTrace trace("graphics.cityTerrain", QString("city=%1 removed=%2")
+		.arg(Id().GetID()).arg(removed));
 	auto* world = dynamic_cast<DaWorldLL*>(Parent());
 	if(!world) return;
 	QMutexLocker lock(&m_Runtime->lock); m_Runtime->EnsureSites(*this, *world);
@@ -2024,8 +2256,13 @@ void DaLegacyCity::UpdateSiteTerrain(AuAtomRenderInfo& ari, bool removed)
 	// A worker started before construction/extension must not publish its old
 	// room mask after BuildingChanged requests a fresh distribution.
 	if(!dirty.isEmpty()) ari.mm.DeleteRockModel(world->Id());
+	trace.SetDetail(QString("city=%1 world=%2 removed=%3 dirty_sites=%4")
+		.arg(Id().GetID()).arg(world->Id().GetID()).arg(removed).arg(dirty.size()));
+	QVector<AuTerrainFootprint> footprints;
+	footprints.reserve(dirty.size());
 	for(const auto& site : dirty)
-		world->BuildingChanged(site.placement, (site.radius + 32.8084) * std::sqrt(2.0), ari.mm);
+		footprints.append(AuTerrainFootprint(site.placement, (site.radius + 32.8084) * std::sqrt(2.0)));
+	if(!footprints.isEmpty()) world->LegacyCityTerrainChanged(footprints, ari.mm);
 }
 
 bool DaLegacyCity::SetState(const AuLegacyCity::State& state, QString& error)
@@ -3180,15 +3417,12 @@ bool DaLegacyCity::RoughExtents(AuBox& extents) const
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!world) return false;
-	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->EnsureCollisionBounds(*this, *world);
 	AuPoint minimum, maximum; bool any = false;
 	const auto worldToCity = Transform().Inverse();
-	for(const auto& building : m_Runtime->buildings)
+	for(const auto& proxy : m_Runtime->collisionProxies)
 	{
-		AuMatrix4x4 transform;
-		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
-			building.state.facingRadians, nullptr, AuPoint(), transform);
-		AuBox box(Point(building.mesh.minimum), Point(building.mesh.maximum)); box.Transform(worldToCity * transform);
+		AuBox box(proxy.minimum, proxy.maximum); box.Transform(worldToCity);
 		AuPoint a, b; box.GetMinMax(a, b);
 		minimum = any ? minimum.Min(a) : a; maximum = any ? maximum.Max(b) : b; any = true;
 	}
@@ -3211,10 +3445,15 @@ DaAtom* DaLegacyCity::SightTarget(const DaAtom* observer, const AuPoint& eye,
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!world || !IsSightTarget(observer)) return best;
-	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
 	const auto worldToObserver = model * Transform().Inverse();
+	const auto observerToWorld = worldToObserver.Inverse();
+	QMutexLocker lock(&m_Runtime->lock);
+	if(!m_Runtime->CollisionInRange(*this, *world, observerToWorld.Project(eye),
+		observerToWorld.Project(sighted), 2000 * FeetPerMeter())) return best;
+	m_Runtime->Ensure(*this, true);
 	for(const auto& building : m_Runtime->buildings)
 	{
+		if(!m_Runtime->CurrentCollision(building)) continue;
 		AuMatrix4x4 placement;
 		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
 			building.state.facingRadians, nullptr, AuPoint(), placement);
@@ -3249,14 +3488,41 @@ bool DaLegacyCity::IsPathBlocked(const AuPoint& from, const AuPoint& to, AuPoint
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!world || !g_Au.IsLegacyGeneration()) return false;
+	AuTransitionTrace trace("physics.cityPath", QStringLiteral("city=%1").arg(Id().GetID()));
+	AuBox actorBody(AuPoint(-.01,-.01,-.01), AuPoint(.01,.01,.01));
+	double bodyReach = 0;
+	if(actor)
+	{
+		if(const auto* creature = dynamic_cast<const DaCreature*>(actor)) creature->LegacyCollisionExtents(actorBody);
+		else actor->RoughExtents(actorBody);
+		for(const auto& corner : actorBody.m_fCorners) bodyReach = std::max(bodyReach, corner.Length());
+	}
+	const double reach = bodyReach + 2000 * FeetPerMeter();
+	{
+		QMutexLocker lock(&m_Runtime->lock);
+		if(!m_Runtime->CollisionInRange(*this, *world, from, to, reach)) return false;
+	}
 	const auto* creature = dynamic_cast<const DaCreature*>(actor);
 	// A gravity query can rebuild actor environment and re-enter the city.
 	const AuPoint gravityUp = creature ? creature->GravityNormal() : AuPoint();
 	const double standingHeight = creature ? creature->GroundHeightAboveCG() : 0;
-	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this, true);
 	bool blocked = false; double closest = from.Distance2(to);
+	AuBox fallbackBody(actorBody);
+	if(actor)
+	{
+		AuMatrix4x4 actorToWorld;
+		if(actor->GetTransformRelativeToParent(actorToWorld, world))
+		{
+			if(creature) fallbackBody = AuLegacyScGeometry::MovementBodyOffsets(fallbackBody, actorToWorld.ProjectVector(gravityUp));
+			else for(auto& corner : fallbackBody.m_fCorners) corner = actorToWorld.ProjectVector(corner);
+		}
+	}
+	if(m_Runtime->ColdCollision(Id(), from, to, fallbackBody, hit, normal))
+	{ blocked = true; closest = from.Distance2(hit); }
 	for(const auto& building : m_Runtime->buildings)
 	{
+		if(!m_Runtime->CurrentCollision(building)) continue;
 		if(!building.collision->IsValid()) continue;
 		AuMatrix4x4 transform;
 		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
@@ -3264,7 +3530,7 @@ bool DaLegacyCity::IsPathBlocked(const AuPoint& from, const AuPoint& to, AuPoint
 		AuBox body(AuPoint(-.01,-.01,-.01), AuPoint(.01,.01,.01));
 		if(actor)
 		{
-			if(creature) creature->LegacyCollisionExtents(body); else actor->RoughExtents(body);
+			body = actorBody;
 			AuMatrix4x4 actorToWorld; actor->GetTransformRelativeToParent(actorToWorld, world);
 			const auto actorToBuilding = transform.Inverse() * actorToWorld;
 			if(creature) body = AuLegacyScGeometry::MovementBodyOffsets(body, actorToBuilding.ProjectVector(gravityUp));
@@ -3296,6 +3562,21 @@ bool DaLegacyCity::FilterDestination(DaAtom& actor, const AuPoint& from, AuPoint
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!world || !g_Au.IsLegacyGeneration()) return false;
 	AuMatrix4x4 actorToWorld; if(!actor.GetTransformRelativeToParent(actorToWorld, world)) return false;
+	AuTransitionTrace trace("physics.cityCollision", QStringLiteral("city=%1 actor=%2")
+		.arg(Id().GetID()).arg(actor.Id().GetID()));
+	AuBox worldBody(anatomy);
+	double bodyReach = 0;
+	for(auto& corner : worldBody.m_fCorners)
+	{ corner = actorToWorld.ProjectVector(corner); bodyReach = std::max(bodyReach, corner.Length()); }
+	{
+		QMutexLocker lock(&m_Runtime->lock);
+		// Five seconds of directional lookahead starts preparation early; the
+		// actual collision tests below still use only the attempted movement.
+		const AuPoint ahead = to + actorToWorld.ProjectVector(actor.Vector()) * 5;
+		const double reach = bodyReach + 2000 * FeetPerMeter();
+		if(!m_Runtime->CollisionInRange(*this, *world, from, to, reach)
+			&& !m_Runtime->CollisionInRange(*this, *world, to, ahead, reach)) return false;
+	}
 	const auto* creature = dynamic_cast<const DaCreature*>(&actor);
 	// Match the legacy spacecraft's walking eligibility. A creature in flight,
 	// a jump or a ladder transition must retain its requested vertical movement.
@@ -3311,10 +3592,23 @@ bool DaLegacyCity::FilterDestination(DaAtom& actor, const AuPoint& from, AuPoint
 	const bool inGravity = actor.IsInGravity();
 	const AuMatrix4x4 cityToWorld = Transform();
 	QVector<AuLegacyScGeometry::CollisionWorld::MovementContact> responses;
-	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this, true);
 	bool changed = false;
+	if(creature) worldBody = AuLegacyScGeometry::MovementBodyOffsets(anatomy, actorToWorld.ProjectVector(gravityUp));
+	AuPoint coldHit, coldNormal;
+	if(m_Runtime->ColdCollision(Id(), from, to, worldBody, coldHit, coldNormal))
+	{
+		to = coldHit; changed = true;
+		// This is a preparation guard, not a real impact surface: remove inward
+		// velocity without applying invented city impact damage.
+		AuPoint localNormal = actorToWorld.UnProjectVector(coldNormal); localNormal.Unit();
+		AuPoint velocity = actor.Vector();
+		const double inward = velocity.Dot(localNormal);
+		if(inward < 0) actor.SetVector(velocity - localNormal * inward);
+	}
 	for(const auto& building : m_Runtime->buildings)
 	{
+		if(!m_Runtime->CurrentCollision(building)) continue;
 		if(!building.collision->IsValid()) continue;
 		AuMatrix4x4 transform;
 		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
@@ -3352,17 +3646,25 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!world || !g_Au.IsLegacyGeneration()) return;
+	AuTransitionTrace trace("physics.cityEnvironment", QStringLiteral("city=%1 actor=%2")
+		.arg(Id().GetID()).arg(actor.Id().GetID()));
+	AuMatrix4x4 actorToWorld; if(!actor.GetTransformRelativeToParent(actorToWorld, world)) return;
+	{
+		QMutexLocker lock(&m_Runtime->lock);
+		const AuPoint ahead = location + actorToWorld.ProjectVector(actor.Vector()) * 5;
+		if(!m_Runtime->CollisionInRange(*this, *world, location, ahead, 2000 * FeetPerMeter())) return;
+	}
 	// EnclosureNeeded 0x28f190 depends on the city's origin and world, without
 	// a power gate. Resolve these world properties before taking the mesh lock.
 	const int enclosure = AuLegacyCity::EnclosureNeeded(*world, Transform().Translation());
 	const bool undersea = enclosure == 2;
-	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this, true);
 	bool hasFarm=false;
-	for(const auto& building : m_Runtime->buildings)
-		if(building.state.industryId==30)
+	for(const auto& proxy : m_Runtime->collisionProxies)
+		if(proxy.state.industryId==30)
 		{
-			const auto* recipe=ConstructionRecipe(building.state.industryId,building.state.constructionProcessId);
-			if(recipe && location.Distance2(world->LocOfLL(building.state.location,building.state.altitudeMSL))
+			const auto* recipe=ConstructionRecipe(proxy.state.industryId,proxy.state.constructionProcessId);
+			if(recipe && location.Distance2(world->LocOfLL(proxy.state.location,proxy.state.altitudeMSL))
 				< std::pow(2*(recipe->buildRadius*FeetPerMeter()+32.8084),2)) { hasFarm=true; break; }
 		}
 	double farmGroundAltitude=0;
@@ -3374,14 +3676,11 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 		farmGroundAltitude=world->TerrainAltitudeMSL(query.m_GlobeLL);
 		lock.relock();
 	}
-	AuMatrix4x4 actorToWorld; if(!actor.GetTransformRelativeToParent(actorToWorld, world)) return;
-	for(const auto& building : m_Runtime->buildings)
+	for(const auto& proxy : m_Runtime->collisionProxies)
 	{
-		AuMatrix4x4 transform;
-		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
-			building.state.facingRadians, nullptr, AuPoint(), transform);
+		const auto& transform = proxy.placement;
 		const auto local = transform.UnProject(location);
-		const auto& dev=building.state;
+		const auto& dev=proxy.state;
 		const auto* recipe=ConstructionRecipe(dev.industryId,dev.constructionProcessId);
 		const double radius=dev.industryId==129 ? dev.biodomeRadiusMeters*FeetPerMeter() : recipe ? recipe->buildRadius*FeetPerMeter() : 0;
 		const double halfWidth=dev.industryId==2 ? dev.roadWidthMeters*FeetPerMeter()/2 : radius;
@@ -3428,7 +3727,9 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 			query.m_Environment|=EB_Breathable;
 			if(enclosure==2 || (domePressure && undersea)) query.m_Environment&=~(EB_OnWater|EB_InWater|EB_MouthUnderwater);
 		}
-		if(!building.collision->IsValid()) continue;
+		const Runtime::Building* prepared = m_Runtime->CurrentBuilding(proxy);
+		if(!prepared || !prepared->collision->IsValid()) continue;
+		const auto& building = *prepared;
 		const auto up = transform.UnProjectVector(-world->GravityDir(location));
 		AuPoint floorNormal;
 		const double height = building.collision->HeightAboveFloor(local, up, floorNormal);
@@ -3874,9 +4175,11 @@ bool DaLegacyCity::Route(quint32 development, const AuPoint& from, const AuPoint
 	points.clear();
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!world || !g_Au.IsLegacyGeneration()) return false;
-	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
+	QMutexLocker lock(&m_Runtime->lock);
+	if(!m_Runtime->CollisionInRange(*this, *world, from, to, 2000 * FeetPerMeter())) return false;
+	m_Runtime->Ensure(*this, true);
 	for(const auto& building : m_Runtime->buildings)
-		if(building.state.id == development)
+		if(building.state.id == development && m_Runtime->CurrentCollision(building))
 		{
 			AuMatrix4x4 transform;
 			world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
@@ -3954,6 +4257,7 @@ void DaLegacyCity::PaintOnSurfaceMap(const DaWorldLL& world, QPainter& painter, 
 
 void DaLegacyCity::DeleteDeviceObjects(AuAtomRenderInfo& ari)
 {
+	AuTransitionTrace trace("graphics.cityDelete", QString("city=%1").arg(Id().GetID()));
 	UpdateSiteTerrain(ari, true);
 	QMutexLocker lock(&m_Runtime->lock);
 	m_Runtime->asyncBuildAllowed = false;
@@ -4015,7 +4319,8 @@ bool DaLegacyCity::GraphicsReady() const
 	QMutexLocker lock(&m_Runtime->lock);
 	QReadLocker stateLock(&m_CityLock);
 	return m_Runtime->sourceRevision == m_CityRevision && m_Runtime->requestedRevision
-		&& m_Runtime->builtRevision == m_Runtime->requestedRevision && !m_Runtime->job
+		&& m_Runtime->builtRevision == m_Runtime->requestedRevision
+		&& m_Runtime->builtRenderRevision == m_Runtime->requestedRevision && !m_Runtime->job
 		&& m_Runtime->drawRevision == m_Runtime->revision && m_Runtime->uploads.isEmpty();
 }
 

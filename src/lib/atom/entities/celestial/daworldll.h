@@ -40,6 +40,14 @@ class DaWorldLL;
 class DePlanetFauna;
 class DePlanetFlora;
 
+struct AuTerrainFootprint
+{
+	AuMatrix4x4 placement;
+	double radius;
+	AuTerrainFootprint() : radius(0) {}
+	AuTerrainFootprint(const AuMatrix4x4& transform, double extent) : placement(transform), radius(extent) {}
+};
+
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 class AuFenceSegment : public AuSegment
@@ -2115,6 +2123,8 @@ public:
 
 	// Called by when a building has changed, to invalidate the 3D model of the terrain affected by the building area.
 	virtual void BuildingChanged(const AuMatrix4x4& bldM, double radius, AuGLModelMaker& mm);
+	// City arrivals/departures submit all changed footprints together.
+	virtual void LegacyCityTerrainChanged(const QVector<AuTerrainFootprint>& footprints, AuGLModelMaker& mm);
 
 	// True if high mountain terrain is snow capped. This does not imply the presense of high mountain terrain, just that it will
 	// be snow capped if it is high enough.

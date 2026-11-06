@@ -15,6 +15,7 @@ class Au3dsGLSLModelInstance;
 class AuFogOfWar;
 class AuGLModelMaker;
 struct AuSeaPreparation;
+struct AuCityTerrainInvalidation;
 class AuZoneResource;
 class DaBd;
 class DePlanetFauna;
@@ -77,6 +78,11 @@ private:
 	QMap<AuPoint, Au3dsGLSLModelInstance*>	m_PlanetoidModels;	// Key is location relative to my parent, value is model to use.
 	QMultiMap<GLuint, QMap<AuPoint, Au3dsGLSLModelInstance*>::iterator> m_PlanetoidsSorted;
 	AuAtGlobeVAO						m_AtGlobe;				// Vertex array objects of the globe as seen from the ground.
+	QVector<AuTerrainFootprint> m_CityTerrainFootprints;
+	std::shared_ptr<AuCityTerrainInvalidation> m_CityTerrainInvalidation;
+	int m_CityTerrainApplyIndex = 0;
+	void ProcessCityTerrainInvalidation(AuGLModelMaker& mm);
+	void DiscardCityTerrainInvalidation();
 	AuGLVAO								m_Atmosphere;			// Vertex array object of the atmosphere unit globe for clouds, etc.
 	GLuint								m_glTexFarSurface;		// Generated planet surface texture for distant render/surface map.
 	GLuint								m_glTexGrass;			// Grass texture generated from local flora.
@@ -147,6 +153,7 @@ public:
 	virtual float AsteroidBeltDensityRecursive(const AuPoint& envLoc) const;
 
 	virtual void BuildingChanged(const AuMatrix4x4& bldM, double radius, AuGLModelMaker& mm);
+	virtual void LegacyCityTerrainChanged(const QVector<AuTerrainFootprint>& footprints, AuGLModelMaker& mm);
 
 	virtual bool CanBeHarvested(COMMODITYID moduleInUse) const
 	{

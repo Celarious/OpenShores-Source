@@ -9,6 +9,7 @@
 #include "au3dsglsl.h"
 #include "auglmodel.h"
 #include "auglobal.h"
+#include "autransitiontrace.h"
 #include "auether.h"
 #include "auglmodelmaker.h"
 #include "daatomlist.h"
@@ -42,6 +43,8 @@ void AuAtomRenderInfo::QueueSceneDeviceChildren(const DaAtom& atom)
 
 bool AuAtomRenderInfo::PrepareSceneDevices(DaAtom& root, AuEther& ether)
 {
+	AuTransitionTrace trace("graphics.prepareDevices", QString("root=%1 pending=%2")
+		.arg(root.Id().GetID()).arg(m_DeviceQueue.size()));
 	if(m_DeviceRoot != root.Id()) ClearSceneDevicePreparation();
 	if(m_DeviceQueue.isEmpty())
 	{
@@ -69,6 +72,8 @@ bool AuAtomRenderInfo::PrepareSceneDevices(DaAtom& root, AuEther& ether)
 		if(!ancestor) continue;
 		re->BeginSceneDeviceObject();
 		m_DeviceObjectPending = false;
+		AuTransitionTrace objectTrace("graphics.prepareObject", QString("atom=%1 type=%2")
+			.arg(id.GetID()).arg(atom->AtomTypeName()));
 		atom->CreateDeviceObjects(*this);
 		const bool texturesReady = re->EndSceneDeviceObject();
 		if(!texturesReady || m_DeviceObjectPending) m_DeviceQueue.enqueue(id);

@@ -10,6 +10,7 @@
 #include "auclientglobal.h"
 #include "auframe.h"
 #include "auview.h"
+#include "autransitiontrace.h"
 #include "daatomlist.h"
 #include "dabd.h"
 #include "dagalaxy.h"
@@ -70,12 +71,37 @@ void AuModel::run()
 	}
 
 	AuElapsedTimer elapseTimer;
+	AuElapsedTimer replicationDeferredAt;
+	AuElapsedTimer replicationReportedAt;
+	AuElapsedTimer healthReported;
 	while(Alive())
 	{
+		AuTransitionTrace cycleTrace("model.cycle");
 		elapseTimer.start();
-		if(g_AuClient.SyncAtomCount() < 100)
+		const unsigned int queued = g_AuClient.SyncAtomCount();
+		// Temporary tracing is unconditional for the reproduction run.
 		{
-			// Sync queue isn't flooded so give it some more.
+			cycleTrace.SetDetail(QString("queued=%1").arg(queued));
+			if(queued >= 100)
+			{
+				if(!replicationDeferredAt.isValid()) replicationDeferredAt.start();
+				if(!replicationReportedAt.isValid() || replicationReportedAt.elapsed() >= 1000)
+				{
+					AuTransitionTrace::Event("model.replicationDeferred", QString("queued=%1 deferred_ms=%2 simulation_active=1")
+						.arg(queued).arg(replicationDeferredAt.elapsed()));
+					replicationReportedAt.restart();
+				}
+			}
+			else if(replicationDeferredAt.isValid())
+			{
+				AuTransitionTrace::Event("model.replicationResumed", QString("queued=%1 deferred_ms=%2 simulation_active=1")
+					.arg(queued).arg(replicationDeferredAt.elapsed()));
+				replicationDeferredAt = AuElapsedTimer(); replicationReportedAt = AuElapsedTimer();
+			}
+		}
+		{
+			// Simulation and position transmission must continue even when the
+			// GUI has fallen behind applying scene replicas.
 			// Locate the scene atom in the root data.
 			// The server only sends us 'normal' atoms.
 			// An atom will be set to 'traveling' instead of 'normal' when it enters a wormhole or deadheads during local client
@@ -92,6 +118,17 @@ void AuModel::run()
 				continue;
 			}
 			DaAtom* sceneControl = sceneRef->ParentControlAtom();
+			if(!healthReported.isValid() || healthReported.elapsed() >= 1000)
+			{
+				AuTransitionTrace::Event("model.heartbeat", QString("scene=%1 parent=%2 control=%3 control_parent=%4 control_rest=%5 normal=%6 tick_age_ms=%7 queued=%8")
+					.arg(sceneRef->Id().GetID()).arg(sceneRef->ParentId().GetID())
+					.arg(sceneControl ? sceneControl->Id().GetID() : 0)
+					.arg(sceneControl ? sceneControl->ParentId().GetID() : 0)
+					.arg(sceneControl ? sceneControl->IsAtRest() : sceneRef->IsAtRest())
+					.arg(sceneControl ? sceneControl->IsNormal() : sceneRef->IsNormal())
+					.arg(m_LastTick.isValid() ? m_LastTick.elapsed() : -1).arg(queued));
+				healthReported.restart();
+			}
 			if(sceneControl && !sceneControl->IsNormal())
 			{
 				// Do not send position updates when the atom controlled by the scene atom is not 'normal'.
@@ -152,179 +189,214 @@ void AuModel::run()
 				tnow.start();
 				if(auApp->IsHazeronCommander())
 				{
+					AuTransitionTrace tickTrace("model.tickClient");
 					// TickOnClient resolves building designs, paths, etc. at the root level; it does not move or reparent atoms.
 					ether.TickOnClient(m_LastTick);
 				}
 				else
 				{
+					AuTransitionTrace movementTrace("model.movement");
 					// Restore locally known position of scene atom and the atom it is controlling, if any.
+					AuTransitionTrace restoreTrace("model.restorePosition");
 					RestoreScenePosition(sceneRef);
+					restoreTrace.Finish();
 
 					// TickOnClient resolves building designs, paths, etc. at the root level; it does not move or reparent atoms.
+					AuTransitionTrace tickTrace("model.tickClient");
 					ether.TickOnClient(m_LastTick);
+					tickTrace.Finish();
 
 					// Tick movement of the scene atom and the atom controlled by the scene atom for smooth client-side movement.
+					AuTransitionTrace avatarTrace("model.moveAvatar");
 					sceneRef->TickMovement(m_LastTick);
+					avatarTrace.Finish();
 					if(sceneControl)
+					{
+						AuTransitionTrace controlTrace("model.moveControl", QString("atom=%1 type=%2 parent=%3")
+							.arg(sceneControl->Id().GetID()).arg(sceneControl->AtomTypeName()).arg(sceneControl->ParentId().GetID()));
 						sceneControl->TickMovement(m_LastTick);
+					}
 
 					// Preserve locally calculated position of scene atom and the atom it is controlling, if any.
+					AuTransitionTrace preserveTrace("model.preservePosition");
 					PreserveScenePosition(sceneRef);
+					preserveTrace.Finish();
 
 					// Transmit current position report to server.
+					AuTransitionTrace transmitTrace("model.transmitPosition");
 					TransmitPosition();
 				}
 				m_LastTick = tnow;
 			}
 
-			// Update list of non-permanent scene atoms.
-			g_AuClient.m_SceneAtomIds.clear();
-			DaAtomList sceneAtoms;
-			sceneRef->ListSceneAtoms(sceneAtoms);
-			if(auApp->IsSingleUserMode())
+			// Backpressure limits only graphics replication, not simulation.
+			if(queued < 100)
 			{
-				for(DaAtomList::const_iterator si = sceneAtoms.begin(); si != sceneAtoms.end(); si++)
+				// Update list of non-permanent scene atoms.
+				g_AuClient.m_SceneAtomIds.clear();
+				DaAtomList sceneAtoms;
+				AuTransitionTrace listTrace("model.listScene");
+				sceneRef->ListSceneAtoms(sceneAtoms);
+				listTrace.SetDetail(QString("atoms=%1").arg(sceneAtoms.size()));
+				listTrace.Finish();
+				if(auApp->IsSingleUserMode())
 				{
-					DaAtom* pa = *si;
-					g_AuClient.m_SceneAtomIds.insert(pair<AuId, bool>(pa->Id(), true));
-
-					// Reset atom scene flag when it appears in a scene.
-					pa->SetInScene();
-
-					// Manage political stance.
-					quint32 empireId = pa->EmpireId();
-					if(empireId)
+					for(DaAtomList::const_iterator si = sceneAtoms.begin(); si != sceneAtoms.end(); si++)
 					{
-						// Monitor for units of other empires so they can become "known" to the scene atom's empire.
-						DaUnit* unit = dynamic_cast<DaUnit*>(pa);
-						if(unit)
+						DaAtom* pa = *si;
+						g_AuClient.m_SceneAtomIds.insert(pair<AuId, bool>(pa->Id(), true));
+
+						// Reset atom scene flag when it appears in a scene.
+						pa->SetInScene();
+
+						// Manage political stance.
+						quint32 empireId = pa->EmpireId();
+						if(empireId)
 						{
-							// The atom is a unit with an empire id.
-							if(m_AtomEmpires.find(empireId) == m_AtomEmpires.cend())
+							// Monitor for units of other empires so they can become "known" to the scene atom's empire.
+							DaUnit* unit = dynamic_cast<DaUnit*>(pa);
+							if(unit)
 							{
-								// Empire id does not exist in the list of empires in our scene.
-								// Test political stance at least once with all empires we encounter, to make contact.
-								sceneRef->PoliticalStanceMakeContact(unit);
+								// The atom is a unit with an empire id.
+								if(m_AtomEmpires.find(empireId) == m_AtomEmpires.cend())
+								{
+									// Empire id does not exist in the list of empires in our scene.
+									// Test political stance at least once with all empires we encounter, to make contact.
+									sceneRef->PoliticalStanceMakeContact(unit);
 
-								// Add the unit's empire id to the list of empires in the scene and the list of empires we've made
-								// contact with.
-								m_AtomEmpires.insert(pair<quint32, bool>(empireId, true));
-								m_AtomStances.insert(pair<quint32, bool>(empireId, true));
+									// Add the unit's empire id to the list of empires in the scene and the list of empires we've made
+									// contact with.
+									m_AtomEmpires.insert(pair<quint32, bool>(empireId, true));
+									m_AtomStances.insert(pair<quint32, bool>(empireId, true));
+								}
+								else if(m_AtomStances.find(empireId) == m_AtomStances.cend())
+								{
+									// Test political stance at least once with all empires we encounter, to make contact.
+									sceneRef->PoliticalStanceMakeContact(unit);
+
+									// Add the unit's empire id to the list of empires we've made contact with.
+									m_AtomStances.insert(pair<quint32, bool>(empireId, true));
+								}
 							}
-							else if(m_AtomStances.find(empireId) == m_AtomStances.cend())
+							else
 							{
-								// Test political stance at least once with all empires we encounter, to make contact.
-								sceneRef->PoliticalStanceMakeContact(unit);
-
-								// Add the unit's empire id to the list of empires we've made contact with.
-								m_AtomStances.insert(pair<quint32, bool>(empireId, true));
+								// The atom is not a unit but it has an empire id, most likely a world that was claimed.
+								if(m_AtomEmpires.find(empireId) == m_AtomEmpires.cend())
+								{
+									// Add the world's empire id to the list of empires in the scene.
+									m_AtomEmpires.insert(pair<quint32, bool>(empireId, true));
+								}
 							}
-						}
-						else
-						{
-							// The atom is not a unit but it has an empire id, most likely a world that was claimed.
-							if(m_AtomEmpires.find(empireId) == m_AtomEmpires.cend())
-							{
-								// Add the world's empire id to the list of empires in the scene.
-								m_AtomEmpires.insert(pair<quint32, bool>(empireId, true));
-							}
-						}
-					}
-				}
-			}
-			else
-			{
-				for(DaAtomList::const_iterator si = sceneAtoms.begin(); si != sceneAtoms.end(); si++)
-					g_AuClient.m_SceneAtomIds.insert(pair<AuId, bool>((*si)->Id(), true));
-			}
-
-			// Star Field
-			DaSector* parSector = (DaSector*)sceneRef->FindParentSector();
-			if(parSector && (!m_AllStarsPresent || parSector->Id() != m_idSyncSector))
-			{
-				// Scene atom's sector was found in the assigned data.
-				// It is not the same sector we used for the star field last time.
-				// It will query its own neighbors to provide the needed star field.
-				DaGalaxy* galaxy = parSector->FindParentGalaxy();
-				if(galaxy)
-					galaxy->InvalidateSectorLocCache();						// Cache will be recreated when needed.
-				m_AllStarsPresent = parSector->ListStarFieldSubatoms(sceneRef, sceneAtoms);
-			}
-
-			// Reconcile remaining atoms in the model against the list of atoms that are supposed to be in the scene.
-			for(DaAtomList::iterator it = sceneAtoms.begin(); it != sceneAtoms.end(); it++)
-			{
-				// Find the atom in the model.
-				DaAtom* dAtom = *it;
-				Q_ASSERT(dAtom);
-				DaAtom* mAtom = m_Ether.FindAtom(dAtom->Id());
-				if(mAtom)
-				{
-					// The atom is already present in the model so update it if it has changed.
-					// We must always update the scene atom and the atom it is controlling because local smoothing touches
-					// the modify time.
-					if(mAtom->CompareModifyTime(dAtom->ModifyTime()) != 0 || dAtom == sceneRef || dAtom == sceneControl)
-					{
-						// We must get the parent of the model atom to know its row index.
-						// Change parent if necessary.
-						if(mAtom->ParentId() != dAtom->ParentId())
-						{
-							// The parent of the atom has changed.
-							mAtom->ChangePos(mAtom->Pos());
-							mAtom->InvalidateEnvironment();
-
-							// Refresh the model atom using the data atom before notifying the view.
-							mAtom->Refresh(dAtom, 0);
-							g_AuClient.SyncAtomParentChanged(mAtom);
-							dAtom->RefreshComplete();
-							mAtom->RefreshComplete();	// Safe to do now because the client made a clone.
-						}
-						else
-						{
-							// Refresh the model atom using the data atom.
-							mAtom->Refresh(dAtom, 0);
-							g_AuClient.SyncAtomChanged(mAtom);
-							dAtom->RefreshComplete();
-							mAtom->RefreshComplete();	// Safe to do now because the client made a clone.
 						}
 					}
 				}
 				else
 				{
-					// The atom is not present in the model so add it.
-					DaAtom* newsub = dAtom->Clone();
-					newsub->ConnectSignals();
-					m_Ether.AddAtom(newsub);
-
-					// Dirty the galaxy sector locs cache when adding an atom. We only ever add sectors to galaxy atoms.
-					DaGalaxy* galaxy = dynamic_cast<DaGalaxy*>(m_Ether.FindAtom(newsub->ParentId()));
-					if(galaxy)
-						galaxy->InvalidateSectorLocCache();			// Cache will be recreated when needed.
-					g_AuClient.SyncAtomAdded(newsub);
-					dAtom->RefreshComplete();
-					newsub->RefreshComplete();
+					for(DaAtomList::const_iterator si = sceneAtoms.begin(); si != sceneAtoms.end(); si++)
+						g_AuClient.m_SceneAtomIds.insert(pair<AuId, bool>((*si)->Id(), true));
 				}
+
+				// Star Field
+				DaSector* parSector = (DaSector*)sceneRef->FindParentSector();
+				if(parSector && (!m_AllStarsPresent || parSector->Id() != m_idSyncSector))
+				{
+					// Scene atom's sector was found in the assigned data.
+					// It is not the same sector we used for the star field last time.
+					// It will query its own neighbors to provide the needed star field.
+					DaGalaxy* galaxy = parSector->FindParentGalaxy();
+					if(galaxy)
+						galaxy->InvalidateSectorLocCache();						// Cache will be recreated when needed.
+					m_AllStarsPresent = parSector->ListStarFieldSubatoms(sceneRef, sceneAtoms);
+				}
+
+				// Reconcile remaining atoms in the model against the list of atoms that are supposed to be in the scene.
+				AuTransitionTrace reconcileTrace("model.reconcile", QString("atoms=%1").arg(sceneAtoms.size()));
+				for(DaAtomList::iterator it = sceneAtoms.begin(); it != sceneAtoms.end(); it++)
+				{
+					// Find the atom in the model.
+					DaAtom* dAtom = *it;
+					Q_ASSERT(dAtom);
+					DaAtom* mAtom = m_Ether.FindAtom(dAtom->Id());
+					if(mAtom)
+					{
+						// The atom is already present in the model so update it if it has changed.
+						// We must always update the scene atom and the atom it is controlling because local smoothing touches
+						// the modify time.
+						if(mAtom->CompareModifyTime(dAtom->ModifyTime()) != 0 || dAtom == sceneRef || dAtom == sceneControl)
+						{
+							AuTransitionTrace atomTrace("model.refreshAtom", QString("atom=%1 type=%2")
+								.arg(dAtom->Id().GetID()).arg(dAtom->AtomTypeName()));
+							// We must get the parent of the model atom to know its row index.
+							// Change parent if necessary.
+							if(mAtom->ParentId() != dAtom->ParentId())
+							{
+								// The parent of the atom has changed.
+								mAtom->ChangePos(mAtom->Pos());
+								mAtom->InvalidateEnvironment();
+
+								// Refresh the model atom using the data atom before notifying the view.
+								mAtom->Refresh(dAtom, 0);
+								g_AuClient.SyncAtomParentChanged(mAtom);
+								dAtom->RefreshComplete();
+								mAtom->RefreshComplete();	// Safe to do now because the client made a clone.
+							}
+							else
+							{
+								// Refresh the model atom using the data atom.
+								mAtom->Refresh(dAtom, 0);
+								g_AuClient.SyncAtomChanged(mAtom);
+								dAtom->RefreshComplete();
+								mAtom->RefreshComplete();	// Safe to do now because the client made a clone.
+							}
+						}
+					}
+					else
+					{
+						// The atom is not present in the model so add it.
+						AuTransitionTrace atomTrace("model.addAtom", QString("atom=%1 type=%2")
+							.arg(dAtom->Id().GetID()).arg(dAtom->AtomTypeName()));
+						DaAtom* newsub = dAtom->Clone();
+						newsub->ConnectSignals();
+						m_Ether.AddAtom(newsub);
+
+						// Dirty the galaxy sector locs cache when adding an atom. We only ever add sectors to galaxy atoms.
+						DaGalaxy* galaxy = dynamic_cast<DaGalaxy*>(m_Ether.FindAtom(newsub->ParentId()));
+						if(galaxy)
+							galaxy->InvalidateSectorLocCache();			// Cache will be recreated when needed.
+						g_AuClient.SyncAtomAdded(newsub);
+						dAtom->RefreshComplete();
+						newsub->RefreshComplete();
+					}
+				}
+
+				reconcileTrace.Finish();
+				// Remove unneeded atoms after repositioning and reparenting them.
+				const DaAtom* pSceneAtom = m_Ether.FindAtom(auApp->AvatarId());
+				AuTransitionTrace removeTrace("model.removeScene");
+				SyncRemove(AuId::Universe(), pSceneAtom);
+				removeTrace.Finish();
+
+				// We remember the sector of the scene atom for reference when we sync the
+				// next scene. Reacquire this info because it may have changed during the sync.
+				parSector = (DaSector*)sceneRef->FindParentSector();
+				if(parSector)
+					m_idSyncSector = parSector->Id();
+				else
+					m_idSyncSector = AuId();
 			}
-
-			// Remove unneeded atoms after repositioning and reparenting them.
-			const DaAtom* pSceneAtom = m_Ether.FindAtom(auApp->AvatarId());
-			SyncRemove(AuId::Universe(), pSceneAtom);
-
-			// We remember the sector of the scene atom for reference when we sync the
-			// next scene. Reacquire this info because it may have changed during the sync.
-			parSector = (DaSector*)sceneRef->FindParentSector();
-			if(parSector)
-				m_idSyncSector = parSector->Id();
-			else
-				m_idSyncSector = AuId();
 			g_Au.UnlockEtheriumDelete();
 		}
 
 		// Process atom and UI controls in the view.
+		AuTransitionTrace controlsTrace("model.controls");
 		pView->ProcessControls();
+		controlsTrace.Finish();
 
 		// Delete an atom from the trash, if any are in there. I don't have a separate trash thread for this ether.
+		AuTransitionTrace trashTrace("model.deleteTrash");
 		m_Ether.DeleteTrashAtom();
+		trashTrace.Finish();
+		cycleTrace.Finish();
 
 		// Wait for the time needed to try to even out the cycle time.
 		int waitMs = d_SyncInterval - elapseTimer.elapsed();

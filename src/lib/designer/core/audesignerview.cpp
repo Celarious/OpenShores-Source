@@ -5,6 +5,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "audesignerview.h"
+#include "autransitiontrace.h"
 #include <QOpenGLContext>
 //
 #include "aubddesignprops.h"
@@ -2232,6 +2233,7 @@ int AuDesignerView::SceneInterfaceWidth()
 
 void AuDesignerView::paintGL()
 {
+	AuTransitionTrace frameTrace("gui.frame");
 	const AuDesignerFrame* frame = qobject_cast<AuDesignerFrame*>(auApp->Frame());
 	bool showWait = m_bWaitingForScene || m_SceneAtomTransition || !auApp->IsSceneConnected()
 		|| (frame && !frame->DockWidgetsReady());
@@ -2239,8 +2241,21 @@ void AuDesignerView::paintGL()
 
 	//qDebug() << "AuDesignerView::paintGL";
 	RenderScene();
+	AuTransitionTrace interfaceTrace("gui.interface");
 	showWait = showWait || (g_Au.IsLegacyGeneration() && m_WaitingForScenery);
 	window()->setEnabled(!showWait);
+	frameTrace.SetDetail(QString("wait=%1 scenery=%2 transition=%3 connected=%4")
+		.arg(showWait).arg(m_WaitingForScenery).arg(m_SceneAtomTransition).arg(auApp->IsSceneConnected()));
+	static QElapsedTimer traceHeartbeat;
+	static int traceFrames = 0;
+	++traceFrames;
+	if(!traceHeartbeat.isValid() || traceHeartbeat.elapsed() >= 1000)
+	{
+		AuTransitionTrace::Event("gui.heartbeat", QString("frames=%1 interval_ms=%2 wait=%3 scenery=%4 transition=%5 connected=%6")
+			.arg(traceFrames).arg(traceHeartbeat.isValid() ? traceHeartbeat.elapsed() : 0)
+			.arg(showWait).arg(m_WaitingForScenery).arg(m_SceneAtomTransition).arg(auApp->IsSceneConnected()));
+		traceFrames = 0; traceHeartbeat.restart();
+	}
 
 	if(showWait)
 	{
@@ -2288,18 +2303,33 @@ void AuDesignerView::paintGL()
 
 void AuDesignerView::RenderScene()
 {
+	AuTransitionTrace sceneTrace("gui.scene");
 	if(m_RenderPaused)
 		return;
 	m_RenderInfo->mm.BeginLegacyScFrame();
 	SyncScene();									// Sync in this thread, with current gl context.
+	AuTransitionTrace animateTrace("gui.animate");
 	AnimateScene();									// Position everybody for the snapshot and reset the scene animate time.
+	animateTrace.Finish();
 	DaPerson* sceneAtom;
-	if(StartScene(&sceneAtom))						// Prepare devices for scene rendering and lock the scene atom.
+	AuTransitionTrace startTrace("gui.startScene");
+	const bool sceneStarted = StartScene(&sceneAtom);
+	startTrace.Finish();
+	if(sceneStarted)
 	{
 		// We have a scene atom.
+		AuTransitionTrace devicesTrace("gui.createDevices", QString("staged=%1 scene=%2")
+			.arg(g_Au.IsLegacyGeneration() && m_WaitingForScenery && !sceneAtom->InDesignEnvironment())
+			.arg(sceneAtom->Id().GetID()));
 		const bool devicesReady = CreateDeviceObjects(sceneAtom);
+		devicesTrace.Finish();
 		// Keep painting the loading UI while initial resources are incomplete.
-		if(devicesReady) RenderScene(sceneAtom);
+		if(devicesReady)
+		{
+			AuTransitionTrace renderTrace("gui.render");
+			RenderScene(sceneAtom);
+		}
+		AuTransitionTrace finishTrace("gui.finishScene");
 		if(m_WaitingForScenery)
 		{
 			const DaWorldLL* world = sceneAtom->FindParentWorldInEnv();
@@ -5153,6 +5183,7 @@ void AuDesignerView::PlanClearCraters()
 
 void AuDesignerView::LockSceneAtom(DaPerson** sceneAtom)
 {
+	AuTransitionTrace trace("gui.sceneReadLock");
 	m_SceneLock.lockForRead();
 	if(!m_idSceneAtom.IsNull())
 		*sceneAtom = dynamic_cast<DaPerson*>(m_SceneEther.FindAtom(m_idSceneAtom));
@@ -5162,6 +5193,7 @@ void AuDesignerView::LockSceneAtom(DaPerson** sceneAtom)
 
 void AuDesignerView::LockSceneAtomForWrite(DaPerson** sceneAtom)
 {
+	AuTransitionTrace trace("gui.sceneWriteLock");
 	// Set up the scene atom pointers.
 	m_SceneLock.lockForWrite();
 	if(!m_idSceneAtom.IsNull())
@@ -5508,8 +5540,16 @@ void AuDesignerView::ProcessControls()
 	if(m_InputSuspended.load()) return;
 
 	// Process control inputs to scene atom.
-	DaPerson* person;
-	LockSceneAtom(&person);
+	// A GUI update of its scene copy must not stall the model's simulation loop.
+	// Leave accumulated keys/mouse input intact and sample it on the next tick.
+	if(!m_SceneLock.tryLockForRead())
+	{
+		// UI controls were sampled above. Do not repeat their one-shot actions;
+		// atom keys and accumulated mouse deltas are still pending.
+		ResetActiveKeyTimes();
+		return;
+	}
+	DaPerson* person = m_idSceneAtom.IsNull() ? nullptr : dynamic_cast<DaPerson*>(m_SceneEther.FindAtom(m_idSceneAtom));
 	ProcessAtomControls(person);	// 'person' can be null.
 	UnlockSceneAtom();
 
@@ -6742,9 +6782,15 @@ void AuDesignerView::AtomAdded(DaAtom* atom)
 // Remove the rows from my display objects.
 void AuDesignerView::AtomDeparted(const AuId& atomId)
 {
+	AuTransitionTrace trace("gui.departAtom", QString("atom=%1").arg(atomId.GetID()));
 	DaAtom* sub = m_SceneEther.FindAtom(atomId);
 	if(sub)
+	{
+		trace.SetDetail(QString("atom=%1 type=%2").arg(atomId.GetID()).arg(sub->AtomTypeName()));
+		AuTransitionTrace deleteTrace("gui.deleteDevices", QString("atom=%1 type=%2")
+			.arg(atomId.GetID()).arg(sub->AtomTypeName()));
 		sub->DeleteDeviceObjects(*m_RenderInfo);	// Clean up the atom's rendering resources recursively.
+	}
 	m_SceneEther.TrashAtom(atomId);
 }
 
@@ -15347,10 +15393,19 @@ void AuDesignerView::PlanGeoLandscapeIrrigate()
 
 void AuDesignerView::SyncScene()
 {
+	AuTransitionTrace trace("gui.syncScene");
 	QList<AuSyncItem> sync;
 	g_AuClient.TakeSyncQueue(sync);
+	int counts[5] = {0, 0, 0, 0, 0};
+	for(const AuSyncItem& item : sync) ++counts[int(item.m_Type)];
+	trace.SetDetail(QString("items=%1 added=%2 changed=%3 departed=%4 reparented=%5 cleared=%6")
+		.arg(sync.size()).arg(counts[0]).arg(counts[1]).arg(counts[2]).arg(counts[3]).arg(counts[4]));
 	for(QList<AuSyncItem>::iterator si = sync.begin(); si != sync.end(); si++)
 	{
+		const AuId id = (*si).m_Atom ? (*si).m_Atom->Id() : (*si).m_AtomId;
+		AuTransitionTrace itemTrace("gui.syncItem", QString("kind=%1 atom=%2 type=%3")
+			.arg(int((*si).m_Type)).arg(id.GetID())
+			.arg((*si).m_Atom ? (*si).m_Atom->AtomTypeName() : QStringLiteral("departed/cleared")));
 		switch((*si).m_Type)
 		{
 		case AuSyncItem::AtomAdded:

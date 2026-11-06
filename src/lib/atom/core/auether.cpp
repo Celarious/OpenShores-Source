@@ -9,6 +9,7 @@
 #include "auatomrenderinfo.h"
 #include "auatomset.h"
 #include "auglobal.h"
+#include "autransitiontrace.h"
 #include "daatomlist.h"
 #include "dagalaxy.h"
 #include "danpc.h"
@@ -438,8 +439,12 @@ void AuEther::RemoveAtomLocked(DaAtom* atom)
 
 void AuEther::ChangeParent(const AuId& chgId, const AuAtomPos& pos, bool orient)
 {
+	AuTransitionTrace trace("atom.changeParent", QString("ether=%1 atom=%2 new_parent=%3")
+		.arg(m_Name).arg(chgId.GetID()).arg(pos.ParentId().GetID()));
 	// Locate the atom that is changing.
+	AuTransitionTrace lookupTrace("atom.parentLookupLock");
 	m_HashLock.lockForRead();
+	lookupTrace.Finish();
 	QHash<AuId, DaAtom*>::const_iterator ahi = m_AtomHash.find(chgId);
 	if(ahi == m_AtomHash.cend())
 	{
@@ -453,6 +458,10 @@ void AuEther::ChangeParent(const AuId& chgId, const AuAtomPos& pos, bool orient)
 
 	// Move the atom to its nu parent's hash table.
 	DaAtom* atom = *ahi;
+	AuTransitionTrace::Event("parent.begin", QString("ether=%1 atom=%2 type=%3 old_parent=%4 new_parent=%5")
+		.arg(m_Name).arg(chgId.GetID()).arg(atom->AtomTypeName())
+		.arg(atom->ParentId().GetID()).arg(pos.ParentId().GetID()));
+	AuTransitionTrace listsTrace("atom.parentLists");
 	bool nuParentOk;
 	do
 	{
@@ -607,15 +616,22 @@ void AuEther::ChangeParent(const AuId& chgId, const AuAtomPos& pos, bool orient)
 		nuParentOk = true;
 	}
 	while(!nuParentOk);
+	listsTrace.Finish();
 
 	// Change parent and position info on the atom.
+	AuTransitionTrace positionTrace("atom.setParentPosition");
 	if(orient)
 		atom->SetPosAndOrientByEther(pos, this);
 	else
 		atom->SetPosByEther(pos, this);
+	positionTrace.Finish();
 
 	m_HashLock.unlock();
+	AuTransitionTrace transformTrace("atom.invalidateTransforms");
 	atom->InvalidateEnvTransform();
+	transformTrace.Finish();
+	AuTransitionTrace::Event("parent.end", QString("ether=%1 atom=%2 new_parent=%3")
+		.arg(m_Name).arg(chgId.GetID()).arg(pos.ParentId().GetID()));
 }
 
 bool AuEther::HasSubatoms(const AuId& atomId) const

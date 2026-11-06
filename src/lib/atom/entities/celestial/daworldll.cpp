@@ -8969,6 +8969,13 @@ void DaWorldLL::BuildingChanged(const AuMatrix4x4& bldM, double radius, AuGLMode
 	ClearMaps();
 }
 
+void DaWorldLL::LegacyCityTerrainChanged(const QVector<AuTerrainFootprint>& footprints, AuGLModelMaker& mm)
+{
+	// Other world shapes retain their existing invalidation path.
+	for(const AuTerrainFootprint& footprint : footprints)
+		BuildingChanged(footprint.placement, footprint.radius, mm);
+}
+
 void DaWorldLL::ClearMaps()
 {
 	// Clear building map.
