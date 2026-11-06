@@ -906,12 +906,7 @@ void DaSector::RenderEnvironment(const AuMatrix4x4& projection, const AuMatrix4x
 			AuPoint vt = tmodel.Project(relLoc);
 			if(vt.z > 0)
 				continue;	// Skipped star behind camera.
-			else
-			{
-				vt.Unit();
-				if(vt.Dot(AuPoint(0,0,-1)) < .7071)
-					continue;
-			}
+			// Let the projection clip stars to the actual field of view.
 
 			// Calculate point size of this star.
 			float rlen = relLoc.Length();		// Distance to the star in parsecs (up to about 25).
