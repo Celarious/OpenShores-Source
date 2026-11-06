@@ -2232,6 +2232,28 @@ unsigned int DaVehicle::IsTocker() const
 	return ms;
 }
 
+bool DaVehicle::LegacyDecaySheltered() const
+{
+	// Use the same low-speed parking threshold as Legacy city vehicle services.
+	if(!g_Au.IsLegacyGeneration() || !IsOnGround() || IsLaunching() || Speed() >= FeetPerMeter())
+		return false;
+	const AuQueryEnvironment* environment = LockEnvironmentQuery();
+	const AuId cityId = environment->LegacyCityId();
+	const quint32 developmentId = environment->LegacyDevelopmentId();
+	UnlockEnvironmentQuery();
+	if(cityId.IsNull() || !developmentId) return false;
+	const DaWorld* world = FindParentPlanetInEnv();
+	const DaLegacyCity* city = world ? dynamic_cast<const DaLegacyCity*>(world->FindSubatomId(cityId)) : nullptr;
+	// StationsPowered checks current stock only after Legacy metadata is active.
+	if(!city || city->IsDead() || !city->StationsPowered()) return false;
+	const AuLegacyCity::State state = city->Snapshot();
+	for(const AuLegacyCity::Development& development : state.developments)
+		if(development.id == developmentId)
+			return !development.demolished && development.completedLevels
+				&& development.industryId == 2 && development.roadSlab;
+	return false;
+}
+
 void DaVehicle::Tock(const AuTime& last, const AuTime& now, const AuScripts& scripts, DtTockTransactions& tockTrans)
 {
 	DaUnit::Tock(last, now, scripts, tockTrans);
@@ -2339,7 +2361,7 @@ void DaVehicle::Tock(const AuTime& last, const AuTime& now, const AuScripts& scr
 	else
 	{
 		// This vehicle is not inside a spaceship.
-		if(g_Au.m_EnableUnitDecay && (!IsNew() || BdId().IsNull()))
+		if(g_Au.m_EnableUnitDecay && (!IsNew() || BdId().IsNull()) && !LegacyDecaySheltered())
 		{
 			// "New" units that are in a city do not decay. If the city decays from under them, then they can decay.
 			const int maxHits = MaxHitPoints();

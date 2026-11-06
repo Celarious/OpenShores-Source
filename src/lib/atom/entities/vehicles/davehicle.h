@@ -1725,6 +1725,7 @@ protected:
 	void ChangeSeats(DaPerson* occupant, int fromSeat, int toSeat);
 
 	void DecayMoveActions();
+	bool LegacyDecaySheltered() const;
 
 	// Returns density in pounds per cubic foot (lbs / ft^3)
 	// Density is increased by armor and streamlining.
