@@ -330,7 +330,7 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 		m_SiteStatus = 0; m_SiteMessage.clear();
 		m_ConflictWorld = 0; m_ConflictingPerimeters.clear();
 		AuPoint point;
-		if(const auto* world = m_pWnd->FindTerrainLocationAtPixel(person, pixel, point))
+		if(const auto* world = FindPlacementLocation(person, pixel, point))
 		{
 			if(m_HasStart && m_StartWorld == world->Id().GetID())
 			{
@@ -666,6 +666,25 @@ void DdPlanLegacyCity::OnMouseWheel(QWheelEvent* event)
 	else ChangeLevels(delta > 0 ? 1 : -1);
 }
 
+DaWorldLL* DdPlanLegacyCity::FindPlacementLocation(DaPerson* person, const QPoint& pixel, AuPoint& point) const
+{
+	if(m_Request.action != AuLegacyCityProtocol::Build || m_Request.industryId != 2
+		|| !m_Request.roadSlab || !m_HasStart)
+		return m_pWnd->FindTerrainLocationAtPixel(person, pixel, point);
+
+	auto* world = person && person->Parent() ? person->Parent()->FindParentWorldInEnv() : nullptr;
+	if(!world || m_StartWorld != world->Id().GetID()) return nullptr;
+	AuMatrix4x4 personToWorld, perspective, ortho, plane;
+	if(!person->GetTransformRelativeToParent(personToWorld, world)) return nullptr;
+	m_pWnd->GetPixelTransforms(perspective, ortho);
+	world->BuildingConstructionTransform(m_Start, 0, nullptr, AuPoint(), plane);
+	// Once anchored, pick directly on the slab plane rather than the terrain.
+	const AuMatrix4x4 worldToPerson = personToWorld.Inverse();
+	if(!(perspective * worldToPerson).UnProjectIntoPlane(point, AuPoint(pixel), plane)
+		|| (ortho * worldToPerson).Project(point).z >= 0) return nullptr;
+	return world;
+}
+
 void DdPlanLegacyCity::ConstrainRoad(const DaWorldLL& world, AuPoint& point, bool constrain) const
 {
 	if(!m_HasStart) return;
@@ -677,9 +696,10 @@ void DdPlanLegacyCity::ConstrainRoad(const DaWorldLL& world, AuPoint& point, boo
 		const double angle = std::round(std::atan2(delta.y, delta.x) * RAD2DEG / m_Angle) * m_Angle * DEG2RAD;
 		point = basis.Project(AuPoint(std::cos(angle) * length, std::sin(angle) * length, 0));
 	}
+	if(m_Request.roadSlab) return; // Keep the endpoint on the anchored slab plane.
 	AuGlobeLLF location;
 	if(world.LLOfLoc(location, point))
-		point = world.LocOfLL(location, m_Request.roadSlab ? world.AltitudeMSL(m_Start) : world.SurfaceAltitudeMSL(location));
+		point = world.LocOfLL(location, world.SurfaceAltitudeMSL(location));
 }
 
 int DdPlanLegacyCity::PrepareRoadRequest(const DaWorldLL& world, AuPoint point, bool constrain,
@@ -742,7 +762,7 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 {
 	if(event->button() != Qt::LeftButton || !m_Interface || !g_Au.IsLegacyGeneration()) return;
 	DaPerson* person = nullptr; m_pWnd->LockSceneAtom(&person);
-	AuPoint point; DaWorldLL* world = person ? m_pWnd->FindTerrainLocationAtPixel(person, event->pos(), point) : nullptr;
+	AuPoint point; DaWorldLL* world = person ? FindPlacementLocation(person, event->pos(), point) : nullptr;
 	AuLegacyCityProtocol::Request request = m_Request;
 	bool submit = false;
 	if(world)
@@ -836,7 +856,7 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuMatrix4x4& camera,
 	DaPerson* person, const QPoint& pixel, AuAtomRenderInfo& info)
 {
-	AuPoint point; auto* world = m_pWnd->FindTerrainLocationAtPixel(person, pixel, point);
+	AuPoint point; auto* world = FindPlacementLocation(person, pixel, point);
 	auto* environment = person->FindEnvironmentAtom(); if(!world || !environment) return;
 	AuMatrix4x4 scene, terrain, placement;
 	if(!person->GetTransformRelativeToParent(scene, environment) || !world->GetTransformRelativeToParent(terrain, environment)) return;

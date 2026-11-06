@@ -58,6 +58,7 @@ private:
 	void ChangeLevels(int direction);
 	void ChangeRotation(int direction, bool fine);
 	void ChangeProduct(int direction);
+	DaWorldLL* FindPlacementLocation(DaPerson* person, const QPoint& pixel, AuPoint& point) const;
 	bool AlignToObstruction();
 	void UpdateSite(const DaWorldLL& world, const AuPoint& point, const DaPerson& person);
 	void RenderSiteCursor(const AuMatrix4x4& projection, const AuMatrix4x4& camera, DaPerson* person,
