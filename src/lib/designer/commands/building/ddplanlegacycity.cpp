@@ -1100,8 +1100,12 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 	if(m_Request.action == AuLegacyCityProtocol::ClearLand) return;
 	if(m_Request.industryId != 2 && m_Request.industryId != 129) return;
 	QFont font; font.setPixelSize(14);
-	const QString text = m_Request.industryId == 2 ? (m_HasStart ? QObject::tr("Click road end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr("Click road start"))
-		: (m_HasStart ? QObject::tr("Click biodome radius — %1 m").arg(preview.biodomeRadiusMeters, 0, 'f', 1) : QObject::tr("Click biodome center"));
+	QString text;
+	if (m_Request.industryId == 2) {
+		text = !m_Request.roadSlab ? m_HasStart ? QObject::tr("Click road end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr("Click road start") : text = m_HasStart ? QObject::tr("Click slab end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr("Click slab start");
+	} else if (m_Request.industryId == 129) {
+		m_HasStart ? QObject::tr("Click biodome radius — %1 m").arg(preview.biodomeRadiusMeters, 0, 'f', 1) : QObject::tr("Click biodome center");
+	}
 	effects.RenderText(pixel.x() + 16, pixel.y() + 24, text, font, QColor(255, 230, 100), info.glw->width(), info.glw->height());
 }
 
