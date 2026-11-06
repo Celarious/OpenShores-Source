@@ -11,7 +11,6 @@
 #include "auframe.h"
 #include "augear.h"
 #include "auglobal.h"
-#include "autransitiontrace.h"
 #include "aulegacygenerationbootstrap.h"
 #include "aumission.h"
 #include "aumodel.h"
@@ -299,7 +298,6 @@ void DtClient::TxData(QTcpSocket& tcpSocket)
 
 bool DtClient::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 {
-	AuTransitionTrace packetTrace("network.packet", QString("bytes=%1").arg(ba.size()));
 	QDataStream block(ba);
 	block.setVersion(QDataStream::Qt_4_1);
 
@@ -684,8 +682,6 @@ bool DtClient::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 					ReconcileAtomsInScene();
 
 				// Send the SyncComplete packet back to the server for ping time calculation.
-				AuTransitionTrace::Event("network.syncComplete", QString("list_kind=%1 scene_ids=%2 removal_pending=%3")
-					.arg(hasAtomIds).arg(qulonglong(m_SyncLastAtomIds.size())).arg(m_SceneRemovalPending));
 				g_Au.ServerTimeUpdated(serverUTC);
 				auApp->SceneSyncComplete(serverUTC);
 
@@ -757,11 +753,7 @@ bool DtClient::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 		return false;
 	}
 
-	packetTrace.SetDetail(QString("bytes=%1 atom=%2 type=%3")
-		.arg(ba.size()).arg(atom->Id().GetID()).arg(atom->AtomTypeName()));
 	AuEther& ether = g_Au.LockEtheriumDelete();
-	AuTransitionTrace updateTrace("network.applyAtom", QString("bytes=%1 atom=%2 type=%3")
-		.arg(ba.size()).arg(atom->Id().GetID()).arg(atom->AtomTypeName()));
 	AuAtomPos receivedPosition;
 	DaAtom* exa = ether.FindAtom(atom->Id());
 	if(exa)
@@ -957,7 +949,6 @@ bool DtClient::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 		}
 	}
 	g_Au.UnlockEtheriumDelete();
-	updateTrace.Finish();
 
 	// Insure empire data is available locally.
 	// This will pick up all units (animals, people, spaceships) and cities.
@@ -992,7 +983,6 @@ bool DtClient::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 // Remove atoms from my data that are not permanent in the scene and not listed in my atoms-in-scene list.
 void DtClient::ReconcileAtomsInScene()
 {
-	AuTransitionTrace trace("network.reconcileScene");
 	// Remove unwanted atoms in reverse order so subordinates get removed before their parents.
 	AuEther& ether = g_Au.LockEtheriumDelete();
 	DaUniverse* univ = ether.FindUniverse();
@@ -1003,8 +993,6 @@ void DtClient::ReconcileAtomsInScene()
 	}
 	DaAtomList myAtoms;
 	univ->ListSubatomsRecursive(myAtoms);	// This gets them in descending order, top of tree to leaves.
-	trace.SetDetail(QString("resident=%1 server_scene=%2")
-		.arg(myAtoms.size()).arg(qulonglong(m_SyncLastAtomIds.size())));
 	m_SceneRemovalPending = false;
 	for(DaAtomList::iterator mai = myAtoms.end()-1; mai != myAtoms.begin()-1; mai--)
 	{

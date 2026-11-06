@@ -10,7 +10,6 @@
 #include "auclientglobal.h"
 #include "auframe.h"
 #include "auview.h"
-#include "autransitiontrace.h"
 #include "daatomlist.h"
 #include "dabd.h"
 #include "dagalaxy.h"
@@ -71,34 +70,10 @@ void AuModel::run()
 	}
 
 	AuElapsedTimer elapseTimer;
-	AuElapsedTimer replicationDeferredAt;
-	AuElapsedTimer replicationReportedAt;
-	AuElapsedTimer healthReported;
 	while(Alive())
 	{
-		AuTransitionTrace cycleTrace("model.cycle");
 		elapseTimer.start();
 		const unsigned int queued = g_AuClient.SyncAtomCount();
-		// Temporary tracing is unconditional for the reproduction run.
-		{
-			cycleTrace.SetDetail(QString("queued=%1").arg(queued));
-			if(queued >= 100)
-			{
-				if(!replicationDeferredAt.isValid()) replicationDeferredAt.start();
-				if(!replicationReportedAt.isValid() || replicationReportedAt.elapsed() >= 1000)
-				{
-					AuTransitionTrace::Event("model.replicationDeferred", QString("queued=%1 deferred_ms=%2 simulation_active=1")
-						.arg(queued).arg(replicationDeferredAt.elapsed()));
-					replicationReportedAt.restart();
-				}
-			}
-			else if(replicationDeferredAt.isValid())
-			{
-				AuTransitionTrace::Event("model.replicationResumed", QString("queued=%1 deferred_ms=%2 simulation_active=1")
-					.arg(queued).arg(replicationDeferredAt.elapsed()));
-				replicationDeferredAt = AuElapsedTimer(); replicationReportedAt = AuElapsedTimer();
-			}
-		}
 		{
 			// Simulation and position transmission must continue even when the
 			// GUI has fallen behind applying scene replicas.
@@ -118,17 +93,6 @@ void AuModel::run()
 				continue;
 			}
 			DaAtom* sceneControl = sceneRef->ParentControlAtom();
-			if(!healthReported.isValid() || healthReported.elapsed() >= 1000)
-			{
-				AuTransitionTrace::Event("model.heartbeat", QString("scene=%1 parent=%2 control=%3 control_parent=%4 control_rest=%5 normal=%6 tick_age_ms=%7 queued=%8")
-					.arg(sceneRef->Id().GetID()).arg(sceneRef->ParentId().GetID())
-					.arg(sceneControl ? sceneControl->Id().GetID() : 0)
-					.arg(sceneControl ? sceneControl->ParentId().GetID() : 0)
-					.arg(sceneControl ? sceneControl->IsAtRest() : sceneRef->IsAtRest())
-					.arg(sceneControl ? sceneControl->IsNormal() : sceneRef->IsNormal())
-					.arg(m_LastTick.isValid() ? m_LastTick.elapsed() : -1).arg(queued));
-				healthReported.restart();
-			}
 			if(sceneControl && !sceneControl->IsNormal())
 			{
 				// Do not send position updates when the atom controlled by the scene atom is not 'normal'.
@@ -189,41 +153,28 @@ void AuModel::run()
 				tnow.start();
 				if(auApp->IsHazeronCommander())
 				{
-					AuTransitionTrace tickTrace("model.tickClient");
 					// TickOnClient resolves building designs, paths, etc. at the root level; it does not move or reparent atoms.
 					ether.TickOnClient(m_LastTick);
 				}
 				else
 				{
-					AuTransitionTrace movementTrace("model.movement");
 					// Restore locally known position of scene atom and the atom it is controlling, if any.
-					AuTransitionTrace restoreTrace("model.restorePosition");
 					RestoreScenePosition(sceneRef);
-					restoreTrace.Finish();
 
 					// TickOnClient resolves building designs, paths, etc. at the root level; it does not move or reparent atoms.
-					AuTransitionTrace tickTrace("model.tickClient");
 					ether.TickOnClient(m_LastTick);
-					tickTrace.Finish();
 
 					// Tick movement of the scene atom and the atom controlled by the scene atom for smooth client-side movement.
-					AuTransitionTrace avatarTrace("model.moveAvatar");
 					sceneRef->TickMovement(m_LastTick);
-					avatarTrace.Finish();
 					if(sceneControl)
 					{
-						AuTransitionTrace controlTrace("model.moveControl", QString("atom=%1 type=%2 parent=%3")
-							.arg(sceneControl->Id().GetID()).arg(sceneControl->AtomTypeName()).arg(sceneControl->ParentId().GetID()));
 						sceneControl->TickMovement(m_LastTick);
 					}
 
 					// Preserve locally calculated position of scene atom and the atom it is controlling, if any.
-					AuTransitionTrace preserveTrace("model.preservePosition");
 					PreserveScenePosition(sceneRef);
-					preserveTrace.Finish();
 
 					// Transmit current position report to server.
-					AuTransitionTrace transmitTrace("model.transmitPosition");
 					TransmitPosition();
 				}
 				m_LastTick = tnow;
@@ -235,10 +186,7 @@ void AuModel::run()
 				// Update list of non-permanent scene atoms.
 				g_AuClient.m_SceneAtomIds.clear();
 				DaAtomList sceneAtoms;
-				AuTransitionTrace listTrace("model.listScene");
 				sceneRef->ListSceneAtoms(sceneAtoms);
-				listTrace.SetDetail(QString("atoms=%1").arg(sceneAtoms.size()));
-				listTrace.Finish();
 				if(auApp->IsSingleUserMode())
 				{
 					for(DaAtomList::const_iterator si = sceneAtoms.begin(); si != sceneAtoms.end(); si++)
@@ -310,7 +258,6 @@ void AuModel::run()
 				}
 
 				// Reconcile remaining atoms in the model against the list of atoms that are supposed to be in the scene.
-				AuTransitionTrace reconcileTrace("model.reconcile", QString("atoms=%1").arg(sceneAtoms.size()));
 				for(DaAtomList::iterator it = sceneAtoms.begin(); it != sceneAtoms.end(); it++)
 				{
 					// Find the atom in the model.
@@ -324,8 +271,6 @@ void AuModel::run()
 						// the modify time.
 						if(mAtom->CompareModifyTime(dAtom->ModifyTime()) != 0 || dAtom == sceneRef || dAtom == sceneControl)
 						{
-							AuTransitionTrace atomTrace("model.refreshAtom", QString("atom=%1 type=%2")
-								.arg(dAtom->Id().GetID()).arg(dAtom->AtomTypeName()));
 							// We must get the parent of the model atom to know its row index.
 							// Change parent if necessary.
 							if(mAtom->ParentId() != dAtom->ParentId())
@@ -353,8 +298,6 @@ void AuModel::run()
 					else
 					{
 						// The atom is not present in the model so add it.
-						AuTransitionTrace atomTrace("model.addAtom", QString("atom=%1 type=%2")
-							.arg(dAtom->Id().GetID()).arg(dAtom->AtomTypeName()));
 						DaAtom* newsub = dAtom->Clone();
 						newsub->ConnectSignals();
 						m_Ether.AddAtom(newsub);
@@ -369,12 +312,9 @@ void AuModel::run()
 					}
 				}
 
-				reconcileTrace.Finish();
 				// Remove unneeded atoms after repositioning and reparenting them.
 				const DaAtom* pSceneAtom = m_Ether.FindAtom(auApp->AvatarId());
-				AuTransitionTrace removeTrace("model.removeScene");
 				SyncRemove(AuId::Universe(), pSceneAtom);
-				removeTrace.Finish();
 
 				// We remember the sector of the scene atom for reference when we sync the
 				// next scene. Reacquire this info because it may have changed during the sync.
@@ -388,15 +328,10 @@ void AuModel::run()
 		}
 
 		// Process atom and UI controls in the view.
-		AuTransitionTrace controlsTrace("model.controls");
 		pView->ProcessControls();
-		controlsTrace.Finish();
 
 		// Delete an atom from the trash, if any are in there. I don't have a separate trash thread for this ether.
-		AuTransitionTrace trashTrace("model.deleteTrash");
 		m_Ether.DeleteTrashAtom();
-		trashTrace.Finish();
-		cycleTrace.Finish();
 
 		// Wait for the time needed to try to even out the cycle time.
 		int waitMs = d_SyncInterval - elapseTimer.elapsed();

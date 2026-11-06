@@ -5,7 +5,6 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "daatom.h"
-#include "autransitiontrace.h"
 //
 #include "auatomrenderinfo.h"
 #include "aubox.h"
@@ -2259,8 +2258,6 @@ bool DaAtom::RoughExtents(AuBox &fExt) const
 DaAtom::COLLISION_TYPE DaAtom::CheckCollision(const AuPoint &foldloc, const AuPoint &fnuloc, DaAtom *&pHit,
 		AuPoint& hitLoc, AuPoint& hitNormal, AuPoint* resolvedDestination)
 {
-	AuTransitionTrace trace("physics.collision", QString("atom=%1 type=%2 parent=%3")
-		.arg(Id().GetID()).arg(AtomTypeName()).arg(ParentId().GetID()));
 	Q_ASSERT(!fnuloc.IsNaN());
 	AuPoint destination(fnuloc);
 	if(resolvedDestination) *resolvedDestination = destination;
@@ -3325,8 +3322,6 @@ void DaAtom::UpdateEnvironment()
 
 AuQueryEnvironment* DaAtom::CreateEnvironmentQuery() const
 {
-	AuTransitionTrace trace("physics.environmentQuery", QString("atom=%1 type=%2 parent=%3")
-		.arg(Id().GetID()).arg(AtomTypeName()).arg(ParentId().GetID()));
 	if(!DoesQueryEnvironment())
 		return 0;
 	AuQueryEnvironment* qe = new AuQueryEnvironment;

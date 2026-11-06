@@ -7,7 +7,6 @@
 #include "daworldglobe.h"
 //
 #include "auatomrenderinfo.h"
-#include "autransitiontrace.h"
 #include "aucombat.h"
 #include "aufilever.h"
 #include "aufogofwar.h"
@@ -58,7 +57,6 @@
 // Workers own only immutable CPU snapshots; no world, city, model-maker or GL pointers.
 struct AuCityTerrainInvalidation
 {
-	AuId worldId;
 	GLuint lowVAO = 0;
 	QVector<AuTerrainFootprint> footprints;
 	QList<AuGlobeTerrainTriCen> triangles;
@@ -171,28 +169,21 @@ public:
 	void run() override
 	{
 		const std::shared_ptr<AuCityTerrainInvalidation> job = m_Job;
-		AuTransitionTrace trace("worker.cityTerrainScan", QString("world=%1 footprints=%2 triangles=%3")
-			.arg(job->worldId.GetID()).arg(job->footprints.size()).arg(job->triangles.size()), 0);
 		// Generate the footprint samples once for the whole batch, rather than
 		// repeating trigonometry and longitude/latitude conversion per triangle.
 		QVector<CityTerrainFootprintSamples> footprints;
-		int sampleCount = 0;
 		for(const AuTerrainFootprint& footprint : job->footprints)
 		{
 			if(job->cancelled.load(std::memory_order_relaxed))
 			{
-				trace.SetDetail(QString("world=%1 cancelled=1 phase=samples samples=%2")
-					.arg(job->worldId.GetID()).arg(sampleCount));
 				return;
 			}
 			CityTerrainFootprintSamples samples;
 			VisitBuildingFootprint(footprint, [&samples](const AuGlobeLL& location) {
 				samples.Append(location); return false;
 			}, &job->cancelled);
-			sampleCount += samples.locations.size();
 			footprints.append(samples);
 		}
-		quint64 footprintTests = 0, sampleTests = 0;
 		// One triangle pass, rejecting whole distant footprints by conservative
 		// bounds before testing their samples. Do not compare every terrain
 		// triangle with every sample on the planet.
@@ -200,38 +191,25 @@ public:
 		{
 			if(job->cancelled.load(std::memory_order_relaxed))
 			{
-				trace.SetDetail(QString("world=%1 cancelled=1 visited_triangles=%2 sample_tests=%3")
-					.arg(job->worldId.GetID()).arg(index).arg(sampleTests));
 				return;
 			}
 			const CityTerrainTriangleTest triangle(job->triangles.at(index));
 			bool affected = false;
 			for(const CityTerrainFootprintSamples& footprint : footprints)
 			{
-				++footprintTests;
 				if(!footprint.Overlaps(triangle)) continue;
 				for(int sample = 0; sample < footprint.locations.size(); ++sample)
 				{
 					if((sample & 255) == 0 && job->cancelled.load(std::memory_order_relaxed))
 					{
-						trace.SetDetail(QString("world=%1 cancelled=1 visited_triangles=%2 sample_tests=%3")
-							.arg(job->worldId.GetID()).arg(index).arg(sampleTests));
 						return;
 					}
-					++sampleTests;
 					if(triangle.Contains(footprint.locations.at(sample))) { affected = true; break; }
 				}
 				if(affected) break;
 			}
 			if(affected) job->affected.append(index);
-			if((index & 255) == 0)
-				trace.SetDetail(QString("world=%1 footprints=%2 triangles=%3 visited_triangles=%4 samples=%5 sample_tests=%6")
-					.arg(job->worldId.GetID()).arg(footprints.size()).arg(job->triangles.size()).arg(index + 1)
-					.arg(sampleCount).arg(sampleTests));
 		}
-		trace.SetDetail(QString("world=%1 footprints=%2 triangles=%3 samples=%4 affected=%5 footprint_tests=%6 sample_tests=%7 completed=1")
-			.arg(job->worldId.GetID()).arg(job->footprints.size()).arg(job->triangles.size())
-			.arg(sampleCount).arg(job->affected.size()).arg(footprintTests).arg(sampleTests));
 		job->finished.store(true, std::memory_order_release);
 	}
 private:
@@ -3713,20 +3691,13 @@ void DaWorldGlobe::LoadCachedSurfaceImage(const AuId& id, QImage& surface, int i
 // iViewSizeX is the pixel width of the resulting texture. The height of the texture will be iViewSizeX/2.
 GLuint DaWorldGlobe::CreatePlanetTexture(AuAtomRenderInfo& ari, int iViewSizeX, bool drawCities)
 {
-	AuTransitionTrace trace("graphics.planetTexture", QString("world=%1 width=%2 cities=%3")
-		.arg(Id().GetID()).arg(iViewSizeX).arg(drawCities));
 	if(!drawCities)
 	{
-		AuTransitionTrace cacheTrace("graphics.surfaceCacheLoad", QString("world=%1 width=%2")
-			.arg(Id().GetID()).arg(iViewSizeX));
 		// Try loading the surface texture image from a cache file.
 		QImage imtex;
 		LoadCachedSurfaceImage(imtex, iViewSizeX);
-		cacheTrace.Finish();
 		if(!imtex.isNull())
 		{
-			AuTransitionTrace uploadTrace("graphics.surfaceCacheUpload", QString("world=%1 width=%2")
-				.arg(Id().GetID()).arg(iViewSizeX));
 			// Create a texture from the image.
 			//qDebug() << "DaWorldGlobe::CreatePlanetTexture" << Id() << Name() << "image loaded from cache"
 				//<< imtex.width() << imtex.height() << imtex.depth() << imtex.bitPlaneCount();
@@ -3746,8 +3717,6 @@ GLuint DaWorldGlobe::CreatePlanetTexture(AuAtomRenderInfo& ari, int iViewSizeX, 
 	if(!m_glTexGrass && CanHaveFlora())
 		return 0;
 
-	AuTransitionTrace drawTrace("graphics.surfaceDraw", QString("world=%1 width=%2 cities=%3")
-		.arg(Id().GetID()).arg(iViewSizeX).arg(drawCities));
 	// Render globe with vertices flattened into the range -1,-1,0 to 1,1,0. This creates the appropriate texture to wrap around
 	// a simple globe.
 	// Create the vertex array object of the peeled-open flat globe.
@@ -3869,11 +3838,8 @@ GLuint DaWorldGlobe::CreatePlanetTexture(AuAtomRenderInfo& ari, int iViewSizeX, 
 	ari.re->glBindFramebuffer(GL_FRAMEBUFFER_EXT, oldfbo);	// Unbind
 	ari.re->glDeleteFramebuffers(1, &fbo);
 
-	drawTrace.Finish();
 	if(!drawCities && !g_Au.IsSceneSolo())
 	{
-		AuTransitionTrace cacheTrace("graphics.surfaceCacheWrite", QString("world=%1 width=%2")
-			.arg(Id().GetID()).arg(iViewSizeX));
 		// Store the result in a cache file.
 		QImage imtex(iViewSizeX, iViewSizeY, QImage::Format_RGB32);
 		GrabSurfaceTextureImage(*ari.re, imtex, glTexSurface);
@@ -4004,8 +3970,6 @@ void DaWorldGlobe::CreateFlatGlobeVAOTriangle(QList<AuGlobeTriAltVeg>& tris, con
 
 void DaWorldGlobe::GrabSurfaceTextureImage(AuGLEffects& re, QImage& imtex, GLuint glTexture) const
 {
-	AuTransitionTrace trace("graphics.surfaceImage", QString("world=%1 width=%2 height=%3")
-		.arg(Id().GetID()).arg(imtex.width()).arg(imtex.height()));
 	int iViewSizeX = imtex.width();
 	int iViewSizeY = imtex.height();
 	//qDebug() << "DaWorldGlobe::GrabSurfaceTextureImage" << Id() << Name() << "size" << iViewSizeX << iViewSizeY;
@@ -4013,10 +3977,7 @@ void DaWorldGlobe::GrabSurfaceTextureImage(AuGLEffects& re, QImage& imtex, GLuin
 	GLfloat* buffer = (GLfloat*)malloc(iViewSizeX*iViewSizeY*4*sizeof(GLfloat));
 
 	re.glBindTexture(GL_TEXTURE_2D, glTexture);
-	AuTransitionTrace readTrace("graphics.surfaceReadback");
 	re.glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_FLOAT, buffer);
-	readTrace.Finish();
-	AuTransitionTrace pixelsTrace("graphics.surfacePixelConversion");
 	for(int w=0; w<iViewSizeX; w++)
 	{
 		for(int h=0; h<iViewSizeY; h++)
@@ -4029,7 +3990,6 @@ void DaWorldGlobe::GrabSurfaceTextureImage(AuGLEffects& re, QImage& imtex, GLuin
 	}
 	re.glBindTexture(GL_TEXTURE_2D, 0);	// Unbind
 
-	pixelsTrace.Finish();
 	free(buffer);
 }
 
@@ -4588,8 +4548,6 @@ QColor DaWorldGlobe::AtmosphereColor() const
 void DaWorldGlobe::CreateDeviceObjects(AuAtomRenderInfo& ari)
 {
 	ProcessCityTerrainInvalidation(ari.mm);
-	AuTransitionTrace trace("graphics.worldDevices", QString("world=%1 viewer_near=%2")
-		.arg(Id().GetID()).arg(m_ViewerNear));
 	if(!(g_Au.m_DebugSwitches & 0x00000800))
 	{
 		if(!s_TexNoise)
@@ -5186,14 +5144,10 @@ float DaWorldGlobe::QuerySunlight(const AuPoint &fSurfLoc) const
 // - New location is checked for potential handoff to a subatom or to parent atom.
 bool DaWorldGlobe::MoveSubatom(DaAtom *pMove, const AuPoint &vMove, int elapsedMs)
 {
-	AuTransitionTrace trace("physics.worldMove", QString("world=%1 atom=%2")
-		.arg(Id().GetID()).arg(pMove->Id().GetID()));
 	// Determine the destination point of the move.
 	AuPoint foldloc(pMove->Location());
 	AuPoint fnuloc = foldloc + vMove;
-	AuTransitionTrace filterTrace("physics.filterDestination");
 	bool moveInAtmo = FilterDestinationLoc(pMove, foldloc, fnuloc, elapsedMs);
-	filterTrace.Finish();
 
 #if !defined(QT_NO_DEBUG)
 	if(fnuloc.IsNaN())
@@ -5206,9 +5160,7 @@ bool DaWorldGlobe::MoveSubatom(DaAtom *pMove, const AuPoint &vMove, int elapsedM
 	// Determine the result of attempting to move to the nu location.
 	DaAtom *pHit = NULL;
 	AuPoint hitLoc, hitNormal;
-	AuTransitionTrace collisionTrace("physics.worldCollision");
 	COLLISION_TYPE eCollide = pMove->CheckCollision(foldloc, fnuloc, pHit, hitLoc, hitNormal, &fnuloc);
-	collisionTrace.Finish();
 	pMove->SetMoveResult(eCollide);
 	//qDebug() << "DaWorldGlobe::MoveSubatom" << Id() << Name() << "move" << pMove->Id() << pMove->Name()
 		//<< "CheckCollision" << eCollide << "oldloc" << foldloc << "nuloc" << fnuloc
@@ -11863,8 +11815,6 @@ void DaWorldGlobe::LegacyCityTerrainChanged(const QVector<AuTerrainFootprint>& f
 	m_RockViewer = AuPoint(0,0);
 	InvalidateTerrainInfoSprites();
 	m_CityTerrainFootprints += footprints;
-	AuTransitionTrace::Event("graphics.cityTerrainQueued", QString("world=%1 footprints=%2 pending=%3")
-		.arg(Id().GetID()).arg(footprints.size()).arg(m_CityTerrainFootprints.size()));
 }
 
 void DaWorldGlobe::DiscardCityTerrainInvalidation()
@@ -11890,8 +11840,6 @@ void DaWorldGlobe::ProcessCityTerrainInvalidation(AuGLModelMaker& mm)
 	if(m_CityTerrainInvalidation && m_CityTerrainInvalidation->finished.load(std::memory_order_acquire))
 	{
 		const std::shared_ptr<AuCityTerrainInvalidation> job = m_CityTerrainInvalidation;
-		AuTransitionTrace trace("graphics.applyCityTerrain", QString("world=%1 affected=%2 next=%3")
-			.arg(Id().GetID()).arg(job->affected.size()).arg(m_CityTerrainApplyIndex));
 		QElapsedTimer budget;
 		budget.start();
 		int applied = 0;
@@ -11902,8 +11850,6 @@ void DaWorldGlobe::ProcessCityTerrainInvalidation(AuGLModelMaker& mm)
 		}
 		if(m_CityTerrainApplyIndex == job->affected.size())
 		{
-			AuTransitionTrace::Event("graphics.cityTerrainApplied", QString("world=%1 footprints=%2 affected=%3")
-				.arg(Id().GetID()).arg(job->footprints.size()).arg(job->affected.size()));
 			m_CityTerrainInvalidation.reset();
 			m_CityTerrainApplyIndex = 0;
 		}
@@ -11914,7 +11860,6 @@ void DaWorldGlobe::ProcessCityTerrainInvalidation(AuGLModelMaker& mm)
 		&& m_AtGlobe.m_Low.VAO() && !m_AtGlobe.m_TerrainTris.isEmpty())
 	{
 		m_CityTerrainInvalidation.reset(new AuCityTerrainInvalidation);
-		m_CityTerrainInvalidation->worldId = Id();
 		m_CityTerrainInvalidation->lowVAO = m_AtGlobe.m_Low.VAO();
 		m_CityTerrainInvalidation->footprints.swap(m_CityTerrainFootprints);
 		m_CityTerrainInvalidation->triangles = m_AtGlobe.m_TerrainTris;
@@ -11924,8 +11869,6 @@ void DaWorldGlobe::ProcessCityTerrainInvalidation(AuGLModelMaker& mm)
 
 void DaWorldGlobe::BuildingChanged(const AuMatrix4x4& bldM, double radius, AuGLModelMaker& mm)
 {
-	AuTransitionTrace trace("graphics.invalidateBuildingTerrain", QString("world=%1 radius=%2")
-		.arg(Id().GetID()).arg(radius));
 	DaWorldLL::BuildingChanged(bldM, radius, mm);
 	//qDebug() << "DaWorldGlobe::BuildingChanged" << Id() << Name() << "iid" << bld->IndustryId()
 		//<< "at" << bld->DevLL() << "radius" << bld->BuildRadius();
