@@ -10175,7 +10175,8 @@ void DaWorldGasGiant::CreateGrassTexture(AuGLEffects& re, AuGLModelMaker& mm)
 		DePlanetFlora::PaintGroundTexture(grass, m_pFlora, ResourceZones(), GenSeed(), m_tmFloraChange);
 
 	QString texName = QString("%1GHigh").arg(Id().StringId());
-	m_glTexGrass = re.CreateTextureFromBitmap(Id().GetID(), texName, grass, GL_LINEAR, GL_LINEAR, true);
+	m_glTexGrass = re.CreateTextureFromBitmap(Id().GetID(), texName, grass, GL_NEAREST, GL_NEAREST, true);
+	re.SetTextureAnisotropy(m_glTexGrass);
 	if(m_glTexGrass) mm.DeleteGrassImages(Id());
 }
 

@@ -371,24 +371,13 @@ bool AuLegacyScModel::Upload(AuGLEffects& re, QElapsedTimer& budget)
 	if(!m_Context || m_Context.data() != QOpenGLContext::currentContext()) return false;
 	if(!budget.isValid()) budget.start();
 	if(budget.nsecsElapsed() >= 4000000) return false;
-	GLfloat anisotropy = 1;
-	if(m_Context->hasExtension(QByteArrayLiteral("GL_EXT_texture_filter_anisotropic"))
-		|| m_Context->hasExtension(QByteArrayLiteral("GL_ARB_texture_filter_anisotropic")))
-	{
-		re.glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &anisotropy);
-		anisotropy = qMin(16.f, anisotropy);
-	}
 	const auto texture = [&](const QString& key, const QImage& image, bool mipMap, bool clampEdges) -> GLuint {
 		const QString textureKey = mipMap ? key + QStringLiteral("/mipmapped") : key;
 		GLuint result = re.UseTexture(STATIC_TEXTURE_ID, textureKey);
 		if(result) return result;
 		result = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, textureKey, image, GL_LINEAR, GL_LINEAR,
 			mipMap, clampEdges ? 1 : 0);
-		if(result && mipMap && anisotropy > 1)
-		{
-			re.glBindTexture(GL_TEXTURE_2D, result);
-			re.glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, anisotropy);
-		}
+		if(mipMap) re.SetTextureAnisotropy(result);
 		return result;
 	};
 	bool failed = false;

@@ -971,6 +971,8 @@ public:
 			unsigned int height, bool mipMap=false, int clampEdges=0, GLenum format=GL_RGB);
 
 	void DeleteTexture(unsigned int uiUserId, const QString &sTextureId);
+	// Enable up to 16x anisotropy when supported; preserves the current binding.
+	void SetTextureAnisotropy(GLuint texture);
 
 	// ALL textures used by 'uiUserId'.
 	void DeleteTextures(unsigned int uiUserId);

@@ -2366,16 +2366,21 @@ GLuint DaWorldLL::CreateTerrainTexture(AuGLEffects& re, WORLDTEX_TYPE worldTexTy
 	texId = re.UseTexture(STATIC_TEXTURE_ID, texName);
 	if(texId) return texId;
 	if(re.SceneDevicePreparation())
-		return re.PrepareSceneTexture(STATIC_TEXTURE_ID, texName, [textureFile, tileSize]() {
-			return QImage(textureFile).scaled(tileSize, tileSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-		}, GL_LINEAR, GL_LINEAR, true);
+	{
+		texId = re.PrepareSceneTexture(STATIC_TEXTURE_ID, texName, [textureFile, tileSize]() {
+			return QImage(textureFile).scaled(tileSize, tileSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+		}, GL_NEAREST, GL_NEAREST, true);
+		re.SetTextureAnisotropy(texId);
+		return texId;
+	}
 	QImage imgTile(textureFile);
 	if(!imgTile.isNull())
 	{
-		QImage imgSized = imgTile.scaled(tileSize,tileSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+		QImage imgSized = imgTile.scaled(tileSize,tileSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
 		if(!imgSized.isNull())
 		{
-			texId = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, texName, imgSized, GL_LINEAR, GL_LINEAR, true);
+			texId = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, texName, imgSized, GL_NEAREST, GL_NEAREST, true);
+			re.SetTextureAnisotropy(texId);
 			if(!texId)
 				qWarning() << "DaWorldLL::CreateTerrainTexture ERROR Failed to create texture" << textureFile;
 			//else

@@ -10,6 +10,7 @@
 #include "autime.h"
 #include <QDataStream>
 #include <QMessageBox>
+#include <QOpenGLContext>
 #include <QOpenGLFunctions_1_0>
 #include <QOpenGLFunctions_1_1>
 #include <QOpenGLFunctions_1_2>
@@ -1225,6 +1226,22 @@ GLuint AuGLEffects::HUDItemsTexture()
 	if(!m_HUDItemsTexture)
 		m_HUDItemsTexture = CreateTextureFromBitmap(STATIC_TEXTURE_ID, "HUDItems", ":data/HudItems.png");
 	return m_HUDItemsTexture;
+}
+
+void AuGLEffects::SetTextureAnisotropy(GLuint texture)
+{
+	if(!texture) return;
+	QOpenGLContext* context = QOpenGLContext::currentContext();
+	if(!context || !(context->hasExtension(QByteArrayLiteral("GL_EXT_texture_filter_anisotropic"))
+		|| context->hasExtension(QByteArrayLiteral("GL_ARB_texture_filter_anisotropic")))) return;
+	GLfloat anisotropy = 1;
+	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &anisotropy);
+	if(anisotropy <= 1) return;
+	GLint previousTexture = 0;
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, qMin(16.f, anisotropy));
+	glBindTexture(GL_TEXTURE_2D, previousTexture);
 }
 
 GLuint AuGLEffects::CreateTextureFromBitmap(unsigned int uiUserId, const QString &sTextureId, const QImage& bm,
@@ -4187,9 +4204,11 @@ void AuGLTexture::NameAndBind(AuOpenGLFunctions& GLf, bool mipMap, GLint magFilt
 		// OpenGL Texture Filter Options
 		if(mipMap)
 		{
-			GLf.glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+			// Honour nearest-neighbour sampling while retaining distant mip levels.
+			GLf.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+				minFilter == GL_NEAREST ? GL_NEAREST_MIPMAP_NEAREST : GL_LINEAR_MIPMAP_LINEAR);
 			OutputGlError(QString("File: %1 Line: %2 glTexParameteri").arg(__FILE__).arg(__LINE__));
-			GLf.glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			GLf.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, magFilter);
 			OutputGlError(QString("File: %1 Line: %2 glTexParameteri").arg(__FILE__).arg(__LINE__));
 		}
 		else

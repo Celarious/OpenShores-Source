@@ -2766,7 +2766,8 @@ void DePlanetFlora::CreateDeviceObjects(AuGLEffects& re, const AuId& flowerPotId
 			if(!imtex.isNull())
 			{
 				// Create a texture map from the QImage object we've created.
-				m_glFloraTex = re.CreateTextureFromBitmap(flowerPotId.GetID(), stid, imtex);
+				m_glFloraTex = re.CreateTextureFromBitmap(flowerPotId.GetID(), stid, imtex, GL_NEAREST, GL_NEAREST);
+				re.SetTextureAnisotropy(m_glFloraTex);
 				Q_ASSERT(m_glFloraTex);
 			}
 		}
@@ -2795,7 +2796,8 @@ void DePlanetFlora::CreateDeviceObjects(AuGLEffects& re, const AuId& planetId, q
 			if(!imtex.isNull())
 			{
 				// Create a texture map from the QImage object we've created.
-				m_glFloraTex = re.CreateTextureFromBitmap(planetId.GetID(), stid, imtex);
+				m_glFloraTex = re.CreateTextureFromBitmap(planetId.GetID(), stid, imtex, GL_NEAREST, GL_NEAREST);
+				re.SetTextureAnisotropy(m_glFloraTex);
 				Q_ASSERT(m_glFloraTex);
 			}
 		}
