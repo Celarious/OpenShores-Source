@@ -8134,6 +8134,9 @@ void DaWorldLL::RenderTerrainInfo(const AuMatrix4x4& model, AuAtomRenderInfo& ar
 		case AuAtomRenderInfo::VI_RocksAll: //   1 = rocks
 		case AuAtomRenderInfo::VI_RocksSome: //   2 = rocks without stone or eludium
 			{
+				AuGlobeLL viewerLL;
+				LLOfLoc(viewerLL, worldLoc);
+				const AuPoint groundLoc = GetSurfaceLocation(viewerLL);
 				const int spacing2 = 150*150;						// Squared distance for declutter.
 				if(m_OverlayRocks.empty() || worldLoc.Distance(m_OverlayRocksLoc) > 50*FeetPerMeter())
 				{
@@ -8163,6 +8166,9 @@ void DaWorldLL::RenderTerrainInfo(const AuMatrix4x4& model, AuAtomRenderInfo& ar
 				for(QMultiHash<COMMODITYID, AuPoint>::const_iterator asi = m_OverlayRocks.cbegin();
 						asi != m_OverlayRocks.cend(); asi++)
 				{
+					// While generation catches up, do not show icons left behind by movement or teleporting.
+					if(asi.value().Distance2(groundLoc) > g_Au.RockViewRangeFt2())
+						continue;
 					if(ari.TopViewInfo() == AuAtomRenderInfo::VI_RocksSome &&
 							(asi.key() == CID_Stone || asi.key() == CID_Eludium || asi.key() == CID_Ice))
 						continue;

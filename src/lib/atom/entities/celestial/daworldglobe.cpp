@@ -8598,6 +8598,7 @@ void DaWorldGlobe::RenderRocks(const AuMatrix4x4& projection, const AuMatrix4x4&
 			// Model maker is instructed to delete the rock distribution model. We have what we need. When the viewer moves far
 			// enough, we'll ask for a nu rock distribution model. They're too transient to keep around.
 			m_RockViewer = groundPos;
+			m_OverlayRocks.clear(); // Rebuild icons from the newly received distribution, even when stationary.
 			mm.DeleteRockModel(Id());
 			//qDebug() << "DaWorldGlobe::RenderRocks" << Id() << Name() << "updated" << m_Rocks.count() << "rocks";
 		}

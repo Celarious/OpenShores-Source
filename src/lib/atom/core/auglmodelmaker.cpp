@@ -1318,6 +1318,13 @@ bool AuGLModelMaker::CreateFlora(const DaWorldLL* world, AuPoint& groundLoc, QMa
 bool AuGLModelMaker::CreateRocks(const DaWorldLL* world, AuPoint& groundLoc, QMap<AuResKey, AuGlobeRock>& rocks)
 {
 	unordered_map<AuId, AuRockModel*, AuIdHash>::iterator rmi = m_Rock.find(world->Id());
+	// Generation includes a 100m margin. Replace completed work that no longer covers the viewer.
+	if(rmi != m_Rock.end() && (*rmi).second->IsDoneRunning() &&
+			(*rmi).second->GroundLoc().Distance2(groundLoc) > 100*FeetPerMeter()*100*FeetPerMeter())
+	{
+		DeleteRockModel(world->Id());
+		rmi = m_Rock.end();
+	}
 	if(rmi != m_Rock.end())
 	{
 		if((*rmi).second->Rock(rocks))								// Returns true when the result is valid, even if it's empty.
