@@ -6987,7 +6987,7 @@ void DaWorldGlobe::FillTerrainAltInfo(const AuGlobeLL& ll, AuGlobeTerrainAltInfo
 	if(inEnclosure < 0)
 		inEnclosure = 0;
 	t.m_TerCoord = GetTerrainLocation(ll, -2./12.);
-	t.m_TerNormal = TerrainNormal(t.m_TerCoord);
+	t.m_TerNormal = TerrainNormal(GetTerrainLocation(ll));
 	int irrigated = IsIrrigated(ll);
 
 	// Calculate vegetation density.
