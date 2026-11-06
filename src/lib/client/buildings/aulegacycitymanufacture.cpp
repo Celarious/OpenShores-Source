@@ -357,6 +357,9 @@ public:
 		else if(process.lastQuantity == -23) m_LastOutput->setText(tr("\nNo New Spacecraft Capacity in Orbit"));
 		else if(process.lastQuantity == -24) m_LastOutput->setText(tr("\nNo Clear Position in Orbit"));
 		else if(process.lastQuantity == -25) m_LastOutput->setText(tr("\nNo Friendly Station in Orbit"));
+		else if(process.lastQuantity == -31) m_LastOutput->setText(tr("\nInvalid Legacy Spacecraft Design Data"));
+		else if(process.lastQuantity == -32) m_LastOutput->setText(tr("\nUnable to Create Spacecraft or Onboard Vehicle"));
+		else if(process.lastQuantity == -33) m_LastOutput->setText(tr("\nSpacecraft Production State Changed"));
 		else if(process.lastQuantity == -99) m_LastOutput->setText(tr("\nUnimplemented Game Object"));
 		else if(process.lastQuantity < 0) m_LastOutput->setText(tr("\nNo Output"));
 		else m_LastOutput->clear();
@@ -389,14 +392,17 @@ public:
 					.arg(seconds % 60, 2, 10, QLatin1Char('0'));
 		};
 		QString status;
-		if(process.spacecraftRetryAt) status = tr("Waiting for a spacecraft spawn location");
+		if(process.spacecraftRetryAt) status = tr("Waiting to retry spacecraft completion");
 		else if(running) status = timedStatus(tr("Running %1:%2"), tr("Running %1:%2:%3"), remaining);
 		else if(!technologyAllowed)
 			status = tr("Process TL%1 Exceeds Building TL%2.").arg(process.minimumTechnology + 1).arg(m_BuildingTechnology + 1);
 		else if(ready) status = timedStatus(tr("Ready %1:%2"), tr("Ready %1:%2:%3"), (quint64(process.laborNeeded) + 3) / 4);
 		else status = timedStatus(tr("Not Ready %1:%2"), tr("Not Ready %1:%2:%3"), (quint64(process.laborNeeded) + 3) / 4);
 		if(!m_ProductName.isEmpty()) status.prepend(m_ProductName + QLatin1Char('\n'));
-		m_StatusIcon->setPixmap(QPixmap(running ? ":data/mpRunning.png" : ready ? ":data/mpReady.png" : ":data/mpNotReady.png").scaledToHeight(16, Qt::SmoothTransformation));
+		// 2016 spacecraft panel uses this hourglass while waiting to spawn.
+		const char* statusIcon = process.spacecraftRetryAt ? ":data/c_SpacecraftWait.png"
+			: running ? ":data/mpRunning.png" : ready ? ":data/mpReady.png" : ":data/mpNotReady.png";
+		m_StatusIcon->setPixmap(QPixmap(statusIcon).scaledToHeight(16, Qt::SmoothTransformation));
 		m_Status->setText(status);
 		// Fetching is an attempt, not a running process. Keep both actions
 		// available until the server reports that the countdown has begun.

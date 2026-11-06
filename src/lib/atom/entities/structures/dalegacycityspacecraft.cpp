@@ -125,14 +125,15 @@ qint32 SpacecraftProductionBatch::Apply(ProductionProcess& process, const Produc
 	const State& state, AuItemHash& inventory, AccountingState& accounting)
 {
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
-	if(!catalogue || state.controllingEmpire != m_Data->empire) return -5;
+	if(!catalogue || state.controllingEmpire != m_Data->empire) return -33;
 	for(int index = 0; index < int(m_Data->attempts.size()); ++index)
 	{
 		auto& attempt = m_Data->attempts[index];
 		if(attempt.development != process.developmentId || attempt.slot != process.slot
 			|| attempt.design != output.spacecraftDesign || attempt.quality != output.quality
 			|| attempt.technology != output.technology) continue;
-		if(!attempt.ship || attempt.applied) return attempt.failure;
+		if(attempt.applied) return -33;
+		if(!attempt.ship) return attempt.failure;
 		for(const auto& candidate : attempt.candidates)
 		{
 			if(candidate.slab && std::none_of(state.developments.cbegin(), state.developments.cend(),
@@ -179,7 +180,7 @@ qint32 SpacecraftProductionBatch::Apply(ProductionProcess& process, const Produc
 		}
 		return attempt.failure;
 	}
-	return -5;
+	return -33;
 }
 
 void SpacecraftProductionBatch::Publish()
@@ -289,6 +290,11 @@ bool PrepareSpacecraftProduction(DaLegacyCity& city, DaWorldLL& world, const Sta
 		{ error = QStringLiteral("Legacy commodity metadata is not ready."); return false; }
 	SpacecraftProductionBatch batch; batch.m_Data->city = &city; batch.m_Data->world = &world;
 	batch.m_Data->empire = state.controllingEmpire;
+	QVector<Development> buildings = state.developments;
+	DaAtomList cities; world.ListNormalSubatoms(cities);
+	for(const auto* atom : cities)
+		if(const auto* other = dynamic_cast<const DaLegacyCity*>(atom))
+			if(other != &city) buildings += other->Snapshot().developments;
 	for(const auto& process : production.processes)
 	{
 		if(!process.spacecraftDesign || ((!process.completeAt || now < process.completeAt)
@@ -309,12 +315,15 @@ bool PrepareSpacecraftProduction(DaLegacyCity& city, DaWorldLL& world, const Sta
 		if(loaded) design.ReportDesign(report);
 		g_Au.UnlockScDesigns();
 		if(loaded && design.State() != AuDesign::Final) attempt.failure = -4;
+		if(loaded && design.State() == AuDesign::Final && (!report.LegacyStats() || !report.LegacyStats()->IsValid()))
+			attempt.failure = -31;
 		if(loaded && design.State() == AuDesign::Final && report.LegacyStats() && report.LegacyStats()->IsValid())
 		{
 			attempt.architect = design.ArchitectId(); attempt.orbital = buyer || report.MustBeBuiltInSpace();
 			attempt.station = report.IsSpaceStation();
 			attempt.ship.reset(new DaSc); attempt.ship->Create();
-			if(attempt.ship->Id().IsNull() || !attempt.ship->SetDesign(report)) attempt.ship.reset();
+			if(attempt.ship->Id().IsNull() || !attempt.ship->SetDesign(report))
+			{ attempt.ship.reset(); attempt.failure = -32; }
 			if(attempt.ship)
 			{
 				attempt.ship->InitSystems(result.quality, result.technology);
@@ -322,6 +331,12 @@ bool PrepareSpacecraftProduction(DaLegacyCity& city, DaWorldLL& world, const Sta
 				attempt.ship->SetName(report.DesignName()); attempt.ship->SetAccessPolicy(ACCESS_Enemy);
 				if(!attempt.orbital)
 				{
+					AuBox shipBounds;
+					if(!attempt.ship->RoughExtents(shipBounds))
+					{
+						attempt.ship.reset(); attempt.failure = -32;
+						batch.m_Data->attempts.push_back(std::move(attempt)); continue;
+					}
 					const auto* construction = catalogue->ConstructionProcessForIndustry(IndustryId(87));
 					const double distance = (construction ? construction->buildRadius * FeetPerMeter() : 0)
 						+ 59.5 / .7071067690849304;
@@ -339,16 +354,19 @@ bool PrepareSpacecraftProduction(DaLegacyCity& city, DaWorldLL& world, const Sta
 									&& ProductionRoadContains(world, value, ll);
 							});
 						if(slab == state.developments.cend()) continue;
-						attempt.failure = -12; if(++qualifying > 4) break;
-						const AuPoint ground = world.GetSurfaceLocation(ll);
+						attempt.failure = -12;
+						const AuPoint ground = world.LocOfLL(ll, slab->roadStartAltitudeMSL);
 						Data::Candidate candidate; candidate.slab = slab->id;
-						if(world.IsSpawnAreaObstructed(ground, report.DesignId(), report.Quality(), report.RoughHullRadius(),
-							&candidate.replaced)) continue;
 						const AuPoint up = -world.GravityDir(ground);
 						candidate.placement.Translate(ground);
 						candidate.placement *= AuPoint(0, 0, 1).GetAlignmentTransform(up);
 						candidate.placement.Translate(0, 0, report.LegacyStats()->GroundHeightAboveCG());
 						candidate.placement.RotateZ(g_Au.Dice().Roll(1, 360, -1) * DEG2RAD);
+						AuBox occupied(shipBounds); occupied.Transform(candidate.placement);
+						if(!ProductionLandSpawnFits(world, *catalogue, *slab, occupied, buildings)) continue;
+						if(++qualifying > 4) break;
+						if(world.IsSpawnAreaObstructed(ground, report.DesignId(), report.Quality(), report.RoughHullRadius(),
+							&candidate.replaced)) continue;
 						attempt.candidates.append(candidate);
 					}
 				}
@@ -404,7 +422,7 @@ bool PrepareSpacecraftProduction(DaLegacyCity& city, DaWorldLL& world, const Sta
 						|| fields[4] != QStringLiteral("commodity")) continue;
 					Data::Parked parked; parked.floor = part->PositionMatrix();
 					parked.vehicle.reset(new DaVehicle(COMMODITYID(fields[5].toUInt()), result.quality)); parked.vehicle->Create();
-					if(parked.vehicle->Id().IsNull()) { attempt.ship.reset(); attempt.failure = -5; break; }
+					if(parked.vehicle->Id().IsNull()) { attempt.ship.reset(); attempt.failure = -32; break; }
 					attempt.parked.push_back(std::move(parked));
 				}
 			}

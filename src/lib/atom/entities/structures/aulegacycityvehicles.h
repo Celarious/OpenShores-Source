@@ -4,9 +4,12 @@
 #include "auatom.h"
 #include "auzoneresource.h"
 #include <QHash>
+#include <QVector>
 #include <memory>
 
 class AuItemHash;
+class AuBox;
+class AuLegacyCityCatalogue;
 class AuPoint;
 class AuGlobeLLF;
 class DaLegacyCity;
@@ -20,6 +23,9 @@ struct Development;
 AUATOM_DLL bool ProductionRoadEndpoints(const DaWorldLL& world, const Development& road,
 	AuGlobeLLF& start, AuGlobeLLF& end);
 AUATOM_DLL bool ProductionRoadContains(const DaWorldLL& world, const Development& road, const AuGlobeLLF& point);
+// Complete rotated bounds must fit on the slab and clear building footprints.
+AUATOM_DLL bool ProductionLandSpawnFits(const DaWorldLL& world, const AuLegacyCityCatalogue& catalogue,
+	const Development& slab, const AuBox& occupied, const QVector<Development>& buildings);
 AUATOM_DLL AuPoint ProductionSpawnOffset(int index);
 
 // Physical vehicle outputs, including restored Mine Machinery and Tanks.

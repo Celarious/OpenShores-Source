@@ -86,11 +86,12 @@ AuBox SpawnBounds(DaWorldLL& world, const AuPoint& location)
 	const AuPoint extent = (x + y + up) * SpawnRadius;
 	return AuBox(location - extent, location + extent);
 }
+}
 
-bool LandSpawnFits(const DaWorldLL& world, const AuLegacyCityCatalogue& catalogue,
+bool ProductionLandSpawnFits(const DaWorldLL& world, const AuLegacyCityCatalogue& catalogue,
 	const Development& slab, const AuBox& occupied, const QVector<Development>& buildings)
 {
-	// The whole vehicle, including aircraft parked on land, must fit on the
+	// The whole vehicle or spacecraft parked on land must fit on the
 	// slab. A centre-only test can leave long vehicles hanging over a building.
 	for(const auto& corner : occupied.m_fCorners)
 	{
@@ -124,7 +125,6 @@ bool LandSpawnFits(const DaWorldLL& world, const AuLegacyCityCatalogue& catalogu
 			&& maximum.y >= -radius && minimum.y <= radius) return false;
 	}
 	return true;
-}
 }
 
 bool IsSpawnedProductionVehicle(quint16 commodity)
@@ -337,7 +337,7 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 			if(!boat)
 			{
 				AuBox occupied(vehicleBounds); occupied.Transform(candidate.placement);
-				if(!parkingSlab || !LandSpawnFits(world, *catalogue, *parkingSlab, occupied, buildings)) continue;
+				if(!parkingSlab || !ProductionLandSpawnFits(world, *catalogue, *parkingSlab, occupied, buildings)) continue;
 				candidate.bounds = occupied;
 			}
 			// Land vehicles retain the original four qualifying slab limit.
