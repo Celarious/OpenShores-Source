@@ -7739,7 +7739,7 @@ bool DaCreature::DismountVehicle()
 		offloc = vehicle->OffLoc(VehicleSeatIndex());		// Offload location for my seat, relative to vehicle.
 	}
 
-	if(g_Au.IsLegacyGeneration() &&	vehicle->CommodityId() == CID_Tank)
+	if(vehicle->CommodityId() == CID_Tank || vehicle->CommodityId() == CID_MineMachinery)
  		{
 			offloc = vehicle->OffLoc(VehicleSeatIndex());
  		}

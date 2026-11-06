@@ -1076,8 +1076,9 @@ public:
 	AuGlobeVertAltVegNPave				m_Vert1;
 	AuGlobeVertAltVegNPave				m_Vert2;
 	// Rendering only, not part of the terrain cache format. Coordinates share
-	// one road frame per triangle: lateral feet, along feet, length, signed
-	// half width (negative for asphalt). Zero width means no road paint.
+	// one road frame per triangle: lateral feet, along feet, signed length
+	// (negative for slabs), signed half width (negative for asphalt).
+	// Zero width means no road paint.
 	QVector4D m_RoadPaint[3];
 	double m_RoadPaintDistance = std::numeric_limits<double>::max();
 

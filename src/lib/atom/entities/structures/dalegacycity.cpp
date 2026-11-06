@@ -1750,7 +1750,7 @@ void DaLegacyCity::AddRoadPaint(const DaWorldLL& world, QList<AuGlobeTriAltVegNP
 	{
 		const auto& dev = site.state;
 		if(dev.industryId == 2 && !dev.demolished && dev.constructed && dev.components.isEmpty()
-			&& !dev.roadSlab && (dev.constructionProcessId == 3 || dev.constructionProcessId == 4)) roads.append(&site);
+			&& (dev.constructionProcessId == 3 || dev.constructionProcessId == 4)) roads.append(&site);
 	}
 	if(roads.isEmpty()) return;
 	for(auto& triangle : triangles)
@@ -1779,16 +1779,25 @@ void DaLegacyCity::AddRoadPaint(const DaWorldLL& world, QList<AuGlobeTriAltVegNP
 			if(maximum.x < -site->halfWidth || minimum.x > site->halfWidth
 				|| maximum.y < -site->halfLength || minimum.y > site->halfLength) continue;
 			// Keep a single coordinate frame across all three corners. Near a
-			// junction, the nearest road centreline supplies this triangle's paint.
+			// junction, the nearest centreline or slab border supplies the paint.
 			const AuPoint middle = (local[0] + local[1] + local[2]) / 3;
 			const double pastEnd = qMax(0.0, std::abs(middle.y) - site->halfLength);
-			const double distance = middle.x * middle.x + pastEnd * pastEnd;
+			double distance = middle.x * middle.x + pastEnd * pastEnd;
+			if(dev.roadSlab)
+			{
+				// Match the shader's ten-foot inset from the paved footprint,
+				// including the road sampler's eight-foot lateral margin.
+				const double border = qMax(std::abs(middle.x) - (site->halfWidth - 10.0),
+					std::abs(middle.y) - (site->halfLength - 10.0));
+				distance = border * border;
+			}
 			if(distance >= triangle.m_RoadPaintDistance) continue;
 			triangle.m_RoadPaintDistance = distance;
 			const float width = dev.constructionProcessId == 3 ? -site->halfWidth : site->halfWidth;
+			const float length = (dev.roadSlab ? -2 : 2) * site->halfLength;
 			for(int corner = 0; corner < 3; ++corner)
 				triangle.m_RoadPaint[corner] = QVector4D(float(local[corner].x),
-					float(local[corner].y + site->halfLength), 2 * site->halfLength, width);
+					float(local[corner].y + site->halfLength), length, width);
 		}
 	}
 }
