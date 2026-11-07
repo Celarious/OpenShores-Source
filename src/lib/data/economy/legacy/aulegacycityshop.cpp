@@ -7,6 +7,24 @@
 
 namespace AuLegacyCity
 {
+bool IndustryBuysCommodity(const AuLegacyCityCatalogue& catalogue, const Development& development,
+	CommodityId commodity, ECOROLE cityDiet)
+{
+	// DaCity::DoesIndustryBuyItem, AuAtom13 0x28dd70: construction
+	// materials first, then the finished industry's products and inputs.
+	if(development.demolished || development.industryId <= 2
+		|| development.industryId == 10 || development.industryId == 114) return false;
+	for(const ConstructionComponent& component : development.components)
+		if(component.commodityId == commodity.value
+			&& (!component.quantity || component.applied < component.quantity)) return true;
+	if(!development.completedLevels) return false;
+	if(IndustrySellsCommodity(catalogue, development.industryId, commodity, cityDiet)) return true;
+	for(const ManufacturingProcessId process : catalogue.ProcessesForIndustry(IndustryId(development.industryId)))
+		for(const ManufacturingComponentRecord& component : catalogue.ComponentsForProcess(process))
+			if(component.commodity == commodity) return true;
+	return false;
+}
+
 bool PackPersonalItem(AuGear& gear, const AuItem& item)
 {
 	if(!item.CanBeCarried()) return false;

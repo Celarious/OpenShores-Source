@@ -135,13 +135,6 @@ bool DaLegacyCity::CanAccessSpacecraft(const DaVessel& ship) const
 	AuPoint location;
 	if(!ship.GetLocationRelativeToParent(location, world)) return false;
 	const double range = ship.MaxTransporterRange();
-	if(range > 0)
-	{
-		const AuQueryEnvironment* environment = ship.LockEnvironmentQuery();
-		const bool inCity = environment->LegacyCityId() == Id();
-		ship.UnlockEnvironmentQuery();
-		if(inCity) return true;
-	}
 	return range > 0 && location.Distance2(Transform().Translation()) < range * range;
 }
 
@@ -225,7 +218,7 @@ int DaLegacyCity::TransferSpacecraftCargo(DaVessel& ship, COMMODITYID commodity,
 	DaWorldLL* world = dynamic_cast<DaWorldLL*>(Parent());
 	if(!catalogue || !world || !g_Au.IsSceneWorker() || count <= 0 || !CanAccessSpacecraft(ship)) return 0;
 	const CommodityRecord* descriptor = catalogue->CommodityForRuntimeId(quint16(commodity));
-	if(!descriptor || !descriptor->descriptor.IsBrokerItem()) return 0;
+	if(!descriptor || (buy && !descriptor->descriptor.IsBrokerItem())) return 0;
 	const quint32 empire = EmpireId();
 	const POLITICAL_STANCE stance = PoliticalStance(empire, ship.EmpireId());
 	const bool subsidized = FreeService(ship, empire);
@@ -244,7 +237,7 @@ int DaLegacyCity::TransferSpacecraftCargo(DaVessel& ship, COMMODITYID commodity,
 		}
 		else if(commodity == CID_Electricity)
 		{
-			std::unique_ptr<AuItem> power(AuItem::Create(commodity, 255, 0, qMin(count, int(ship.CapacitorLevel()))));
+			std::unique_ptr<AuItem> power(AuItem::Create(commodity, 255, ship.EmpireId(), qMin(count, int(ship.CapacitorLevel()))));
 			if(power && power->Count()) shipInventory.AddItem(*power);
 		}
 		else { shipInventory = ship.LockCargoForRead(); ship.UnlockCargo(); }
@@ -261,8 +254,10 @@ int DaLegacyCity::TransferSpacecraftCargo(DaVessel& ship, COMMODITYID commodity,
 	std::unique_ptr<AuItem> cargo(item->second->Clone());
 	if(cargo->StoryInstance()) return 0;
 	const bool free = buy && cargo->IsFreeToFriendlyGovShip() && subsidized;
-	if(!buy && !ship.IsPrivatelyOwned() && cargo->IsFreeToFriendlyGovShip()) return 0;
-	quint32 unitPrice = free ? 0 : buy ? CachedShopPrice(*catalogue, m_City, inventory, production, *cargo, 111)
+	const bool agreedSale = !buy && !mission && exact;
+	if(!buy && !ship.IsPrivatelyOwned() && (cargo->IsFreeToFriendlyGovShip() || cargo->IsPower())
+		&& (!agreedSale || maximumPrice)) return 0;
+	quint32 unitPrice = free || agreedSale ? 0 : buy ? CachedShopPrice(*catalogue, m_City, inventory, production, *cargo, 111)
 		: CachedShopPrice(*catalogue, m_City, inventory, production, *cargo, 255);
 	if(mission && !free)
 	{
@@ -290,11 +285,11 @@ int DaLegacyCity::TransferSpacecraftCargo(DaVessel& ship, COMMODITYID commodity,
 	}
 	if(!quantity || (buy && quint64(quantity) * unitPrice > maximumPrice)) return 0;
 	double price = double(quantity) * unitPrice;
-	if(!buy && !mission && exact)
+	if(agreedSale)
 	{
 		// An accepted auction pays its agreed bid in full. Requoting cannot
 		// silently reduce the seller's payment or delivered quantity.
-		if(quantity != exact->Count() || price < maximumPrice || availableMoney < maximumPrice) return 0;
+		if(quantity != exact->Count() || (maximumPrice && availableMoney < maximumPrice)) return 0;
 		price = maximumPrice;
 	}
 	if(buy)
@@ -351,15 +346,23 @@ void DaLegacyCity::AcceptSpacecraftRepair(DaPerson& person, const AuCommAcceptRe
 void DaLegacyCity::AcceptSpacecraftCargo(DaPerson& person, const AuCommAccept& message)
 {
 	DaVessel* ship = person.FindParentVesselInEnv();
-	if(!message.Item() || !message.Item()->IsValid() || !ship || !person.IsInsideSpacecraft()
-		|| !ship->InChainOfCommand(&person) || !g_Au.HasPendingBid(&message)
+	if(!message.Item() || !message.Item()->IsValid() || !ship || !person.IsInsideSpacecraft() || person.IsDead()
+		|| !ship->InChainOfCommand(&person)
 		|| message.Item()->Count() > quint32(std::numeric_limits<int>::max())) return;
+	AuLegacyFinanceTransfer finance(&person, ship);
+	if(!g_Au.HasPendingBid(&message)) return;
 	const int delivered = TransferSpacecraftCargo(*ship, message.Item()->CommodityId(), int(message.Item()->Count()),
 		false, false, message.Item(), message.Price());
-	if(delivered) g_Au.BidRevoked(Id(), message.ChannelName());
+	if(delivered)
+	{
+		g_Au.BidRevoked(Id(), message.ChannelName());
+		person.Stats().ItemSoldAsCargo(*message.Item());
+		person.IncreaseSkill(AuSkill::Trade, 1);
+	}
 	const DaSector* sector = FindParentSector();
 	if(!sector) return;
-	AuCommCityChat response(delivered ? tr("Cargo sold to the city.") : tr("The cargo sale could not be completed. Request a new bid."),
+	AuCommCityChat response(delivered ? (message.Price() ? tr("Cargo sold to the city.") : tr("Cargo given to the city."))
+		: tr("The cargo sale could not be completed. Request a new bid."),
 		message.ChannelName(), Id(), Name(), sector->Id(), Galaxy(), message.ReceptionRange(), message.Scope());
 	g_Au.SendAtomChat(response);
 }
@@ -370,12 +373,11 @@ bool DaLegacyCity::RxSpacecraftServiceMessage(const AuCommPacket* message)
 	if(!message) return false;
 	const bool repair = message->Type() == AuCommPacket::RequestRepairAll || message->Type() == AuCommPacket::RequestRepairSystem;
 	const bool upgrade = message->Type() == AuCommPacket::RequestUpgradeSystem || message->Type() == AuCommPacket::AcceptUpgradeInstall;
-	const bool auction = message->Type() == AuCommPacket::Auction;
 	const bool exterminate = message->Type() == AuCommPacket::RequestExterminator;
 	COMMODITYFILTER filter = FILTER_All;
 	const bool sales = SalesFilter(message->Type(), filter);
 	const AuCommBid* bid = dynamic_cast<const AuCommBid*>(message);
-	if(!repair && !upgrade && !sales && !bid && !auction && !exterminate) return false;
+	if(!repair && !upgrade && !sales && !bid && !exterminate) return false;
 	DaAtom* system = FindEnvironmentAtom();
 	DaPerson* person = system ? dynamic_cast<DaPerson*>(system->FindIdRecursive(message->FromId())) : nullptr;
 	DaVessel* ship = person ? person->FindParentVesselInEnv() : nullptr;
@@ -414,34 +416,6 @@ bool DaLegacyCity::RxSpacecraftServiceMessage(const AuCommPacket* message)
 		text += tr("Extermination complete.");
 		if(price) text += tr(" 100 was deducted from the spacecraft's fund.");
 		reply(text); return true;
-	}
-	if(auction)
-	{
-		if(!message->Item() || !message->Item()->IsValid() || !message->Item()->Count() || !message->Item()->IsBrokerItem()) return true;
-		if(message->Item()->StoryInstance()) { reply(tr("The city does not buy story items.")); return true; }
-		const State state = Snapshot(); AuItemHash inventory; ProductionState production; AccountingState accounting; QString error;
-		if(!ReadCityInventory(state.inventory, *catalogue, inventory, error)
-			|| !DecodeProductionState(*catalogue, state.manufacturing, production, error)
-			|| !DecodeAccounting(state.accounting, accounting, error)) return true;
-		const DaWorldLL* world = dynamic_cast<const DaWorldLL*>(Parent());
-		if(!world) return true;
-		const POLITICAL_STANCE stance = PoliticalStance(state.controllingEmpire, ship->EmpireId());
-		const DgData& gd = g_Au.LockDataForRead();
-		const bool restricted = gd.EmpireCommerceRestricted(state.controllingEmpire, message->Item()->CommodityId(),
-			stance); g_Au.UnlockData();
-		if(restricted || (!ship->IsPrivatelyOwned() && message->Item()->IsFreeToFriendlyGovShip())) return true;
-		quint32 price;
-		{ QWriteLocker lock(&m_CityLock); price = CachedShopPrice(*catalogue, state, inventory, production, *message->Item(), 255); }
-		std::unique_ptr<AuItem> offered(message->Item()->Clone());
-		const AuSpecies species(state.citizenSpecies);
-		quint32 quantity = TestFitCityCommodity(*catalogue, inventory, *offered,
-			CityStorage(*catalogue, state.developments, quint8(world->OrbitZone())), world->HasBreathableAtmosphere(), quint8(species.EcoRole()));
-		quantity = qMin(quantity, quint32(qMin(double(std::numeric_limits<quint32>::max()), qMax(0.0, accounting.accounts.citizens / price))));
-		if(!quantity) return true;
-		offered->SetCount(quantity);
-		AuCommBid response(*offered, message->EmpireOfOrigin(), quint32(qMin(quint64(0xffffffffu), quint64(price) * quantity)),
-			message->ChannelName(), Id(), Name(), sector->Id(), Galaxy(), message->ReceptionRange(), message->Scope());
-		g_Au.SendAtomChat(response); return true;
 	}
 	if(repair)
 	{

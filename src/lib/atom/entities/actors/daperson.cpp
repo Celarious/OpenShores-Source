@@ -25100,7 +25100,7 @@ void DaPerson::CommAccept(const AuCommAccept& msg)
 		if(DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(buyer))
 		{
 			if(dynamic_cast<const AuItemScDesign*>(msg.Item())) city->AcceptSpacecraftBlueprint(*this, msg);
-			else city->AcceptSpacecraftCargo(*this, msg);
+			else city->AcceptGoodsSale(*this, msg);
 			return;
 		}
 	DaVessel* sellerShip = 0;
@@ -25577,66 +25577,10 @@ void DaPerson::CommAccept(const AuCommAccept& msg)
 			// Buyer
 			if(!buyerPerson && !buyerChar)
 			{
-				// Remove the item(s) from the seller person's inventory.
-				// This has already been done when the buyer is a person or character.
-				int countToTransfer = iNew->Count();
-				for(int ipos=0; ipos<spinv->size() && countToTransfer > 0; ipos++)
-				{
-					// Reposition in each loop iteration due to consuming items from my inventory.
-					AuGear::const_iterator gi = spinv->cbegin() + ipos;
-					const AuItemContent* contents = (*gi).Item().Content();
-					if(contents && !contents->empty())
-					{
-						// Consume the items in the container but not the container itself.
-						bool keepSearching;
-						do
-						{
-							keepSearching = false;	// Will be set true if we need to search the container again.
-							for(AuItemContent::const_iterator cit = contents->cbegin(); cit != contents->cend(); cit++)
-							{
-								if((*cit).second->Content() && !(*cit).second->Content()->empty())
-									continue;	// Skip non-empty containers.
-								if((*cit).second->IsItem(*iNew))
-								{
-									// An offered item has been located in a container.
-									if((int)(*cit).second->Count() > countToTransfer)
-									{
-										ConsumeGearNoLock(*spinv, AuGearPos(*gi, (*cit).first),
-												countToTransfer);
-										countToTransfer = 0;
-									}
-									else
-									{
-										countToTransfer -= (*cit).second->Count();
-										ConsumeGearNoLock(*spinv, AuGearPos(*gi, (*cit).first),
-												(*cit).second->Count());
-
-										// Must break out and restart the search in the container because consuming an item may
-										// have invalidated the container contents iterator.
-										keepSearching = true;
-									}
-									break;
-								}
-							}
-						}
-						while(countToTransfer > 0 && keepSearching);
-					}
-					else if((*gi).Item().IsItem(*iNew))
-					{
-						// An offered item has been located.
-						// Consume the top-level item or empty container.
-						if((int)(*gi).Item().Count() > countToTransfer)
-						{
-							ConsumeGearNoLock(*spinv, AuGearPos(*gi), countToTransfer);
-							countToTransfer = 0;
-						}
-						else
-						{
-							countToTransfer -= (*gi).Item().Count();
-							ConsumeGearNoLock(*spinv, AuGearPos(*gi), (*gi).Item().Count());
-						}
-					}
-				}
+				// Personal buyers already received their items above. City sales
+				// share the same stack/container removal with Legacy transactions.
+				spinv->ConsumeItemsForSale(*iNew);
+				UpdateGearWeight();
 			}
 		}
 

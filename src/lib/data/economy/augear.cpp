@@ -1070,6 +1070,36 @@ bool AuGear::DestructStoryItems()
 	return anyDestroyed;
 }
 
+quint32 AuGear::ConsumeItemsForSale(const AuItem& sold)
+{
+	// Shared by modern CommAccept and staged Legacy city sales. Nonempty
+	// containers stay with the seller; only their immediate saleable contents go.
+	quint32 remaining = sold.Count();
+	for(auto slot = begin(); slot != end() && remaining;)
+	{
+		AuItemContent* contents = slot->Item().Content();
+		if(contents && !contents->empty())
+		{
+			for(auto item = contents->begin(); item != contents->end() && remaining;)
+			{
+				if(item->second->IsItem(sold) && (!item->second->Content() || item->second->Content()->empty()))
+				{
+					remaining -= item->second->Consume(remaining);
+					if(!item->second->Count()) { item = contents->Erase(item); continue; }
+				}
+				++item;
+			}
+		}
+		else if(slot->Item().IsItem(sold))
+		{
+			remaining -= slot->Item().Consume(remaining);
+			if(!slot->Item().Count()) { slot = erase(slot); continue; }
+		}
+		++slot;
+	}
+	return sold.Count() - remaining;
+}
+
 void AuGear::CombineItemsForSale(AuItemHash& combined) const
 {
 	for(const_iterator ii = cbegin(); ii != cend(); ii++)

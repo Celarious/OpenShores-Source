@@ -134,9 +134,9 @@ quint32 TestFitCityCommodity(const AuLegacyCityCatalogue& catalogue, const AuIte
 			&& (stored.TechLevel() > item.TechLevel()
 				|| (stored.TechLevel() == item.TechLevel() && stored.Quality() >= item.Quality()))) better += stored.Count();
 	}
-	// Retain the original unsigned subtraction when capacity has fallen below
-	// existing stock. AddCommodity's subsequent trim enforces the new limit.
-	const quint32 freeCapacity = limit - quint32(better);
+	// Full or over-capacity stock must decline further sales. Better goods
+	// can still replace inferior stock because only equal-or-better is tallied.
+	const quint32 freeCapacity = better < limit ? limit - quint32(better) : 0;
 	return qMin(item.Count(), freeCapacity);
 }
 

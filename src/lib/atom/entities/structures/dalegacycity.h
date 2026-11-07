@@ -132,6 +132,8 @@ public:
 	bool RxSpacecraftServiceMessage(const AuCommPacket* message);
 	void AcceptSpacecraftRepair(DaPerson& person, const AuCommAcceptRepair& message);
 	void AcceptSpacecraftCargo(DaPerson& person, const AuCommAccept& message);
+	bool RxGoodsSaleMessage(const AuCommPacket* message);
+	void AcceptGoodsSale(DaPerson& person, const AuCommAccept& message);
 	bool CanAccessSpacecraft(const DaVessel& ship) const;
 	bool IsSpacecraftOnSlab(const DaVessel& ship) const;
 	void SupplySpaceStation(DaVessel& ship);

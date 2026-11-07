@@ -10,6 +10,7 @@ class AuGear;
 namespace AuLegacyCity
 {
 struct State;
+struct Development;
 struct ProductionState;
 AUDATA_DLL bool SalesFilter(AuCommPacket::TYPE type, COMMODITYFILTER& filter);
 // Pack a private gear transaction without actor/environment callbacks.
@@ -23,6 +24,8 @@ AUDATA_DLL quint32 ShopUnitPrice(const AuLegacyCityCatalogue& catalogue, const S
 	const AuItemHash& inventory, const ProductionState& production, const AuItem& item, quint8 industry);
 AUDATA_DLL quint32 ShopDemandCost(const AuLegacyCityCatalogue& catalogue, const State& city,
 	const AuItemHash& inventory, const ProductionState& production, const AuItem& item);
+AUDATA_DLL bool IndustryBuysCommodity(const AuLegacyCityCatalogue& catalogue, const Development& development,
+	CommodityId commodity, ECOROLE cityDiet);
 
 inline bool HasShop(const AuLegacyCityCatalogue& catalogue, quint8 industry)
 {

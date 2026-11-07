@@ -668,6 +668,9 @@ public:	// Methods
 	// Looks in the first level of containers.
 	// Does not list containers unless they are empty.
 	void CombineItemsForSale(AuItemHash& combined) const;
+	// Consume matching sale stacks using CombineItemsForSale's container rules.
+	// Returns the count removed; caller owns actor callbacks and transaction staging.
+	quint32 ConsumeItemsForSale(const AuItem& item);
 
 	// Returns the number of 'item's that are available. i.e. Non-empty containers are not available.
 	// This is used when bartering and is specifically followed by RemoveItems, which must use the same criteria.
