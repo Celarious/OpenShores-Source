@@ -2,6 +2,7 @@
 #define AuLegacyShipStats_H
 
 #include "aulegacyship.h"
+#include "aupoint.h"
 
 #include <QMap>
 #include <QStringList>
@@ -72,6 +73,8 @@ struct Stats
 };
 
 Stats CalculateStats(const Design& design);
+// AuAtom13:1803dc790, in author coordinates. Stations require authored emitters.
+QVector<AuPoint> ContrailEmitterLocations(const Design& design, const Stats& stats, bool station);
 }
 
 #endif // AuLegacyShipStats_H

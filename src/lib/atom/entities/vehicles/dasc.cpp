@@ -3789,6 +3789,7 @@ void DaSc::CreateDeviceObjects(AuAtomRenderInfo& ari)
 			alSourcei(m_AudioShip[AS_Sensors], AL_BUFFER, ari.al->AudioBuffer(SOUND_Telemetry));
 			alSourcei(m_AudioShip[AS_TractorBeam], AL_BUFFER, ari.al->AudioBuffer(SOUND_TractorBeam));
 		}
+		CreateContrailDeviceObjects(ari);
 		return;
 	}
 
@@ -4673,16 +4674,49 @@ void DaSc::CreateDeviceObjects(AuAtomRenderInfo& ari)
 		alSourcei(m_AudioShip[AS_TractorBeam], AL_BUFFER, ari.al->AudioBuffer(SOUND_TractorBeam));
 	}
 
-	// Create engine contrail particle generators for spacecraft that are not stations.
+	CreateContrailDeviceObjects(ari);
+}
+
+void DaSc::CreateContrailDeviceObjects(AuAtomRenderInfo& ari)
+{
 	if(!m_ContrailsValid && IsDesignDataCacheValid())
 	{
 		// Get the contrail emitter locations and their sizes.
-		m_ContrailsValid = true;	// Do this only once, even if the design has no contrail emitters.
-		QMap<AuPoint, float> contrails;
+		QVector<QPair<AuPoint, float>> contrails;
+		const bool legacy = IsLegacyDebug();
 		const AuScDesign* scd = LockDesign();
-		if(scd)
-			scd->ContrailEmitters(contrails);
+		if(legacy)
+		{
+			const auto stats = scd ? scd->LegacyStats() : QSharedPointer<const AuLegacyScStats>();
+			const auto plan = scd ? scd->LegacyDeckPlan() : QSharedPointer<const AuLegacyScDeckPlan>();
+			if(!stats || !plan)
+			{
+				UnlockDesign();
+				if(!m_LegacyDeckRequested)
+				{
+					m_LegacyDeckRequested = true;
+					g_Au.ScDesignNeeded(DesignId());
+				}
+				return;	// Retry once the original design metadata arrives.
+			}
+			if(stats->Performance().structure && stats->Stats().hasHull)
+			{
+				const bool station = IsSpaceStation();
+				const float size = station ? 5000.f : float(stats->Stats().width * 100);
+				const auto positions = AuLegacyShip::ContrailEmitterLocations(plan->SourceDesign(), stats->Stats(), station);
+				for(const AuPoint& position : positions)
+					contrails.append(qMakePair(position - plan->AuthorCenter(), size));
+			}
+		}
+		else if(scd)
+		{
+			QMap<AuPoint, float> emitters;
+			scd->ContrailEmitters(emitters);
+			for(auto ci = emitters.cbegin(); ci != emitters.cend(); ++ci)
+				contrails.append(qMakePair(ci.key(), *ci * 450));
+		}
 		UnlockDesign();
+		m_ContrailsValid = true;	// Do this only once, even if the design has no contrail emitters.
 		if(!contrails.empty())
 		{
 			// Get the contrail color of the empire.
@@ -4695,17 +4729,19 @@ void DaSc::CreateDeviceObjects(AuAtomRenderInfo& ari)
 			GLuint texIdGlow = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID,  "tBCM", ":data/particle.bmp");
 
 			// Create the emitters.
-			for(QMap<AuPoint, float>::const_iterator ci = contrails.cbegin(); ci != contrails.cend(); ci++)
+			for(const auto& emitter : contrails)
 			{
 				PsEngineTrail* con = new PsEngineTrail;
 				con->SetMaxParticles(35);
 				con->SetLifeCycle(1.0f);
 				con->SetReleaseInterval(0.0f);
 				con->SetColor(m_ContrailColor);
-				con->SetPosition(ci.key());							// Position of all nu particles made by this emitter.
+				con->SetPosition(emitter.first);						// Position of all nu particles made by this emitter.
 				con->SetTextureID(texIdStreak);
 				con->SetTextureID2(texIdGlow);
-				con->SetSize(*ci * 450);
+				con->SetSize(emitter.second);
+				if(legacy && IsSpaceStation())
+					con->SetVelocity(Transform().ProjectVector(AuPoint(0,0,-25)));
 				m_Contrails.append(con);
 			}
 		}

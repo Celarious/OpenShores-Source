@@ -3109,6 +3109,11 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 	case 2:		// Viewer is not inside the atmosphere and is far enough away that we can just render it as a blended sphere.
 	case 3:		// Viewer is at world but at globe isn't ready yet.
 		{
+			// Keep Legacy development visible across the near/far model switch.
+			// Its existing mip chain supplies the distant texture LOD.
+			const bool legacyCitySurface = HasEstablishedLegacyCity() && m_glTexNearSurface;
+			const GLuint surfaceTexture = legacyCitySurface ? m_glTexNearSurface : m_glTexFarSurface;
+
 			// Insure weather render data has been created. This way we only create it when we need it.
 			if(viewerContext == 2 && g_Au.DrawClouds())
 				CreateWeatherRenderData(re, mm);
@@ -3127,14 +3132,14 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 			if(viewerContext == 2 && g_Au.DrawClouds())
 			{
 				// Draw world with clouds
-				if(OrbitZone() == OZONE_Inferno)
+				if(OrbitZone() == OZONE_Inferno || legacyCitySurface)
 				{
 					// Configure far globe shader. All planet details are blended into a single surface texture.
 					re.GLSL().FarGlobeLitLavaCloudsShader().Select();
 					re.GLSL().FarGlobeLitLavaCloudsShader().SetProjectionModelView(projection * model);
 					re.GLSL().FarGlobeLitLavaCloudsShader().SetAtmosphereColor(atmColor);
 					re.GLSL().FarGlobeLitLavaCloudsShader().SetAtmosphereRadius(atmRadius);
-					re.GLSL().FarGlobeLitLavaCloudsShader().SetPlanetTexture(m_glTexFarSurface);
+					re.GLSL().FarGlobeLitLavaCloudsShader().SetPlanetTexture(surfaceTexture);
 					re.GLSL().FarGlobeLitLavaCloudsShader().SetWxOffset(m_WxSPOffset, m_WxVPOffset);
 					re.GLSL().FarGlobeLitLavaCloudsShader().SetLowWxMinimums(m_WxMinSP, m_WxMinVP);
 					re.GLSL().FarGlobeLitLavaCloudsShader().SetLowWxMaximums(m_WxMaxSP, m_WxMaxVP);
@@ -3167,7 +3172,7 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 					re.GLSL().FarGlobeLitCloudsShader().SetProjectionModelView(projection * model);
 					re.GLSL().FarGlobeLitCloudsShader().SetAtmosphereColor(atmColor);
 					re.GLSL().FarGlobeLitCloudsShader().SetAtmosphereRadius(atmRadius);
-					re.GLSL().FarGlobeLitCloudsShader().SetPlanetTexture(m_glTexFarSurface);
+					re.GLSL().FarGlobeLitCloudsShader().SetPlanetTexture(surfaceTexture);
 					re.GLSL().FarGlobeLitCloudsShader().SetWxOffset(m_WxSPOffset, m_WxVPOffset);
 					re.GLSL().FarGlobeLitCloudsShader().SetLowWxMinimums(m_WxMinSP, m_WxMinVP);
 					re.GLSL().FarGlobeLitCloudsShader().SetLowWxMaximums(m_WxMaxSP, m_WxMaxVP);
@@ -3197,14 +3202,14 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 			else
 			{
 				// Draw world without clouds.
-				if(OrbitZone() == OZONE_Inferno)
+				if(OrbitZone() == OZONE_Inferno || legacyCitySurface)
 				{
 					// Configure far globe shader. All planet details are blended into a single surface texture.
 					re.GLSL().FarGlobeLitLavaShader().Select();
 					re.GLSL().FarGlobeLitLavaShader().SetProjectionModelView(projection * model);
 					re.GLSL().FarGlobeLitLavaShader().SetAtmosphereColor(atmColor);
 					re.GLSL().FarGlobeLitLavaShader().SetAtmosphereRadius(atmRadius);
-					re.GLSL().FarGlobeLitLavaShader().SetPlanetTexture(m_glTexFarSurface);
+					re.GLSL().FarGlobeLitLavaShader().SetPlanetTexture(surfaceTexture);
 
 					// Ambient light
 					re.GLSL().FarGlobeLitLavaShader().SetAmbientLight(atmIllumination);
@@ -3233,7 +3238,7 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 					re.GLSL().FarGlobeLitShader().SetProjectionModelView(projection * model);
 					re.GLSL().FarGlobeLitShader().SetAtmosphereColor(atmColor);
 					re.GLSL().FarGlobeLitShader().SetAtmosphereRadius(atmRadius);
-					re.GLSL().FarGlobeLitShader().SetPlanetTexture(m_glTexFarSurface);
+					re.GLSL().FarGlobeLitShader().SetPlanetTexture(surfaceTexture);
 
 					// Ambient light
 					re.GLSL().FarGlobeLitShader().SetAmbientLight(atmIllumination);
@@ -4725,7 +4730,7 @@ void DaWorldGlobe::CreateDeviceObjects(AuAtomRenderInfo& ari)
 			m_glTexFarSurface = CreatePlanetTexture(ari, iViewSizeX, false);
 		}
 
-		if(m_ViewerNear)
+		if(m_ViewerNear || HasEstablishedLegacyCity())
 			UpdateNearSurfaceTexture(ari);
 	}
 

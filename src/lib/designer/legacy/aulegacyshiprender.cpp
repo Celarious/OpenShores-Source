@@ -922,23 +922,7 @@ public:
 		// requires a classified spacecraft rather than an incomplete hull.
 		if(!performance.structure || !designStats.hasHull) return;
 		const bool station = performance.structure == 3 || performance.structure == 4;
-		QVector<AuPoint> positions;
-		for(const auto& detail : design.details)
-		{
-			if(detail.detailType != 98) continue;
-			const QPointF xy = AuLegacyShip::DecodePoint(detail.packedXY);
-			positions.append(AuPoint(xy.x(), xy.y() - (station ? 0 : designStats.width / 10),
-				detail.deck * AuLegacyShip::DeckHeight + (station ? -4 : 4)));
-			if(positions.size() == 10) break;
-		}
-		if(positions.isEmpty() && !station)
-		{
-			// Original fallback: center, port and starboard aft emitters.
-			const double y = designStats.hullCenter.y() - designStats.length / 2 - designStats.width / 10;
-			const double z = (designStats.minimumDeck + designStats.maximumDeck) * AuLegacyShip::DeckHeight / 2;
-			for(double x : {0.0, -designStats.width / 3, designStats.width / 3})
-				positions.append(AuPoint(designStats.hullCenter.x() + x, y, z));
-		}
+		const QVector<AuPoint> positions = AuLegacyShip::ContrailEmitterLocations(design, designStats, station);
 		const DgData& data = g_Au.LockDataForRead();
 		const QColor color = data.EmpireContrailColor(0);
 		g_Au.UnlockData();

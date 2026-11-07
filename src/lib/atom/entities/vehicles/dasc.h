@@ -58,6 +58,7 @@ class AUATOM_DLL DaSc : public DaVessel
 	ALERT_CONDITION m_LegacyApparentAlertCondition = ConditionGreen;
 	qint64 m_LegacyAlertSecond = -1;
 	bool CreateLegacyDeviceObjects(AuAtomRenderInfo& ari);
+	void CreateContrailDeviceObjects(AuAtomRenderInfo& ari);
 	void RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ari, const AuMatrix4x4& model, bool transparent);
 
 public:

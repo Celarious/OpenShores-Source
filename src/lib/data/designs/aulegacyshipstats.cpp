@@ -252,6 +252,28 @@ bool IsConsole(int type)
 }
 }
 
+QVector<AuPoint> ContrailEmitterLocations(const Design& design, const Stats& stats, bool station)
+{
+	QVector<AuPoint> positions;
+	for(const auto& detail : design.details)
+	{
+		if(detail.detailType != 98) continue;
+		const QPointF xy = DecodePoint(detail.packedXY);
+		positions.append(AuPoint(xy.x(), xy.y() - (station ? 0 : stats.width / 10),
+			detail.deck * AuLegacyShip::DeckHeight + (station ? -4 : 4)));
+		if(positions.size() == 10) break;
+	}
+	if(positions.isEmpty() && !station)
+	{
+		// Original fallback: center, port and starboard aft emitters.
+		const double y = stats.hullCenter.y() - stats.length / 2 - stats.width / 10;
+		const double z = (stats.minimumDeck + stats.maximumDeck) * AuLegacyShip::DeckHeight / 2;
+		for(double x : {0.0, -stats.width / 3, stats.width / 3})
+			positions.append(AuPoint(stats.hullCenter.x() + x, y, z));
+	}
+	return positions;
+}
+
 Stats CalculateStats(const Design& design)
 {
 	Stats stats;
