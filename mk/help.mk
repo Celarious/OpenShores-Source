@@ -24,8 +24,9 @@ help:
 		'  make release-package      Build both platforms’ archives' \
 		'' \
 		"$${heading}Local server deployment$${reset}" \
-		'  make server-up            Build and start the local stack' \
-		'  make server-web-up        Compile web tools and start local Apache' \
+		'  make server-up            Build and start local game servers and database' \
+		'  make website-up           Build and start local website and reports (servers must be running)' \
+		'  make website-down         Stop local website and reports, preserving data' \
 		'  make server-reports-up    Apply report interval and restart report schedulers' \
 		'  make server-standings     Refresh local empire standings (no build)' \
 		'  make server-avatars       Refresh local avatar pages (no build)' \
@@ -35,8 +36,9 @@ help:
 		'  make server-reset         Delete local data and restart' \
 		'' \
 		"$${heading}Production server deployment$${reset}" \
-		'  make server-prod-up       Build and start production' \
-		'  make server-prod-web-up   Compile web tools and start production Apache' \
+		'  make server-prod-up       Build and start production game servers and database' \
+		'  make website-prod-up      Build and start production website and reports (servers must be running)' \
+		'  make website-prod-down    Stop production website and reports, preserving data' \
 		'  make server-prod-reports-up Apply production report interval and restart schedulers' \
 		'  make server-prod-standings Refresh production empire standings (no build)' \
 		'  make server-prod-avatars  Refresh production avatar pages (no build)' \

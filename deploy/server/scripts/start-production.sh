@@ -14,4 +14,5 @@ BUILDX_NO_DEFAULT_ATTESTATIONS=1 exec docker compose \
     --env-file "$env_file" \
     -f "$bundle_dir/deploy/server/compose.yaml" \
     -f "$bundle_dir/workers.compose.json" \
+    --profile website \
     up --build --detach --remove-orphans --wait "$@"

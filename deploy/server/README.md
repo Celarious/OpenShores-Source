@@ -22,8 +22,9 @@ Containers use Docker service names for private traffic. Native clients use the 
 
 Server compilation reuses the repository's existing named Docker volumes (`hazeron-linux-<config>-cache`). The build exports `build/linux-<config>/bin` and `lib`; the deployment then packages those artifacts into the runtime image. There is no second CMake cache inside the image build.
 
-The `server-deployment` build target compiles the game servers and the five web
-tools (including `AuEmpireReport`) together. Deployment containers use no bind mounts: executables, web files,
+`make server-up` compiles the `servers` target; `make website-up` separately compiles
+the five `web-tools` (including `AuEmpireReport`). The combined `server-deployment`
+target remains available for packaging. Deployment containers use no bind mounts: executables, web files,
 and INI configuration are copied into images. Only database data and generated
 reports use named Docker volumes. The release archive includes every local input
 needed to assemble those images, with paths relative to the extracted archive.
@@ -37,6 +38,22 @@ Start one Debug scene worker:
 ```bash
 make server-up
 ```
+
+This starts only the game servers and PostgreSQL. Start the optional website and
+both report schedulers after the servers are running:
+
+```bash
+make website-up
+make website-down
+```
+
+`website-down` removes only the website and report containers, preserving their
+data and leaving the game servers running. The website services use the Compose
+`website` profile, so subsequent `server-up` runs leave an existing website alone.
+The existing `server-web-up` command is an alias for `website-up`.
+`server-down` still stops the whole stack, including an optional running website,
+because it also stops the shared database. Release archives retain their full-stack
+`./start.sh` and `./stop.sh` behavior.
 
 Common commands:
 
@@ -135,8 +152,10 @@ into `build/server/web-context-<config>/` for development. The generated Compose
 settings select that context. The web-up targets compile `web-tools` and stage
 the context before rebuilding the image. The container has no executable mounts.
 
-The normal `make server-up` compiles and packages both the servers and web tools.
-For production, use `make server-prod-web-up` or the full `make server-prod-up`.
+`make server-up` does not compile, package, build, or start the website or reports.
+For production, run `make server-prod-up` followed by `make website-prod-up` when
+needed; `make website-prod-down` stops only the production website and reports.
+`server-prod-web-up` remains an alias for `website-prod-up`.
 The production archive includes this complete context as `deploy/server/web/`,
 with the five Release executables in `deploy/server/web/bin/` and their shared
 libraries in `deploy/server/web/lib/`. Its Compose
@@ -273,8 +292,8 @@ docker compose --env-file compose.env -f deploy/server/compose.yaml \
 To rebuild reporting changes and publish fresh standings without restarting game
 servers, use `make server-web-up` (production: `make server-prod-web-up
 SERVER_CONFIG=release`). The web-up target rebuilds the shared image and recreates
-Apache and both report schedulers, which begin an immediate refresh. Full-stack
-`server-up` targets also build the web image and start the report services.
+Apache and both report schedulers, which begin an immediate refresh. The
+`server-up` targets leave these optional services alone.
 On a newly initialized universe, refresh again after the scene server has created
 the galaxy and players have established empires.
 

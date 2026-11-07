@@ -19,6 +19,7 @@ PRODUCTION_COMPOSE = BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose \
 	-f deploy/server/monitor.compose.yaml
 
 .PHONY: server-config server-ensure-config server-image server-up server-down \
+        website-up website-down website-prod-up website-prod-down \
         server-web-up server-reports-up server-standings server-avatars server-logs server-status server-reset \
         server-prod-config server-prod-ensure-config server-prod-image \
         server-prod-up server-prod-web-up server-prod-reports-up server-prod-standings server-prod-avatars server-prod-down server-prod-logs server-prod-status
@@ -42,12 +43,18 @@ server-image: server-config
 server-up: server-image
 	$(LOCAL_COMPOSE) up --build --detach --remove-orphans --wait
 
-server-web-up: server-config
+server-web-up: website-up
+
+website-up: server-config
 	@config=$$(awk -F= '$$1 == "SERVER_BUILD_CONFIG" { print $$2 }' "$(LOCAL_SERVER_ENV)"); \
 	HAZERON_LINUX_IMAGE="$(LINUX_IMAGE)" HAZERON_BUILD_CONFIG="$$config" \
 		bash docker/linux/build.sh web-tools && \
 	bash deploy/server/web/stage.sh "$$config"
 	$(LOCAL_COMPOSE) up --build --detach --wait --no-deps --force-recreate web empire-standings avatar-reports
+
+website-down: server-ensure-config
+	$(LOCAL_COMPOSE) stop web empire-standings avatar-reports
+	$(LOCAL_COMPOSE) rm --force web empire-standings avatar-reports
 
 server-reports-up: server-config
 	$(LOCAL_COMPOSE) up --detach --wait --no-deps --force-recreate empire-standings avatar-reports
@@ -59,7 +66,7 @@ server-avatars: server-ensure-config
 	$(LOCAL_COMPOSE) run --rm --no-deps avatar-reports --once
 
 server-down: server-ensure-config
-	$(LOCAL_COMPOSE) down --remove-orphans
+	$(LOCAL_COMPOSE) --profile website down --remove-orphans
 
 server-logs: server-ensure-config
 	$(LOCAL_COMPOSE) logs --follow --tail="$(SERVER_LOG_TAIL)" $(SERVICE)
@@ -73,7 +80,7 @@ server-reset: server-image
 		read answer; \
 		case "$$answer" in y|Y|yes|YES) ;; *) echo 'Cancelled.'; exit 1;; esac; \
 	fi
-	$(LOCAL_COMPOSE) down --volumes --remove-orphans
+	$(LOCAL_COMPOSE) --profile website down --volumes --remove-orphans
 	$(LOCAL_COMPOSE) up --build --detach --remove-orphans --wait
 
 server-prod-config:
@@ -97,12 +104,18 @@ server-prod-image: server-prod-config
 server-prod-up: server-prod-image
 	$(PRODUCTION_COMPOSE) up --build --detach --remove-orphans --wait
 
-server-prod-web-up: server-prod-config
+server-prod-web-up: website-prod-up
+
+website-prod-up: server-prod-config
 	@config=$$(awk -F= '$$1 == "SERVER_BUILD_CONFIG" { print $$2 }' "$(PRODUCTION_SERVER_ENV)"); \
 	HAZERON_LINUX_IMAGE="$(LINUX_IMAGE)" HAZERON_BUILD_CONFIG="$$config" \
 		bash docker/linux/build.sh web-tools && \
 	bash deploy/server/web/stage.sh "$$config"
 	$(PRODUCTION_COMPOSE) up --build --detach --wait --no-deps --force-recreate web empire-standings avatar-reports
+
+website-prod-down: server-prod-ensure-config
+	$(PRODUCTION_COMPOSE) stop web empire-standings avatar-reports
+	$(PRODUCTION_COMPOSE) rm --force web empire-standings avatar-reports
 
 server-prod-reports-up: server-prod-config
 	$(PRODUCTION_COMPOSE) up --detach --wait --no-deps --force-recreate empire-standings avatar-reports
@@ -114,7 +127,7 @@ server-prod-avatars: server-prod-ensure-config
 	$(PRODUCTION_COMPOSE) run --rm --no-deps avatar-reports --once
 
 server-prod-down: server-prod-ensure-config
-	$(PRODUCTION_COMPOSE) down --remove-orphans
+	$(PRODUCTION_COMPOSE) --profile website down --remove-orphans
 
 server-prod-logs: server-prod-ensure-config
 	$(PRODUCTION_COMPOSE) logs --follow --tail="$(SERVER_LOG_TAIL)" $(SERVICE)

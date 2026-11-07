@@ -9,4 +9,5 @@ BUILDX_NO_DEFAULT_ATTESTATIONS=1 exec docker compose \
     --env-file "$bundle_dir/compose.env" \
     -f "$bundle_dir/deploy/server/compose.yaml" \
     -f "$bundle_dir/workers.compose.json" \
+    --profile website \
     down --remove-orphans "$@"

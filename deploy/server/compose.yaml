@@ -26,6 +26,7 @@ x-server: &server
 
 services:
   web:
+    profiles: [website]
     image: ${WEB_IMAGE:-openshores-web:local}
     pull_policy: never
     build:
@@ -63,6 +64,7 @@ services:
         max-file: "3"
 
   empire-standings: &web-report
+    profiles: [website]
     image: ${WEB_IMAGE:-openshores-web:local}
     pull_policy: never
     build:
