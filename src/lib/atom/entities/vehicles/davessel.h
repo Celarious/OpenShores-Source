@@ -5134,6 +5134,9 @@ protected:
 	// Update ATC contact information.
 	void ATCContact(const DaSolarSystem* system);
 
+	// Advance the repair/installation wait once per second in either simulation path.
+	void CycleRepairTime();
+
 	virtual void DowngradeSystemModules(quint8 repairQ, const QSet<AuSysId>& systemsRepaired);
 
 	void RenderGameChair(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, const AuPoint& loc,

@@ -14564,6 +14564,17 @@ void DaVessel::ShieldStabilize()
 	SetModified();
 }
 
+void DaVessel::CycleRepairTime()
+{
+	if(RepairSecondsRemaining())
+	{
+		m_VesselLock.lockForWrite();
+		m_RepairSecs--;
+		m_VesselLock.unlock();
+		SetModified();
+	}
+}
+
 void DaVessel::Tock(const AuTime& last, const AuTime& now, const AuScripts& scripts, DtTockTransactions& tockTrans)
 {
 	// Tock base class and all subatoms.
@@ -15591,13 +15602,7 @@ void DaVessel::Tock(const AuTime& last, const AuTime& now, const AuScripts& scri
 	}
 
 	// Repairs. Count down seconds until repairs are completed.
-	if(RepairSecondsRemaining())
-	{
-		m_VesselLock.lockForWrite();
-		m_RepairSecs--;
-		m_VesselLock.unlock();
-		SetModified();
-	}
+	CycleRepairTime();
 
 	// Fire weapons that are waiting to fire.
 	m_BayLock.lockForRead();

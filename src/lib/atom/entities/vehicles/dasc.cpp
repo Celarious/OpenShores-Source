@@ -12514,6 +12514,8 @@ void DaSc::Tock(const AuTime& last, const AuTime& now, const AuScripts& scripts,
 			if(IsPowerPlantOn() || !IsNew()) CycleCapacitor();
 			if(!IsNew())
 			{
+				// DaSpaceShip::Think (0x46cfb0) also advances repairs with the plant off.
+				CycleRepairTime();
 				CycleFTLDrive();
 				ShieldStabilize();
 				if(HasTransporter()) DeactivateTransporterSystems();
