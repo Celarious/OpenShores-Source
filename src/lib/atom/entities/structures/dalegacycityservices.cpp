@@ -546,6 +546,12 @@ bool DaLegacyCity::RxSpacecraftServiceMessage(const AuCommPacket* message)
 	if(bid)
 	{
 		if(!bid->Item() || !bid->Item()->IsValid() || !g_Au.HasPendingBid(bid)) return true;
+		const bool free = bid->Item()->IsFreeToFriendlyGovShip() && FreeService(*ship, EmpireId());
+		if(!free && bid->Price() > ship->AccountBalance())
+		{
+			reply(tr("Your ship's balance doesn't have %1.").arg(AuGlobal::FormatMoney(bid->Price())));
+			return true;
+		}
 		const int delivered = TransferSpacecraftCargo(*ship, bid->Item()->CommodityId(), int(qMin(bid->Item()->Count(), quint32(std::numeric_limits<int>::max()))),
 			true, false, bid->Item(), bid->Price());
 		if(!delivered) { reply(tr("The cargo purchase could not be completed. Request the city's stock again.")); return true; }
