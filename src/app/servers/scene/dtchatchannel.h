@@ -30,6 +30,7 @@
 #include <QMutex>
 #include <QReadWriteLock>
 #include <QSemaphore>
+#include <QSet>
 #include <QTcpSocket>
 #include <QThread>
 #include <QUdpSocket>
@@ -433,6 +434,7 @@ private:
 	bool LegacyCityAuthorized();
 	void ProcessLegacyConstructionRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityProtocol::Reply& reply);
 	void ProcessLegacyCityRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityProtocol::Reply& reply);
+	void ProcessLegacyCitySurfaceRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityProtocol::Reply& reply);
 
 	void RxData(QTcpSocket& tcpSocket);
 
@@ -511,6 +513,7 @@ private:
 	AuElapsedTimer m_LastLegacyScCatalogQuery;
 	AuElapsedTimer m_LastLegacyScSpawn;
 	AuElapsedTimer m_LastLegacyCityRequest;
+	QSet<quint32> m_LegacyCitySurfaceBodies; // At most one visual snapshot per body per connection.
 	AuElapsedTimer m_LastLegacyStudioRequest;
 	int									m_PacketSizeBytesLeft;	// Number of packet size bytes we are expecting.
 	int									m_socketDescriptor;		// Provided in the constructor.

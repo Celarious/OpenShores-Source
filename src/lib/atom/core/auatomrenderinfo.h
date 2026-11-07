@@ -11,10 +11,12 @@
 #include "augleffects.h"
 #include "auscface.h"
 #include "dbcommodity.h"
+#include "aulegacycityprotocol.h"
 #include <QOpenGLWidget>
 #include <QHash>
 #include <QQueue>
 #include <QSet>
+#include <functional>
 
 class Au3dsGLSLModelDefinition;
 class Au3dsGLSLModelInstance;
@@ -62,6 +64,10 @@ public:
 	int									viewDeck;				// Absolute author deck for the legacy ship tactical view.
 	bool								m_ShowHUD;
 	bool								m_ShowPaths;
+	// Visual-only cache survives full city atoms leaving the streamed scene.
+	QHash<quint32, AuLegacyCityProtocol::SurfaceCities> m_LegacyCitySurfaces;
+	QSet<quint32> m_LegacyCitySurfaceRequested;
+	std::function<bool(quint32)> m_RequestLegacyCitySurface;
 
 private:
 	AuGLModelCache&						m_ModelCache;			// Cache of 3d models.

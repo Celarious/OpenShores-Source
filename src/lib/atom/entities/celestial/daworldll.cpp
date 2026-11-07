@@ -6751,6 +6751,36 @@ bool DaWorldLL::HasEstablishedLegacyCity() const
 	return false;
 }
 
+void DaWorldLL::PrepareLegacyCitySurface(AuAtomRenderInfo& ari)
+{
+	if(g_Au.IsLegacyGeneration())
+	{
+		const auto cached = ari.m_LegacyCitySurfaces.constFind(Id().GetID());
+		m_HasLegacyCitySurface = cached != ari.m_LegacyCitySurfaces.cend() && !cached->isEmpty();
+	}
+}
+
+void DaWorldLL::RenderLegacyCitySurface(AuAtomRenderInfo& ari, float radiansPerFootX, float radiansPerFootY)
+{
+	auto cached = ari.m_LegacyCitySurfaces.value(Id().GetID());
+	DaAtomList children; ListNormalSubatoms(children);
+	bool hasLiveCities = false;
+	for(const DaAtom* atom : children)
+	{
+		const auto* city = dynamic_cast<const DaLegacyCity*>(atom);
+		if(!city) continue;
+		hasLiveCities = true;
+		// Replace only cities for which full data is currently present. Missing
+		// atoms mean stream-out, not demolition; their last visual stays cached.
+		cached.insert(city->Id().GetID(), city->SurfaceSnapshot(radiansPerFootX, radiansPerFootY));
+	}
+	// Baking an empty natural planet before city data arrives is not a snapshot.
+	if(hasLiveCities) ari.m_LegacyCitySurfaces.insert(Id().GetID(), cached);
+	m_HasLegacyCitySurface = !cached.isEmpty();
+	for(auto it = cached.cbegin(); it != cached.cend(); ++it)
+		DaLegacyCity::RenderSurfaceSnapshot(*ari.re, it.value());
+}
+
 bool DaWorldLL::HasVillage() const
 {
 	m_VillageLock.lockForRead();

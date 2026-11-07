@@ -6,6 +6,7 @@
 #include <QByteArray>
 #include <QString>
 #include <QVector>
+#include <QMap>
 
 // Legacy gameplay has its own interface and commands. Architect fixture actions
 // retain their original numbers and their separate server authorization.
@@ -15,6 +16,8 @@ constexpr int MaximumRequestBytes = 1024;
 constexpr int MaximumReplyBytes = 512 * 1024;
 constexpr int MaximumEntries = 256;
 constexpr int MaximumRecipeChoices = 526;
+constexpr double SurfaceRequestRangeMeters = 150000;
+constexpr int MaximumSurfaceQuads = 12000;
 // Recovered online editors use the existing empty design environment for
 // avatar isolation. Keep the original marker name for serialized studio IDs.
 constexpr quint16 PrivateStudioIdBase = 0x8000;
@@ -34,7 +37,8 @@ enum Action : quint8
 	StudioState = 28, EnterSpacecraftStudio = 29,
 	// TEMPORARY ARCHITECT MANUFACTURING TEST: remove after testing; reserve 30 afterwards.
 	TestingFinishIndustryProcess = 30,
-	BuySpacecraft = 31
+	BuySpacecraft = 31,
+	SurfaceSnapshot = 32 // One-shot visual data; never a city subscription.
 };
 inline bool IsEconomy(Action action) { return (action >= EconomyList && action <= RunIndustryProcess)
 	|| action == BuySpacecraft || action == TestingFinishIndustryProcess; } // TEMPORARY ARCHITECT MANUFACTURING TEST
@@ -81,6 +85,17 @@ struct Entry
 	QString materials;
 	QVector<AuLegacyCity::ConstructionComponent> components;
 };
+struct SurfaceQuad
+{
+	quint8 kind = 0; // Dirt road/slab, paved road/slab, building footprint.
+	float xy[8] = {}; // Normalized longitude/latitude, four corners.
+};
+struct SurfaceCity
+{
+	bool powered = false; // Frozen when the snapshot is captured.
+	QVector<SurfaceQuad> quads;
+};
+typedef QMap<quint32, SurfaceCity> SurfaceCities;
 struct Reply
 {
 	Action action = List;
@@ -107,6 +122,8 @@ struct Reply
 	bool hasStudio = false;
 	quint8 studioCount = 0;
 	quint16 occupiedStudios = 0;
+	quint32 surfaceWorldId = 0;
+	SurfaceCities surfaceCities;
 };
 AUDATA_DLL QByteArray EncodeRequest(const Request& request);
 AUDATA_DLL bool DecodeRequest(const QByteArray& bytes, Request& request);

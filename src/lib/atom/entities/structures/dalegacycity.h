@@ -33,7 +33,7 @@ namespace AuLegacyCity { struct PopulationRuntimeFacts; struct PopulationRuntime
 namespace AuLegacyCity { struct CityConnection; class PowerImportBatch; }
 namespace AuLegacyCity { struct WealthLevyOrder; }
 namespace AuLegacyCity { struct DevelopmentSupplyFacts; struct AccountingState; }
-namespace AuLegacyCityProtocol { struct Request; struct Reply; }
+namespace AuLegacyCityProtocol { struct Request; struct Reply; struct SurfaceCity; }
 namespace AuLegacyConstructionMaterials { class Batch; }
 
 // City-owned legacy developments have no DaBd identity or modern economics.
@@ -241,6 +241,8 @@ public:
 		QVector<AuLegacyBd::Paths::RoutePoint>& points, bool useGroundLevelDoors = true) const;
 	void PaintOnSurfaceMap(const DaWorldLL& world, QPainter& painter, unsigned int width, unsigned int height) const override;
 	void RenderOnSurfaceTexture(AuGLEffects& re, float radiansPerFootX, float radiansPerFootY) const override;
+	AuLegacyCityProtocol::SurfaceCity SurfaceSnapshot(float radiansPerFootX, float radiansPerFootY) const;
+	static void RenderSurfaceSnapshot(AuGLEffects& re, const AuLegacyCityProtocol::SurfaceCity& city);
 	void DeleteDeviceObjects(AuAtomRenderInfo& ari) override;
 	void GetRenderLightsRecursive(const DaPerson& person, const AuMatrix4x4& model,
 		QList<AuGLSun>& suns, QList<AuGLLight>& lights) const override;

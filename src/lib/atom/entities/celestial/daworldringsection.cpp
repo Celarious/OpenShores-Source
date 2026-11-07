@@ -4151,7 +4151,8 @@ GLuint DaWorldRingSection::CreatePlanetTexture(AuAtomRenderInfo& ari, int iViewS
 		DaAtomList subs;
 		ListNormalSubatoms(subs);
 		const auto renderCities = [&]() {
-			for(DaAtom* atom : subs) atom->RenderOnSurfaceTexture(*ari.re, radiansPerFootX, radiansPerFootY);
+			if(g_Au.IsLegacyGeneration()) RenderLegacyCitySurface(ari, radiansPerFootX, radiansPerFootY);
+			else for(DaAtom* atom : subs) atom->RenderOnSurfaceTexture(*ari.re, radiansPerFootX, radiansPerFootY);
 		};
 		if(g_Au.IsLegacyGeneration()) ari.re->RenderAntialiasedSurface(glTexSurface, iViewSizeX, iViewSizeY, renderCities);
 		else renderCities();
@@ -4693,6 +4694,7 @@ QColor DaWorldRingSection::AtmosphereColor() const
 
 void DaWorldRingSection::CreateDeviceObjects(AuAtomRenderInfo& ari)
 {
+	PrepareLegacyCitySurface(ari);
 	if(!s_TexNoise)
 		s_TexNoise = ari.re->CreateTextureFromBitmap(STATIC_TEXTURE_ID, "TerNoise", ":data/TerNoise.png");
 
@@ -8359,7 +8361,7 @@ void DaWorldRingSection::RenderNearGlobe(const AuMatrix4x4& projection, const Au
 	m_NearGlobe.SelectGL();
 
 	// Cities use the glow shader for the glow effect of the city lights.
-	if(BdHere() || HasEstablishedLegacyCity())
+	if(BdHere() || HasLegacyCitySurface())
 	{
 		ari.re->GLSL().NearRingworldGlowShader().Select();
 		ari.re->GLSL().NearRingworldGlowShader().SetProjectionModelView(projection * model);
@@ -8461,7 +8463,7 @@ void DaWorldRingSection::RenderNearGlobeFog(const AuMatrix4x4& projection, const
 	m_NearGlobe.SelectGL();
 
 	// Cities use the glow shader for the glow effect of the city lights.
-	if(BdHere() || HasEstablishedLegacyCity())
+	if(BdHere() || HasLegacyCitySurface())
 	{
 		ari.re->GLSL().NearRingworldGlowFogShader().Select();
 		ari.re->GLSL().NearRingworldGlowFogShader().SetProjectionModelView(projection * model);

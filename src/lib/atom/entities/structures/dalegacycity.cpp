@@ -920,6 +920,8 @@ struct DaLegacyCity::Runtime
 	QSharedPointer<MinePostJob> minePostJob;
 	quint64 minePostRevision = 0, minePostTerrainRevision = 0;
 	quint64 siteRevision = 0, terrainRevision = 0, terrainDrawRevision = 0;
+	quint64 surfaceRevision = 0;
+	AuLegacyCityProtocol::SurfaceCity surfaceSnapshot;
 	const DaWorldLL* siteWorld = nullptr;
 	QVector<AuLegacyCity::Development> siteState;
 	QVector<Site> sites, renderedSites;
@@ -4243,22 +4245,33 @@ void DaLegacyCity::PaintOnSurfaceMap(const DaWorldLL& world, QPainter& painter, 
 	}
 }
 
-void DaLegacyCity::RenderOnSurfaceTexture(AuGLEffects& re, float radiansPerFootX, float radiansPerFootY) const
+AuLegacyCityProtocol::SurfaceCity DaLegacyCity::SurfaceSnapshot(float radiansPerFootX, float radiansPerFootY) const
 {
+	using namespace AuLegacyCityProtocol;
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!g_Au.IsLegacyGeneration() || IsDead() || !world
-		|| AuLegacyCity::EnclosureNeeded(*world, Transform().Translation()) == 2) return;
+		|| AuLegacyCity::EnclosureNeeded(*world, Transform().Translation()) == 2) return SurfaceCity();
 	bool powered;
 	{ QReadLocker stateLock(&m_CityLock); powered = m_City.capacitor > 0; }
 	powered = powered || world->AtomType() == ATOM_WorldRingSection;
-	AuPointArray batches[5]; // Dirt road/slab, paved road/slab, building sites.
 	QMutexLocker lock(&m_Runtime->lock);
 	m_Runtime->EnsureSites(*this, *world);
+	m_Runtime->surfaceSnapshot.powered = powered;
+	if(m_Runtime->surfaceRevision == m_Runtime->terrainRevision) return m_Runtime->surfaceSnapshot;
+	m_Runtime->surfaceRevision = m_Runtime->terrainRevision;
+	m_Runtime->surfaceSnapshot.quads.clear();
 	const auto mapPoint = [](const AuGlobeLLF& location) {
 		return AuPoint(location.Longitude() / PIf, location.Latitude() / (PIf / 2.f), 0);
 	};
+	const auto appendQuad = [&](quint8 kind, const AuPoint& a, const AuPoint& b, const AuPoint& c, const AuPoint& d) {
+		SurfaceQuad quad; quad.kind = kind;
+		const AuPoint corners[] = {a, b, c, d};
+		for(int i = 0; i < 4; ++i) { quad.xy[i * 2] = corners[i].x; quad.xy[i * 2 + 1] = corners[i].y; }
+		m_Runtime->surfaceSnapshot.quads.append(quad);
+	};
 	for(const auto& site : m_Runtime->sites)
 	{
+		if(m_Runtime->surfaceSnapshot.quads.size() >= MaximumSurfaceQuads) break;
 		const auto& dev = site.state;
 		if(dev.demolished || dev.IsLandscaper()) continue;
 		if(dev.industryId == 2)
@@ -4273,7 +4286,7 @@ void DaLegacyCity::RenderOnSurfaceTexture(AuGLEffects& re, float radiansPerFootX
 			side.Unit_2D(dev.roadWidthMeters * FeetPerMeter() * .5 * 1.25);
 			side.x *= radiansPerFootX; side.y *= radiansPerFootY;
 			const bool paved = dev.constructed && dev.constructionProcessId != 1;
-			AppendCitySurfaceQuad(batches[(paved ? 2 : 0) + (dev.roadSlab ? 1 : 0)],
+			appendQuad((paved ? 2 : 0) + (dev.roadSlab ? 1 : 0),
 				a - side, b - side, b + side, a + side);
 		}
 		else
@@ -4291,10 +4304,26 @@ void DaLegacyCity::RenderOnSurfaceTexture(AuGLEffects& re, float radiansPerFootX
 				if(!world->LLOfLoc(location, site.placement.Project(local[i]))) { valid = false; break; }
 				corners[i] = mapPoint(location);
 			}
-			if(valid) AppendCitySurfaceQuad(batches[4], corners[0], corners[1], corners[2], corners[3]);
+			if(valid) appendQuad(4, corners[0], corners[1], corners[2], corners[3]);
 		}
 	}
-	lock.unlock();
+	return m_Runtime->surfaceSnapshot;
+}
+
+void DaLegacyCity::RenderOnSurfaceTexture(AuGLEffects& re, float radiansPerFootX, float radiansPerFootY) const
+{
+	RenderSurfaceSnapshot(re, SurfaceSnapshot(radiansPerFootX, radiansPerFootY));
+}
+
+void DaLegacyCity::RenderSurfaceSnapshot(AuGLEffects& re, const AuLegacyCityProtocol::SurfaceCity& city)
+{
+	AuPointArray batches[5];
+	for(const auto& quad : city.quads)
+	{
+		AppendCitySurfaceQuad(batches[quad.kind], AuPoint(quad.xy[0], quad.xy[1], 0),
+			AuPoint(quad.xy[2], quad.xy[3], 0), AuPoint(quad.xy[4], quad.xy[5], 0), AuPoint(quad.xy[6], quad.xy[7], 0));
+	}
+	const bool powered = city.powered;
 	// Alpha stores inverse glow, as expected by the existing near-globe and
 	// ringworld shaders. Sunlit surfaces retain normal solar illumination.
 	const QVector4D colors[] = {QVector4D(1, .5764706f, .16078432f, .9f),

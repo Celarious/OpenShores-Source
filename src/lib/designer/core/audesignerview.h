@@ -1332,6 +1332,7 @@ protected slots:
 	void ScreenShot();
 
 public slots:
+	void LegacyCitySurfaceReceived(QByteArray payload);
 	void AvatarOnLine(AuId id);
 
 	void CommandPromptChanged(const QString& prompt);

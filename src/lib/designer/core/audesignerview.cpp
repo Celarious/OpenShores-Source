@@ -1750,6 +1750,13 @@ AuDesignerView::AuDesignerView(QWidget* parent) : QOpenGLWidget(parent), m_Scene
 	m_MM = new AuGLModelMaker(!auApp->IsSingleUserDesignerMode());
 	m_ModelCache = new AuGLModelCache();
 	m_RenderInfo = new AuAtomRenderInfo(this, auApp->Sound(), *m_MM, *m_ModelCache, g_AuClient.FontAtom());
+	m_RenderInfo->m_RequestLegacyCitySurface = [](quint32 worldId) {
+		AuLegacyCityProtocol::Request request;
+		request.action = AuLegacyCityProtocol::SurfaceSnapshot;
+		request.worldId = worldId;
+		return auApp->RequestLegacyCityTool(request) != 0;
+	};
+	connect(auApp, SIGNAL(LegacyCityReplyReceived(QByteArray)), this, SLOT(LegacyCitySurfaceReceived(QByteArray)));
 
 	setFocusPolicy(Qt::StrongFocus);
 	setObjectName("AuView");
@@ -6887,8 +6894,29 @@ void AuDesignerView::AtomChanged(DaAtom* atom)
 		emit DesignerSelectionChanged();
 }
 
+void AuDesignerView::LegacyCitySurfaceReceived(QByteArray payload)
+{
+	using namespace AuLegacyCityProtocol;
+	// Other city replies belong to F10; avoid decoding them again here.
+	if(!g_Au.IsLegacyGeneration() || payload.size() < 2 || quint8(payload[1]) != SurfaceSnapshot) return;
+	Reply reply;
+	if(!DecodeReply(payload, reply) || !reply.accepted
+		|| !m_RenderInfo->m_LegacyCitySurfaceRequested.contains(reply.surfaceWorldId)) return;
+	m_SceneLock.lockForWrite();
+	auto& cached = m_RenderInfo->m_LegacyCitySurfaces[reply.surfaceWorldId];
+	// Near data may have arrived while the one-shot reply was in flight.
+	// Keep those newer city footprints and fill in the other cities.
+	for(auto it = cached.cbegin(); it != cached.cend(); ++it) reply.surfaceCities.insert(it.key(), it.value());
+	cached = reply.surfaceCities;
+	auto* world = dynamic_cast<DaWorldLL*>(m_SceneEther.FindAtom(AuId(reply.surfaceWorldId)));
+	if(world) world->InvalidateNearGlobeTexture();
+	m_SceneLock.unlock();
+}
+
 void AuDesignerView::ResetGameGeneration()
 {
+	m_RenderInfo->m_LegacyCitySurfaces.clear();
+	m_RenderInfo->m_LegacyCitySurfaceRequested.clear();
 	EndCommands();
 	DeselectAllUnits();
 	if(isValid())

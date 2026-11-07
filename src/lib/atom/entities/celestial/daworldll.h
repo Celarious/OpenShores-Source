@@ -1753,6 +1753,7 @@ public:
 
 protected:
 	DaWorldLL(const DaWorldLL& c);
+	bool m_HasLegacyCitySurface = false; // Rendering only; never used by gameplay/terrain queries.
 
 public:	// Operators
 	virtual void operator>>(QDataStream& out) const;
@@ -2476,6 +2477,9 @@ public:
 
 	// Legacy settlements replace indigenous encounters after their first building.
 	bool HasEstablishedLegacyCity() const;
+	bool HasLegacyCitySurface() const { return g_Au.IsLegacyGeneration() && (m_HasLegacyCitySurface || HasEstablishedLegacyCity()); }
+	void PrepareLegacyCitySurface(AuAtomRenderInfo& ari);
+	void RenderLegacyCitySurface(AuAtomRenderInfo& ari, float radiansPerFootX, float radiansPerFootY);
 
 	// Returns true if this world has an active village with a non-zero population.
 	bool HasVillage() const;

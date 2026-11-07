@@ -3111,7 +3111,7 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 		{
 			// Keep Legacy development visible across the near/far model switch.
 			// Its existing mip chain supplies the distant texture LOD.
-			const bool legacyCitySurface = HasEstablishedLegacyCity() && m_glTexNearSurface;
+			const bool legacyCitySurface = HasLegacyCitySurface() && m_glTexNearSurface;
 			const GLuint surfaceTexture = legacyCitySurface ? m_glTexNearSurface : m_glTexFarSurface;
 
 			// Insure weather render data has been created. This way we only create it when we need it.
@@ -3829,7 +3829,8 @@ GLuint DaWorldGlobe::CreatePlanetTexture(AuAtomRenderInfo& ari, int iViewSizeX, 
 		DaAtomList subs;
 		ListNormalSubatoms(subs);
 		const auto renderCities = [&]() {
-			for(DaAtom* atom : subs) atom->RenderOnSurfaceTexture(*ari.re, radiansPerFootX, radiansPerFootY);
+			if(g_Au.IsLegacyGeneration()) RenderLegacyCitySurface(ari, radiansPerFootX, radiansPerFootY);
+			else for(DaAtom* atom : subs) atom->RenderOnSurfaceTexture(*ari.re, radiansPerFootX, radiansPerFootY);
 		};
 		if(g_Au.IsLegacyGeneration()) ari.re->RenderAntialiasedSurface(glTexSurface, iViewSizeX, iViewSizeY, renderCities);
 		else renderCities();
@@ -4555,6 +4556,7 @@ QColor DaWorldGlobe::AtmosphereColor() const
 
 void DaWorldGlobe::CreateDeviceObjects(AuAtomRenderInfo& ari)
 {
+	PrepareLegacyCitySurface(ari);
 	ProcessCityTerrainInvalidation(ari.mm);
 	if(!(g_Au.m_DebugSwitches & 0x00000800))
 	{
@@ -4730,7 +4732,7 @@ void DaWorldGlobe::CreateDeviceObjects(AuAtomRenderInfo& ari)
 			m_glTexFarSurface = CreatePlanetTexture(ari, iViewSizeX, false);
 		}
 
-		if(m_ViewerNear || HasEstablishedLegacyCity())
+		if(m_ViewerNear || HasLegacyCitySurface())
 			UpdateNearSurfaceTexture(ari);
 	}
 
@@ -4836,6 +4838,16 @@ void DaWorldGlobe::DeleteFloraDeviceObjects(AuGLEffects& re, AuGLModelMaker& mm)
 void DaWorldGlobe::AnimateDeviceObjects(AuAtomRenderInfo& ari, const DaPerson* sceneAtom, const AuElapsedTimer& lastAnim)
 {
 	InitSystemPosition();
+	if(g_Au.IsLegacyGeneration() && g_Au.IsSceneClient() && sceneAtom && !sceneAtom->InDesignEnvironment()
+		&& ari.m_RequestLegacyCitySurface && !ari.m_LegacyCitySurfaces.contains(Id().GetID())
+		&& !ari.m_LegacyCitySurfaceRequested.contains(Id().GetID()))
+	{
+		AuPoint location;
+		const double range = AuLegacyCityProtocol::SurfaceRequestRangeMeters * FeetPerMeter();
+		if(GetRelativeLocation(*sceneAtom, location) && location.Length2() <= range * range
+			&& ari.m_RequestLegacyCitySurface(Id().GetID()))
+			ari.m_LegacyCitySurfaceRequested.insert(Id().GetID());
+	}
 
 	// This will take care of the subatoms, particularly the terrain patches.
 	DaWorldSphere::AnimateDeviceObjects(ari, sceneAtom, lastAnim);
@@ -7445,7 +7457,7 @@ void DaWorldGlobe::RenderNearGlobe(const AuMatrix4x4& projection, const AuMatrix
 	m_NearGlobe.SelectGL();
 
 	// Cities use the inferno shader for the glow effect of the city lights.
-	if(OrbitZone() == OZONE_Inferno || BdHere() || HasEstablishedLegacyCity())
+	if(OrbitZone() == OZONE_Inferno || BdHere() || HasLegacyCitySurface())
 	{
 		ari.re->GLSL().NearGlobeLavaShader().Select();
 		ari.re->GLSL().NearGlobeLavaShader().SetProjectionModelView(projection * model);
@@ -7539,7 +7551,7 @@ void DaWorldGlobe::RenderNearGlobeFog(const AuMatrix4x4& projection, const AuMat
 	m_NearGlobe.SelectGL();
 
 	// Cities use the inferno shader for the glow effect of the city lights.
-	if(OrbitZone() == OZONE_Inferno || BdHere() || HasEstablishedLegacyCity())
+	if(OrbitZone() == OZONE_Inferno || BdHere() || HasLegacyCitySurface())
 	{
 		ari.re->GLSL().NearGlobeLavaFogShader().Select();
 		ari.re->GLSL().NearGlobeLavaFogShader().SetProjectionModelView(projection * model);

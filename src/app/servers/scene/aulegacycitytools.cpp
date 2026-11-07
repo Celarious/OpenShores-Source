@@ -24,6 +24,7 @@
 #include "dasector.h"
 #include "dagalaxy.h"
 #include "daworldll.h"
+#include "daworldglobe.h"
 #include "dtccpacket.h"
 #include <algorithm>
 #include <cmath>
@@ -430,7 +431,8 @@ void DtChatChannel::ReadLegacyCityPacket(const QByteArray& payload)
 	Request request;
 	if(!LegacyCityAuthorized() || !DecodeRequest(payload, request)) { Disconnect(); return; }
 	Reply reply; reply.token = request.token; reply.action = request.action;
-	if(!IsGameplay(request.action) && !LegacyScAuthorized(true)) reply.message = tr("Enable architect or programmer powers to use Legacy city test tools.");
+	if(request.action == SurfaceSnapshot) ProcessLegacyCitySurfaceRequest(request, reply);
+	else if(!IsGameplay(request.action) && !LegacyScAuthorized(true)) reply.message = tr("Enable architect or programmer powers to use Legacy city test tools.");
 	else if(m_LastLegacyCityRequest.isValid() && m_LastLegacyCityRequest.elapsed() < 200)
 	{
 		reply.message = tr("Wait a moment before sending another city request.");
@@ -446,6 +448,37 @@ void DtChatChannel::ReadLegacyCityPacket(const QByteArray& payload)
 	const QByteArray response = EncodeReply(reply);
 	if(response.isEmpty()) return;
 	QByteArray packet(1, char(DtChatChannelPacket::PD_LegacyCity)); packet.append(response); SendPacket(packet);
+}
+
+void DtChatChannel::ProcessLegacyCitySurfaceRequest(const AuLegacyCityProtocol::Request& request,
+	AuLegacyCityProtocol::Reply& reply)
+{
+	using namespace AuLegacyCityProtocol;
+	reply.surfaceWorldId = request.worldId;
+	if(m_LegacyCitySurfaceBodies.contains(request.worldId) || m_LegacyCitySurfaceBodies.size() >= 1024) return;
+	DaPerson* person = m_I->LockAvatar(); AvatarUnlock unlock{m_I};
+	AuEther* ether = person ? person->Ether() : nullptr;
+	const auto* world = ether ? dynamic_cast<const DaWorldGlobe*>(ether->FindNormalAtom(AuId(request.worldId))) : nullptr;
+	AuPoint location;
+	const double range = SurfaceRequestRangeMeters * FeetPerMeter();
+	if(!person || !world || person->IsDead() || world->FindParentSolarSystem() != person->FindParentSolarSystem()
+		|| !world->GetRelativeLocation(*person, location) || !(location.Length2() <= range * range)) return;
+	m_LegacyCitySurfaceBodies.insert(request.worldId);
+	reply.accepted = true;
+	// Inspect only the requested body's immediate cities. No subscriptions,
+	// simulation/inventory reads, or recurring per-player solar-system scans.
+	DaAtomList children; world->ListNormalSubatoms(children);
+	int remaining = MaximumSurfaceQuads;
+	for(const DaAtom* atom : children)
+	{
+		const auto* city = dynamic_cast<const DaLegacyCity*>(atom);
+		if(!city || city->IsDead()) continue;
+		auto surface = city->SurfaceSnapshot(1.f / world->SeaLevelRadius(), 1.f / world->SeaLevelRadius());
+		if(surface.quads.size() > remaining) surface.quads.resize(remaining);
+		remaining -= surface.quads.size();
+		reply.surfaceCities.insert(city->Id().GetID(), surface);
+		if(!remaining || reply.surfaceCities.size() >= MaximumEntries) break;
+	}
 }
 
 bool DtChatChannel::LegacyCityAuthorized()

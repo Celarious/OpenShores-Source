@@ -64,6 +64,13 @@ bool ReadText(QDataStream& in, QString& text, int maximum)
 
 QByteArray AuLegacyCityProtocol::EncodeRequest(const Request& r)
 {
+	if(r.action == SurfaceSnapshot)
+	{
+		if(!r.token || !r.worldId) return QByteArray();
+		QByteArray bytes; QDataStream out(&bytes, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_4_1);
+		out << quint8(7) << quint8(r.action) << r.token << r.worldId;
+		return bytes;
+	}
 	if(!Valid(r)) return QByteArray();
 	QByteArray bytes; QDataStream out(&bytes, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_4_1);
 	const quint8 version = IsStudio(r.action) ? quint8(6) : quint8(4);
@@ -87,7 +94,14 @@ bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& resul
 	if(bytes.size() > MaximumRequestBytes || bytes.size() < 6) return false;
 	Request r; quint8 version = 0, action = 0; bool retiredDoorsOpen = false;
 	QDataStream in(bytes); in.setVersion(QDataStream::Qt_4_1);
-	in >> version >> action >> r.token >> r.cityId >> r.developmentId >> r.designId
+	in >> version >> action >> r.token;
+	if(version == 7 && action == SurfaceSnapshot)
+	{
+		in >> r.worldId;
+		if(!r.token || !r.worldId || in.status() != QDataStream::Ok || !in.atEnd()) return false;
+		r.action = SurfaceSnapshot; result = r; return true;
+	}
+	in >> r.cityId >> r.developmentId >> r.designId
 		>> r.material >> r.minimumDeck >> r.maximumDeck >> r.constructed >> retiredDoorsOpen
 		>> r.distanceMeters >> r.headingDegrees >> r.elevationMeters >> r.targetX >> r.targetY >> r.targetZ;
 	if(version >= 2 && version <= 6)
@@ -113,6 +127,30 @@ bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& resul
 }
 QByteArray AuLegacyCityProtocol::EncodeReply(const Reply& r)
 {
+	if(r.action == SurfaceSnapshot)
+	{
+		if(!r.token || !r.surfaceWorldId || r.surfaceCities.size() > MaximumEntries
+			|| (!r.accepted && !r.surfaceCities.isEmpty())) return QByteArray();
+		QByteArray bytes; QDataStream out(&bytes, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_4_1);
+		out << quint8(7) << quint8(r.action) << r.token << r.surfaceWorldId << r.accepted << quint16(r.surfaceCities.size());
+		int total = 0;
+		for(auto it = r.surfaceCities.cbegin(); it != r.surfaceCities.cend(); ++it)
+		{
+			if(!it.key() || (total += it->quads.size()) > MaximumSurfaceQuads) return QByteArray();
+			out << it.key() << it->powered << quint16(it->quads.size());
+			for(const SurfaceQuad& quad : it->quads)
+			{
+				if(quad.kind > 4) return QByteArray();
+				out << quad.kind;
+				for(float value : quad.xy)
+				{
+					if(!std::isfinite(value) || std::abs(value) > 4) return QByteArray();
+					out << value;
+				}
+			}
+		}
+		return out.status() == QDataStream::Ok && bytes.size() <= MaximumReplyBytes ? bytes : QByteArray();
+	}
 	// TEMPORARY ARCHITECT MANUFACTURING TEST: the normal economy reply also reports action 30.
 	if(!r.token || r.action > BuySpacecraft || r.entries.size() > MaximumEntries
 		|| r.production.size() > MaximumReplyBytes / 2
@@ -173,7 +211,35 @@ bool AuLegacyCityProtocol::DecodeReply(const QByteArray& bytes, Reply& result)
 	if(bytes.size() > MaximumReplyBytes || bytes.size() < 6) return false;
 	Reply r; quint8 version = 0, action = 0; quint16 count = 0;
 	QDataStream in(bytes); in.setVersion(QDataStream::Qt_4_1);
-	in >> version >> action >> r.token >> r.selectedCity >> r.selectedDevelopment >> r.hasList >> r.truncated;
+	in >> version >> action >> r.token;
+	if(version == 7 && action == SurfaceSnapshot)
+	{
+		in >> r.surfaceWorldId >> r.accepted >> count;
+		if(!r.token || !r.surfaceWorldId || count > MaximumEntries) return false;
+		int total = 0;
+		for(int i = 0; i < count; ++i)
+		{
+			quint32 cityId = 0; quint16 quads = 0; SurfaceCity city;
+			in >> cityId >> city.powered >> quads;
+			if(!cityId || r.surfaceCities.contains(cityId) || (total += quads) > MaximumSurfaceQuads
+				|| in.status() != QDataStream::Ok || quads * 33 > in.device()->bytesAvailable()) return false;
+			city.quads.resize(quads);
+			for(SurfaceQuad& quad : city.quads)
+			{
+				in >> quad.kind;
+				if(quad.kind > 4) return false;
+				for(float& value : quad.xy)
+				{
+					in >> value;
+					if(!std::isfinite(value) || std::abs(value) > 4) return false;
+				}
+			}
+			r.surfaceCities.insert(cityId, city);
+		}
+		if(in.status() != QDataStream::Ok || !in.atEnd() || (!r.accepted && count)) return false;
+		r.action = SurfaceSnapshot; result = r; return true;
+	}
+	in >> r.selectedCity >> r.selectedDevelopment >> r.hasList >> r.truncated;
 	// TEMPORARY ARCHITECT MANUFACTURING TEST: preserve ordinary version-4/5 economy replies for action 30.
 	if((version < 1 || version > 6) || action > BuySpacecraft || (version == 1 && action > Route)
 		|| (version == 2 && action > ChangeRoad)
