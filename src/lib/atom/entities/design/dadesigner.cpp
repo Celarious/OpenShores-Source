@@ -1194,6 +1194,7 @@ void DaDesigner::ProcessLegacyStudioRequest(DaPerson& person,
 		else ++it;
 	bool changed = false;
 	bool remember = false;
+	bool predictedBatch = false;
 	if(request.action != Snapshot && request.action != Library && m_LegacyReservedOperation
 		&& (m_LegacyReservedActor != person.Id() || m_LegacyReservedOperation != request.operationId
 			|| m_LegacyReservedAction != request.action))
@@ -1211,20 +1212,36 @@ void DaDesigner::ProcessLegacyStudioRequest(DaPerson& person,
 		&& request.revision != state.revision)
 		reply.message = tr("The shared design changed. Review the current design and try again.");
 	else if(state.revision == ~quint64(0)) reply.message = tr("The studio revision limit has been reached.");
-	else if(request.action == Edit)
+	else if(request.action == Edit || request.action == EditBatch)
 	{
 		AuLegacyShip::Design candidate(state.design);
-		if(Apply(request.edit, candidate, error, changed))
+		const quint64 baseRevision = state.revision;
+		QVector<Command> commands = request.edits;
+		if(request.action == Edit) commands.append(request.edit);
+		int rejected = 0;
+		QString firstError;
+		for(const auto& command : commands)
 		{
-			QString validationError;
-			if(!changed || !EncodeDocument(candidate, validationError).isEmpty())
-			{
-				if(changed) { state.design = candidate; state.modified = true; ++state.revision; }
-				reply.accepted = remember = true;
-			}
-			else error = validationError;
+			bool commandChanged = false;
+			if(Apply(command, candidate, error, commandChanged)) changed = changed || commandChanged;
+			else { ++rejected; if(firstError.isEmpty()) firstError = error; }
 		}
-		reply.message = error;
+		// Ordinary drawing checks only transport/storage bounds, once per batch.
+		// Full save and burn validation remains at those explicit boundaries.
+		if(!changed || CheckDocumentLimits(candidate, error))
+		{
+			if(changed) { state.design = candidate; state.modified = true; ++state.revision; }
+			// A batch acknowledges every command, including conflicting edits
+			// that failed. Its snapshot below supplies the accepted result.
+			reply.accepted = remember = request.action == EditBatch || !rejected;
+			predictedBatch = request.action == EditBatch && !rejected && request.revision == baseRevision;
+			if(rejected)
+			{
+				reply.message = request.action == Edit ? firstError
+					: tr("%1 studio edits could not be applied: %2").arg(rejected).arg(firstError);
+			}
+		}
+		else { changed = false; reply.message = error; }
 	}
 	else if(request.action == Replace || request.action == AuLegacyStudioProtocol::LoadDesign)
 	{
@@ -1303,7 +1320,8 @@ void DaDesigner::ProcessLegacyStudioRequest(DaPerson& person,
 	reply.libraryDesignId = state.libraryDesignId;
 	QString burnError;
 	reply.canBurn = LegacyStudioCanBurn(person, burnError);
-	if(request.revision != state.revision || request.generation != state.generation)
+	if(!predictedBatch && (request.revision != state.revision || request.generation != state.generation
+		|| request.action == Edit || request.action == EditBatch))
 	{
 		reply.document = EncodeDocument(state.design, error);
 		reply.hasDocument = !reply.document.isEmpty();

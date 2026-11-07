@@ -21,11 +21,12 @@ constexpr int MaximumMembers = 64;
 constexpr int MaximumPasswordCharacters = 128;
 constexpr int MaximumNameCharacters = 128;
 constexpr int MaximumLibraryEntries = 256;
+constexpr int MaximumBatchCommands = 128;
 
 enum Action : quint8
 {
 	Snapshot = 0, Edit = 1, Replace = 2, Saved = 3, Password = 4, BurnMedia = 5,
-	Library = 6, LoadDesign = 7
+	Library = 6, LoadDesign = 7, EditBatch = 8
 };
 enum EditKind : quint8
 {
@@ -55,6 +56,7 @@ struct Request
 	quint32 generation = 0;
 	quint64 revision = 0;
 	Command edit;
+	QVector<Command> edits;
 	QByteArray document;
 	QString password;
 	QString name;
@@ -66,6 +68,9 @@ struct LibraryEntry { quint32 id = 0; QString name; quint8 state = 0; };
 
 struct Reply
 {
+	// An accepted EditBatch without a document confirms exact replay on the
+	// requested base revision. Conflicts, retries and remote edits carry a
+	// snapshot so the client can rebase the edits it has not sent yet.
 	quint32 token = 0, environmentId = 0, ownerId = 0, generation = 0;
 	quint64 revision = 0;
 	quint64 lastOperation = 0;
@@ -93,6 +98,9 @@ AUDATA_DLL bool IsLibraryNameValid(const QString& name);
 AUDATA_DLL bool DecodeRequest(const QByteArray& bytes, Request& request, QString& error);
 AUDATA_DLL QByteArray EncodeReply(const Reply& reply);
 AUDATA_DLL bool DecodeReply(const QByteArray& bytes, Reply& reply);
+// Cheap transport bounds for edits; only documents near the compressed limit
+// need serialization here. Full save/burn validation is a separate operation.
+AUDATA_DLL bool CheckDocumentLimits(const AuLegacyShip::Design& design, QString& error);
 AUDATA_DLL QByteArray EncodeDocument(const AuLegacyShip::Design& design, QString& error);
 AUDATA_DLL bool DecodeDocument(const QByteArray& bytes, AuLegacyShip::Design& design, QString& error);
 AUDATA_DLL QByteArray EncodeState(const State& state, QString& error);

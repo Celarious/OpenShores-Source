@@ -57,6 +57,7 @@ public:
 	QStringList Warnings() const;
 	std::function<void(const QString&)> tipsChanged;
 	std::function<void(const QPointF&)> cellEntered;
+	std::function<void()> editStrokeFinished;
 	std::function<void(int)> rotateEquipment;
 	std::function<void(InteriorLight)> interiorLightChanged;
 

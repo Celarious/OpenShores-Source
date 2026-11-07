@@ -6,6 +6,7 @@
 #include "dadesignbase.h"
 #include "daperson.h"
 #include <QMessageBox>
+#include <QProgressDialog>
 #include <QStringList>
 #include <QTimer>
 #include <algorithm>
@@ -16,13 +17,15 @@ bool MutatesStudio(AuLegacyStudioProtocol::Action action)
 {
 	return action != AuLegacyStudioProtocol::Snapshot && action != AuLegacyStudioProtocol::Library;
 }
+const int BatchIntervalMs = 160;
 }
 
 AuLegacyStudioSession::AuLegacyStudioSession(AuLegacyShipViewer* viewer, quint32 environmentId, quint32 personId)
 	: QObject(viewer), m_Viewer(viewer), m_Timer(new QTimer(this)),
 	m_EnvironmentId(environmentId), m_PersonId(personId)
 {
-	m_Viewer->SetStudioCommandHandler([this](AuLegacyStudioProtocol::Request request) { Queue(request); });
+	m_Viewer->SetStudioCommandHandler([this](AuLegacyStudioProtocol::Request request) { Queue(request); },
+		[this](bool wait) { return Flush(wait); });
 	m_Viewer->SetStudioConnected(false);
 	m_Viewer->SetStudioBurnAvailable(false);
 	m_Viewer->SetStudioLibraryDesignId(0);
@@ -35,7 +38,7 @@ AuLegacyStudioSession::AuLegacyStudioSession(AuLegacyShipViewer* viewer, quint32
 		m_Connected = false; m_NeedSnapshot = true;
 		m_LastSend.invalidate(); m_WarnedTimeout = false;
 		UpdateControls();
-		m_Viewer->ShowStudioMessage(tr("Disconnected. This is the last confirmed studio design. "
+		m_Viewer->ShowStudioMessage(tr("Disconnected. Your local working copy is preserved. "
 			"Unconfirmed edits remain queued until the connection returns."));
 	});
 	m_Timer->start();
@@ -58,11 +61,51 @@ void AuLegacyStudioSession::UpdateControls()
 {
 	m_Viewer->SetStudioConnected(m_Connected && !m_Stopped);
 	if(!m_Connected || m_Stopped) m_Viewer->SetStudioBurnAvailable(false);
-	// Polls never block export. On a disconnect the last confirmed design
-	// remains exportable by its owner, and ConfirmExit handles queued edits.
+	// The local working copy, including unconfirmed edits, remains exportable
+	// when disconnected. ConfirmExit warns before abandoning its queued edits.
+	m_Viewer->SetStudioBusy(m_Connected && HasUnconfirmed());
+}
+
+bool AuLegacyStudioSession::HasUnconfirmed() const
+{
 	bool busy = m_HasPending && MutatesStudio(m_Pending.action);
 	for(const auto& request : m_Queue) busy = busy || MutatesStudio(request.action);
-	m_Viewer->SetStudioBusy(m_Connected && busy);
+	return busy;
+}
+
+bool AuLegacyStudioSession::HasLocalEdits() const
+{
+	using namespace AuLegacyStudioProtocol;
+	if(m_HasPending && (m_Pending.action == Edit || m_Pending.action == EditBatch)) return true;
+	for(const auto& request : m_Queue) if(request.action == Edit) return true;
+	return false;
+}
+
+bool AuLegacyStudioSession::Flush(bool wait)
+{
+	m_FlushEdits = true;
+	Pump();
+	if(!wait || !HasUnconfirmed()) return !HasUnconfirmed();
+	if(m_Waiting || !m_Connected || m_Stopped) return false;
+	m_Waiting = true;
+	QProgressDialog progress(tr("Synchronizing your studio edits..."), tr("Cancel"), 0, 0, m_Viewer);
+	progress.setWindowModality(Qt::WindowModal);
+	progress.setMinimumDuration(0);
+	QElapsedTimer elapsed; elapsed.start();
+	QTimer timer;
+	connect(&timer, &QTimer::timeout, &progress, [this, &progress, &elapsed]() {
+		if(!HasUnconfirmed()) progress.accept();
+		else if(!m_Connected || m_Stopped || elapsed.elapsed() >= 15000) progress.reject();
+	});
+	timer.start(40);
+	progress.exec();
+	m_Waiting = false;
+	if(HasUnconfirmed())
+	{
+		m_Viewer->ShowStudioMessage(tr("Studio edits are still awaiting confirmation. Your working copy and queued edits are preserved."));
+		return false;
+	}
+	return true;
 }
 
 void AuLegacyStudioSession::Queue(AuLegacyStudioProtocol::Request request)
@@ -73,7 +116,7 @@ void AuLegacyStudioSession::Queue(AuLegacyStudioProtocol::Request request)
 		m_Viewer->ShowStudioMessage(tr("Wait for the studio connection before editing."));
 		return;
 	}
-	if(request.action == Snapshot || m_Queue.size() >= 4096)
+	if(request.action == Snapshot || request.action == EditBatch || m_Queue.size() >= 4096)
 	{
 		m_Viewer->ShowStudioMessage(tr("Wait for the studio to finish applying your edits."));
 		return;
@@ -93,6 +136,14 @@ void AuLegacyStudioSession::Queue(AuLegacyStudioProtocol::Request request)
 		return;
 	}
 	request.token = 0; request.operationId = 0;
+	if(request.action == Edit)
+	{
+		// Apply once to the displayed working copy. The confirmed document is
+		// untouched until the server acknowledges this command's batch.
+		if(!m_Viewer->ApplyStudioEdit(request.edit)) return;
+		if(m_Queue.isEmpty()) m_BatchWait.restart();
+	}
+	else m_FlushEdits = true;
 	m_Queue.enqueue(request);
 	UpdateControls();
 	Pump();
@@ -108,7 +159,7 @@ void AuLegacyStudioSession::Pump()
 		{
 			m_Connected = false; m_NeedSnapshot = true;
 			UpdateControls();
-			m_Viewer->ShowStudioMessage(tr("The studio connection is unavailable. This is the last confirmed design."));
+			m_Viewer->ShowStudioMessage(tr("The studio connection is unavailable. Your local working copy and queued edits are preserved."));
 		}
 		return;
 	}
@@ -130,6 +181,8 @@ void AuLegacyStudioSession::Pump()
 	Request request;
 	if(m_Connected && !m_Queue.isEmpty())
 	{
+		if(m_Queue.head().action == Edit && !m_FlushEdits && m_Queue.size() < MaximumBatchCommands
+			&& m_BatchWait.isValid() && m_BatchWait.elapsed() < BatchIntervalMs) return;
 		request = m_Queue.dequeue();
 		if(MutatesStudio(request.action) && request.generation != m_Generation)
 		{
@@ -137,12 +190,23 @@ void AuLegacyStudioSession::Pump()
 			UpdateControls();
 			return;
 		}
+		if(request.action == Edit)
+		{
+			request.action = EditBatch;
+			request.edits.append(request.edit);
+			while(!m_Queue.isEmpty() && m_Queue.head().action == Edit
+				&& m_Queue.head().generation == m_Generation && request.edits.size() < MaximumBatchCommands)
+				request.edits.append(m_Queue.dequeue().edit);
+			m_BatchWait.restart();
+		}
 		request.operationId = MutatesStudio(request.action) ? ++m_LastOperation : 0;
 		// New/Load and Save retain the exact revision shown in their dialogs.
-		if(request.action == Edit || request.action == Password || request.action == Library) request.revision = m_Revision;
+		if(request.action == EditBatch || request.action == Password || request.action == Library) request.revision = m_Revision;
+		if(m_Queue.isEmpty()) m_FlushEdits = false;
 	}
 	else
 	{
+		m_FlushEdits = false;
 		if(!m_NeedSnapshot && m_LastPoll.isValid() && m_LastPoll.elapsed() < 500) return;
 		request.action = Snapshot;
 		request.environmentId = m_EnvironmentId;
@@ -150,6 +214,8 @@ void AuLegacyStudioSession::Pump()
 		request.revision = m_NeedSnapshot ? 0 : m_Revision;
 		m_LastPoll.restart();
 	}
+	m_HasPendingDesign = request.action == EditBatch && m_Queue.isEmpty();
+	if(m_HasPendingDesign) m_PendingDesign = m_Viewer->StudioWorkingDesign();
 	m_Pending = request;
 	m_Pending.environmentId = m_EnvironmentId;
 	m_Pending.token = auApp->RequestLegacyStudio(m_Pending);
@@ -179,11 +245,12 @@ void AuLegacyStudioSession::Receive(QByteArray payload)
 		return;
 	}
 	const Action action = m_Pending.action;
-	m_HasPending = false;
-	m_LastOperation = std::max(m_LastOperation, reply.lastOperation);
 	if(!reply.generation || !reply.revision)
 	{
-		m_Connected = false;
+		// Retain an unconfirmed mutation so a failed reconnect cannot lose
+		// the user's working copy or bypass the warning when leaving.
+		m_HasPending = MutatesStudio(action);
+		m_Connected = false; m_NeedSnapshot = true;
 		UpdateControls();
 		if(!reply.message.isEmpty()) m_Viewer->ShowStudioMessage(reply.message);
 		return;
@@ -199,9 +266,33 @@ void AuLegacyStudioSession::Receive(QByteArray payload)
 		}
 		m_Design = std::move(incoming); m_HasDocument = true;
 	}
+	else if(action == EditBatch && reply.accepted && m_HasDocument
+		&& reply.generation == m_Generation && m_Pending.revision == m_Revision)
+	{
+		// A compact acknowledgement means this exact batch was applied to
+		// our confirmed base, with no intervening remote edits or rejections.
+		if(m_HasPendingDesign) m_Design = m_PendingDesign;
+		else
+		{
+			// An unusually long queue can span several batches. In that case
+			// the displayed copy already includes edits beyond this batch.
+			AuLegacyShip::Design confirmed(m_Design);
+			for(const auto& edit : m_Pending.edits)
+			{
+				QString error; bool changed = false;
+				if(!Apply(edit, confirmed, error, changed)) { m_HasDocument = false; break; }
+			}
+			if(m_HasDocument) m_Design = std::move(confirmed);
+		}
+	}
+	else if(reply.generation != m_Generation || reply.revision != m_Revision || action == EditBatch)
+		m_HasDocument = false;
+	m_HasPending = false;
+	m_HasPendingDesign = false; m_PendingDesign = AuLegacyShip::Design();
+	m_LastOperation = std::max(m_LastOperation, reply.lastOperation);
 	if(!m_HasDocument)
 	{
-		m_NeedSnapshot = true;
+		m_NeedSnapshot = true; m_Connected = false;
 		UpdateControls();
 		return;
 	}
@@ -219,8 +310,24 @@ void AuLegacyStudioSession::Receive(QByteArray payload)
 	}
 	m_Generation = reply.generation; m_Revision = reply.revision;
 	m_NeedSnapshot = false; m_Connected = SceneReady();
-	m_Viewer->ApplyStudioState(m_Design, reply.ownerId == m_PersonId, reply.modified, m_Generation, m_Revision);
-	m_Viewer->SetStudioBurnAvailable(m_Connected && reply.canBurn);
+	AuLegacyShip::Design working;
+	int conflicts = 0;
+	if(reply.hasDocument)
+	{
+		working = m_Design;
+		QQueue<Request> rebased;
+		while(!m_Queue.isEmpty())
+		{
+			const Request queued = m_Queue.dequeue();
+			QString error; bool changed = false;
+			if(queued.action == Edit && !Apply(queued.edit, working, error, changed)) ++conflicts;
+			else rebased.enqueue(queued);
+		}
+		m_Queue = rebased;
+	}
+	m_Viewer->ApplyStudioState(reply.hasDocument ? working : m_Design, reply.ownerId == m_PersonId,
+		reply.modified || HasLocalEdits(), m_Generation, m_Revision, reply.hasDocument);
+	m_Viewer->SetStudioBurnAvailable(m_Connected && !HasLocalEdits() && reply.canBurn);
 	m_Viewer->SetStudioLibraryDesignId(reply.libraryDesignId);
 	if(reply.hasLibrary) m_Viewer->ApplyStudioLibrary(reply.library, reply.libraryTruncated);
 	// Apply the authoritative dirty state before releasing a Save/Exit wait.
@@ -239,13 +346,15 @@ void AuLegacyStudioSession::Receive(QByteArray payload)
 		m_Viewer->ShowStudioMessage(tr("The studio could not apply that change."));
 	else if(discarded)
 		m_Viewer->ShowStudioMessage(tr("The owner loaded a different design. %1 queued edits for the previous design were not applied.").arg(discarded));
+	else if(conflicts)
+		m_Viewer->ShowStudioMessage(tr("%1 queued edits could no longer be applied after the shared design changed.").arg(conflicts));
 }
 
 bool AuLegacyStudioSession::ConfirmExit()
 {
-	bool unconfirmed = m_HasPending && MutatesStudio(m_Pending.action);
-	for(const auto& request : m_Queue) unconfirmed = unconfirmed || MutatesStudio(request.action);
-	if(m_Connected || !unconfirmed) return true;
+	if(m_Waiting) return false;
+	if(!HasUnconfirmed()) return true;
+	if(m_Connected) return Flush(true);
 	return QMessageBox::question(m_Viewer, tr("Leave Design Studio"),
 		tr("Some edits have not been confirmed by the server. Leave the studio anyway? "
 			"Queued edits will be abandoned."), QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;

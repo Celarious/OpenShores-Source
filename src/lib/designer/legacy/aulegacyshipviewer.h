@@ -9,10 +9,10 @@
 class QCloseEvent;
 class AuCommPacket;
 namespace AuLegacyShip { struct Design; }
-namespace AuLegacyStudioProtocol { struct Request; struct LibraryEntry; }
+namespace AuLegacyStudioProtocol { struct Request; struct Command; struct LibraryEntry; }
 
-// Editor for the recovered 2016 authoring format. Shared studios apply server
-// snapshots while standalone editing keeps the original local file workflow.
+// Editor for the recovered 2016 authoring format. Shared studios display edits
+// immediately and reconcile with the server; standalone editing uses local files.
 class AuLegacyShipViewer : public QMainWindow
 {
 public:
@@ -26,9 +26,12 @@ public:
 	bool ConfirmDiscardChanges();
 	void ControlsChanged();
 	void ToggleTools();
-	void SetStudioCommandHandler(const std::function<void(AuLegacyStudioProtocol::Request)>& handler);
+	void SetStudioCommandHandler(const std::function<void(AuLegacyStudioProtocol::Request)>& handler,
+		const std::function<bool(bool)>& flush);
+	bool ApplyStudioEdit(const AuLegacyStudioProtocol::Command& edit);
+	const AuLegacyShip::Design& StudioWorkingDesign() const;
 	void ApplyStudioState(const AuLegacyShip::Design& design, bool owner, bool modified,
-		quint32 generation, quint64 revision);
+		quint32 generation, quint64 revision, bool updateDocument);
 	void SetStudioConnected(bool connected);
 	void SetStudioBusy(bool busy);
 	void SetStudioBurnAvailable(bool available);

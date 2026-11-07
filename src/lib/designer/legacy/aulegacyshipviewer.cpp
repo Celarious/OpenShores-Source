@@ -508,6 +508,7 @@ public:
 		RefreshControlLabels();
 
 		renderView->cellEntered = [this](const QPointF& point) { EditAt(point); };
+		renderView->editStrokeFinished = [this]() { if(studioFlush) studioFlush(false); };
 		renderView->rotateEquipment = [this](int steps) {
 			if (toolMode != EquipmentMode || !EquipmentCanRotate(selectedEquipmentType)) return;
 			selectedEquipmentType = AuLegacyShip::RotateDetailType(selectedEquipmentType, steps);
@@ -720,7 +721,7 @@ public:
 	void RefreshStudioControls()
 	{
 		const bool online = !studioHandler || (studioConnected && studioReady);
-		const bool ownsFileCommands = !studioHandler || (studioOwner && !studioBusy);
+		const bool ownsFileCommands = !studioHandler || studioOwner;
 		editPanel->setEnabled(loaded && (!studioHandler || studioReady));
 		tools->setEnabled(online);
 		deleteDeckAction->setEnabled(loaded && online);
@@ -769,6 +770,8 @@ public:
 	bool StudioFileCommandAllowed(bool saveSnapshot = false)
 	{
 		if(!studioHandler) return true;
+		if(studioConnected && studioBusy && studioFlush && !studioFlush(true)) return false;
+		// Synchronization can dispatch a remote ownership change.
 		if(!studioOwner)
 		{
 			SetFeedback(QStringLiteral("Only the studio owner can create, open, or save a design."));
@@ -957,6 +960,7 @@ public:
 
 	bool ConfirmChanges(bool leaving)
 	{
+		if(studioHandler && studioBusy && studioFlush && !studioFlush(true)) return false;
 		if(studioHandler && studioBusy)
 		{
 			SetFeedback(QStringLiteral("Wait for the studio changes to finish before leaving."));
@@ -1762,7 +1766,7 @@ public:
 		ScheduleStatsRefresh();
 		UpdateTitle();
 		SetFeedback(studioHandler && !studioConnected
-			? QStringLiteral("Saved the last confirmed studio snapshot to %1.").arg(QFileInfo(path).fileName())
+			? QStringLiteral("Saved your local studio working copy to %1.").arg(QFileInfo(path).fileName())
 			: QStringLiteral("Saved %1").arg(QFileInfo(path).fileName()));
 		settings.setValue(QStringLiteral("LegacySpacecraft/LastOpenDirectory"), QFileInfo(path).absolutePath());
 		settings.sync();
@@ -1845,6 +1849,7 @@ public:
 	QAction* lineActions[4];
 	std::function<void()> exitHandler;
 	std::function<void(AuLegacyStudioProtocol::Request)> studioHandler;
+	std::function<bool(bool)> studioFlush;
 	bool studioConnected = false, studioReady = false, studioOwner = false;
 	bool studioBusy = false, studioExitAfterSave = false, studioCanBurn = false;
 	bool studioLibraryLoaded = false, studioLibraryTruncated = false;
@@ -1992,9 +1997,11 @@ void AuLegacyShipViewer::ChooseFile()
 	else m_Impl->ChooseDesignFile();
 }
 
-void AuLegacyShipViewer::SetStudioCommandHandler(const std::function<void(AuLegacyStudioProtocol::Request)>& handler)
+void AuLegacyShipViewer::SetStudioCommandHandler(const std::function<void(AuLegacyStudioProtocol::Request)>& handler,
+	const std::function<bool(bool)>& flush)
 {
 	m_Impl->studioHandler = handler;
+	m_Impl->studioFlush = flush;
 	m_Impl->studioReady = false;
 	m_Impl->studioExitAfterSave = false;
 	m_Impl->studioLibraryLoaded = false;
@@ -2004,17 +2011,45 @@ void AuLegacyShipViewer::SetStudioCommandHandler(const std::function<void(AuLega
 	m_Impl->RefreshStudioControls();
 }
 
+bool AuLegacyShipViewer::ApplyStudioEdit(const AuLegacyStudioProtocol::Command& edit)
+{
+	if(!m_Impl->studioReady) return false;
+	QString error; bool changed = false;
+	if(!AuLegacyStudioProtocol::Apply(edit, m_Impl->design, error, changed))
+	{
+		ShowStudioMessage(error); return false;
+	}
+	if(changed)
+	{
+		m_Impl->modified = true;
+		m_Impl->renderDirty = true;
+		if(edit.kind == AuLegacyStudioProtocol::MoveCopy || edit.kind == AuLegacyStudioProtocol::EraseDeck)
+			m_Impl->renderView->ResetEditStroke();
+		m_Impl->IndexDecks();
+		m_Impl->RefreshHeaderControls();
+		m_Impl->ShowDeck(m_Impl->currentDeck);
+		m_Impl->UpdateTitle();
+	}
+	if(!error.isEmpty()) ShowStudioMessage(error);
+	return changed;
+}
+
+const AuLegacyShip::Design& AuLegacyShipViewer::StudioWorkingDesign() const
+{
+	return m_Impl->design;
+}
+
 void AuLegacyShipViewer::ApplyStudioState(const AuLegacyShip::Design& design, bool owner, bool modified,
-	quint32 generation, quint64 revision)
+	quint32 generation, quint64 revision, bool updateDocument)
 {
 	if(!m_Impl->studioHandler) return;
-	if(m_Impl->studioReady && generation == m_Impl->studioGeneration && revision == m_Impl->studioRevision)
+	if(m_Impl->studioReady && !updateDocument && generation == m_Impl->studioGeneration)
 	{
-		// Ownership/password/save metadata can change without geometry changes.
+		// Acknowledgements leave the already displayed local edits in place.
 		m_Impl->studioOwner = owner;
+		m_Impl->studioRevision = revision;
 		m_Impl->modified = modified;
 		m_Impl->RefreshStudioControls();
-		m_Impl->RefreshStats();
 		m_Impl->UpdateTitle();
 		return;
 	}
@@ -2040,7 +2075,7 @@ void AuLegacyShipViewer::ApplyStudioState(const AuLegacyShip::Design& design, bo
 	m_Impl->RefreshHeaderControls();
 	m_Impl->ShowDeck(replaced ? 0 : m_Impl->currentDeck);
 	m_Impl->UpdateTitle();
-	m_Impl->RefreshStats();
+	m_Impl->ScheduleStatsRefresh();
 }
 
 void AuLegacyShipViewer::SetStudioConnected(bool connected)
@@ -2048,7 +2083,7 @@ void AuLegacyShipViewer::SetStudioConnected(bool connected)
 	m_Impl->studioConnected = connected;
 	m_Impl->RefreshStudioControls();
 	if(!connected && m_Impl->studioHandler)
-		m_Impl->SetFeedback(QStringLiteral("Studio connection lost. The displayed design is the last confirmed snapshot."));
+		m_Impl->SetFeedback(QStringLiteral("Studio connection lost. Your local working copy is preserved, including unconfirmed edits."));
 }
 
 void AuLegacyShipViewer::SetStudioBusy(bool busy)

@@ -3259,7 +3259,12 @@ void AuLegacyShipRender::mouseMoveEvent(QMouseEvent* event)
 
 void AuLegacyShipRender::mouseReleaseEvent(QMouseEvent* event)
 {
-	if(event->button() == Qt::LeftButton) ResetEditStroke();
+	if(event->button() == Qt::LeftButton)
+	{
+		const bool edited = m_Impl->editingStroke;
+		ResetEditStroke();
+		if(edited && editStrokeFinished) editStrokeFinished();
+	}
 	if(SceneRenderInfo().m_ShowHUD && SceneInterfaceMouseRelease(event->pos()))
 	{
 		event->accept();

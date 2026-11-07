@@ -17,6 +17,7 @@ const quint8 StateCodecVersion = 2;
 const quint8 ReplyCodecVersion = 3;
 const int MaximumMemberNameCharacters = 128;
 const int MaximumMessageCharacters = 4096;
+const int CommandBytes = 59;
 
 bool Available(QDataStream& in, quint64 bytes)
 {
@@ -140,10 +141,12 @@ bool ReadCommand(QDataStream& in, Command& command)
 
 bool ValidRequest(const Request& request)
 {
-	if(request.action > LoadDesign || !request.token || !request.environmentId
+	if(request.action > EditBatch || !request.token || !request.environmentId
 		|| (request.action != Snapshot && request.action != Library
 			&& (!request.operationId || !request.generation || !request.revision))
 		|| (request.action == Edit && !ValidCommand(request.edit))
+		|| (request.action == EditBatch ? request.edits.isEmpty() || request.edits.size() > MaximumBatchCommands
+			: !request.edits.isEmpty())
 		|| request.document.size() > MaximumCompressedDocumentBytes
 		|| (request.action == Replace ? request.document.isEmpty() : !request.document.isEmpty())
 		|| request.password.size() > MaximumPasswordCharacters
@@ -151,7 +154,34 @@ bool ValidRequest(const Request& request)
 		|| request.name.size() > MaximumNameCharacters
 		|| (request.action != Saved && !request.name.isEmpty())
 		|| (request.action == LoadDesign ? !request.designId : request.designId != 0)) return false;
+	for(const auto& edit : request.edits) if(!ValidCommand(edit)) return false;
 	return true;
+}
+
+bool DocumentSize(const AuLegacyShip::Design& design, quint64& bytes, QString& error)
+{
+	error = QStringLiteral("The studio working document exceeds its limits.");
+	const auto& header = design.header;
+	const quint64 records = quint64(header.firstPairs.size()) + header.secondPairs.size() + design.rooms.size() + design.details.size();
+	if(records > AuLegacyShip::MaximumRecords || header.scalarSlots.size() > AuLegacyShip::MaximumRecords
+		|| header.name.size() > MaximumDocumentBytes / 2 || header.architectName.size() > MaximumDocumentBytes / 2
+		|| header.legacyDiscardedString.size() > MaximumDocumentBytes / 2) return false;
+	// Fixed codec fields and length prefixes, followed by variable-sized data.
+	bytes = 61 + quint64(header.name.size()) * 2 + quint64(header.architectName.size()) * 2
+		+ quint64(header.legacyDiscardedString.size()) * 2
+		+ (quint64(header.firstPairs.size()) + header.secondPairs.size()) * 6
+		+ quint64(header.scalarSlots.size()) * 2 + quint64(design.details.size()) * 23;
+	for(const auto& room : design.rooms)
+	{
+		if(room.packedVertices.size() > AuLegacyShip::MaximumRecords || room.workingBoundary.size() > AuLegacyShip::MaximumRecords)
+			return false;
+		bytes += 22 + quint64(room.packedVertices.size()) * 2 + quint64(room.workingBoundary.size()) * 16;
+		if(bytes > MaximumDocumentBytes) return false;
+		for(const auto& point : room.workingBoundary)
+			if(!FinitePoint(point)) { error = QStringLiteral("A studio room boundary is not finite."); return false; }
+	}
+	if(bytes > MaximumDocumentBytes) return false;
+	error.clear(); return true;
 }
 
 bool WritePairs(QDataStream& out, const QVector<AuLegacyShip::ModulePair>& pairs)
@@ -207,6 +237,11 @@ QByteArray AuLegacyStudioProtocol::EncodeRequest(const Request& request)
 	out << CodecVersion << quint8(request.action) << request.token << request.environmentId
 		<< request.operationId << request.generation << request.revision;
 	if(request.action == Edit) WriteCommand(out, request.edit);
+	if(request.action == EditBatch)
+	{
+		out << quint16(request.edits.size());
+		for(const auto& edit : request.edits) WriteCommand(out, edit);
+	}
 	if(request.action == Replace && !WriteBytes(out, request.document, MaximumCompressedDocumentBytes)) return QByteArray();
 	if(request.action == Password && !WriteString(out, request.password, MaximumPasswordCharacters)) return QByteArray();
 	if(request.action == Saved && !WriteString(out, request.name, MaximumNameCharacters)) return QByteArray();
@@ -230,9 +265,20 @@ bool AuLegacyStudioProtocol::DecodeRequest(const QByteArray& bytes, Request& req
 	QDataStream in(bytes); in.setVersion(QDataStream::Qt_4_1);
 	Request parsed; quint8 version = 0, action = 0;
 	in >> version >> action >> parsed.token >> parsed.environmentId >> parsed.operationId >> parsed.generation >> parsed.revision;
-	if(version != CodecVersion || action > LoadDesign) return false;
+	if(version != CodecVersion || action > EditBatch) return false;
 	parsed.action = static_cast<Action>(action);
 	if(parsed.action == Edit && !ReadCommand(in, parsed.edit)) return false;
+	if(parsed.action == EditBatch)
+	{
+		quint16 count = 0; in >> count;
+		if(!count || count > MaximumBatchCommands || !Available(in, quint64(count) * CommandBytes)) return false;
+		parsed.edits.reserve(count);
+		for(quint16 index = 0; index < count; ++index)
+		{
+			Command edit; if(!ReadCommand(in, edit)) return false;
+			parsed.edits.append(edit);
+		}
+	}
 	if(parsed.action == Replace && !ReadBytes(in, parsed.document, MaximumCompressedDocumentBytes)) return false;
 	if(parsed.action == Password && !ReadString(in, parsed.password, MaximumPasswordCharacters)) return false;
 	if(parsed.action == Saved && !ReadString(in, parsed.name, MaximumNameCharacters)) return false;
@@ -314,12 +360,22 @@ bool AuLegacyStudioProtocol::DecodeReply(const QByteArray& bytes, Reply& reply)
 	reply = std::move(parsed); return true;
 }
 
+bool AuLegacyStudioProtocol::CheckDocumentLimits(const AuLegacyShip::Design& design, QString& error)
+{
+	quint64 bytes = 0;
+	if(!DocumentSize(design, bytes, error)) return false;
+	// zlib's bound guarantees that the document will fit without actually
+	// encoding or compressing it during ordinary drawing acknowledgements.
+	if(quint64(compressBound(uLong(bytes))) + 4 <= MaximumCompressedDocumentBytes) return true;
+	return !EncodeDocument(design, error).isEmpty();
+}
+
 QByteArray AuLegacyStudioProtocol::EncodeDocument(const AuLegacyShip::Design& design, QString& error)
 {
+	quint64 expectedBytes = 0;
+	if(!DocumentSize(design, expectedBytes, error)) return QByteArray();
 	error = QStringLiteral("The studio working document exceeds its limits.");
 	const auto& header = design.header;
-	const quint64 records = quint64(header.firstPairs.size()) + header.secondPairs.size() + design.rooms.size() + design.details.size();
-	if(records > AuLegacyShip::MaximumRecords || header.scalarSlots.size() > AuLegacyShip::MaximumRecords) return QByteArray();
 	QByteArray raw; QDataStream out(&raw, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_4_1);
 	out << DocumentMagic << CodecVersion << header.designId;
 	if(!WriteString(out, header.name, MaximumDocumentBytes / 2)) return QByteArray();
@@ -334,25 +390,18 @@ QByteArray AuLegacyStudioProtocol::EncodeDocument(const AuLegacyShip::Design& de
 	out << qint32(design.bytesConsumed) << quint32(design.rooms.size());
 	for(const auto& room : design.rooms)
 	{
-		if(room.packedVertices.size() > AuLegacyShip::MaximumRecords || room.workingBoundary.size() > AuLegacyShip::MaximumRecords
-			|| quint64(raw.size()) + 22 + quint64(room.packedVertices.size()) * 2
-				+ quint64(room.workingBoundary.size()) * 16 > MaximumDocumentBytes) return QByteArray();
 		out << qint32(room.streamOffset) << room.designId << room.roomId << room.deck << room.roomType << room.roomSubtype
 			<< quint32(room.packedVertices.size());
 		for(const quint16 vertex : room.packedVertices) out << vertex;
 		out << quint8(room.hasWorkingBoundary) << quint32(room.workingBoundary.size());
 		for(const auto& point : room.workingBoundary)
-		{
-			if(!FinitePoint(point)) { error = QStringLiteral("A studio room boundary is not finite."); return QByteArray(); }
 			out << double(point.x()) << double(point.y());
-		}
 	}
-	if(quint64(raw.size()) + 4 + quint64(design.details.size()) * 23 > MaximumDocumentBytes) return QByteArray();
 	out << quint32(design.details.size());
 	for(const auto& detail : design.details)
 		out << qint32(detail.streamOffset) << detail.deck << detail.detailType << detail.hiddenRaw << detail.detailId
 			<< detail.designId << detail.packedXY << detail.roomId << detail.commodityIdRaw << detail.commodityIdNormalized;
-	if(out.status() != QDataStream::Ok || raw.size() > MaximumDocumentBytes) return QByteArray();
+	if(out.status() != QDataStream::Ok || quint64(raw.size()) != expectedBytes) return QByteArray();
 	QByteArray compressed = qCompress(raw);
 	if(compressed.isEmpty() || compressed.size() > MaximumCompressedDocumentBytes) return QByteArray();
 	error.clear(); return compressed;
