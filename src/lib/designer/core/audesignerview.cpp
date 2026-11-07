@@ -5649,6 +5649,23 @@ void AuDesignerView::ProcessAtomControls(DaPerson* sceneAtom)
 		}
 	}
 
+	// E can operate the same Legacy hull-door panel as a cursor click.
+	// Preserve its existing dismount/console/ladder release priority.
+	if(aActiveControls.HasId(DaPerson::CI_EnterExit) && !sceneAtom->IsLockedPose()
+		&& !sceneAtom->IsRider() && !sceneAtom->IsAboardVehicle() && !sceneAtom->IsLadderPose())
+	{
+		qint16 panelId = 0;
+		AuPoint panelLocation, hitLocation;
+		DaSc* doorShip = dynamic_cast<DaSc*>(FindControlAt(sceneAtom, rect().center(), panelId, panelLocation, hitLocation));
+		if(doorShip && doorShip->IsLegacyDebug() && doorShip->IsHullDoor(panelId))
+		{
+			DiControlInputArray doorControls;
+			doorShip->SampleControlPanelInput(panelId, panelLocation, doorControls, false);
+			auApp->ProcessControlInput(doorShip->Id(), doorControls, gearPos, 0, 0);
+			aActiveControls.RemoveId(DaPerson::CI_EnterExit);
+		}
+	}
+
 	// Forward the control inputs to the model for processing.
 	auApp->ProcessControlInput(sceneAtom->Id(), aActiveControls, gearPos, 0, msElapsed);
 
