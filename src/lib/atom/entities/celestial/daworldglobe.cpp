@@ -7437,7 +7437,7 @@ void DaWorldGlobe::RenderNearGlobe(const AuMatrix4x4& projection, const AuMatrix
 	m_NearGlobe.SelectGL();
 
 	// Cities use the inferno shader for the glow effect of the city lights.
-	if(OrbitZone() == OZONE_Inferno || BdHere())
+	if(OrbitZone() == OZONE_Inferno || BdHere() || HasEstablishedLegacyCity())
 	{
 		ari.re->GLSL().NearGlobeLavaShader().Select();
 		ari.re->GLSL().NearGlobeLavaShader().SetProjectionModelView(projection * model);
@@ -7531,7 +7531,7 @@ void DaWorldGlobe::RenderNearGlobeFog(const AuMatrix4x4& projection, const AuMat
 	m_NearGlobe.SelectGL();
 
 	// Cities use the inferno shader for the glow effect of the city lights.
-	if(OrbitZone() == OZONE_Inferno || BdHere())
+	if(OrbitZone() == OZONE_Inferno || BdHere() || HasEstablishedLegacyCity())
 	{
 		ari.re->GLSL().NearGlobeLavaFogShader().Select();
 		ari.re->GLSL().NearGlobeLavaFogShader().SetProjectionModelView(projection * model);

@@ -147,7 +147,7 @@ public:
 			"its capacitor is charged and construction time is applied before departure."));
 		// TEMPORARY ARCHITECT MANUFACTURING TEST: remove button, tooltip and layout/connection below.
 		m_TestFinish = new QPushButton(tr("Finish (Test)"), this);
-		m_TestFinish->setToolTip(tr("Bypass missing required materials, tools and manufacturing wait for testing. "
+		m_TestFinish->setToolTip(tr("Bypass required materials, tools, building/input technology limits and manufacturing wait for testing. "
 			"Completes on the next server tick using the normal output rules. Requires architect powers."));
 		m_TestFinish->hide();
 		m_StatusIcon = new QLabel(this); m_Status = new QLabel(this); m_LastOutput = new QLabel(this);
@@ -423,7 +423,7 @@ public:
 		// TEMPORARY ARCHITECT MANUFACTURING TEST: refresh when powers change while F10 is open.
 		const bool canSkipWait = CanSkipIndustryWaitForTesting();
 		m_TestFinish->setVisible(canSkipWait);
-		m_TestFinish->setEnabled(canSkipWait && technologyAllowed && (!running || process.completeAt > now));
+		m_TestFinish->setEnabled(canSkipWait && (!running || process.completeAt > now));
 	}
 };
 

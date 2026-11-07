@@ -8356,7 +8356,7 @@ void DaWorldRingSection::RenderNearGlobe(const AuMatrix4x4& projection, const Au
 	m_NearGlobe.SelectGL();
 
 	// Cities use the glow shader for the glow effect of the city lights.
-	if(BdHere())
+	if(BdHere() || HasEstablishedLegacyCity())
 	{
 		ari.re->GLSL().NearRingworldGlowShader().Select();
 		ari.re->GLSL().NearRingworldGlowShader().SetProjectionModelView(projection * model);
@@ -8458,7 +8458,7 @@ void DaWorldRingSection::RenderNearGlobeFog(const AuMatrix4x4& projection, const
 	m_NearGlobe.SelectGL();
 
 	// Cities use the glow shader for the glow effect of the city lights.
-	if(BdHere())
+	if(BdHere() || HasEstablishedLegacyCity())
 	{
 		ari.re->GLSL().NearRingworldGlowFogShader().Select();
 		ari.re->GLSL().NearRingworldGlowFogShader().SetProjectionModelView(projection * model);

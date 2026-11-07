@@ -207,24 +207,37 @@ bool DaLegacyCity::SkipIndustryProcessWaitForTesting(DaPerson& person, quint32 d
 	if(!process->enabled && actorEmpire != state.controllingEmpire)
 	{ error = QStringLiteral("Only the city's empire may operate a process disabled for citizen work."); return false; }
 	if(process->spacecraftRetryAt)
+	{
+		process->lastTechnology = qMax(process->lastTechnology, process->minimumTechnology);
 		process->spacecraftRetryAt = now;
+	}
 	else
 	{
+		process->buildingTechnology = qMax(development->technology, process->minimumTechnology);
+		for(auto& component : process->components)
+			if(component.effect == 5)
+			{
+				// Test-only applied inputs; no city stock or ready tools are withdrawn.
+				component.applied = component.required ? component.required : 1;
+				if(!component.quality) component.quality = 255;
+				component.technology = qMax(component.technology, process->minimumTechnology);
+			}
 		if(!process->completeAt)
 		{
-			process->buildingTechnology = development->technology;
-			for(auto& component : process->components)
-				if(component.effect == 5 && !component.IsSatisfied())
-				{
-					// Test-only applied inputs; no city stock or ready tools are withdrawn.
-					component.applied = component.required ? component.required : 1;
-					if(!component.quality) component.quality = 255;
-					component.technology = qMin(component.technology, process->minimumTechnology);
-				}
 			if(!RunProduction(*process, now))
 			{ error = QStringLiteral("This process cannot run at the industry's technology level."); return false; }
 		}
 		process->completeAt = now;
+		if(process->spacecraftDesign)
+		{
+			// Freeze the test output through the existing spawn-retry state.
+			// The economy tick otherwise reapplies the real building TL before finishing.
+			ProductionOutput output;
+			const AuZoneResource resources;
+			if(!FinishProduction(*catalogue, *process, resources, now, output))
+			{ error = QStringLiteral("The spacecraft test output could not be prepared."); return false; }
+			process->spacecraftRetryAt = now;
+		}
 	}
 	if(!EncodeProductionState(*catalogue, production, state.manufacturing, error)) return false;
 	QByteArray checked;

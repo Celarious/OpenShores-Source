@@ -3610,6 +3610,11 @@ bool DaSc::LegacyNpcOccluded(const AuBox& bounds, const AuPoint& eye) const
 void DaSc::RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ari, const AuMatrix4x4& model, bool transparent)
 {
 	if(!m_LegacyScModel || !m_LegacyScModel->Ready()) return;
+	GLboolean polygonOffsetEnabled;
+	GLfloat polygonOffsetFactor, polygonOffsetUnits;
+	ari.re->glGetBooleanv(GL_POLYGON_OFFSET_FILL, &polygonOffsetEnabled);
+	ari.re->glGetFloatv(GL_POLYGON_OFFSET_FACTOR, &polygonOffsetFactor);
+	ari.re->glGetFloatv(GL_POLYGON_OFFSET_UNITS, &polygonOffsetUnits);
 	const GLuint effects[EFF_Count] = {};
 	const bool powered = CapacitorLevel() > 0;
 	// AuAtom13:1803c9950 gates berth, life-support and surgery overlays with
@@ -3719,7 +3724,20 @@ void DaSc::RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ar
 		// still controls which surfaces receive the glowing overlay.
 		shader.SetEffectTexture(effectTexture, effectTexture ? 2 : 0);
 		shader.SetModelView(turretModels.value(draw.turretId, model));
+		const bool prioritizeHull = draw.hullSurface && !transparent;
+		if(prioritizeHull)
+		{
+			// Distant interior modules can quantize to the hull's depth.
+			// Prefer the opaque hull without changing geometry or camera clipping.
+			ari.re->glEnable(GL_POLYGON_OFFSET_FILL);
+			ari.re->glPolygonOffset(-1.f, -1.f);
+		}
 		draw.vao.DrawSc(shader, effects, 0);
+		if(prioritizeHull)
+		{
+			ari.re->glPolygonOffset(polygonOffsetFactor, polygonOffsetUnits);
+			if(!polygonOffsetEnabled) ari.re->glDisable(GL_POLYGON_OFFSET_FILL);
+		}
 	}
 	shader.SetModelView(model);
 	shader.SetEffectTexture(0, 0);

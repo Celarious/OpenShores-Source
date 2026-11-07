@@ -77,6 +77,27 @@
 
 namespace
 {
+// Unwrap each footprint before drawing it. The viewport clips the duplicate
+// at the opposite map edge, keeping cities crossing 180 E/W continuous.
+void AppendCitySurfaceQuad(AuPointArray& vertices, AuPoint a, AuPoint b, AuPoint c, AuPoint d)
+{
+	AuPoint corners[] = {a, b, c, d};
+	double minimumX = a.x, maximumX = a.x;
+	for(AuPoint& corner : corners)
+	{
+		while(corner.x - a.x > 1) corner.x -= 2;
+		while(corner.x - a.x < -1) corner.x += 2;
+		minimumX = std::min(minimumX, corner.x);
+		maximumX = std::max(maximumX, corner.x);
+	}
+	const int indices[] = {0, 1, 2, 2, 3, 0};
+	for(int copy = -1; copy <= 1; ++copy)
+	{
+		if(maximumX + copy * 2 < -1 || minimumX + copy * 2 > 1) continue;
+		for(int index : indices) vertices.append(corners[index] + AuPoint(copy * 2, 0, 0));
+	}
+}
+
 bool TransporterPadsActive(const DaAtom& source, const AuMatrix4x4& padFrame, const AuPointArray& pads)
 {
 	DaAtomList teleporters;
@@ -886,6 +907,7 @@ struct DaLegacyCity::Runtime
 	quint64 revision = 0, drawRevision = 0;
 	quint64 sourceRevision = 0;
 	quint64 overlayRevision = 0;
+	bool surfacePowerKnown = false, surfacePowered = false;
 	quint32 geometryEmpire = 0;
 	QVector<AuLegacyCity::Development> geometryState;
 	QVector<Building> buildings;
@@ -2184,6 +2206,13 @@ void DaLegacyCity::UpdateSiteTerrain(AuAtomRenderInfo& ari, bool removed)
 	removed = removed || IsDead();
 	{
 		QReadLocker stateLock(&m_CityLock);
+		const bool powered = m_City.capacitor > 0 || world->AtomType() == ATOM_WorldRingSection;
+		if(!m_Runtime->surfacePowerKnown || m_Runtime->surfacePowered != powered)
+		{
+			m_Runtime->surfacePowerKnown = true;
+			m_Runtime->surfacePowered = powered;
+			world->InvalidateNearGlobeTexture();
+		}
 		if(removed || m_Runtime->overlayRevision != m_CityRevision)
 		{
 			m_Runtime->overlayRevision = m_CityRevision;
@@ -4214,6 +4243,83 @@ void DaLegacyCity::PaintOnSurfaceMap(const DaWorldLL& world, QPainter& painter, 
 	}
 }
 
+void DaLegacyCity::RenderOnSurfaceTexture(AuGLEffects& re, float radiansPerFootX, float radiansPerFootY) const
+{
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	if(!g_Au.IsLegacyGeneration() || IsDead() || !world
+		|| AuLegacyCity::EnclosureNeeded(*world, Transform().Translation()) == 2) return;
+	bool powered;
+	{ QReadLocker stateLock(&m_CityLock); powered = m_City.capacitor > 0; }
+	powered = powered || world->AtomType() == ATOM_WorldRingSection;
+	AuPointArray batches[5]; // Dirt road/slab, paved road/slab, building sites.
+	QMutexLocker lock(&m_Runtime->lock);
+	m_Runtime->EnsureSites(*this, *world);
+	const auto mapPoint = [](const AuGlobeLLF& location) {
+		return AuPoint(location.Longitude() / PIf, location.Latitude() / (PIf / 2.f), 0);
+	};
+	for(const auto& site : m_Runtime->sites)
+	{
+		const auto& dev = site.state;
+		if(dev.demolished || dev.IsLandscaper()) continue;
+		if(dev.industryId == 2)
+		{
+			// DaCity::RenderOnSurfaceTexture 0x2b1990 / RenderRoadVerts
+			// 0x2b3f40: half-width * 1.25, four dirt/paved road/slab colors.
+			AuPoint a = mapPoint(site.roadStart), b = mapPoint(site.roadEnd);
+			if(b.x - a.x > 1) b.x -= 2;
+			if(b.x - a.x < -1) b.x += 2;
+			AuPoint side(-(b.y - a.y), b.x - a.x, 0);
+			if(side.Length2_2D() <= 0) continue;
+			side.Unit_2D(dev.roadWidthMeters * FeetPerMeter() * .5 * 1.25);
+			side.x *= radiansPerFootX; side.y *= radiansPerFootY;
+			const bool paved = dev.constructed && dev.constructionProcessId != 1;
+			AppendCitySurfaceQuad(batches[(paved ? 2 : 0) + (dev.roadSlab ? 1 : 0)],
+				a - side, b - side, b + side, a + side);
+		}
+		else
+		{
+			// A simple site footprint supplements the recovered road layer;
+			// orbital views do not need the full authored building geometry.
+			AuPoint corners[4];
+			const AuPoint local[] = {AuPoint(-site.halfWidth, -site.halfLength, 0),
+				AuPoint(-site.halfWidth, site.halfLength, 0), AuPoint(site.halfWidth, site.halfLength, 0),
+				AuPoint(site.halfWidth, -site.halfLength, 0)};
+			bool valid = true;
+			for(int i = 0; i < 4; ++i)
+			{
+				AuGlobeLLF location;
+				if(!world->LLOfLoc(location, site.placement.Project(local[i]))) { valid = false; break; }
+				corners[i] = mapPoint(location);
+			}
+			if(valid) AppendCitySurfaceQuad(batches[4], corners[0], corners[1], corners[2], corners[3]);
+		}
+	}
+	lock.unlock();
+	// Alpha stores inverse glow, as expected by the existing near-globe and
+	// ringworld shaders. Sunlit surfaces retain normal solar illumination.
+	const QVector4D colors[] = {QVector4D(1, .5764706f, .16078432f, .9f),
+		QVector4D(1, .5764706f, .16078432f, .95f),
+		powered ? QVector4D(1, .81960785f, .69803923f, .85f) : QVector4D(1, .5764706f, .16078432f, .9f),
+		powered ? QVector4D(.84705883f, .96862745f, 1, .9f) : QVector4D(1, .77254903f, .56078434f, .95f),
+		QVector4D(.55f, .5f, .4f, powered ? .9f : 1.f)};
+	const bool depthEnabled = re.glIsEnabled(GL_DEPTH_TEST), cullEnabled = re.glIsEnabled(GL_CULL_FACE);
+	const bool blendEnabled = re.glIsEnabled(GL_BLEND);
+	re.glDisable(GL_DEPTH_TEST); re.glDisable(GL_CULL_FACE);
+	// Write the glow channel, rather than alpha-blending it into terrain alpha.
+	re.glDisable(GL_BLEND);
+	for(int i = 0; i < 5; ++i)
+	{
+		if(batches[i].isEmpty()) continue;
+		re.GLSL().LineShader().SetColor(colors[i].x(), colors[i].y(), colors[i].z(), colors[i].w());
+		AuGLVAO vao;
+		vao.CreateForLines(re, batches[i], false, GL_STREAM_DRAW);
+		if(vao.VAO()) { vao.SelectGL(); vao.DrawGL(GL_TRIANGLES); vao.DeselectGL(); vao.DeleteGL(); }
+	}
+	if(blendEnabled) re.glEnable(GL_BLEND);
+	if(cullEnabled) re.glEnable(GL_CULL_FACE);
+	if(depthEnabled) re.glEnable(GL_DEPTH_TEST);
+}
+
 void DaLegacyCity::DeleteDeviceObjects(AuAtomRenderInfo& ari)
 {
 	UpdateSiteTerrain(ari, true);
@@ -4292,6 +4398,13 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 	DaAtomList stationOccupants;
 	if(beforeTerrain) world->ListNormalSubatoms(stationOccupants);
 	UpdateSiteTerrain(ari);
+	if(!ari.IsViewTopDown() && world->AtomType() == ATOM_WorldGlobe)
+	{
+		const AuMatrix4x4 worldModel = model->Matrix() * Transform().Inverse();
+		// Outside the atmosphere the globe's surface texture supplies the city.
+		// Detailed meshes at that distance shimmer against the planet surface.
+		if(worldModel.UnProject(ari.re->EyeLocation()).Length() > world->AtmosphereRadius()) return;
+	}
 	QVector<AuLegacyCity::Flag> flags;
 	bool powered;
 	{ QReadLocker stateLock(&m_CityLock); flags = m_City.flags; powered = m_City.capacitor > 0; }

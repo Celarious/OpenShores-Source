@@ -28,6 +28,7 @@ struct AuLegacyScDraw
 	QVector2D textureInset;
 	float opacity = 1;
 	bool interior = false;
+	bool hullSurface = false;
 	bool cutout = false;
 	bool translucent = false;
 	quint16 doorId = 0;

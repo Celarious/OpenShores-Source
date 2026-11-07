@@ -220,7 +220,8 @@ void AuLegacyScModel::Prepare()
 						// effect batches, including berth sides from their plain tops.
 						const quint64 lightingKey = (quint64(stateKey) << 1) | quint64(interior)
 							| (quint64(triangleEffectFrame + 1) << 25) | (quint64(weaponBayId) << 32)
-							| (quint64(transporterId) << 41);
+							| (quint64(transporterId) << 41)
+							| (quint64(!interior && (part->IsHullMesh() || (isDoor && hullDoorMaterial))) << 57);
 						if(!triangles.contains(lightingKey))
 						{
 							triangles.insert(lightingKey, QVector<QMap<float, AuScTriRenderList>>(bindings.size()));
@@ -306,13 +307,14 @@ void AuLegacyScModel::Prepare()
 						else draw.doorId = quint16((states.key() >> 9) & 0xffff);
 						draw.doorState = quint8((states.key() >> 1) & 0xff);
 						draw.interior = states.key() & 1;
+						draw.hullSurface = (states.key() >> 57) & 1;
 						draw.textureInset = binding.textureInset;
 						draw.cutout = binding.cutout;
 						draw.opacity = group.key();
 						draw.translucent = draw.opacity < .999f || material.transparent;
 						draw.effectFirstFrame = int((states.key() >> 25) & 0x7f) - 1;
 						draw.weaponBayId = quint16((states.key() >> 32) & 0x1ff);
-						draw.transporterId = quint16(states.key() >> 41);
+						draw.transporterId = quint16((states.key() >> 41) & 0xffff);
 						if(draw.effectFirstFrame >= 0)
 						{
 							draw.effectFrameCount = draw.effectFirstFrame == 24 || draw.effectFirstFrame == 40 ? 3 : 4;
