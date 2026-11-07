@@ -97,9 +97,9 @@ class AuLegacyManufacturePanel : public QWidget
 		if(!m_HasSelectedProcess && !selectRecipe) return;
 		if((action == AuLegacyCityProtocol::RunIndustryProcess
 			|| action == AuLegacyCityProtocol::FetchIndustryMaterials) && m_Process.completeAt) return;
-		// TEMPORARY ARCHITECT MANUFACTURING TEST: stale controls cannot submit an idle process.
+		// TEMPORARY ARCHITECT MANUFACTURING TEST: the server rechecks active powers.
 		if(action == AuLegacyCityProtocol::TestingFinishIndustryProcess
-			&& (!m_Process.completeAt || !CanSkipIndustryWaitForTesting())) return;
+			&& !CanSkipIndustryWaitForTesting()) return;
 		AuLegacyCityProtocol::Request request;
 		request.action = action; request.cityId = m_CityId; request.developmentId = m_DevelopmentId;
 		request.processSlot = m_Process.slot;
@@ -147,7 +147,7 @@ public:
 			"its capacitor is charged and construction time is applied before departure."));
 		// TEMPORARY ARCHITECT MANUFACTURING TEST: remove button, tooltip and layout/connection below.
 		m_TestFinish = new QPushButton(tr("Finish (Test)"), this);
-		m_TestFinish->setToolTip(tr("Skip the remaining manufacturing wait for testing. "
+		m_TestFinish->setToolTip(tr("Bypass missing required materials, tools and manufacturing wait for testing. "
 			"Completes on the next server tick using the normal output rules. Requires architect powers."));
 		m_TestFinish->hide();
 		m_StatusIcon = new QLabel(this); m_Status = new QLabel(this); m_LastOutput = new QLabel(this);
@@ -411,7 +411,7 @@ public:
 		// TEMPORARY ARCHITECT MANUFACTURING TEST: refresh when powers change while F10 is open.
 		const bool canSkipWait = CanSkipIndustryWaitForTesting();
 		m_TestFinish->setVisible(canSkipWait);
-		m_TestFinish->setEnabled(canSkipWait && running && process.completeAt > now);
+		m_TestFinish->setEnabled(canSkipWait && technologyAllowed && (!running || process.completeAt > now));
 	}
 };
 

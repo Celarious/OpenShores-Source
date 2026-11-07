@@ -169,7 +169,7 @@ bool DaLegacyCity::SkipIndustryProcessWaitForTesting(DaPerson& person, quint32 d
 {
 	error.clear();
 	if(!person.HasArchitectPower())
-	{ error = QStringLiteral("Enable architect powers to skip manufacturing wait time for testing."); return false; }
+	{ error = QStringLiteral("Enable architect powers to force manufacturing completion for testing."); return false; }
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
 	auto* world = dynamic_cast<DaWorldLL*>(Parent());
 	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker() || !catalogue || !world
@@ -202,12 +202,30 @@ bool DaLegacyCity::SkipIndustryProcessWaitForTesting(DaPerson& person, quint32 d
 		[developmentId, processSlot](const ProductionProcess& item) {
 			return item.developmentId == developmentId && item.slot == processSlot;
 		});
-	if(process == production.processes.end() || !process->completeAt)
-	{ error = QStringLiteral("Start this manufacturing process before skipping its wait time."); return false; }
+	if(process == production.processes.end())
+	{ error = QStringLiteral("Select a manufacturing process before finishing it for testing."); return false; }
 	if(!process->enabled && actorEmpire != state.controllingEmpire)
 	{ error = QStringLiteral("Only the city's empire may operate a process disabled for citizen work."); return false; }
-	if(process->completeAt <= now) return true;
-	process->completeAt = now;
+	if(process->spacecraftRetryAt)
+		process->spacecraftRetryAt = now;
+	else
+	{
+		if(!process->completeAt)
+		{
+			process->buildingTechnology = development->technology;
+			for(auto& component : process->components)
+				if(component.effect == 5 && !component.IsSatisfied())
+				{
+					// Test-only applied inputs; no city stock or ready tools are withdrawn.
+					component.applied = component.required ? component.required : 1;
+					if(!component.quality) component.quality = 255;
+					component.technology = qMin(component.technology, process->minimumTechnology);
+				}
+			if(!RunProduction(*process, now))
+			{ error = QStringLiteral("This process cannot run at the industry's technology level."); return false; }
+		}
+		process->completeAt = now;
+	}
 	if(!EncodeProductionState(*catalogue, production, state.manufacturing, error)) return false;
 	QByteArray checked;
 	if(!EncodeState(state, checked, error)) return false;
