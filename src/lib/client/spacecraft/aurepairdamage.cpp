@@ -206,6 +206,9 @@ AuRepairDamage::AuRepairDamage(AuServiceDialog* parent) : QWidget(parent)
 
 	m_MinQ = new QSpinBox(this);
 	m_MinQ->setRange(1,255);
+	lbMinQ->setVisible(!g_Au.IsLegacyGeneration());
+	m_MinQ->setVisible(!g_Au.IsLegacyGeneration());
+	m_MinQ->setEnabled(!g_Au.IsLegacyGeneration());
 	m_MinQ->setToolTip(tr("<html>"
 				"Minimum quality of parts to be installed. "
 				"Initially, this value is the quality of manufacture of the spacecraft. "
@@ -342,6 +345,6 @@ void AuRepairDamage::EstimateSystem(AuSysId sysId, QString systemName)
 
 quint8 AuRepairDamage::MinQ() const
 {
-	return m_MinQ->value();
+	return g_Au.IsLegacyGeneration() ? 0 : m_MinQ->value();
 }
 

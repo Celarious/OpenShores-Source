@@ -160,6 +160,8 @@ int DaLegacyCity::RepairSpacecraft(DaVessel& ship, const AuSysId* system, quint8
 	const AuLegacyCityCatalogue* catalogue = ServiceCatalogue();
 	if(!catalogue || !g_Au.IsSceneWorker() || !CanAccessSpacecraft(ship)
 		|| (!GroundService(*this, ship) && !StationService(*this, ship))) return 0;
+	// 2016 repairs have no minimum-Q selection, including saved mission orders.
+	minimumQuality = 0;
 	const quint8 technology = ship.LegacyMinimumRepairTechnology();
 	if(!HasSpacecraftService(110, technology)) return 0;
 	const quint32 empire = EmpireId();
@@ -337,7 +339,7 @@ void DaLegacyCity::AcceptSpacecraftRepair(DaPerson& person, const AuCommAcceptRe
 	quint16 seconds = 0;
 	const int result = RepairSpacecraft(*ship,
 		message.Type() == AuCommPacket::AcceptRepairSystem ? &target : nullptr,
-		message.MinQ(), message.Price(), true, &seconds);
+		0, message.Price(), true, &seconds);
 	if(result < 0) { reply(tr("The spacecraft cannot afford those repairs. Request a new offer.")); return; }
 	if(!result) { reply(tr("No repairs can be performed with the available materials and repair facilities.")); return; }
 	g_Au.BidRevoked(Id(), message.ChannelName());
@@ -446,7 +448,7 @@ bool DaLegacyCity::RxSpacecraftServiceMessage(const AuCommPacket* message)
 		const AuSysId target(message->SysId());
 		const AuSysId* selected = message->Type() == AuCommPacket::RequestRepairSystem ? &target : nullptr;
 		quint16 duration = 0;
-		const quint32 price = quint32(RepairSpacecraft(*ship, selected, message->MinQ(), 0xffffffffu, false, &duration));
+		const quint32 price = quint32(RepairSpacecraft(*ship, selected, 0, 0xffffffffu, false, &duration));
 		if(!duration) { reply(tr("No repairs are available. Check damage, repair shop technology and city parts.")); return true; }
 		AuItemHash inventory; QString error; const State state = Snapshot();
 		if(!ReadCityInventory(state.inventory, *catalogue, inventory, error)) return true;
@@ -454,18 +456,18 @@ bool DaLegacyCity::RxSpacecraftServiceMessage(const AuCommPacket* message)
 		if(selected) ship->ListRepairsNeeded(*selected, hits, required); else ship->ListRepairsNeeded(hits, required);
 		QList<COMMODITYID> missing, empty;
 		for(auto part = required.cbegin(); part != required.cend(); ++part)
-			if(EligibleCount(inventory, part.key(), ship->LegacyMinimumRepairTechnology(), message->MinQ()) < part.value()) missing.append(part.key());
+			if(EligibleCount(inventory, part.key(), ship->LegacyMinimumRepairTechnology(), 0) < part.value()) missing.append(part.key());
 		if(selected)
 		{
 			AuCommOfferRepairSystem response(message->System(), message->SystemWhich(), ship->SystemName(target), empty, empty,
-				missing, empty, ship->Id(), ship->NameWithEmpire(), price, duration, message->MinQ(), 1,
+				missing, empty, ship->Id(), ship->NameWithEmpire(), price, duration, 0, 1,
 				message->ChannelName(), Id(), Name(), sector->Id(), Galaxy(), message->ReceptionRange(), message->Scope());
 			g_Au.SendAtomChat(response);
 		}
 		else
 		{
 			AuCommOfferRepairAll response(empty, empty, missing, empty, ship->Id(), ship->NameWithEmpire(), price, duration,
-				message->MinQ(), 1, message->ChannelName(), Id(), Name(), sector->Id(), Galaxy(), message->ReceptionRange(), message->Scope());
+				0, 1, message->ChannelName(), Id(), Name(), sector->Id(), Galaxy(), message->ReceptionRange(), message->Scope());
 			g_Au.SendAtomChat(response);
 		}
 		return true;

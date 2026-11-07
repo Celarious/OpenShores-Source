@@ -3302,6 +3302,7 @@ void AuMissionOrderWidget::EnableControls()
 		break;
 
 	case AuMissionOrder::Repair:
+		if(g_Au.IsLegacyGeneration()) break;
 		showit.insert(m_ApplyShipQRadio);
 		showit.insert(m_ApplyMinQRadio);
 		showit.insert(m_ApplySystemQRadio);
@@ -4768,7 +4769,8 @@ AuMissionOrder* AuMissionOrderWidget::Order() const
 		return new AuMissionOrderPosture(m_Posture, execType);
 
 	case AuMissionOrder::Repair:
-		return new AuMissionOrderRepair(m_ApplyQ, m_MinQ, execType);
+		return new AuMissionOrderRepair(g_Au.IsLegacyGeneration() ? 0 : m_ApplyQ,
+			g_Au.IsLegacyGeneration() ? 0 : m_MinQ, execType);
 
 	case AuMissionOrder::ScanSurveyPlanet:
 		return new AuMissionOrderScanSurveyPlanet(m_MailCoC->checkState() == Qt::Checked ? 1 : 0, execType);
