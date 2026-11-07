@@ -74,17 +74,20 @@ AuServiceDialog::AuServiceDialog(AuCommChannel* parent) : AuDialog(parent)
 	page++;
 
 	//
-	AuServiceRefit* refitPage = new AuServiceRefit(this);
-	m_Pages->insertWidget(page, refitPage);
+	if(!g_Au.IsLegacyGeneration())
+	{
+		AuServiceRefit* refitPage = new AuServiceRefit(this);
+		m_Pages->insertWidget(page, refitPage);
 
-	QIcon refitIcon(":data/ShipRefit.png");
-	itab = m_Tabs->insertTab(page, refitIcon, "Refit");
-	m_Tabs->setTabToolTip(itab, QString("<html><b>Refit</b><br>"
+		QIcon refitIcon(":data/ShipRefit.png");
+		itab = m_Tabs->insertTab(page, refitIcon, "Refit");
+		m_Tabs->setTabToolTip(itab, QString("<html><b>Refit</b><br>"
 				"Request refit from a city with an airport repair shop.<br>"
 				"<i>Tips</i><br>"
 				"%1 You must be an officer of the ship.<br>"
 				"%1 Transmit on the <b>Trade channel</b> to initiate contact with a city."
 				"</html>").arg(g_Au.MiddleDotSymbol()));
+	}
 
 	QGridLayout* lay = new QGridLayout();
 	lay->addWidget(m_Tabs, 0, 0);

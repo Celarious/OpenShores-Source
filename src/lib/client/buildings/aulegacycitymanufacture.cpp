@@ -342,7 +342,6 @@ public:
 			}
 		}
 		ResizeModifierColumns();
-		UpdateCountdown();
 		if(process.lastQuantity >= 0 && (process.lastQuantity || process.lastQuality))
 			m_LastOutput->setText(tr("\nTL%3 Q%1x%2").arg(process.lastQuality).arg(process.lastQuantity).arg(process.lastTechnology + 1));
 		else if(process.lastQuantity == -1) m_LastOutput->setText(tr("\nNo Empty Spawn Location"));
@@ -364,6 +363,10 @@ public:
 		else if(process.lastQuantity < 0) m_LastOutput->setText(tr("\nNo Output"));
 		else m_LastOutput->clear();
 		if(!m_HasSelectedProcess) m_LastOutput->clear();
+		// Keep successful TL/Q output in its original column. Spacecraft
+		// failures are displayed as part of the status label instead.
+		m_LastOutput->setVisible(!m_SpacecraftPanel || process.lastQuantity >= 0);
+		UpdateCountdown();
 		m_Recipe->setEnabled(canConfigure); m_Employ->setEnabled(canConfigure && m_HasSelectedProcess);
 		m_Technology->setEnabled(canConfigure && m_HasSelectedProcess && recipe
 			&& (process.spacecraftDesign || !AuLegacyCity::IsProductionTechnology(recipe->commodity.value)));
@@ -392,13 +395,22 @@ public:
 					.arg(seconds % 60, 2, 10, QLatin1Char('0'));
 		};
 		QString status;
-		if(process.spacecraftRetryAt) status = tr("Waiting to retry spacecraft completion");
+		if(process.spacecraftRetryAt)
+		{
+			const qint64 retryRemaining = qMax(qint64(0), (process.spacecraftRetryAt - now + 999) / 1000);
+			status = retryRemaining ? timedStatus(tr("Retry spacecraft completion in %1:%2"),
+				tr("Retry spacecraft completion in %1:%2:%3"), retryRemaining) : tr("Retrying spacecraft completion");
+		}
 		else if(running) status = timedStatus(tr("Running %1:%2"), tr("Running %1:%2:%3"), remaining);
 		else if(!technologyAllowed)
 			status = tr("Process TL%1 Exceeds Building TL%2.").arg(process.minimumTechnology + 1).arg(m_BuildingTechnology + 1);
 		else if(ready) status = timedStatus(tr("Ready %1:%2"), tr("Ready %1:%2:%3"), (quint64(process.laborNeeded) + 3) / 4);
 		else status = timedStatus(tr("Not Ready %1:%2"), tr("Not Ready %1:%2:%3"), (quint64(process.laborNeeded) + 3) / 4);
 		if(!m_ProductName.isEmpty()) status.prepend(m_ProductName + QLatin1Char('\n'));
+		if(m_SpacecraftPanel && process.lastQuantity < 0 && !m_LastOutput->text().isEmpty())
+			status = QStringLiteral("<html>") + status.toHtmlEscaped().replace(QLatin1Char('\n'), QStringLiteral("<br>"))
+				+ QStringLiteral("<br><span style=\"color: red;\">")
+				+ m_LastOutput->text().trimmed().toHtmlEscaped() + QStringLiteral("</span></html>");
 		// 2016 spacecraft panel uses this hourglass while waiting to spawn.
 		const char* statusIcon = process.spacecraftRetryAt ? ":data/c_SpacecraftWait.png"
 			: running ? ":data/mpRunning.png" : ready ? ":data/mpReady.png" : ":data/mpNotReady.png";

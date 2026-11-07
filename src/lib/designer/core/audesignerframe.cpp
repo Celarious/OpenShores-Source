@@ -1111,6 +1111,7 @@ void AuDesignerFrame::ToggleSpacecraftDamageUi()
 
 void AuDesignerFrame::ToggleBdExchangeUi()
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	if(m_BdExchangeDock)
 	{
 		if(m_BdExchangeDock->isHidden())
@@ -1122,6 +1123,7 @@ void AuDesignerFrame::ToggleBdExchangeUi()
 
 void AuDesignerFrame::ToggleSpacecraftDesignExchangeUi()
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	if(m_SpacecraftDesignExchangeDock)
 	{
 		if(m_SpacecraftDesignExchangeDock->isHidden())
@@ -2688,6 +2690,7 @@ void AuDesignerFrame::CreateDockWidgets()
 
 		addStep([=]() {
 
+			if(g_Au.IsLegacyGeneration()) return true;
 			m_SpacecraftDesignExchangeDock = new AuScExchangeDock(this);
 			addDockWidget(Qt::BottomDockWidgetArea, m_SpacecraftDesignExchangeDock, Qt::Horizontal);
 			m_SpacecraftDesignExchangeDock->hide();
@@ -2882,11 +2885,14 @@ void AuDesignerFrame::CreateDockWidgets()
 
 		addStep([=]() {
 
-			m_BdExchangeDock = new AuBdExchangeDock(this);
-			addDockWidget(Qt::BottomDockWidgetArea, m_BdExchangeDock, Qt::Horizontal);
-			m_BdExchangeDock->hide();
-			m_BdExchangeDock->setFloating(true);
-			m_DockBars.m_DockWidgets.append(AuFrameDock(m_BdExchangeDock));
+			if(!g_Au.IsLegacyGeneration())
+			{
+				m_BdExchangeDock = new AuBdExchangeDock(this);
+				addDockWidget(Qt::BottomDockWidgetArea, m_BdExchangeDock, Qt::Horizontal);
+				m_BdExchangeDock->hide();
+				m_BdExchangeDock->setFloating(true);
+				m_DockBars.m_DockWidgets.append(AuFrameDock(m_BdExchangeDock));
+			}
 
 			// Legacy uses its own F10 labor window. Avoid constructing the unused
 			// modern building pages and loading their interface assets during login.

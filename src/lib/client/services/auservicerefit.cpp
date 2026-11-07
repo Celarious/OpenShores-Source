@@ -756,6 +756,7 @@ void AuServiceRefit::SplitterMoved(int /*pos*/, int /*index*/)
 
 void AuServiceRefit::RequestRefit()
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	AuServiceDialog* svcdlg = dynamic_cast<AuServiceDialog*>(parent());
 	if(!svcdlg)
 		return;

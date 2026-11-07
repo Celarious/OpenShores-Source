@@ -164,6 +164,7 @@ bool AuSpacecraftPages::InitializeNextPage()
 	break;
 
 	case 8:
+	if(!g_Au.IsLegacyGeneration())
 	{
 		int tabIndex = m_Tabs->AddTab(QIcon(":data/Exchange.png"));
 		m_Tabs->SetTabToolTip(tabIndex, tr("Blueprint Exchange"));
