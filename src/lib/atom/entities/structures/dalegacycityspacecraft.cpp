@@ -153,7 +153,7 @@ qint32 SpacecraftProductionBatch::Apply(ProductionProcess& process, const Produc
 			attempt.selected = candidate;
 			attempt.applied = true; m_Data->applied.append(index);
 			quint32 wanted = attempt.ship->FuelCapacity();
-			const auto hydrogen = COMMODITYID(catalogue->RuntimeCommodityId(CommodityId(111)));
+			const auto hydrogen = CID_Hydrogen;
 			while(wanted)
 			{
 				auto fuel = inventory.find(hydrogen);

@@ -7412,7 +7412,16 @@ void AuDesignerView::ChatReceived(AuCommPacket* msg)
 	}
 
 	// Check filter based on message type.
-	if(!g_Au.Settings().readNumEntry(QString("OnScreenMessageTypes/%1").arg(msg->Type()), msg->OnScreenByDefault()))
+	bool showByDefault = msg->OnScreenByDefault();
+	if(g_Au.IsLegacyGeneration() && (msg->Type() == AuCommPacket::AcceptBerthCaptain
+		|| msg->Type() == AuCommPacket::AcceptBerthCaptainSlot))
+	{
+		// F9 sends an intercom request without opening the comms window.
+		// Show the existing acceptance text to the avatar receiving the berth.
+		const auto* berth = dynamic_cast<const AuCommAcceptBerth*>(msg);
+		if(berth && berth->UnitId() == SceneAtomId()) showByDefault = true;
+	}
+	if(!g_Au.Settings().readNumEntry(QString("OnScreenMessageTypes/%1").arg(msg->Type()), showByDefault))
 		return;		// The message type is not wanted on the screen.
 
 	//qDebug("AuDesignerView::ChatReceived");
