@@ -12747,10 +12747,37 @@ bool DaSc::TransporterVoidLocation(AuPoint& voidLoc) const
 {
 	m_DesignLock.lockForRead();
 	const AuScDesign* scd = LockDesign();
-	quint16 roomId = scd->RandomRoomVoidLocation(voidLoc, PERSONNEL_Everyone, m_DoorStates, m_LandingGearStates, m_Lifts);
+	bool found = false;
+	if(scd)
+	{
+		const bool legacy = IsLegacyDebug();
+		const auto plan = scd->LegacyDeckPlan();
+		// Fuel cells remain room voids for environment queries, but must never
+		// be transporter arrival points. Missing Legacy metadata fails safely.
+		if(!legacy || plan)
+			for(int attempt = 0; attempt < (legacy ? 32 : 1); ++attempt)
+			{
+				AuPoint candidate;
+				if(!scd->RandomRoomVoidLocation(candidate, PERSONNEL_Everyone, m_DoorStates, m_LandingGearStates, m_Lifts)) break;
+				bool inFuelCell = false;
+				if(legacy)
+				{
+					const AuPoint author = candidate + plan->AuthorCenter();
+					const int deck = LegacyAuthorDeck(author.z);
+					for(const auto& room : plan->SourceDesign().rooms)
+						if(room.roomType == ROOM_Fuel && room.deck == deck
+							&& AuLegacyShip::RoomBoundary(room).containsPoint(QPointF(author.x, author.y), Qt::OddEvenFill))
+						{ inFuelCell = true; break; }
+				}
+				if(inFuelCell) continue;
+				voidLoc = candidate;
+				found = true;
+				break;
+			}
+	}
 	UnlockDesign();
 	m_DesignLock.unlock();
-	return roomId;
+	return found;
 }
 
 unsigned int DaSc::TroopBerths() const
