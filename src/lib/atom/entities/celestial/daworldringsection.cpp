@@ -4150,8 +4150,11 @@ GLuint DaWorldRingSection::CreatePlanetTexture(AuAtomRenderInfo& ari, int iViewS
 		// Render buildings and cities, if any.
 		DaAtomList subs;
 		ListNormalSubatoms(subs);
-		for(DaAtomList::const_iterator it = subs.cbegin(); it != subs.cend(); it++)
-			(*it)->RenderOnSurfaceTexture(*ari.re, radiansPerFootX, radiansPerFootY);
+		const auto renderCities = [&]() {
+			for(DaAtom* atom : subs) atom->RenderOnSurfaceTexture(*ari.re, radiansPerFootX, radiansPerFootY);
+		};
+		if(g_Au.IsLegacyGeneration()) ari.re->RenderAntialiasedSurface(glTexSurface, iViewSizeX, iViewSizeY, renderCities);
+		else renderCities();
 		ari.re->GLSL().LineShader().Deselect();
 	}
 

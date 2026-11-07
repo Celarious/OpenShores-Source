@@ -4362,6 +4362,51 @@ void DaLegacyCity::GetRenderLightsRecursive(const DaPerson& person, const AuMatr
 	}
 }
 
+void DaLegacyCity::RenderAirportNavBeacon(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
+	AuModelMatrixHash& matrices, const DaPerson* sceneAtom) const
+{
+	if(!g_Au.IsLegacyGeneration() || !ari.re || !sceneAtom || IsDead() || !ari.textBrightness
+		|| !sceneAtom->CanSeeBridgeIndicators()) return;
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	const auto model = matrices.constFind(Id());
+	if(!world || model == matrices.cend()) return;
+	{
+		QReadLocker stateLock(&m_CityLock);
+		bool hasAirport = false;
+		for(const auto& dev : m_City.developments)
+			if(dev.industryId == 111 && !dev.demolished && dev.completedLevels) { hasAirport = true; break; }
+		if(!hasAirport) return;
+	}
+	// DaCity::RenderEnvironmentObject 0x2a8d70: a line from the city
+	// origin to atmosphere radius + 2500 feet, with its name at the top.
+	const AuMatrix4x4 worldModel = model->Matrix() * Transform().Inverse();
+	const AuPoint bottom = Transform().Translation();
+	AuPoint top = bottom;
+	world->ElevateLoc(top, world->AtmosphereRadius() + 2500);
+	QColor color = PoliticalStanceColor(sceneAtom->EmpireId(), EmpireId(), false);
+	color.setRgbF(color.redF() * ari.textBrightness, color.greenF() * ari.textBrightness,
+		color.blueF() * ari.textBrightness, 1);
+	AuPointArray vertices;
+	vertices.append(bottom);
+	vertices.append(top);
+	AuGLVAO vao;
+	vao.CreateForLines(*ari.re, vertices, false, GL_STREAM_DRAW);
+	auto& shader = ari.re->GLSL().LineShader();
+	shader.Select(); shader.SetProjectionModelView(projection * worldModel);
+	shader.SetColor(color.redF(), color.greenF(), color.blueF(), 1);
+	if(vao.VAO()) { vao.SelectGL(); vao.DrawGL(GL_LINES); vao.DeselectGL(); vao.DeleteGL(); }
+	shader.Deselect();
+	// Reuse the modern airport's projected text path, alignment and blending.
+	const bool blendEnabled = ari.re->glIsEnabled(GL_BLEND);
+	GLint sourceRGB, destinationRGB, sourceAlpha, destinationAlpha;
+	ari.re->glGetIntegerv(GL_BLEND_SRC_RGB, &sourceRGB); ari.re->glGetIntegerv(GL_BLEND_DST_RGB, &destinationRGB);
+	ari.re->glGetIntegerv(GL_BLEND_SRC_ALPHA, &sourceAlpha); ari.re->glGetIntegerv(GL_BLEND_DST_ALPHA, &destinationAlpha);
+	ari.re->glEnable(GL_BLEND); ari.re->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	ari.RenderText(projection, worldModel, top, Name(), color, Qt::AlignBottom | Qt::AlignHCenter);
+	ari.re->glBlendFuncSeparate(sourceRGB, destinationRGB, sourceAlpha, destinationAlpha);
+	if(!blendEnabled) ari.re->glDisable(GL_BLEND);
+}
+
 void DaLegacyCity::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 	AuModelMatrixHash& matrices, const DaPerson* sceneAtom, AuRenderLastMap& last,
 	RENDERPASS pass, DaAtomList& sc, DaAtomList& scFog, DaAtomList& scGlobe,
@@ -4369,7 +4414,11 @@ void DaLegacyCity::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtom
 {
 	DaAtom::RenderEnvironmentObject(projection, ari, matrices, sceneAtom, last, pass,
 		sc, scFog, scGlobe, scGlobeFog, scRing, scRingFog);
-	if(pass == PASS_Near) RenderCity(projection, ari, matrices, sceneAtom, false);
+	if(pass == PASS_Near)
+	{
+		RenderCity(projection, ari, matrices, sceneAtom, false);
+		RenderAirportNavBeacon(projection, ari, matrices, sceneAtom);
+	}
 }
 
 void DaLegacyCity::RenderPreTerrain(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,

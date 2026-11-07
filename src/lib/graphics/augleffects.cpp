@@ -955,6 +955,61 @@ AuGLEffects::AuGLEffects()
 	m_CrosshairSmoothing = true;
 }
 
+void AuGLEffects::RenderAntialiasedSurface(GLuint texture, int width, int height, const std::function<void()>& draw)
+{
+	GLint originalDraw, originalRead, originalRenderbuffer, maximumSamples;
+	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &originalDraw);
+	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &originalRead);
+	glGetIntegerv(GL_RENDERBUFFER_BINDING, &originalRenderbuffer);
+	glGetIntegerv(GL_MAX_SAMPLES, &maximumSamples);
+	GLuint multisampleFbo = 0, multisampleColor = 0;
+	bool antialiased = false;
+	if(maximumSamples > 1)
+	{
+		glGenFramebuffers(1, &multisampleFbo);
+		glBindFramebuffer(GL_FRAMEBUFFER, multisampleFbo);
+		glGenRenderbuffers(1, &multisampleColor);
+		glBindRenderbuffer(GL_RENDERBUFFER, multisampleColor);
+		glRenderbufferStorageMultisample(GL_RENDERBUFFER, qMin(4, maximumSamples), GL_RGBA8, width, height);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, multisampleColor);
+		antialiased = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+	}
+	glBindRenderbuffer(GL_RENDERBUFFER, originalRenderbuffer);
+	const bool multisampleEnabled = glIsEnabled(GL_MULTISAMPLE);
+	const bool scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+	glDisable(GL_SCISSOR_TEST);
+	if(antialiased)
+	{
+		// Seed every sample with the existing terrain. Resolving after drawing
+		// averages road RGB and inverse-glow alpha against that background.
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, originalDraw);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, multisampleFbo);
+		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		glBindFramebuffer(GL_FRAMEBUFFER, multisampleFbo);
+		glEnable(GL_MULTISAMPLE);
+	}
+	else glBindFramebuffer(GL_FRAMEBUFFER, originalDraw);
+	draw();
+	if(antialiased)
+	{
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, multisampleFbo);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, originalDraw);
+		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	}
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, originalDraw);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, originalRead);
+	if(multisampleFbo) glDeleteFramebuffers(1, &multisampleFbo);
+	if(multisampleColor) glDeleteRenderbuffers(1, &multisampleColor);
+	if(!multisampleEnabled) glDisable(GL_MULTISAMPLE);
+	if(scissorEnabled) glEnable(GL_SCISSOR_TEST);
+	GLint previousTexture;
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glGenerateMipmap(GL_TEXTURE_2D);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	glBindTexture(GL_TEXTURE_2D, previousTexture);
+}
+
 void AuGLEffects::CullSprites(const AuMatrix4x4& clip, QList<AuPointAlpha>& vertices) const
 {
 	if(!m_FrustumCulling || vertices.isEmpty()) return;

@@ -252,6 +252,8 @@ public:
 		RENDERPASS pass, DaAtomList& sc, DaAtomList& scFog, DaAtomList& scGlobe,
 		DaAtomList& scGlobeFog, DaAtomList& scRing, DaAtomList& scRingFog) override;
 private:
+	void RenderAirportNavBeacon(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
+		AuModelMatrixHash& matrices, const DaPerson* sceneAtom) const;
 	void RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom, bool beforeTerrain);
 	friend class AuLegacyCity::PowerImportBatch;

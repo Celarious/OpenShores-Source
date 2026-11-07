@@ -713,6 +713,9 @@ public:
 	// Filter transient visual data before allocating/uploading its GPU buffers.
 	void CullSprites(const AuMatrix4x4& clip, QList<AuPointAlpha>& vertices) const;
 	void CullTriangles(const AuMatrix4x4& clip, QList<AuTriTex>& triangles) const;
+	// Add surface markings to the current texture FBO with multisample edge
+	// coverage, then generate mipmaps for stable distant/minified sampling.
+	void RenderAntialiasedSurface(GLuint texture, int width, int height, const std::function<void()>& draw);
 
 	// Returns 'col1' blended with 'col2' by 'blend' ammount. 'blend' is in the range of 0 to 1.
 	// 'blend' <= 0 returns col1
