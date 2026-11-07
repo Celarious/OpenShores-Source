@@ -12542,6 +12542,11 @@ void DaSc::Tock(const AuTime& last, const AuTime& now, const AuScripts& scripts,
 			if(IsPilotMannedByPerson() || !IsPilotMannedByAI()) DecayMoveActions();
 		}
 		ApplyLegacyEnvironmentalDamage(last, now);
+		// DaSpaceShip::Tock (0x46d6e0) resupplies stations hourly. The
+		// Legacy tick bypasses DaVessel::Tock, which normally schedules this.
+		if(IsSpaceStation() && g_Au.m_EnableStationResupply
+			&& last.IsNewPeriod(now, d_MSecPerHr, Id().GetID()))
+			RepairAndResupplyStation();
 		tockTrans.Add(DtTockTransaction(__FILE__, __LINE__, now));
 		return;
 	}
