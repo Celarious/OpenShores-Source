@@ -89,7 +89,7 @@ bool DaLegacyCity::RxStatusChat(const AuCommPacket* message)
 			.arg(qRound(100.0 * flag.m_Level / MaxFlagLevel));
 	}
 	flagsHtml += QStringLiteral("</div>");
-	if(!MailReport(report, report, person->Id(), flagsHtml)) return true;
+	if(!MailReport(report, report, person->Id(), flagsHtml, tr("Manual City Report"))) return true;
 	AuCommCityChat response(tr("Current city status report sent to %1 by mail.").arg(person->Name()),
 		AuCommStdChannel::TradeChannelName(), Id(), Name(), sector->Id(), Galaxy(), range, AuCommStdChannel::Everyone);
 	g_Au.SendAtomChat(response);
@@ -329,7 +329,7 @@ void DaLegacyCity::MailLastReport(const AuId& toId) const
 }
 
 bool DaLegacyCity::MailReport(const AuCityReport& report, const AuCityReport& previous,
-	const AuId& toId, const QString& extraHtml) const
+	const AuId& toId, const QString& extraHtml, const QString& subject) const
 {
 	if(InArena() || InDesignPreview() || toId.IsNull()) return false;
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
@@ -342,7 +342,8 @@ bool DaLegacyCity::MailReport(const AuCityReport& report, const AuCityReport& pr
 	AuPoint galaxyLocation;
 	system->GetLocationRelativeToParent(galaxyLocation, galaxy);
 	g_Au.SendMail(player, confirmation, Id(), Name(), toId, AuMailMsg::MSGTYPE(report.m_MessageType),
-		report.Title(), report.ReportHtml(previous, true) + extraHtml, system->Id(), system->Name(), world->Id(), world->Name(),
+		subject.isEmpty() ? report.Title() : subject, report.ReportHtml(previous, true) + extraHtml,
+		system->Id(), system->Name(), world->Id(), world->Name(),
 		galaxy->Galaxy(), galaxyLocation);
 	return true;
 }

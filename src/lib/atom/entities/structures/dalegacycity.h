@@ -260,7 +260,7 @@ public:
 		DaAtomList& scGlobeFog, DaAtomList& scRing, DaAtomList& scRingFog) override;
 private:
 	bool MailReport(const AuCityReport& report, const AuCityReport& previous, const AuId& toId,
-		const QString& extraHtml = QString()) const;
+		const QString& extraHtml = QString(), const QString& subject = QString()) const;
 	void RenderAirportNavBeacon(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom) const;
 	void RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
