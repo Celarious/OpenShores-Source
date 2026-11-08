@@ -7247,7 +7247,8 @@ bool AuSceneServerApp::NotifyOfficerKilled(const AuId& homePlanetId)
 		// The home planet was found in my local data.
 		DaWorldLL* llworld = dynamic_cast<DaWorldLL*>(homePlanet);
 		if(llworld)
-			llworld->SetCapt(AuId(0), QString(""));
+			// Legacy reports can announce the replacement before the hourly mail.
+			llworld->SetCapt(AuId(), g_Au.IsLegacyGeneration() ? g_Au.Dice().RandomPersonName() : QString());
 		homePlanet->SetModified();
 		planetNotified = true;
 	}

@@ -13872,7 +13872,7 @@ void AuApp::OfficerKilledUp(const AuId homePlanetId)
         // The home planet was found in my local data.
         DaWorldLL* llworld = dynamic_cast<DaWorldLL*>(homePlanet);
         if(llworld)
-            llworld->SetCapt(AuId(), QString(""));
+            llworld->SetCapt(AuId(), g_Au.IsLegacyGeneration() ? g_Au.Dice().RandomPersonName() : QString());
         homePlanet->SetModified();
     }
     g_Au.UnlockEtheriumDelete();
