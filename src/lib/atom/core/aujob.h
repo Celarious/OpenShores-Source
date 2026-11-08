@@ -19,6 +19,7 @@ class DaBd;
 class DaPerson;
 class DaVehicle;
 class DaVessel;
+class DaLegacyCity;
 
 class AUATOM_DLL AuJob
 {
@@ -55,6 +56,8 @@ public:
 		Story,							// AuJobStory
 		TransferPrisoners,				// AuJobTransferPrisoners
 		VisitSystem,					// AuJobVisitSystem
+		BountyHunterLegacyCity,			// Recovered 2016 city bounty; append without renumbering modern jobs.
+		CaptureLegacyCity,				// Recovered city missions, distinguished by the saved reason.
 		JobTypes						// LAST ENTRY EXPECTED NOT TO EXCEED A BYTE. ADD NEW TYPES BEFORE THIS ENTRY.
 	};
 
@@ -405,6 +408,59 @@ public:
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+class AuJobBountyHunterLegacyCity : public AuJobBountyHunter
+{
+	quint32 m_TargetEmpire = 0;
+public:
+	AuJobBountyHunterLegacyCity() {}
+	AuJobBountyHunterLegacyCity(const AuId& city, const QString& name, quint32 targetEmpire,
+		const QString& address, double reward, const QStringList& reasons);
+	AuJob* Clone() const override { return new AuJobBountyHunterLegacyCity(*this); }
+	bool Compare(const AuJob* other) override;
+	bool DoesReplace(const AuJob* other) const override;
+	bool IsObsolete() const override;
+	bool IsOkToOffer(const DaPerson& person, quint32 fromEmpire, int sectorRange) const override;
+	QString Brief() const override;
+	QString Proposal(const QString& fromName) const override;
+	QString Teaser(const QString& fromName) const override;
+	TYPE Type() const override { return BountyHunterLegacyCity; }
+	QString TypeName() override;
+	void operator<<(QDataStream& in) override;
+	void operator>>(QDataStream& out) const override;
+	int CityCaptured(DaPerson& person, DaLegacyCity& city);
+};
+
+class AuJobCaptureLegacyCity : public AuJob
+{
+	AuId m_CityId, m_SystemId;
+	QString m_CityName, m_SystemName, m_SectorName;
+	quint8 m_Reason = 0;
+public:
+	enum Reason { Enemy, EmpireCapital, SectorCapital, InProgress, Occupied, UnderAttack };
+	AuJobCaptureLegacyCity() {}
+	AuJobCaptureLegacyCity(const AuId& cityId, const QString& cityName, const AuId& systemId,
+		const QString& systemName, const QString& sectorName, Reason reason);
+	AuJob* Clone() const override { return new AuJobCaptureLegacyCity(*this); }
+	bool Compare(const AuJob* other) override;
+	bool DoesReplace(const AuJob* other) const override;
+	bool IsCritical() const override { return true; }
+	bool IsCritical(int sectorRange) const override { return sectorRange < 4; }
+	bool IsObsolete() const override;
+	bool IsOfferExpired(const AuTime& asOf) const override;
+	bool IsOkToOffer(const DaPerson& person, quint32 fromEmpire, int sectorRange) const override;
+	QString Brief() const override;
+	QString Proposal(const QString& fromName) const override;
+	QString Teaser(const QString& fromName) const override;
+	QString Title() const override;
+	QString IconName() const override { return QStringLiteral(":data/DocCityCaptured.png"); }
+	TYPE Type() const override { return CaptureLegacyCity; }
+	QString TypeName() override;
+	quint64 MemoryUsage() const override;
+	void operator<<(QDataStream& in) override;
+	void operator>>(QDataStream& out) const override;
+	int CityCaptured(DaPerson& person, DaLegacyCity& city, bool baseOnly);
+};
+
 class AuJobBountyHunterPerson : public AuJobBountyHunter
 {
 public:
@@ -590,6 +646,7 @@ protected:
 	QString								m_CityName;				// Name of city.
 	quint32								m_MinCount;				// Minimum quantity to deliver.
 	quint8								m_MinQuality;			// Minimum quality wanted.
+	quint8 m_MinTechnology = 0; // Reserved protocol byte restored for Legacy delivery contracts.
 	quint32								m_PricePerUnit;			// Price per unit on success.
 	QString								m_SectorName;			// Name of sector.
 	AuId								m_SystemId;				// System id to deliver cargo.
@@ -606,6 +663,8 @@ public:
 	{
 		return m_CityId;
 	}
+	void SetMinimumTechnology(quint8 technology) { m_MinTechnology = technology > 31 ? 31 : technology; }
+	QString TechnologyRequirement() const;
 
 	virtual bool Compare(const AuJob* c);
 
@@ -2028,6 +2087,7 @@ public:
 	//  1 = Job changed by event.
 	//  2 = Job completed by event.
 	virtual int SystemVisited(DaPerson* person, const AuId& systemId, DaBd& bd);
+	int LegacySystemVisited(DaPerson& person, const AuId& systemId, DaLegacyCity& city);
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|

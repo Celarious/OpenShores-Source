@@ -10,6 +10,7 @@
 #include "aucommpacket.h"
 #include "auglobal.h"
 #include "dabd.h"
+#include "dalegacycity.h"
 #include "daperson.h"
 #include "dasector.h"
 #include "dasolarsystem.h"
@@ -17,6 +18,25 @@
 #include "davessel.h"
 #include "dgdata.h"
 #include <QDebug>
+
+namespace
+{
+bool PayLegacyJobReward(DaPerson& person, const AuId& cityId, double requested, bool government, QString& text)
+{
+	auto* system = person.FindParentSolarSystemInEnv();
+	auto* city = system ? dynamic_cast<DaLegacyCity*>(system->FindIdRecursive(cityId)) : nullptr;
+	if(!g_Au.IsLegacyGeneration() || !city || city->IsDead()) return false;
+	const double paid = city->PayCivicReward(requested, government);
+	if(paid > 0)
+	{
+		person.CreditAccount(paid);
+		text += paid >= requested ? QObject::tr(" The agreed reward of %1 was credited to my personal account.").arg(AuGlobal::FormatMoney(paid))
+			: QObject::tr(" The city credited %1 to my personal account; it was all the money available.").arg(AuGlobal::FormatMoney(paid));
+	}
+	else text += QObject::tr(" The city had no money to pay the promised reward.");
+	return true;
+}
+}
 
 AuJob::AuJob(const AuTime& start)
 {
@@ -51,6 +71,10 @@ AuJob* AuJob::CreateJob(TYPE type)
 		return new AuJobAssassin;
 	case BountyHunterPerson:
 		return new AuJobBountyHunterPerson;
+	case BountyHunterLegacyCity:
+		return new AuJobBountyHunterLegacyCity;
+	case CaptureLegacyCity:
+		return new AuJobCaptureLegacyCity;
 	case BountyHunterShip:
 		return new AuJobBountyHunterShip;
 	case BountyHunterVehicle:
@@ -925,6 +949,166 @@ quint64 AuJobBountyHunter::MemoryUsage() const
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+AuJobBountyHunterLegacyCity::AuJobBountyHunterLegacyCity(const AuId& city, const QString& name, quint32 targetEmpire,
+	const QString& address, double reward, const QStringList& reasons)
+	: AuJobBountyHunter(city, name, address, reward, reasons), m_TargetEmpire(targetEmpire)
+{
+}
+
+bool AuJobBountyHunterLegacyCity::Compare(const AuJob* other)
+{
+	const auto* cityJob = dynamic_cast<const AuJobBountyHunterLegacyCity*>(other);
+	return cityJob && AuJobBountyHunter::Compare(other) && m_TargetEmpire == cityJob->m_TargetEmpire;
+}
+
+bool AuJobBountyHunterLegacyCity::DoesReplace(const AuJob* other) const
+{
+	const auto* cityJob = dynamic_cast<const AuJobBountyHunterLegacyCity*>(other);
+	return cityJob && cityJob->PreyId() == m_PreyId;
+}
+
+bool AuJobBountyHunterLegacyCity::IsObsolete() const { return !g_Au.IsLegacyGeneration(); }
+
+bool AuJobBountyHunterLegacyCity::IsOkToOffer(const DaPerson& person, quint32 fromEmpire, int sectorRange) const
+{
+	// Original 0x1699b0 offers city capture bounties only against enemies.
+	return g_Au.IsLegacyGeneration() && PoliticalStance(person.EmpireId(), m_TargetEmpire) == POL_Enemy
+		&& AuJobBountyHunter::IsOkToOffer(person, fromEmpire, sectorRange);
+}
+
+QString AuJobBountyHunterLegacyCity::Brief() const
+{
+	QString text = QObject::tr("<p>Capture the town square of %1, located at %2.</p>"
+		"<p>The current bounty of %3 is paid to the first bounty hunter who captures it.</p>")
+		.arg(m_PreyName.toHtmlEscaped(), m_LastSeen.toHtmlEscaped(), AuGlobal::FormatMoney(m_Reward));
+	for(const auto& reason : m_Reasons) text += QStringLiteral("<p>") + reason.toHtmlEscaped() + QStringLiteral("</p>");
+	return text;
+}
+
+QString AuJobBountyHunterLegacyCity::Proposal(const QString&) const
+{
+	return QObject::tr("Capture the town square of %1 at %2. The posted bounty is %3.")
+		.arg(m_PreyName, m_LastSeen, AuGlobal::FormatMoney(m_Reward));
+}
+
+QString AuJobBountyHunterLegacyCity::Teaser(const QString&) const
+{
+	return QObject::tr("A bounty is offered for capturing %1 town square.").arg(m_PreyName);
+}
+
+QString AuJobBountyHunterLegacyCity::TypeName() { return QObject::tr("City Capture Bounty"); }
+
+void AuJobBountyHunterLegacyCity::operator<<(QDataStream& in)
+{
+	AuJobBountyHunter::operator<<(in); in >> m_TargetEmpire;
+}
+
+void AuJobBountyHunterLegacyCity::operator>>(QDataStream& out) const
+{
+	AuJobBountyHunter::operator>>(out); out << m_TargetEmpire;
+}
+
+int AuJobBountyHunterLegacyCity::CityCaptured(DaPerson& person, DaLegacyCity& city)
+{
+	if(!g_Au.IsLegacyGeneration() || city.Id() != m_PreyId) return 0;
+	const double bounty = city.TakeBounty();
+	if(bounty > 0) person.CreditAccount(bounty);
+	const QString text = bounty > 0
+		? QObject::tr("%1 town square captured! The posted bounty of %2 was transferred to my personal account.")
+			.arg(m_PreyName, AuGlobal::FormatMoney(bounty))
+		: QObject::tr("%1 town square captured! Unfortunately, no bounty was paid. Another bounty hunter must have claimed it already.")
+			.arg(m_PreyName);
+	AuCommThought message(text, person.Id(), person.Name()); g_Au.SendAtomChat(message);
+	return 2;
+}
+
+AuJobCaptureLegacyCity::AuJobCaptureLegacyCity(const AuId& cityId, const QString& cityName, const AuId& systemId,
+	const QString& systemName, const QString& sectorName, Reason reason)
+	: AuJob(AuTime::Now()), m_CityId(cityId), m_SystemId(systemId), m_CityName(cityName),
+	  m_SystemName(systemName), m_SectorName(sectorName), m_Reason(quint8(reason))
+{
+}
+
+bool AuJobCaptureLegacyCity::Compare(const AuJob* other)
+{
+	const auto* job = dynamic_cast<const AuJobCaptureLegacyCity*>(other);
+	return job && AuJob::Compare(other) && m_CityId == job->m_CityId && m_SystemId == job->m_SystemId
+		&& m_CityName == job->m_CityName && m_SystemName == job->m_SystemName
+		&& m_SectorName == job->m_SectorName && m_Reason == job->m_Reason;
+}
+
+bool AuJobCaptureLegacyCity::DoesReplace(const AuJob* other) const
+{
+	const auto* job = dynamic_cast<const AuJobCaptureLegacyCity*>(other);
+	return job && m_CityId == job->m_CityId;
+}
+
+bool AuJobCaptureLegacyCity::IsObsolete() const { return !g_Au.IsLegacyGeneration(); }
+bool AuJobCaptureLegacyCity::IsOfferExpired(const AuTime& asOf) const { return Started().SecsTo(asOf) > 3600; }
+
+bool AuJobCaptureLegacyCity::IsOkToOffer(const DaPerson& person, quint32 fromEmpire, int) const
+{
+	const auto stance = PoliticalStance(fromEmpire, person.EmpireId());
+	return g_Au.IsLegacyGeneration() && (stance == POL_Friend || stance == POL_Empire || stance == POL_Vassal);
+}
+
+QString AuJobCaptureLegacyCity::Brief() const
+{
+	QString text = QObject::tr("<p>Capture the city %1 in the %2 system, %3.</p>")
+		.arg(m_CityName.toHtmlEscaped(), m_SystemName.toHtmlEscaped(), m_SectorName.toHtmlEscaped());
+	switch(m_Reason)
+	{
+	case EmpireCapital: text += QObject::tr("<p>This is an enemy empire capital.</p>"); break;
+	case SectorCapital: text += QObject::tr("<p>This is an enemy sector capital.</p>"); break;
+	case InProgress: text += QObject::tr("<p>Our forces occupy part of the city. Finish capturing the city for our empire.</p>"); break;
+	case Occupied: text += QObject::tr("<p>Our city is occupied by an enemy invader. Reclaim it while loyalty to our empire remains.</p>"); break;
+	case UnderAttack: text += QObject::tr("<p>The city's flags are contested. Capture the town square for our empire.</p>"); break;
+	default: text += QObject::tr("<p>This city is controlled by our enemy.</p>"); break;
+	}
+	return text + QObject::tr("<p>Standard empire capture reward rates apply.</p>");
+}
+
+QString AuJobCaptureLegacyCity::Proposal(const QString&) const
+{
+	return QObject::tr("Capture %1 in the %2 system, %3. Standard empire capture reward rates apply.")
+		.arg(m_CityName, m_SystemName, m_SectorName);
+}
+
+QString AuJobCaptureLegacyCity::Teaser(const QString&) const
+{
+	return QObject::tr("Our empire needs someone to capture %1.").arg(m_CityName);
+}
+
+QString AuJobCaptureLegacyCity::Title() const { return QObject::tr("Capture %1").arg(m_CityName); }
+QString AuJobCaptureLegacyCity::TypeName() { return QObject::tr("Capture City"); }
+
+quint64 AuJobCaptureLegacyCity::MemoryUsage() const
+{
+	return AuJob::MemoryUsage() + sizeof(AuJobCaptureLegacyCity) - sizeof(AuJob)
+		+ StringMemoryUsage(m_CityName) + StringMemoryUsage(m_SystemName) + StringMemoryUsage(m_SectorName);
+}
+
+void AuJobCaptureLegacyCity::operator<<(QDataStream& in)
+{
+	AuJob::operator<<(in); in >> m_CityId >> m_CityName >> m_SectorName >> m_SystemId >> m_SystemName >> m_Reason;
+	if(m_Reason > UnderAttack) in.setStatus(QDataStream::ReadCorruptData);
+}
+
+void AuJobCaptureLegacyCity::operator>>(QDataStream& out) const
+{
+	AuJob::operator>>(out); out << m_CityId << m_CityName << m_SectorName << m_SystemId << m_SystemName << m_Reason;
+}
+
+int AuJobCaptureLegacyCity::CityCaptured(DaPerson& person, DaLegacyCity& city, bool baseOnly)
+{
+	if(!g_Au.IsLegacyGeneration() || city.Id() != m_CityId) return 0;
+	const QString text = baseOnly
+		? QObject::tr("Base captured! After I capture all the bases, I can capture the %1 town square.").arg(city.Name())
+		: QObject::tr("%1 town square captured! The city is ours. Mission accomplished!").arg(city.Name());
+	AuCommThought message(text, person.Id(), person.Name()); g_Au.SendAtomChat(message);
+	return baseOnly ? 0 : 2;
+}
+
 AuJobBountyHunterPerson::AuJobBountyHunterPerson(const AuId& preyId, const QString& preyName, const QString& lastSeen,
 		double reward, const QStringList& reasons) :
 	AuJobBountyHunter(preyId, preyName, lastSeen, reward, reasons)
@@ -1366,6 +1550,7 @@ AuJobDeliverCargo::AuJobDeliverCargo(const AuJobDeliverCargo& c) : AuJob(c)
 	m_CityName = c.m_CityName;
 	m_MinCount = c.m_MinCount;
 	m_MinQuality = c.m_MinQuality;
+	m_MinTechnology = c.m_MinTechnology;
 	m_PricePerUnit = c.m_PricePerUnit;
 	m_SectorName = c.m_SectorName;
 	m_SystemId = c.m_SystemId;
@@ -1380,7 +1565,7 @@ void AuJobDeliverCargo::operator>>(QDataStream& out) const
 	out << m_CityName;
 	out << m_MinCount;
 	out << m_MinQuality;
-	quint8 mintl = 0;
+	quint8 mintl = g_Au.IsLegacyGeneration() ? m_MinTechnology : 0;
 	out << mintl;
 	out << m_PricePerUnit;
 	out << m_SectorName;
@@ -1403,6 +1588,7 @@ void AuJobDeliverCargo::operator<<(QDataStream& in)
 		m_MinQuality = 1;
 	quint8 mintl;
 	in >> mintl;
+	m_MinTechnology = g_Au.IsLegacyGeneration() ? qMin(quint8(31), mintl) : 0;
 	in >> m_PricePerUnit;
 	in >> m_SectorName;
 	in >> m_SystemId;
@@ -1426,6 +1612,8 @@ bool AuJobDeliverCargo::Compare(const AuJob* c)
 	if(m_MinCount != cm->m_MinCount)
 		return false;
 	if(m_MinQuality != cm->m_MinQuality)
+		return false;
+	if(m_MinTechnology != cm->m_MinTechnology)
 		return false;
 	if(m_PricePerUnit != cm->m_PricePerUnit)
 		return false;
@@ -1470,7 +1658,10 @@ int AuJobDeliverCargo::CargoDelivered(DaPerson* person, const AuId& cityId, cons
 		return 0;
 	if(item.Quality() < m_MinQuality)
 		return 0;
+	if(g_Au.IsLegacyGeneration() && item.TechLevel() < m_MinTechnology)
+		return 0;
 
+	const quint32 outstandingBefore = m_MinCount;
 	int countDelivered;
 	if(item.Count() > m_MinCount)
 	{
@@ -1487,7 +1678,12 @@ int AuJobDeliverCargo::CargoDelivered(DaPerson* person, const AuId& cityId, cons
 		.arg(countDelivered)
 		.arg(item.SayName());
 
-	if(m_PricePerUnit)
+	if(m_PricePerUnit && g_Au.IsLegacyGeneration())
+	{
+		if(!PayLegacyJobReward(*person, m_CityId, double(m_PricePerUnit) * countDelivered, false, text))
+		{ m_MinCount = outstandingBefore; return 0; }
+	}
+	else if(m_PricePerUnit)
 	{
 		DaSolarSystem* system = person->FindParentSolarSystemInEnv();
 		if(!system)
@@ -1531,6 +1727,12 @@ int AuJobDeliverCargo::CargoDelivered(DaPerson* person, const AuId& cityId, cons
 
 	// This job is done if the count needed has been reduced to zero.
 	return (m_MinCount == 0) ? 2 : 1;
+}
+
+QString AuJobDeliverCargo::TechnologyRequirement() const
+{
+	return g_Au.IsLegacyGeneration() && m_MinTechnology
+		? QObject::tr(" (minimum TL%1)").arg(m_MinTechnology + 1) : QString();
 }
 
 quint64 AuJobDeliverCargo::MemoryUsage() const
@@ -2229,7 +2431,7 @@ bool AuJobDeliverCargoSpacecraftFactory::DoesReplace(const AuJob* job) const
 
 QString AuJobDeliverCargoSpacecraftFactory::Title() const
 {
-	return QObject::tr("%1 Spacecraft Production Halted").arg(m_CityName);
+	return QObject::tr("%1 Spacecraft Production Halted").arg(m_CityName) + TechnologyRequirement();
 }
 
 QString AuJobDeliverCargoSpacecraftFactory::Teaser(const QString& fromName) const
@@ -2353,7 +2555,7 @@ bool AuJobDeliverCargoConstruction::DoesReplace(const AuJob* job) const
 
 QString AuJobDeliverCargoConstruction::Title() const
 {
-	return QObject::tr("%1 Construction Halted").arg(m_CityName);
+	return QObject::tr("%1 Construction Halted").arg(m_CityName) + TechnologyRequirement();
 }
 
 QString AuJobDeliverCargoConstruction::Teaser(const QString& fromName) const
@@ -2501,10 +2703,10 @@ QString AuJobDeliverCargoManufacture::Title() const
 	if(m_CIDStopped != CID_Invalid)
 		return QObject::tr("%1 Manufacturing %2 Halted")
 			.arg(m_CityName)
-			.arg(g_Au.CommodityName(m_CIDStopped));
+			.arg(g_Au.CommodityName(m_CIDStopped)) + TechnologyRequirement();
 	else
 		return QObject::tr("%1 Manufacturing Halted")
-			.arg(m_CityName);
+			.arg(m_CityName) + TechnologyRequirement();
 }
 
 QString AuJobDeliverCargoManufacture::Teaser(const QString& fromName) const
@@ -2703,6 +2905,7 @@ int AuJobDeliverPassengers::PassengersDelivered(DaPerson* person, const AuId& ci
 	if(cityId != m_CityId)
 		return 0;
 
+	const quint32 outstandingBefore = m_MinCount;
 	int countDelivered;
 	if(count > m_MinCount)
 	{
@@ -2717,7 +2920,12 @@ int AuJobDeliverPassengers::PassengersDelivered(DaPerson* person, const AuId& ci
 
 	QString text = QObject::tr("The locals thanked me for bringing %L1 people.").arg(countDelivered);
 
-	if(m_PricePerUnit)
+	if(m_PricePerUnit && g_Au.IsLegacyGeneration())
+	{
+		if(!PayLegacyJobReward(*person, m_CityId, double(m_PricePerUnit) * countDelivered, false, text))
+		{ m_MinCount = outstandingBefore; return 0; }
+	}
+	else if(m_PricePerUnit)
 	{
 		DaSolarSystem* system = person->FindParentSolarSystemInEnv();
 		if(!system)
@@ -3348,7 +3556,11 @@ int AuJobPickUpPassengersHomeless::PassengersPickedUp(DaPerson* person, const Au
 
 	QString text = QObject::tr("The locals thanked me for rousting out %L1 homeless people.").arg(count);
 
-	if(m_PricePerUnit)
+	if(m_PricePerUnit && g_Au.IsLegacyGeneration())
+	{
+		if(!PayLegacyJobReward(*person, m_CityId, double(m_PricePerUnit) * count, false, text)) return 0;
+	}
+	else if(m_PricePerUnit)
 	{
 		DaSolarSystem* system = person->FindParentSolarSystemInEnv();
 		if(!system)
@@ -3523,7 +3735,11 @@ int AuJobPickUpPassengersOverpopulated::PassengersPickedUp(DaPerson* person, con
 
 	QString text = QObject::tr("The locals thanked me for picking up %L1 people.").arg(count);
 
-	if(m_PricePerUnit)
+	if(m_PricePerUnit && g_Au.IsLegacyGeneration())
+	{
+		if(!PayLegacyJobReward(*person, m_CityId, double(m_PricePerUnit) * count, false, text)) return 0;
+	}
+	else if(m_PricePerUnit)
 	{
 		DaSolarSystem* system = person->FindParentSolarSystemInEnv();
 		if(!system)
@@ -3690,7 +3906,11 @@ int AuJobPickUpPassengersStranded::PassengersPickedUp(DaPerson* person, const Au
 
 	QString text = QObject::tr("%L1 stranded colonists thanked me for rescuing them.").arg(count);
 
-	if(m_PricePerUnit)
+	if(m_PricePerUnit && g_Au.IsLegacyGeneration())
+	{
+		if(!PayLegacyJobReward(*person, m_CityId, double(m_PricePerUnit) * count, false, text)) return 0;
+	}
+	else if(m_PricePerUnit)
 	{
 		DaSolarSystem* system = person->FindParentSolarSystemInEnv();
 		if(!system)
@@ -4829,6 +5049,17 @@ int AuJobVisitSystem::SystemVisited(DaPerson* person, const AuId& systemId, DaBd
 	return 2;
 }
 
+int AuJobVisitSystem::LegacySystemVisited(DaPerson& person, const AuId& systemId, DaLegacyCity& city)
+{
+	if(!g_Au.IsLegacyGeneration() || systemId != m_SystemId || city.Id() != m_CityId) return 0;
+	QString text = QObject::tr("The citizens of the %1 system are relieved that I am here. "
+		"My presence assures them they have not been abandoned or forgotten by the empire.").arg(m_SystemName);
+	if(m_Reward && !PayLegacyJobReward(person, m_CityId, m_Reward, false, text)) return 0;
+	text += QObject::tr(" The people of %1 invited me to visit their city and share tales of my adventures.").arg(city.Name());
+	AuCommThought message(text, person.Id(), person.Name()); g_Au.SendAtomChat(message);
+	return 2;
+}
+
 quint64 AuJobVisitSystem::MemoryUsage() const
 {
 	quint64 mem = AuJob::MemoryUsage();
@@ -5362,6 +5593,7 @@ int AuJobDeliverFood::CargoDelivered(DaPerson* person, const AuId& cityId, const
 	if(!item.IsFood(m_ForEcoRole))
 		return 0;												// The commodity is not food for the ecological role.
 
+	const quint32 outstandingBefore = m_MinCount;
 	int countDelivered;
 	if(item.Count() > m_MinCount)
 	{
@@ -5394,7 +5626,12 @@ int AuJobDeliverFood::CargoDelivered(DaPerson* person, const AuId& cityId, const
 		break;
 	}
 
-	if(m_PricePerUnit)
+	if(m_PricePerUnit && g_Au.IsLegacyGeneration())
+	{
+		if(!PayLegacyJobReward(*person, m_CityId, double(m_PricePerUnit) * countDelivered, false, text))
+		{ m_MinCount = outstandingBefore; return 0; }
+	}
+	else if(m_PricePerUnit)
 	{
 		DaSolarSystem* system = person->FindParentSolarSystemInEnv();
 		if(!system)

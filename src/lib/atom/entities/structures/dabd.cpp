@@ -11,6 +11,7 @@
 #include "aubddesign.h"
 #include "aubox.h"
 #include "aucommpacket.h"
+#include "aucommunicationevent.h"
 #include "audialog.h"
 #include "augame.h"
 #include "auglmodelmaker.h"
@@ -26438,59 +26439,7 @@ void DaBd::RxChatMessage(const AuCommPacket* msg, quint32& countSupplied, bool /
 	// provides an informal way for people to leave messages for the administrator(s) of a city.
 	if(EmpireId() && (stanceToSender == POL_Enemy || msg->Type() == AuCommPacket::Chat))
 	{
-		// Log the reception of this message.
-		AuEventLogEntry::TYPE type;
-		switch(stanceToSender)
-		{
-		case POL_Friend:
-			type = AuEventLogEntry::FriendComm;
-			break;
-#if defined(QT_NO_DEBUG)
-		default:						// Eliminate compiler warning in release build.
-#endif
-		case POL_Neutral:
-			type = AuEventLogEntry::NeutralComm;
-			break;
-		case POL_Enemy:
-			type = AuEventLogEntry::EnemyComm;
-			break;
-		case POL_Empire:
-		case POL_Vassal:
-			type = AuEventLogEntry::EmpireComm;
-			break;
-		}
-
-		QString text;
-		if(senderShip)
-		{
-			text = tr("%1: %2")
-				.arg(senderShip->NameWithEmpire())
-				.arg(msg->Text());
-		}
-		else if(ship)
-		{
-			text = tr("%1 <i>(%2)</i> aboard %3: %4")
-				.arg(person->Name())
-				.arg(person->Id().StringId())
-				.arg(ship->NameWithEmpire())
-				.arg(msg->Text());
-		}
-		else
-		{
-			QString ename;
-			quint32 empire = person->EmpireId();
-			const DgData& gd = g_Au.LockDataForRead();
-			gd.EmpireName(empire, ename);
-			g_Au.UnlockData();
-
-			text = tr("%1 %2 <i>(%3)</i>: %4")
-				.arg(ename)
-				.arg(person->Name())
-				.arg(person->Id().StringId())
-				.arg(msg->Text());
-		}
-
-		AuEventLogEntry cle(type, text);
+		const AuEventLogEntry cle = AuReceivedCommunicationEvent(*msg, stanceToSender, person, senderShip, ship);
 		m_EventLogLock.lock();
 		m_EventLog->AddEventTrim(cle);
 		m_EventLogLock.unlock();

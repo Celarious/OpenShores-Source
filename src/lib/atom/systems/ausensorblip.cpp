@@ -92,6 +92,8 @@ AuSensorBlip* AuSensorBlip::Create(TYPE type)
 		return new AuBlipAsteroid;
 	case Planetoid:
 		return new AuBlipPlanetoid;
+	case LegacyCity:
+		return g_Au.IsLegacyGeneration() ? new AuBlipLegacyCity : nullptr;
 	case Avatar:
 		return new AuBlipAvatar;
 	case BdBase:
@@ -5488,6 +5490,78 @@ QDebug operator<<(QDebug dbg, const AuBlipTransporterBd& blip)
 }
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+
+AuBlipLegacyCity::AuBlipLegacyCity(const QString& name, quint16 population, bool empireCapital, bool sectorCapital,
+	quint32 empire, POLITICAL_STANCE stance, const AuId& id, const AuPoint& sysLoc)
+	: AuBlipEmpire(empire, stance, id, sysLoc), m_Name(name), m_Population(population),
+	  m_CapitalFlags(quint8((empireCapital ? 1 : 0) | (sectorCapital ? 2 : 0)))
+{
+}
+
+const char* AuBlipLegacyCity::BlipImage() const
+{
+	// Reuse the packaged city/capital icon selectors. These temporary objects
+	// provide only an image; no building HP, radius or volume is published.
+	if(IsEmpireCapitol())
+	{
+		AuBlipBdCapitolEmpire image;
+		image.SetPoliticalStance(Stance()); return image.BlipImage();
+	}
+	if(IsSectorCapitol())
+	{
+		AuBlipBdCapitolSector image;
+		image.SetPoliticalStance(Stance()); return image.BlipImage();
+	}
+	AuBlipBdCity image;
+	image.SetPoliticalStance(Stance()); return image.BlipImage();
+}
+
+QStringList AuBlipLegacyCity::InfoLines(const DaAtom* system) const
+{
+	// AuBlipCity::InfoLines, AuAtom13 0x1a9bf0.
+	QStringList lines;
+	lines << TypeName() << m_Name << QObject::tr("%1 pop.").arg(m_Population);
+	lines << AuBlipEmpire::InfoLines(system);
+	return lines;
+}
+
+QString AuBlipLegacyCity::TypeName() const
+{
+	return IsEmpireCapitol() ? QObject::tr("Empire Capital")
+		: IsSectorCapitol() ? QObject::tr("Sector Capital") : QObject::tr("City");
+}
+
+quint64 AuBlipLegacyCity::MemoryUsage() const
+{
+	return AuBlipEmpire::MemoryUsage() + StringMemoryUsage(m_Name) + sizeof(m_Population) + sizeof(m_CapitalFlags);
+}
+
+void AuBlipLegacyCity::operator>>(QDataStream& out) const
+{
+	AuBlipEmpire::operator>>(out);
+	out << m_Name << m_Population << m_CapitalFlags;
+}
+
+void AuBlipLegacyCity::operator<<(QDataStream& in)
+{
+	AuBlipEmpire::operator<<(in);
+	in >> m_Name >> m_Population >> m_CapitalFlags;
+	if(m_CapitalFlags > 3 || Stance() > POL_Vassal || m_Name.size() > 128)
+		in.setStatus(QDataStream::ReadCorruptData);
+}
+
+void AuBlipLegacyCity::TxMin(QDataStream& out) const
+{
+	AuBlipEmpire::TxMin(out);
+	out << m_CapitalFlags;
+}
+
+void AuBlipLegacyCity::RxMin(QDataStream& in)
+{
+	AuBlipEmpire::RxMin(in);
+	in >> m_CapitalFlags;
+	if(m_CapitalFlags > 3 || Stance() > POL_Vassal) in.setStatus(QDataStream::ReadCorruptData);
+}
 
 AuBlipBd::AuBlipBd(const QString& name, INDUSTRYID iid, quint8 quality, bool isLockedOn, float roughRadius, quint32 volume,
 		quint32 maxHits, quint32 curHits, quint32 empire, POLITICAL_STANCE stance, const AuId& id, const AuPoint& sysLoc) :

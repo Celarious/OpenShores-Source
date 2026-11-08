@@ -19,10 +19,10 @@ bool Bytes(QDataStream& in, QByteArray& bytes, quint32 maximum)
 	bytes.resize(int(size));
 	return !size || in.readRawData(bytes.data(), int(size)) == int(size);
 }
-bool String(QDataStream& in, QString& value)
+bool String(QDataStream& in, QString& value, quint32 maximumBytes = 256)
 {
 	QByteArray bytes;
-	if(!Bytes(in, bytes, 256) || (bytes.size() & 1)) return false;
+	if(!Bytes(in, bytes, maximumBytes) || (bytes.size() & 1)) return false;
 	value.resize(bytes.size() / 2);
 	for(int i = 0; i < value.size(); ++i)
 		value[i] = QChar((quint16(quint8(bytes[2*i])) << 8) | quint8(bytes[2*i+1]));
@@ -32,7 +32,8 @@ bool Valid(const State& state, QString& error)
 {
 	if(state.name.size() > 128 || state.population < 0 || state.satisfaction < -20 || state.satisfaction > 20
 		|| !std::isfinite(state.capacitor) || state.capacitor < 0
-		|| state.developments.size() > MaximumDevelopments || state.flags.size() > 4096 || state.citizenSpecies.size() > 4096)
+		|| state.developments.size() > MaximumDevelopments || state.flags.size() > 4096 || state.citizenSpecies.size() > 4096
+		|| state.bounties.size() > 1024 || state.crises.size() > 3 || state.pendingEvents.size() > 256)
 	{ error = QStringLiteral("Invalid legacy city summary or collection size."); return false; }
 	QSet<quint32> ids;
 	for(const Development& dev : state.developments)
@@ -68,6 +69,26 @@ bool Valid(const State& state, QString& error)
 		if(flag.level > 30 || !std::isfinite(flag.location.Latitude()) || !std::isfinite(flag.location.Longitude())
 			|| std::abs(flag.location.Latitude()) > PIf / 2 || std::abs(flag.location.Longitude()) > PIf)
 		{ error = QStringLiteral("Invalid legacy flag level or location."); return false; }
+	double bountyTotal = 0;
+	for(const Bounty& bounty : state.bounties)
+	{
+		bountyTotal += bounty.reward;
+		if(bounty.reason.size() > 4096 || !std::isfinite(bounty.reward) || bounty.reward <= 0 || bounty.createdAt < 0)
+		{ error = QStringLiteral("Invalid legacy city bounty."); return false; }
+		if(!std::isfinite(bountyTotal))
+		{ error = QStringLiteral("Legacy city bounty total exceeds its limit."); return false; }
+	}
+	QSet<quint8> crisisTypes;
+	for(const Crisis& crisis : state.crises)
+	{
+		if(crisis.type < 1 || crisis.type > 3 || crisisTypes.contains(crisis.type)
+			|| crisis.createdAt < 0 || crisis.species.size() > 4096)
+		{ error = QStringLiteral("Invalid legacy city crisis."); return false; }
+		crisisTypes.insert(crisis.type);
+	}
+	for(const CityEvent& event : state.pendingEvents)
+		if(!event.type || event.type > 66 || event.text.size() > 4096 || event.when < 0)
+		{ error = QStringLiteral("Invalid legacy city event."); return false; }
 	for(const QByteArray* group : {&state.inventory, &state.manufacturing, &state.accounting, &state.reportHistory})
 		if(group->size() > MaximumStateBytes / 2) { error = QStringLiteral("Legacy city group exceeds its size limit."); return false; }
 	return true;
@@ -104,6 +125,14 @@ bool EncodeState(const State& state, QByteArray& output, QString& error)
 	out << state.inventory << state.manufacturing << state.accounting << state.reportHistory;
 	out << state.lastEmployment << state.lastPopulationCycle << state.citizenSpecies << state.lastAttack;
 	out << state.garrisonTroops;
+	out << quint16(state.bounties.size());
+	for(const Bounty& bounty : state.bounties) out << bounty.reason << bounty.reward << bounty.createdAt;
+	out << quint8(state.crises.size());
+	for(const Crisis& crisis : state.crises)
+		out << crisis.type << crisis.strength << crisis.contagion << crisis.quality
+			<< crisis.createdAt << crisis.treatedUnits << crisis.species;
+	out << quint16(state.pendingEvents.size());
+	for(const CityEvent& event : state.pendingEvents) out << event.type << event.text << event.when;
 	if(out.status() != QDataStream::Ok || bytes.size() > MaximumStateBytes)
 	{ error = QStringLiteral("Legacy city state exceeds its envelope limit."); return false; }
 	output = bytes;
@@ -180,6 +209,49 @@ bool DecodeState(const QByteArray& bytes, State& output, QString& error)
 		in >> state.lastAttack;
 	}
 	if(version >= 4) in >> state.garrisonTroops;
+	if(version >= 5)
+	{
+		quint16 bountyCount = 0;
+		in >> bountyCount;
+		if(in.status() != QDataStream::Ok || bountyCount > 1024
+			|| quint64(bountyCount) * 20 > quint64(in.device()->bytesAvailable()))
+		{ error = QStringLiteral("Invalid legacy city bounty count."); return false; }
+		for(quint16 index = 0; index < bountyCount; ++index)
+		{
+			Bounty bounty;
+			if(!String(in, bounty.reason, 8192))
+			{ error = QStringLiteral("Invalid legacy city bounty reason."); return false; }
+			in >> bounty.reward >> bounty.createdAt;
+			state.bounties.append(bounty);
+		}
+		quint8 crisisCount = 0;
+		in >> crisisCount;
+		if(in.status() != QDataStream::Ok || crisisCount > 3
+			|| quint64(crisisCount) * 20 > quint64(in.device()->bytesAvailable()))
+		{ error = QStringLiteral("Invalid legacy city crisis count."); return false; }
+		for(quint8 index = 0; index < crisisCount; ++index)
+		{
+			Crisis crisis;
+			in >> crisis.type >> crisis.strength >> crisis.contagion >> crisis.quality >> crisis.createdAt >> crisis.treatedUnits;
+			if(!Bytes(in, crisis.species, 4096))
+			{ error = QStringLiteral("Invalid legacy city crisis species."); return false; }
+			state.crises.append(crisis);
+		}
+		quint16 eventCount = 0;
+		in >> eventCount;
+		if(in.status() != QDataStream::Ok || eventCount > 256
+			|| quint64(eventCount) * 13 > quint64(in.device()->bytesAvailable()))
+		{ error = QStringLiteral("Invalid legacy city event count."); return false; }
+		for(quint16 index = 0; index < eventCount; ++index)
+		{
+			CityEvent event;
+			in >> event.type;
+			if(!String(in, event.text, 8192))
+			{ error = QStringLiteral("Invalid legacy city event text."); return false; }
+			in >> event.when;
+			state.pendingEvents.append(event);
+		}
+	}
 	if(in.status() != QDataStream::Ok || !in.atEnd() || !Valid(state, error))
 	{ if(error.isEmpty()) error = QStringLiteral("Malformed legacy city state or trailing data."); return false; }
 	output = state;

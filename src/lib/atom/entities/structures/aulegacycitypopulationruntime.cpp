@@ -133,14 +133,18 @@ PopulationRuntimeFacts GatherPopulationFacts(DaLegacyCity& city, DaWorldLL& worl
 	facts.pirateEmpire = gd.EmpireRole(state.controllingEmpire) == EMPIRE_Pirate;
 	const bool normalizeAllegiance = !state.loyalPopulation || !state.population;
 	const bool occupied = !normalizeAllegiance && state.allegianceEmpire != state.controllingEmpire;
+	// Situation deaths precede the loyalty step. Prepare a destination for a
+	// crisis that can remove the final loyalists in this same transaction.
+	const bool crisisMayRemoveLoyalists = !state.crises.isEmpty();
 	const qint64 now = AuTime::CurrentMSecsSinceEpoch();
 	if(state.lastPopulationCycle && now >= state.lastPopulationCycle
 		&& double((now - state.lastPopulationCycle) / 1000) >= 771.4285714285714
-		&& !occupied && facts.daysSinceCityVisit >= 15 && state.loyalPopulation < 2
+		&& (!occupied || crisisMayRemoveLoyalists) && facts.daysSinceCityVisit >= 15
+		&& (state.loyalPopulation < 2 || crisisMayRemoveLoyalists)
 		&& state.satisfaction < 0 && !facts.pirateEmpire)
 	{
 		facts.revoltDestinationKnown = true;
-		facts.revoltEmpire = normalizeAllegiance || state.allegianceEmpire == state.controllingEmpire
+		facts.revoltEmpire = normalizeAllegiance || state.allegianceEmpire == state.controllingEmpire || crisisMayRemoveLoyalists
 			? gd.SelectLegacyPirateEmpire() : state.allegianceEmpire;
 	}
 	if(gd.EmpireCapital(state.controllingEmpire, empireCapital, empireCapitalGalaxy))

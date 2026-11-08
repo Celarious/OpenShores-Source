@@ -1,4 +1,5 @@
 #include "dalegacycity.h"
+#include "aulegacycitylifecycle.h"
 #include "aucityreport.h"
 #include "aucommpacket.h"
 #include "auitem.h"
@@ -110,6 +111,7 @@ bool DaLegacyCity::ReportCurrent(AuCityReport& report)
 	auto facts = GatherPopulationFacts(*this, *world, state);
 	facts.context.isolated = QueryCityConnections(*this, *world, state).isEmpty();
 	report = GatherCityReport(state, facts);
+	CopyCityEvents(state, report);
 	PopulationRuntimeReport population;
 	population.occupied = state.controllingEmpire != state.allegianceEmpire;
 	population.allegianceEmpire = state.allegianceEmpire;
@@ -311,9 +313,12 @@ bool DaLegacyCity::CompleteCityReport(AuCityReport& report, const State& state,
 	if(!distress.isEmpty())
 	{
 		report.m_MessageType = AuMailMsg::MSG_CityDistressReport;
-		report.m_DistressRpt = QStringLiteral("<b style=\"color: rgb(255, 255, 0);\">DISTRESS</b><div style=\"margin-left: 10px;\"><span style=\"color: rgb(255, 255, 0);\">")
+		report.m_DistressRpt += QStringLiteral("<b style=\"color: rgb(255, 255, 0);\">DISTRESS</b><div style=\"margin-left: 10px;\"><span style=\"color: rgb(255, 255, 0);\">")
 			+ distress + QStringLiteral("</span></div>");
 	}
+	for(const auto& bounty : state.bounties)
+		report.m_DistressRpt += tr("Capture Bounty! %1 posted. Reason: %2<br>")
+			.arg(AuGlobal::FormatMoney(bounty.reward), bounty.reason.toHtmlEscaped());
 	return true;
 }
 
@@ -350,6 +355,7 @@ bool DaLegacyCity::MailReport(const AuCityReport& report, const AuCityReport& pr
 
 void DaLegacyCity::SendCityReport(const AuCityReport& report, const AuCityReport* previous)
 {
+	PostCivicJobs(report);
 	// Called after publishing the transaction, so observers and mail rendering
 	// may safely query this city and its environment again.
 	const int satisfaction = report.m_PopOrig ? std::max(-20, std::min(20,

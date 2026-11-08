@@ -629,12 +629,13 @@ player labor, enables citizen labor, and halts or resumes projects. Extensions
 retain the existing building's design and material. A new town square requires
 an empire flag and a valid city name.
 
-Construction, economy and ship personnel services use legacy city state version 4. Fresh database
+Construction, economy, ship personnel services and politics use legacy city state version 5. Fresh database
 initialization creates the current legacy city tables. For an existing universe,
 stop the servers and apply `postgres/schema/legacycities.sql` to `auUniverse`
 using the existing deployment database administration procedure. That script
-updates the version constraint and retains version-1/2/3 envelopes; ordinary city
-saves write version 4, including the city's garrison troop pool. Spacecraft factory
+updates the version constraint and retains version-1/2/3/4 envelopes; ordinary city
+saves write version 5, including the city's garrison troop pool, bounties,
+poison/disease/vermin crises and pending report events. Spacecraft factory
 processes also use a versioned manufacturing envelope; existing processes remain
 readable. Also apply `postgres/schema/legacyspacecraft.sql` for the per-empire
 Legacy blueprint publication table. Rebuild both client and servers manually
@@ -646,8 +647,14 @@ extensions, each road/landscaping type, demolition and town-square deletion
 restrictions, and restart/reconnect with work partially complete. Check the
 separate F10/F11 windows and a modern server as well. Stage-5 economy recovery was
 accepted on 19 October 2026. Stage-6 spacecraft manufacturing and city ship
-services require a new manual build and gameplay acceptance. The full political
-lifecycle remains stage 7.
+services were accepted on 8 November 2026. Stage-7 political lifecycle recovery
+is implemented in source and requires a manual client/server build and gameplay
+verification. Exercise base-first town capture, deferred flag transfer, occupation,
+loyalty/revolt, surrender, garrison deployment, capture rewards and pillage, accepted
+capture-bounty jobs, neglected-city decay, crises, hail/diplomatic messages and
+report history, including save/restart. See the recovery ledgers under
+`research/legacy-city-recovery/` in the source checkout for evidence and remaining
+parity gaps; runtime deployment does not depend on that folder.
 
 F10 now exposes historical manufacturing recipes, citizen employment and minimum
 TL, plus bank loans, treasury transfers, reward redemption and capital

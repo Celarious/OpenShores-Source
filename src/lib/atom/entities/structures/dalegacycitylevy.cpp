@@ -101,12 +101,7 @@ void DaLegacyCity::ApplyWealthLevy(const AuLegacyCity::WealthLevyOrder& order)
 		if(result.revolution)
 		{
 			if(controlChanged)
-			{
-				emit CityCaptured(order.empire, surrenderedTo, Id());
-				if(auto* world = dynamic_cast<DaWorldLL*>(Parent())) world->InvalidateEnvironmentRecursive();
-				if(auto* system = FindParentSolarSystem())
-					if(!system->IsExploredBy(surrenderedTo)) system->ExploredBy(surrenderedTo);
-			}
+				ApplyPoliticalControlChange(order.empire, surrenderedTo, true);
 			if(result.bounty >= 1)
 				emit BountyPosted(Id(), Name(), order.issuer,
 					tr("Death Sentence for Political Corruption and Graft in the %1 incident.").arg(order.statement), result.bounty, 0);
@@ -158,12 +153,7 @@ void DaLegacyCity::NotifyRevolt(quint32 oldEmpire, quint32 newEmpire, bool captu
 	// Caller has already committed city ownership and the bank run. No city
 	// state mutation belongs in this notification phase of CityCycle.
 	if(captured)
-	{
-		emit CityCaptured(oldEmpire, newEmpire, Id());
-		if(auto* world = dynamic_cast<DaWorldLL*>(Parent())) world->InvalidateEnvironmentRecursive();
-		if(auto* system = FindParentSolarSystem())
-			if(!system->IsExploredBy(newEmpire)) system->ExploredBy(newEmpire);
-	}
+		ApplyPoliticalControlChange(oldEmpire, newEmpire, true);
 	AuIdList places, governors; places.append(Id()); ChainOfPlaces(places);
 	const DgData& data = g_Au.LockDataForRead();
 	data.EmpireDomainGovernors(oldEmpire, places, governors);

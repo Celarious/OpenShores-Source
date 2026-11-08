@@ -185,6 +185,7 @@ void DaLegacyCity::AcceptGoodsSale(DaPerson& person, const AuCommAccept& message
 	lock.unlock();
 	person.UpdateGearWeight(); person.CreditAccount(message.Price());
 	person.Stats().ItemSoldAsInventory(*sold); person.IncreaseSkill(AuSkill::Trade, 1);
+	person.CargoDelivered(Id(), *sold);
 	SetModified();
 	reply(message.Price() ? tr("Items sold to the city.") : tr("Items given to the city."));
 }
@@ -219,7 +220,8 @@ void DaLegacyCity::RxChatMessage(const AuCommPacket* message, quint32& countSupp
 	using namespace AuLegacyCity;
 	const auto* catalogue = ShopCatalogue();
 	if(!message || !catalogue || IsDead()) return;
-	if(RxStatusChat(message) || RxPersonnelChat(message, countSupplied) || RxSpacecraftBlueprintMessage(message)
+	LogReceivedCommunication(message);
+	if(RxCivicChat(message) || RxStatusChat(message) || RxPersonnelChat(message, countSupplied) || RxSpacecraftBlueprintMessage(message)
 		|| RxGoodsSaleMessage(message) || RxSpacecraftServiceMessage(message)) return;
 	COMMODITYFILTER filter = FILTER_All;
 	const bool solicit = SalesFilter(message->Type(), filter);

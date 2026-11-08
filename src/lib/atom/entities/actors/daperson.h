@@ -34,6 +34,7 @@ class DaCitizen;
 class DaSolarSystem;
 class DaVessel;
 class DaWorldLL;
+class DaLegacyCity;
 class PsEntity;
 class PsWeather;
 class QSqlDatabase;
@@ -2383,6 +2384,9 @@ public:
 	void SpacecraftCommanded(const AuId& shipId);
 	void SpacecraftDestroyed(DaVessel* ship, const AuId& inSystemId);
 	void SystemVisited(const AuId& systemId, DaBd& bd);
+	void LegacySystemVisited(const AuId& systemId, DaLegacyCity& city);
+	void LegacyCityCaptured(DaLegacyCity& city);
+	void LegacyBaseCaptured(DaLegacyCity& city);
 	void VehicleCaptured(DaVehicle* vehicle);
 	void VehicleDestroyed(DaVehicle* vehicle);
 

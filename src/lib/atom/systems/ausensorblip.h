@@ -70,6 +70,7 @@ public:
 		NeutronStarCompanion,			// neutron star
 		Asteroid,
 		Planetoid,						// Planetoid in an asteroid belt.
+		LegacyCity,						// Original city-owned population contact; append without changing modern IDs.
 		BlipTypes						// LAST ENTRY EXPECTED NOT TO EXCEED A BYTE. ADD NEW TYPES BEFORE THIS ENTRY.
 	};
 
@@ -3052,6 +3053,44 @@ public:
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+
+// AuBlipCity (2016) carried a name and population, not building HP or hull
+// dimensions. Capital bits replace its three original stream subclasses.
+class AUATOM_DLL AuBlipLegacyCity : public AuBlipEmpire
+{
+	QString m_Name;
+	quint16 m_Population = 0;
+	quint8 m_CapitalFlags = 0;
+public:
+	AuBlipLegacyCity() {}
+	AuBlipLegacyCity(const QString& name, quint16 population, bool empireCapital, bool sectorCapital,
+		quint32 empire, POLITICAL_STANCE stance, const AuId& id, const AuPoint& sysLoc);
+	AuSensorBlip* Clone() const override { return new AuBlipLegacyCity(*this); }
+	const char* BlipImage() const override;
+	QStringList InfoLines(const DaAtom* system) const override;
+	bool IsAITarget() const override { return false; }
+	bool IsCity() const override { return true; }
+	bool IsCivilian() const override { return false; } // Original AuBlipCity stub at 0xc5730.
+	bool IsFireControlConsoleBlip() const override { return true; }
+	bool IsEmpireCapitol() const override { return (m_CapitalFlags & 1) != 0; }
+	bool IsSectorCapitol() const override { return (m_CapitalFlags & 2) != 0; }
+	bool IsSensorConsoleBlip() const override { return true; }
+	AuEventLogEntry::TYPE OfficerEventLogType() const override
+	{
+		return Stance() != POL_Enemy ? AuEventLogEntry::Invalid
+			: m_CapitalFlags ? AuEventLogEntry::EnemyCapital : AuEventLogEntry::EnemyCity;
+	}
+	quint64 MemoryUsage() const override;
+	const QString& Name() const { return m_Name; }
+	quint16 Population() const { return m_Population; }
+	QString ScreenName() const override { return m_Name; }
+	TYPE Type() const override { return LegacyCity; }
+	QString TypeName() const override;
+	void operator>>(QDataStream& out) const override;
+	void operator<<(QDataStream& in) override;
+	void TxMin(QDataStream& out) const override;
+	void RxMin(QDataStream& in) override;
+};
 
 class AUATOM_DLL AuBlipBd : public AuBlipEmpire
 {

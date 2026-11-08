@@ -6338,6 +6338,11 @@ void AuSceneServerApp::GovCitySurrenderedDown(AuId byWho, AuId cityId, quint32 f
 			ether.ListAtoms(atoms);
 			for(DaAtomList::const_iterator ci = atoms.cbegin(); ci != atoms.cend(); ci++)
 			{
+				if(g_Au.IsLegacyGeneration())
+				{
+					if(auto* city = dynamic_cast<DaLegacyCity*>(*ci)) city->Surrender(fromEmpire, toEmpire);
+					continue;
+				}
 				DaBd* bd = dynamic_cast<DaBd*>(*ci);
 				if(!bd)
 					continue;	// wut?
@@ -6347,6 +6352,12 @@ void AuSceneServerApp::GovCitySurrenderedDown(AuId byWho, AuId cityId, quint32 f
 		else
 		{
 			// Surrender a single city, capitol or hq to another empire.
+			if(g_Au.IsLegacyGeneration())
+			{
+				if(auto* city = dynamic_cast<DaLegacyCity*>(ether.FindNormalAtom(cityId))) city->Surrender(fromEmpire, toEmpire);
+				g_Au.UnlockEtheriumDelete();
+				return;
+			}
 			DaBd* bd = dynamic_cast<DaBd*>(ether.FindNormalAtom(cityId));
 			if(bd)
 				bd->Surrender(byWho, fromEmpire, toEmpire);		// The city is here in my local data.

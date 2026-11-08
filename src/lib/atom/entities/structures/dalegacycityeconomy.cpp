@@ -3,6 +3,7 @@
 #include "aulegacycityinventory.h"
 #include "aulegacycitypopulation.h"
 #include "aulegacycitypopulationruntime.h"
+#include "aulegacycitylifecycle.h"
 #include "aulegacycityproduction.h"
 #include "aulegacycitycommerce.h"
 #include "aulegacycitizenconstruction.h"
@@ -783,6 +784,11 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 	const quint8 zone = quint8(world->OrbitZone());
 	const bool populationDue = before.lastPopulationCycle && now >= before.lastPopulationCycle
 		&& double((now - before.lastPopulationCycle) / 1000) >= 771.4285714285714;
+	if(populationDue)
+	{
+		SurrenderFriendlyFlags(now);
+		QReadLocker read(&m_CityLock); before = m_City; revision = m_CityRevision;
+	}
 	const auto empireTaxes = CityTaxes(before.controllingEmpire, HasBank(before));
 	PopulationRuntimeFacts populationFacts;
 	QList<quint16> cycleVehicles;
@@ -812,6 +818,7 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 	bool cycleInterrupted = false, revoltCaptured = false;
 	quint32 revoltOldEmpire = 0, revoltNewEmpire = 0;
 	bool citizenSpeciesChanged = false;
+	LifecycleResult lifecycle;
 	quint32 tributeDestination = 0;
 	float tributeAmount = 0;
 	if(populationDue)
@@ -916,7 +923,7 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 	const bool reverseEmployment = AuTime::CurrentMinCycle() > .5f;
 	if(jobsChanged || !state.lastEmployment || now < state.lastEmployment || (now - state.lastEmployment) / 1000 > 29)
 	{
-		const auto employment = EmployCitizens(*catalogue, state.developments, enabled,
+		auto employment = EmployCitizens(*catalogue, state.developments, enabled,
 			quint32(state.population), !breathable, reverseEmployment);
 		accounting.unemployed = employment.unemployed;
 		state.lastEmployment = now;
@@ -938,19 +945,44 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 			const AuItemHash initialInventory(inventory);
 			*cycleReport->m_Inventory = initialInventory;
 			*cycleReport->m_Tools = production.tools;
-			if(!populationFacts.revoltDestinationKnown) UpgradeBuildingsFromInventory(*catalogue, state, inventory, production);
+			// Situation reports precede decay and meals in CityCycle. All stock,
+			// mortality and development changes stay in this same transaction.
+			ApplyCityCrises(*catalogue, state, inventory, populationFacts, *cycleReport, now, lifecycle);
+			ApplyCityDecay(*catalogue, state, production, *cycleReport, CreatedTime().MSecsSinceEpoch(), now, lifecycle);
+			if(!lifecycle.finalDecay) DrainCityEvents(state, *cycleReport);
+			for(auto& development : state.developments)
+				if(lifecycle.reduced.contains(development.id)) RefreshDevelopmentDecks(development);
+			constructionChanged |= lifecycle.changed;
+			physicalChanged |= lifecycle.decayed != 0;
+			if(lifecycle.decayed || lifecycle.deaths)
+			{
+				enabled.clear();
+				for(const auto& process : production.processes) if(process.enabled) ++enabled[process.developmentId];
+				employment = EmployCitizens(*catalogue, state.developments, enabled,
+					quint32(state.population), !breathable, reverseEmployment);
+				accounting.unemployed = employment.unemployed;
+			}
+			populationFacts.context.decayedLevels = lifecycle.decayed;
+			populationFacts.context.environmentPopulation = qMax(0,
+				populationFacts.context.environmentPopulation - int(lifecycle.deaths));
+			const bool occupiedAfterCrises = state.population && state.loyalPopulation
+				&& state.allegianceEmpire != state.controllingEmpire;
+			const bool neglectRevolt = !occupiedAfterCrises && populationFacts.daysSinceCityVisit >= 15
+				&& state.loyalPopulation < 2 && state.satisfaction < 0 && !populationFacts.pirateEmpire;
+			if(!lifecycle.finalDecay && !neglectRevolt)
+				UpgradeBuildingsFromInventory(*catalogue, state, inventory, production);
 			PopulationRuntimeReport report;
-			if(!ApplyCityPopulation(state, inventory, accounting, empireTaxes, populationFacts, now,
+			if(!lifecycle.finalDecay && !ApplyCityPopulation(state, inventory, accounting, empireTaxes, populationFacts, now,
 				int(employment.jobs), report, error))
 			{ qWarning() << "Legacy city population:" << Id() << error; return; }
 			else
 			{
 				revoltRequested = report.revoltRequested;
-				cycleInterrupted = report.cycleInterrupted;
+				cycleInterrupted = report.cycleInterrupted || lifecycle.finalDecay;
 				revoltCaptured = report.revoltCaptured;
 				revoltOldEmpire = report.revoltOldEmpire;
 				revoltNewEmpire = report.revoltNewEmpire;
-				citizenSpeciesChanged = report.citizenSpeciesChanged;
+				citizenSpeciesChanged = report.citizenSpeciesChanged || lifecycle.citizenSpeciesChanged;
 				tributeDestination = report.tributeDestination;
 				tributeAmount = report.tributeAmount;
 				AuCityReportHistory history;
@@ -965,6 +997,7 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 					if(!EncodeAccounting(AccountingState(), cycleReport->m_LegacyAccounting, error)) return;
 					cycleReport->m_LegacyPopulationAfter = state.population;
 					cycleReport->m_WhenCompiled = AuTime(now);
+					state.lastPopulationCycle = accounting.lastPopulationCycle = now;
 				}
 				if(!history.IsEmpty()) previousReport.reset(new AuCityReport(history.Last()));
 				history.Append(*cycleReport);
@@ -979,6 +1012,9 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 				{
 					accounting.powerRequested = 0;
 					if(HasBank(state)) accounting.accounts.ResetPeriod();
+					// New crises begin after this report's cures and population
+					// changes. Their first damage/treatment occurs next report.
+					GenerateCityCrisis(state, report, lifecycle.decayed, now);
 				}
 			}
 		}
@@ -1172,6 +1208,13 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 	vehicleProduction.Publish(state.controllingEmpire);
 	spacecraftProduction.Publish();
 	constructionMaterials.Finalize();
+	for(const auto& removed : lifecycle.removed) PublishDevelopmentRemoval(removed);
+	for(const quint32 reducedId : lifecycle.reduced)
+	{
+		const auto original = std::find_if(before.developments.cbegin(), before.developments.cend(),
+			[reducedId](const Development& development) { return development.id == reducedId; });
+		if(original != before.developments.cend()) PublishDevelopmentRemoval(*original);
+	}
 	if(before.population != state.population) world->WorldPopulationChanged();
 	if(physicalChanged) world->InvalidateEnvironmentRecursive();
 	if(citizenSpeciesChanged) emit EmpireCityWorkerSpeciesChanged(state.controllingEmpire, Id(), AuSpecies(state.citizenSpecies));
@@ -1188,5 +1231,5 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 			"In a triumphant moment, police and military units sided with the protesters. The tide turned against the few remaining loyalists. "
 			"Local politicians and school teachers were hanged and their homes burned.").arg(empireName.toHtmlEscaped()));
 	}
-	if(reportCompleted && !cycleInterrupted) SendCityReport(*cycleReport, previousReport.get());
+	if(reportCompleted && (!cycleInterrupted || lifecycle.finalDecay)) SendCityReport(*cycleReport, previousReport.get());
 }

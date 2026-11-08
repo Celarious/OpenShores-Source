@@ -162,7 +162,15 @@ quint32 ShopDemandCost(const AuLegacyCityCatalogue& catalogue, const State& city
 	// DaCity::DemandCost 0x28baa0 rounds up before PriceOffer's integer
 	// 120-percent margin (0x2a4f20). TxForSaleChat doubles cantina prices.
 	const float demand = item.Demand(quint32(qMax(0, city.population)), quint32(stock), quint32(needed), quint32(produced));
-	const float cost = std::ceil(item.UnitCost() * demand);
+	float multiplier = demand;
+	// DaCity::DemandCost 0x28baa0: an active crisis doubles the price of
+	// its remedy when the offered quality reaches the crisis quality.
+	const quint8 crisisType = historical.value == 119 ? 1 : historical.value == 120 ? 2 : historical.value == 62 ? 3 : 0;
+	if(crisisType)
+		for(const Crisis& crisis : city.crises)
+			if(crisis.type == crisisType && item.Quality() >= crisis.quality)
+			{ multiplier *= 2.0f; break; }
+	const float cost = std::ceil(item.UnitCost() * multiplier);
 	if(!std::isfinite(cost)) return 0;
 	const quint64 maximumPrice = std::numeric_limits<quint32>::max();
 	return quint32(cost < 1.f ? 1 : cost >= double(maximumPrice) ? maximumPrice : quint64(cost));

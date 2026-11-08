@@ -7508,6 +7508,8 @@ unsigned int DaPerson::IsTocker() const
 	if(!IsNormal())
 		return ms;
 	// Here we know ms is not zero.
+	if(g_Au.IsLegacyGeneration() && ms > d_MSecPerSec && !IsInsideSpacecraft()
+		&& (InIndustry() == IID_TownSquare || InIndustry() == IID_BaseFlag)) ms = d_MSecPerSec;
 
 	if(ms > d_MSecPerSec)
 	{
@@ -7574,6 +7576,15 @@ void DaPerson::Tock(const AuTime& last, const AuTime& now, const AuScripts& scri
 
 	if(last.ElapsedSecTicks(now) > 0)
 		ClearDeletedLegacyHome(FindParentSolarSystem());
+	if(g_Au.IsLegacyGeneration() && last.ElapsedSecTicks(now) > 0 && !IsInsideSpacecraft())
+	{
+		const auto* query = LockEnvironmentQuery();
+		const AuId cityId = query->LegacyCityId();
+		UnlockEnvironmentQuery();
+		auto* world = FindParentPlanetInEnv();
+		auto* city = world ? dynamic_cast<DaLegacyCity*>(world->FindSubatomId(cityId)) : nullptr;
+		if(city) city->InfluenceFlagTakeover(*this);
+	}
 
 	// Watch for requirement for immediate respawn.
 	if(Actions() & (ACT_SpawnAnywhere|ACT_SpawnLocal))
@@ -15833,6 +15844,8 @@ void DaPerson::JobAccepted(const AuJobOffer& jobOffer, const AuScript& script)
 	case AuJob::BountyHunterPerson:
 	case AuJob::BountyHunterShip:
 	case AuJob::BountyHunterVehicle:
+	case AuJob::BountyHunterLegacyCity:
+	case AuJob::CaptureLegacyCity:
 	case AuJob::CommandShipInOrbit:
 	case AuJob::CommandShipOnGround:
 	case AuJob::DeliverCargoConstruction:
@@ -16193,6 +16206,50 @@ void DaPerson::SpacecraftDestroyed(DaVessel* ship, const AuId& inSystemId)
 		SetModified();
 	}
 	m_JobsLock.unlock();
+}
+
+void DaPerson::LegacyCityCaptured(DaLegacyCity& city)
+{
+	if(!g_Au.IsLegacyGeneration()) return;
+	AuLegacyFinanceTransfer transfer(this);
+	QWriteLocker lock(&m_JobsLock);
+	for(auto job = m_Jobs.begin(); job != m_Jobs.end();)
+	{
+		auto* bounty = dynamic_cast<AuJobBountyHunterLegacyCity*>(*job);
+		auto* capture = dynamic_cast<AuJobCaptureLegacyCity*>(*job);
+		if((bounty && bounty->CityCaptured(*this, city) == 2) || (capture && capture->CityCaptured(*this, city, false) == 2))
+		{
+			delete *job; job = m_Jobs.erase(job); m_tmJobsChange.Set(); SetModified();
+		}
+		else ++job;
+	}
+}
+
+void DaPerson::LegacyBaseCaptured(DaLegacyCity& city)
+{
+	if(!g_Au.IsLegacyGeneration()) return;
+	QReadLocker lock(&m_JobsLock);
+	for(auto* job : m_Jobs)
+	{
+		auto* capture = dynamic_cast<AuJobCaptureLegacyCity*>(job);
+		if(capture) capture->CityCaptured(*this, city, true);
+	}
+}
+
+void DaPerson::LegacySystemVisited(const AuId& systemId, DaLegacyCity& city)
+{
+	if(!g_Au.IsLegacyGeneration() || !city.EmpireId() || EmpireId() != city.EmpireId()) return;
+	AuLegacyFinanceTransfer transfer(this);
+	QWriteLocker lock(&m_JobsLock);
+	for(auto job = m_Jobs.begin(); job != m_Jobs.end();)
+	{
+		auto* visit = dynamic_cast<AuJobVisitSystem*>(*job);
+		if(visit && visit->LegacySystemVisited(*this, systemId, city) == 2)
+		{
+			delete *job; job = m_Jobs.erase(job); m_tmJobsChange.Set(); SetModified();
+		}
+		else ++job;
+	}
 }
 
 void DaPerson::SystemVisited(const AuId& systemId, DaBd& bd)

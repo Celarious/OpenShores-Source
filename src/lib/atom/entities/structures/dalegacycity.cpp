@@ -177,7 +177,7 @@ bool SweepCityBounds(const AuPoint& from, const AuPoint& to, const AuPoint& mini
 
 AuPoint Point(const QVector3D& p) { return AuPoint(p.x(), p.y(), p.z()); }
 
-const AuLegacyCityCatalogue* StationCatalogue()
+const AuLegacyCityCatalogue* ReadyCityCatalogue()
 {
 	const AuLegacyCityCatalogue* catalogue = AuLegacyCityCatalogue::BuiltIn();
 	if(!g_Au.IsLegacyGeneration() || !catalogue || !AuLegacyItemTechnologyActive()) return nullptr;
@@ -190,7 +190,7 @@ const AuLegacyCityCatalogue* StationCatalogue()
 quint32 StationElectricity(const QByteArray& bytes, bool* metadataReady = nullptr)
 {
 	if(metadataReady) *metadataReady = false;
-	const AuLegacyCityCatalogue* catalogue = StationCatalogue();
+	const AuLegacyCityCatalogue* catalogue = ReadyCityCatalogue();
 	if(!catalogue) return 0;
 	if(metadataReady) *metadataReady = true;
 	AuItemHash inventory; QString error;
@@ -1778,6 +1778,7 @@ DaLegacyCity::DaLegacyCity(const DaLegacyCity& city) : DaAtom(city), m_Runtime(n
 	m_Runtime->asynchronous = g_Au.IsSceneClient() || (g_Au.IsSceneApp() && city.Ether());
 }
 DaAtom* DaLegacyCity::Clone() const { return new DaLegacyCity(*this); }
+void DaLegacyCity::RefreshDevelopmentDecks(AuLegacyCity::Development& development) { ConstructedDecks(development); }
 AuLegacyCity::State DaLegacyCity::Snapshot() const { QReadLocker lock(&m_CityLock); return m_City; }
 QByteArray DaLegacyCity::TerrainCacheKey() const
 {
@@ -1810,22 +1811,33 @@ bool DaLegacyCity::WriteReportHistory(const AuCityReportHistory& history, QByteA
 	error.clear();
 	if(history.IsEmpty() || history.Count() > 240)
 	{ error = QStringLiteral("Invalid legacy city report history count."); return false; }
-	QByteArray raw;
-	QDataStream writer(&raw, QIODevice::WriteOnly); writer.setVersion(QDataStream::Qt_4_1);
-	writer << history;
-	if(writer.status() != QDataStream::Ok || raw.size() > 128 * 1024 * 1024)
-	{ error = QStringLiteral("Legacy city report history exceeds its expanded limit."); return false; }
-	// Large flag arrays can still require compression within three reports.
-	QByteArray stored = raw.size() <= AuLegacyCity::MaximumStateBytes / 2
-		? raw : QByteArray("LCRH", 4) + qCompress(raw);
-	if(stored.size() > AuLegacyCity::MaximumStateBytes / 2)
-	{ error = QStringLiteral("Legacy city report history exceeds its storage envelope."); return false; }
-	bytes = stored;
-	return true;
+	for(int first = qMax(0, history.Count() - 3); first < history.Count(); ++first)
+	{
+		QByteArray raw;
+		QDataStream writer(&raw, QIODevice::WriteOnly); writer.setVersion(QDataStream::Qt_4_1);
+		writer << quint16(history.Count() - first);
+		for(int index = first; index < history.Count(); ++index) writer << history.At(index);
+		if(writer.status() != QDataStream::Ok)
+		{ error = QStringLiteral("Could not encode legacy city report history."); return false; }
+		if(raw.size() > 128 * 1024 * 1024) continue;
+		// Keep the usual three reports. A large inventory/chat log can exceed
+		// the bounded wrapper even compressed; evict oldest reports first so
+		// their accumulated size does not indefinitely block the next cycle.
+		const QByteArray stored = raw.size() <= AuLegacyCity::MaximumStateBytes / 2
+			? raw : QByteArray("LCRH", 4) + qCompress(raw);
+		if(stored.size() > AuLegacyCity::MaximumStateBytes / 2) continue;
+		bytes = stored;
+		return true;
+	}
+	error = QStringLiteral("The newest legacy city report exceeds its storage envelope.");
+	return false;
 }
 
 bool DaLegacyCity::ReadReportHistory(const QByteArray& bytes, AuCityReportHistory& result)
 {
+	// Reports contain AuItem inventories as well. Reuse the same complete
+	// metadata readiness boundary before invoking their shared stream reader.
+	if(!ReadyCityCatalogue()) return false;
 	// The shared history assignment appends, so clear it using its existing
 	// zero-count reader before publishing or returning an empty result.
 	const QByteArray emptyHistory(2, char(0));
@@ -2709,7 +2721,6 @@ bool DaLegacyCity::DemolishDevelopment(DaPerson& person, quint32 id, bool clear,
 {
 	Q_UNUSED(clear);
 	if(!ConstructionAuthority(*this,person,true,error)) return false;
-	auto* world = dynamic_cast<DaWorldLL*>(Parent());
 	QWriteLocker lock(&m_CityLock);
 	auto state = m_City;
 	for(int i=0;i<state.developments.size();++i) if(state.developments[i].id == id)
@@ -2738,43 +2749,55 @@ bool DaLegacyCity::DemolishDevelopment(DaPerson& person, quint32 id, bool clear,
 		state.lastVisit = qMax(state.lastVisit, m_City.lastVisit);
 		m_City=std::move(state); ++m_CityRevision;
 		lock.unlock(); SetModified();
-		if(world)
-		{
-			// Building stations live in the world's frame. Only demolition
-			// releases their occupants; rebuilding geometry for an extension
-			// must leave the existing attachment alone.
-			const auto* recipe = ConstructionRecipe(removed.industryId, removed.constructionProcessId);
-			if(recipe)
-			{
-				AuMatrix4x4 placement;
-				world->BuildingConstructionTransform(world->LocOfLL(removed.location, removed.altitudeMSL),
-					removed.facingRadians, nullptr, AuPoint(), placement);
-				const double radius = recipe->buildRadius * FeetPerMeter() + 2.828427;
-				DaAtomList occupants; world->ListSubatoms(occupants);
-				for(auto* atom : occupants)
-				{
-					if(removed.industryId == 126)
-						if(DaVessel* ship = dynamic_cast<DaVessel*>(atom))
-							if(ship->IsDormant() && ship->IsMoored())
-							{
-								const AuPoint stored = placement.UnProject(ship->Location());
-								if(ship->Location().Distance2(placement.Translation()) < 4 * radius * radius
-									&& std::abs(stored.x) <= radius && std::abs(stored.y) <= radius) ship->Kill();
-							}
-					auto* occupant = dynamic_cast<DaCreature*>(atom);
-					if(!occupant || occupant->Parent() != world || !occupant->IsLockedPose()) continue;
-					const AuPoint local = placement.UnProject(occupant->Location());
-					if(std::abs(local.x) <= radius && std::abs(local.y) <= radius
-						&& local.z >= (removed.minimumDeck - 1) * AuLegacyBd::DeckHeight
-						&& local.z < (removed.maximumDeck + 2) * AuLegacyBd::DeckHeight)
-						occupant->ExitConsole();
-				}
-			}
-			world->InvalidateEnvironmentRecursive();
-		}
+		PublishDevelopmentRemoval(removed);
 		return true;
 	}
 	error = QStringLiteral("The development no longer exists."); return false;
+}
+
+void DaLegacyCity::PublishDevelopmentRemoval(const AuLegacyCity::Development& removed)
+{
+	auto* world = dynamic_cast<DaWorldLL*>(Parent());
+	if(!world) return;
+	const auto current = Snapshot();
+	const auto surviving = std::find_if(current.developments.cbegin(), current.developments.cend(),
+		[&removed](const AuLegacyCity::Development& development) { return development.id == removed.id && !development.demolished; });
+	const bool siteSurvives = surviving != current.developments.cend();
+	// Stations live in the world's frame. Demolition and decay share the same
+	// occupant/hangar cleanup, after their city-state transaction commits.
+	const auto* recipe = ConstructionRecipe(removed.industryId, removed.constructionProcessId);
+	if(recipe)
+	{
+		AuMatrix4x4 placement;
+		world->BuildingConstructionTransform(world->LocOfLL(removed.location, removed.altitudeMSL),
+			removed.facingRadians, nullptr, AuPoint(), placement);
+		const double radius = recipe->buildRadius * FeetPerMeter() + 2.828427;
+		DaAtomList occupants; world->ListSubatoms(occupants);
+		for(auto* atom : occupants)
+		{
+			if(!siteSurvives && removed.industryId == 126)
+				if(DaVessel* ship = dynamic_cast<DaVessel*>(atom))
+					if(ship->IsDormant() && ship->IsMoored())
+					{
+						const AuPoint stored = placement.UnProject(ship->Location());
+						if(ship->Location().Distance2(placement.Translation()) < 4 * radius * radius
+							&& std::abs(stored.x) <= radius && std::abs(stored.y) <= radius) ship->Kill();
+					}
+			auto* occupant = dynamic_cast<DaCreature*>(atom);
+			if(!occupant || occupant->Parent() != world || !occupant->IsLockedPose()) continue;
+			const AuPoint local = placement.UnProject(occupant->Location());
+			if(std::abs(local.x) <= radius && std::abs(local.y) <= radius
+				&& local.z >= (removed.minimumDeck - 1) * AuLegacyBd::DeckHeight
+				&& local.z < (removed.maximumDeck + 2) * AuLegacyBd::DeckHeight)
+			{
+				// A decayed level can leave the rest of the authored building
+				// intact. Retain a station attachment if it still exists there.
+				AuStation retained;
+				if(!siteSurvives || !Station(*occupant, retained)) occupant->ExitConsole();
+			}
+		}
+	}
+	world->InvalidateEnvironmentRecursive();
 }
 
 bool DaLegacyCity::FetchConstructionMaterials(DaPerson& person, quint32 id, QString& error)
@@ -3230,6 +3253,8 @@ void DaLegacyCity::Tock(const AuTime& last, const AuTime& now, const AuScripts& 
 {
 	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker()) return;
 	DaAtom::Tock(last,now,scripts,transactions);
+	if(IsDead()) return;
+	TockPolitics(now.MSecsSinceEpoch());
 	if(IsDead() || !last.IsNewPeriod(now,1000,Id().GetID())) return;
 	bool monitorTrade = false;
 	{
@@ -3247,7 +3272,17 @@ void DaLegacyCity::Tock(const AuTime& last, const AuTime& now, const AuScripts& 
 	// boundaries still reach the six-minute broker/service import schedule.
 	const AuTime previousEconomy = m_LastEconomyTock.IsNull() ? last : m_LastEconomyTock;
 	m_LastEconomyTock = now;
+	TockLifecycle(previousEconomy.MSecsSinceEpoch(), now.MSecsSinceEpoch());
+	if(IsDead()) return;
+	if(!previousEconomy.IsNull()
+		&& (previousEconomy.MSecsSinceEpoch() + Id().GetID()) / d_MSecPerHr
+			!= (now.MSecsSinceEpoch() + Id().GetID()) / d_MSecPerHr)
+		PostCityBountyJob();
 	TockEconomy(previousEconomy.MSecsSinceEpoch(), now.MSecsSinceEpoch());
+	if(!previousEconomy.IsNull()
+		&& previousEconomy.MSecsSinceEpoch() / d_MSecPerMin != now.MSecsSinceEpoch() / d_MSecPerMin)
+		TockSensors();
+	TockGarrison();
 	if(last.IsNewPeriod(now, 5000, Id().GetID())) TockHospitalPatients();
 }
 
@@ -3305,6 +3340,7 @@ void DaLegacyCity::TxUpdate(QDataStream& out, const AuTime& lastUpdate,
 	// Public physical state is replicated. Accounts, inventory and report history
 	// remain on the authority; later report requests must authorize their reader.
 	state.inventory.clear(); state.manufacturing.clear(); state.accounting.clear(); state.reportHistory.clear();
+	state.pendingEvents.clear();
 	QByteArray bytes; QString error;
 	if(!AuLegacyCity::EncodeState(state, bytes, error)) out.setStatus(QDataStream::WriteFailed);
 	WriteEnvelope(out, bytes);
@@ -3806,7 +3842,7 @@ bool DaLegacyCity::StationsPowered() const
 int DaLegacyCity::ReserveStationPower(int requested, AuItemHash& reserved)
 {
 	reserved.Clear();
-	const AuLegacyCityCatalogue* catalogue = StationCatalogue();
+	const AuLegacyCityCatalogue* catalogue = ReadyCityCatalogue();
 	if(!catalogue || !g_Au.IsSceneWorker() || requested <= 0) return 0;
 	if(Parent() && Parent()->AtomType() == ATOM_WorldRingSection) return requested;
 	QWriteLocker lock(&m_CityLock);
@@ -3832,7 +3868,7 @@ int DaLegacyCity::ReserveStationPower(int requested, AuItemHash& reserved)
 void DaLegacyCity::RefundStationPower(AuItemHash& reserved, int used)
 {
 	if(reserved.empty()) return;
-	const AuLegacyCityCatalogue* catalogue = StationCatalogue();
+	const AuLegacyCityCatalogue* catalogue = ReadyCityCatalogue();
 	if(!catalogue || !g_Au.IsSceneWorker()) return;
 	QWriteLocker lock(&m_CityLock);
 	AuItemHash inventory; QString error;
@@ -4041,7 +4077,7 @@ bool DaLegacyCity::WeaponStation(const DaCreature& who, AuLegacyCity::Developmen
 
 AuItem* DaLegacyCity::WeaponAmmunition(COMMODITYID module) const
 {
-	const auto* catalogue = StationCatalogue();
+	const auto* catalogue = ReadyCityCatalogue();
 	if(!catalogue || !g_Au.IsSceneWorker()) return nullptr;
 	QReadLocker lock(&m_CityLock);
 	AuItemHash inventory; QString error;
@@ -4093,7 +4129,7 @@ bool DaLegacyCity::FireStationWeapon(DaPerson& gunner, const AuId& targetId, int
 	if(DbCommodity::IsEnergyWeapon(ammo->CommodityId())) fired = ReserveStationPower(fired, reserved);
 	else
 	{
-		const auto* catalogue = StationCatalogue();
+		const auto* catalogue = ReadyCityCatalogue();
 		if(!catalogue) return false;
 		QWriteLocker lock(&m_CityLock); AuItemHash inventory; QString error;
 		if(!AuLegacyCity::ReadCityInventory(m_City.inventory, *catalogue, inventory, error)) return false;

@@ -1,12 +1,18 @@
 #include "dalegacycity.h"
 #include "aucommpacket.h"
+#include "aucondition.h"
 #include "augear.h"
 #include "auglobal.h"
+#include "audice.h"
+#include "audnabase.h"
+#include "auether.h"
 #include "auitem.h"
 #include "aulegacycitycatalogue.h"
 #include "aulegacycityinventory.h"
 #include "aulegacycitypopulation.h"
+#include "aulegacycitypopulationruntime.h"
 #include "auplayerstats.h"
+#include "auqueryenvironment.h"
 #include "auskill.h"
 #include "auspecies.h"
 #include "daatomlist.h"
@@ -88,7 +94,7 @@ void DecreasePopulation(AuLegacyCity::State& state, int count)
 	state.loyalPopulation -= qMin(state.loyalPopulation, quint32(count));
 }
 
-QList<DaNpc*> GroundTroops(const DaLegacyCity& city, quint32 empire)
+QList<DaNpc*> GroundTroops(const DaLegacyCity& city, quint32 empire, bool includeStations = false)
 {
 	QList<DaNpc*> troops;
 	const auto* world = dynamic_cast<const DaWorldLL*>(city.Parent());
@@ -98,7 +104,7 @@ QList<DaNpc*> GroundTroops(const DaLegacyCity& city, quint32 empire)
 	{
 		auto* troop = dynamic_cast<DaNpc*>(atom);
 		if(troop && troop->Role() == ROLE_Troop && troop->EmpireId() == empire && troop->CurrentHitPoints() > 0
-			&& troop->GarrisonBd() == city.Id() && !troop->IsTroopStationPose()) troops.append(troop);
+			&& troop->GarrisonBd() == city.Id() && (includeStations || !troop->IsTroopStationPose())) troops.append(troop);
 	}
 	return troops;
 }
@@ -112,6 +118,84 @@ bool DaLegacyCity::HasOfficerAcademy() const
 	// DaCity::HasStarFleetAcademy 0xf2240. An academy is the combination
 	// of university, airport terminal and spacecraft factory in one city.
 	return levels[125] && levels[111] && levels[87];
+}
+
+void DaLegacyCity::TockGarrison()
+{
+	if(!MetadataReady() || IsDead()) return;
+	auto* world = dynamic_cast<DaWorldLL*>(Parent());
+	AuEther* ether = world ? world->Ether() : nullptr;
+	const auto before = Snapshot();
+	if(!ether || !before.controllingEmpire || !before.garrisonTroops) return;
+	std::unique_ptr<AuDNABase> dna;
+	if(!AuLegacyCity::ReadSpeciesDNA(before.citizenSpecies, dna)) return;
+	QMutexLocker operation(&personnelLock);
+	QHash<quint32, int> defenders;
+	for(DaNpc* troop : GroundTroops(*this, before.controllingEmpire, true))
+	{
+		const auto* query = troop->LockEnvironmentQuery();
+		if(query->LegacyCityId() == Id()) ++defenders[query->LegacyDevelopmentId()];
+		troop->UnlockEnvironmentQuery();
+	}
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	// DaCity::Tock 0x2d3100 and CountTroopsAtDevLL 0x511a80 maintain
+	// one living, assigned defender at each town/base controlled by the city.
+	for(const auto& development : before.developments)
+	{
+		if((development.industryId != 1 && development.industryId != 10) || development.demolished
+			|| !development.completedLevels || defenders.value(development.id)) continue;
+		const auto flag = std::find_if(before.flags.cbegin(), before.flags.cend(),
+			[&development](const AuLegacyCity::Flag& value) { return value.location == development.location; });
+		if(flag == before.flags.cend() || flag->empire != before.controllingEmpire) continue;
+		const auto* recipe = catalogue->ConstructionProcess(AuLegacyCity::ConstructionProcessId(development.constructionProcessId));
+		if(!recipe) recipe = catalogue->ConstructionProcessForIndustry(AuLegacyCity::IndustryId(development.industryId));
+		if(!recipe) continue;
+		// MaxWorkerSpawnRadius 0xf7f40 and GenRandomLocation 0x519130.
+		// Preserve the latter's positive one-metre offset on BOTH axes:
+		// Roll[-(max-min), max-min] / 100 + min, in hundredths of a foot.
+		const double minimum = FeetPerMeter();
+		const double maximum = double(float(recipe->buildRadius * FeetPerMeter())) - FeetPerMeter();
+		const int extent = qMax(0, int((maximum - minimum) * 100));
+		AuMatrix4x4 site;
+		world->BuildingConstructionTransform(world->LocOfLL(development.location, development.altitudeMSL),
+			development.facingRadians, nullptr, AuPoint(), site);
+		AuGlobeLLF location;
+		const double dx = g_Au.Dice().Roll(1, 2 * extent + 1, -extent - 1) / 100.0 + minimum;
+		const double dy = g_Au.Dice().Roll(1, 2 * extent + 1, -extent - 1) / 100.0 + minimum;
+		if(!world->LLOfLoc(location, site.Project(AuPoint(dx, dy, 0)))) continue;
+		{
+			QWriteLocker lock(&m_CityLock);
+			if(m_City.controllingEmpire != before.controllingEmpire || !m_City.garrisonTroops) break;
+			const auto live = std::find_if(m_City.developments.cbegin(), m_City.developments.cend(),
+				[&development](const AuLegacyCity::Development& value) { return value.id == development.id
+					&& value.location == development.location && value.completedLevels && !value.demolished; });
+			const auto liveFlag = std::find_if(m_City.flags.cbegin(), m_City.flags.cend(),
+				[&development](const AuLegacyCity::Flag& value) { return value.location == development.location; });
+			if(live == m_City.developments.cend() || liveFlag == m_City.flags.cend()
+				|| liveFlag->empire != m_City.controllingEmpire || m_City.citizenSpecies != before.citizenSpecies) continue;
+			--m_City.garrisonTroops; ++m_CityRevision;
+		}
+		DaNpc* troop = new DaNpc(ROLE_Troop, *dna,
+			AuDNABase::CHROMATID(g_Au.Dice().Roll(1, 2, -1)), HANDEDNESS(g_Au.Dice().Roll(1, 2, -1)),
+			g_Au.Dice().RandomPersonName());
+		troop->ConnectSignals(); troop->Create(); troop->SetHomeWorld(world); troop->Stand();
+		const AuPoint spawn = world->GetSurfaceLocation(location, troop->GroundHeightAboveCG());
+		AuMatrix4x4 placement;
+		placement.Translate(spawn);
+		placement *= AuPoint(0, 0, 1).GetAlignmentTransform(-world->GravityDir(spawn));
+		placement.RotateZ(g_Au.Dice().Roll(1, 360, -1) * DEG2RAD);
+		troop->SetPosAndOrient(AuAtomPos(world->Id(), placement));
+		ether->AddAtom(troop);
+		troop->ResetHitPoints(); troop->ResetHunger(); troop->ResetStamina();
+		troop->SetEmpireId(before.controllingEmpire); troop->SetGarrisonBd(Id());
+		troop->InitTraining(); troop->SetGarrisonPosture(); troop->UpdateEnvironment();
+		EquipSpacecraftPersonnel(*troop);
+		InflictCitizenCrises(*troop);
+		troop->SetOrder(ORDER_Stay, world->Id(), spawn);
+		troop->SetInScene();
+		g_Au.AtomAdded(troop->Id()); troop->SetNormal(); troop->TickTock();
+		SetModified();
+	}
 }
 
 int DaLegacyCity::SpacecraftPersonnelAvailable(const DaVessel& ship, NPC_ROLE role, const DaPerson* loader) const
@@ -167,6 +251,18 @@ void DaLegacyCity::EquipSpacecraftPersonnel(DaNpc& npc)
 	lock.unlock(); SetModified();
 }
 
+void DaLegacyCity::InflictCitizenCrises(DaNpc& citizen) const
+{
+	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker()) return;
+	// AuSitPoison/Disease::InflictCitizen applies to new citizens emerging
+	// from the city. Equipment resupply alone does not create an exposure.
+	for(const auto& crisis : Snapshot().crises)
+		if(crisis.type == 1)
+			citizen.AddCondition(new AuConPoison(crisis.strength, crisis.quality, AuTime::Now()));
+		else if(crisis.type == 2)
+			citizen.AddCondition(new AuConDisease(crisis.strength, crisis.contagion, crisis.quality, AuTime::Now()));
+}
+
 int DaLegacyCity::BoardSpacecraftPersonnel(DaVessel& ship, NPC_ROLE role, int requested,
 	const DaPerson* loader, const DaSentient* commander)
 {
@@ -215,7 +311,11 @@ int DaLegacyCity::BoardSpacecraftPersonnel(DaVessel& ship, NPC_ROLE role, int re
 		default: break;
 		}
 		if(!npc) break;
-		if(role != ROLE_Troop || boarded < reservedTroops) EquipSpacecraftPersonnel(*npc);
+		if(role != ROLE_Troop || boarded < reservedTroops)
+		{
+			EquipSpacecraftPersonnel(*npc);
+			InflictCitizenCrises(*npc);
+		}
 		if(commander && (role == ROLE_Crew || role == ROLE_Troop)) npc->SetPosture(commander->Posture());
 		if(role == ROLE_Officer)
 		{ world->SetCapt(npc->Id(), npc->Name()); world->SetModified(NOTIFY_Database); }
@@ -280,6 +380,7 @@ int DaLegacyCity::DebarkSpacecraftPassengers(DaVessel& ship, int requested, quin
 			if(!m_City.population || m_City.citizenSpecies.isEmpty()) m_City.citizenSpecies = species.Key();
 			++m_City.population; ++m_CityRevision;
 		}
+		SpreadDisease(passenger, ship.Name());
 		ship.RemoveBerthOccupant(passenger->Id());
 		ship.KillColonist();
 		fare += fee;

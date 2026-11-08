@@ -595,6 +595,7 @@ public:
 	QByteArray							m_LegacyAccounting;		// Optional separate 2016 citizen/treasury ledgers, report version 16.
 	qint8								m_LegacyMoraleChange = 0;	// Actual old-city cycle result; modern morale rules differ.
 	qint32								m_LegacyPopulationAfter = 0;
+	quint32 m_LegacyCrisisDeaths = 0; // Version 19: deaths before meals, separately from starvation/suffocation.
 	// Version 18 snapshots the original report calculations independently of
 	// the city cycle. Cantina reporting uses the actual cycle modifier rather
 	// than the original report's erroneous extra liquor bonus.

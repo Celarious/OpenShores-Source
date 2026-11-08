@@ -358,6 +358,8 @@ void DaLegacyCity::AcceptSpacecraftCargo(DaPerson& person, const AuCommAccept& m
 		g_Au.BidRevoked(Id(), message.ChannelName());
 		person.Stats().ItemSoldAsCargo(*message.Item());
 		person.IncreaseSkill(AuSkill::Trade, 1);
+		std::unique_ptr<AuItem> cargo(message.Item()->Clone()); cargo->SetCount(quint32(delivered));
+		person.CargoDelivered(Id(), *cargo);
 	}
 	const DaSector* sector = FindParentSector();
 	if(!sector) return;

@@ -8,6 +8,8 @@
 #include <QHash>
 #include <QMap>
 #include <QScopedPointer>
+#include <QSharedPointer>
+#include <QSet>
 
 class AuCityReport;
 class AuCondition;
@@ -27,6 +29,10 @@ class DaSentient;
 class AuCommAcceptRepair;
 class AuCommAccept;
 class AuSysId;
+class AuSensorBlipList;
+class AuJob;
+class DaSolarSystem;
+class QStringList;
 class AuLegacyCityCatalogue;
 namespace AuLegacyCity { struct CitizenConstructionFacts; struct ProductionState; }
 namespace AuLegacyCity { struct PopulationRuntimeFacts; struct PopulationRuntimeReport; struct AccountingState; struct EmploymentTotals; }
@@ -80,6 +86,36 @@ public:
 	// Surface-map query: ordinary buildings, then roads, then enclosing domes.
 	bool DevelopmentAt(const AuGlobeLL& location, AuLegacyCity::Development& result) const;
 	void RegisterEmpireVisit(quint32 empireId, qint64 now);
+	bool IsOccupied() const;
+	void InfluenceFlagTakeover(const DaCreature& actor);
+	void TockPolitics(qint64 now);
+	void SurrenderFriendlyFlags(qint64 now);
+	void Surrender(quint32 oldEmpire, quint32 newEmpire);
+	void ApplyPoliticalControlChange(quint32 oldEmpire, quint32 newEmpire, bool surrenderTroops);
+	bool GarrisonTroop(DaNpc& troop, bool autoReturn = false);
+	void FinishGarrisonTroop(const AuId& troop);
+	bool RxCivicChat(const AuCommPacket* message);
+	void AddBounty(const QString& reason, double amount);
+	void AddBounty(const AuId& posterId, const QString& posterName, const QString& reason,
+		double reward, int why) override;
+	double Bounty() const;
+	void BountyReasons(QStringList& reasons) const;
+	double TakeBounty();
+	double PayCivicReward(double requested, bool government);
+	void PostCivicJobs(const AuCityReport& report);
+	void PostCityBountyJob();
+	void ReportEnemySensorContact(const DaSolarSystem* system, const AuSensorBlipList& blips, float sensorRange);
+	float SensorRange() const override;
+	void SensorScan(AuSensorBlipList& blips, const AuPoint& scannerLoc, const AuId& scannerId, quint32 scannerEmpire,
+		int scannerDomain, const AuId& scannerWorld, float scannerSensorRange, float scannerWeaponRange,
+		int scanContent, const AuId& lockedBlip,
+		unordered_map<quint32, POLITICAL_STANCE, AuEmpireIdHash>& stanceCache) const override;
+	void LogEvent(quint8 eventType, const QString& text = QString());
+	void LogReceivedCommunication(const AuCommPacket* message);
+	void TockLifecycle(qint64 previous, qint64 now);
+	void SpreadDisease(const DaCreature* carrier, const QString& name);
+	void AddCrisis(quint8 type, quint8 strength, quint8 contagion, quint8 quality,
+		const QByteArray& species = QByteArray());
 	// Newly authored shared display envelope; no 2016 database binary import.
 	bool ReportHistory(AuCityReportHistory& result) const;
 	// Diagnostic snapshot only: no population cycle, stock consumption or history mutation.
@@ -272,6 +308,17 @@ private:
 	quint64 m_CityRevision = 1;
 	QHash<quint32, qint64> m_ConstructionLaborTimes;
 	QHash<AuId, qint64> m_StatusRequestTimes;
+	QHash<AuId, QSharedPointer<AuJob>> m_EnemyJobs;
+	QSet<AuId> m_ReturningGarrisonTroops;
+	struct PendingFlagCapture
+	{
+		quint32 newEmpire = 0, oldEmpire = 0;
+		AuGlobeLLF location;
+		bool insurgent = false;
+	};
+	QVector<PendingFlagCapture> m_PendingFlagCaptures;
+	qint64 m_LastFlagDistress = 0, m_LastDiplomaticMessage = 0, m_LastAutonomousFlagInfluence = 0;
+	void CaptureFlag(const PendingFlagCapture& capture, qint64 now);
 	bool m_TradeMonitored = false;
 	AuTime m_LastEconomyTock;
 	QHash<QByteArray, QPair<quint32, qint64>> m_ShopPrices;
@@ -285,6 +332,11 @@ private:
 	bool OperateConstruction(DaPerson* person, quint32 developmentId, bool fetch, bool labor, QString& error, bool* accepted = nullptr);
 	void TockEconomy(qint64 previous, qint64 now);
 	void TockHospitalPatients();
+	void TockGarrison();
+	void TockSensors();
+	void InflictCitizenCrises(DaNpc& citizen) const;
+	void PublishDevelopmentRemoval(const AuLegacyCity::Development& removed);
+	static void RefreshDevelopmentDecks(AuLegacyCity::Development& development);
 	void ImportCityGoods(const QVector<AuLegacyCity::CityConnection>& connections);
 	bool ReplaceFinishedDevelopment(const AuLegacyCity::Development& development,
 		quint8 expectedProcess, quint8 expectedLevels, QString& error);

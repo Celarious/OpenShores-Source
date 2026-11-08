@@ -912,6 +912,8 @@ unsigned int DaNpc::IsTocker() const
 	if(!IsNormal())
 		return ms;
 	// Here we know ms is not zero.
+	if(g_Au.IsLegacyGeneration() && IsNpcTroop() && ms > d_MSecPerSec && !IsInsideSpacecraft()
+		&& (InIndustry() == IID_TownSquare || InIndustry() == IID_BaseFlag)) ms = d_MSecPerSec;
 
 	if(IsBodyDyingOrDead())
 		return ms;
@@ -931,6 +933,34 @@ void DaNpc::Tock(const AuTime& last, const AuTime& now, const AuScripts& scripts
 		return;	// This atom (not body) is dead or awaiting transfer.
 	if(IsBodyDyingOrDead())
 		return;
+	if(g_Au.IsLegacyGeneration() && IsNpcTroop() && last.ElapsedSecTicks(now) > 0 && !IsInsideSpacecraft())
+	{
+		const auto* query = LockEnvironmentQuery();
+		const AuId cityId = query->LegacyCityId();
+		UnlockEnvironmentQuery();
+		auto* world = FindParentPlanetInEnv();
+		auto* city = world ? dynamic_cast<DaLegacyCity*>(world->FindSubatomId(cityId)) : nullptr;
+		if(city) city->InfluenceFlagTakeover(*this);
+	}
+	if(g_Au.IsLegacyGeneration() && IsNpcTroop() && !StoryInstance() && !last.IsNull()
+		&& last.ElapsedMinTicks(now) > 0 && quint32(last.MSecsSinceEpoch() / d_MSecPerMin) % 3 == Id().GetID() % 3
+		&& !HasCompanion() && !IsInAnyScene() && !IsMounted() && AssignedShip().IsNull() && !IsInsideSpacecraft())
+	{
+		// DaCitTroop::Tock 0x261ae0 returns surplus unseen defenders to
+		// their abstract city garrison every third minute. The city retains
+		// the final physical defender and locked station occupants.
+		const auto* query = LockEnvironmentQuery();
+		const AuId cityId = query->LegacyCityId();
+		UnlockEnvironmentQuery();
+		auto* world = FindParentPlanetInEnv();
+		auto* city = world && cityId == GarrisonBd() ? dynamic_cast<DaLegacyCity*>(world->FindSubatomId(cityId)) : nullptr;
+		if(city && city->GarrisonTroop(*this, true))
+		{
+			ExitConsole(); ReleaseBerth(); Kill();
+			city->FinishGarrisonTroop(Id());
+			return;
+		}
+	}
 
 	// Check for officer homesickness.
 	// Home world id 1 is set when an agent spawns an officer.
@@ -1024,7 +1054,10 @@ void DaNpc::Tock(const AuTime& last, const AuTime& now, const AuScripts& scripts
 		tockTrans.Add(DtTockTransaction(__FILE__, __LINE__, now));
 	}
 
-	if(g_Au.m_EnableTroopResupply && IsAtBd() && last.IsNewPeriod(now, d_MSecPerHr/3, Id().GetID()))
+	const auto* resupplyEnvironment = g_Au.IsLegacyGeneration() ? LockEnvironmentQuery() : nullptr;
+	const bool atLegacyCity = resupplyEnvironment && !resupplyEnvironment->LegacyCityId().IsNull();
+	if(resupplyEnvironment) UnlockEnvironmentQuery();
+	if(g_Au.m_EnableTroopResupply && (IsAtBd() || atLegacyCity) && last.IsNewPeriod(now, d_MSecPerHr/3, Id().GetID()))
 	{
 		UpgradeEquipmentFromBd();
 		tockTrans.Add(DtTockTransaction(__FILE__, __LINE__, now));
@@ -1072,7 +1105,17 @@ void DaNpc::TakeOrder(const AuCommPacket& msg, CITIZEN_ORDER order, const AuId& 
 
 	// Garrison order requires some checking to see if it can be done.
 	bool acceptOrder = true;
-	if(order == ORDER_Garrison)
+	bool legacyGroundGarrison = false;
+	if(order == ORDER_Garrison && g_Au.IsLegacyGeneration() && IsNpcTroop() && !IsInsideSpacecraft())
+	{
+		const auto* query = LockEnvironmentQuery();
+		const AuId cityId = query->LegacyCityId();
+		UnlockEnvironmentQuery();
+		auto* world = FindParentPlanetInEnv();
+		const auto* city = world ? dynamic_cast<const DaLegacyCity*>(world->FindSubatomId(cityId)) : nullptr;
+		legacyGroundGarrison = city && city->EmpireId() == EmpireId();
+	}
+	if(order == ORDER_Garrison && !legacyGroundGarrison)
 	{
 		if(!IsInsideSpacecraft())
 			return;
@@ -3719,6 +3762,30 @@ void DaNpc::DoGarrison()
 {
 	if(StoryInstance())
 		return;
+	if(g_Au.IsLegacyGeneration() && IsNpcTroop() && !IsInsideSpacecraft())
+	{
+		const auto* query = LockEnvironmentQuery();
+		const AuId cityId = query->LegacyCityId();
+		UnlockEnvironmentQuery();
+		auto* world = FindParentPlanetInEnv();
+		auto* city = world ? dynamic_cast<DaLegacyCity*>(world->FindSubatomId(cityId)) : nullptr;
+		if(city && city->EmpireId() == EmpireId())
+		{
+			SetGarrisonBd(city->Id());
+			if(city->GarrisonTroop(*this))
+			{
+				ExitConsole();
+				ReleaseBerth();
+				Kill();
+				city->FinishGarrisonTroop(Id());
+				return;
+			}
+			// The final defender remains at its flag instead of entering the pool.
+			ReleaseBerth();
+			StayIdle();
+			return;
+		}
+	}
 	// Get the name of the ship I am deploying from, if possible.
 	if(!AssignedShip().IsNull() && !IsInsideSpacecraft() && !BdId().IsNull())
 	{

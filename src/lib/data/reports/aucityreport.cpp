@@ -232,8 +232,8 @@ bool ValidLegacyDetails(const AuCityReport& report)
 	if(population.population < 0 || population.unemployed < 0 || population.births < 0 || population.births > 2
 		|| population.suffocated < 0 || population.starved < 0 || population.immigrants < 0 || population.emigrants < 0
 		|| population.hospitalShortage < 0 || population.hospitalShortage > 2
-		|| qint64(population.suffocated) + population.starved > report.m_PopOrig
-		|| qint64(population.population) != qint64(report.m_PopOrig) - population.suffocated - population.starved
+		|| qint64(population.suffocated) + population.starved + report.m_LegacyCrisisDeaths > report.m_PopOrig
+		|| qint64(population.population) != qint64(report.m_PopOrig) - report.m_LegacyCrisisDeaths - population.suffocated - population.starved
 			+ population.births + population.immigrants - population.emigrants
 		|| population.moraleFactors.size() > std::size_t(AuLegacyCity::MoraleFactorType::Count)
 		|| report.m_LegacyIndustryTechnology.size() > 256) return false;
@@ -244,7 +244,7 @@ bool ValidLegacyDetails(const AuCityReport& report)
 			|| factor.modifier == std::numeric_limits<int>::min() || factor.detail < 0) return false;
 		morale += factor.modifier;
 	}
-	if(morale != population.moraleChange || population.satisfaction != (report.m_PopOrig
+	if(morale != population.moraleChange || population.satisfaction != (report.m_PopOrig > report.m_LegacyCrisisDeaths
 		? std::max(qint64(-20), std::min(qint64(20), qint64(report.m_SatOrig) + morale)) : 1)) return false;
 	for(auto industry = report.m_LegacyIndustryTechnology.cbegin(); industry != report.m_LegacyIndustryTechnology.cend(); ++industry)
 		if(industry.value().first > industry.value().second) return false;
@@ -339,6 +339,9 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 	const AuLegacyCity::PopulationCycleResult result = LegacyReportPopulation(report);
 	int population = int(report.m_PopOrig);
 	{
+		if(report.m_LegacyCrisisDeaths)
+			html += QObject::tr("%1 citizens died from food poisoning or epidemic.<br>").arg(report.m_LegacyCrisisDeaths);
+		population = std::max(0, population - int(report.m_LegacyCrisisDeaths));
 		if(result.suffocated)
 			html += result.suffocated == 1 ? QObject::tr("One citizen suffocated to death.<br>")
 				: QObject::tr("%1 citizens suffocated to death.<br>").arg(result.suffocated);
@@ -789,6 +792,7 @@ AuCityReport::AuCityReport(const AuCityReport& c) : m_Bank(c.m_Bank), m_Industri
 	m_LegacyAccounting = c.m_LegacyAccounting;
 	m_LegacyMoraleChange = c.m_LegacyMoraleChange;
 	m_LegacyPopulationAfter = c.m_LegacyPopulationAfter;
+	m_LegacyCrisisDeaths = c.m_LegacyCrisisDeaths;
 	m_AirConsumed = c.m_AirConsumed;
 	m_AirSupply = c.m_AirSupply;
 	m_AteEnoughFood = c.m_AteEnoughFood;
@@ -889,6 +893,7 @@ const AuCityReport& AuCityReport::operator=(const AuCityReport& c)
 	m_LegacyAccounting = c.m_LegacyAccounting;
 	m_LegacyMoraleChange = c.m_LegacyMoraleChange;
 	m_LegacyPopulationAfter = c.m_LegacyPopulationAfter;
+	m_LegacyCrisisDeaths = c.m_LegacyCrisisDeaths;
 	m_CaptName = c.m_CaptName;
 	m_Citizens = c.m_Citizens;
 	m_CityType = c.m_CityType;
@@ -1017,7 +1022,7 @@ void AuCityReport::operator>>(QDataStream& out) const
 		bits |= 0x4000;
 	out << bits;
 
-	const quint8 version = m_HasLegacyDetails ? 18 : extendedLegacyFlags ? 17 : legacyAccounts ? 16 : 15;
+	const quint8 version = m_HasLegacyDetails ? 19 : extendedLegacyFlags ? 17 : legacyAccounts ? 16 : 15;
 	out << version;
 
 	out << m_AirConsumed;
@@ -1140,6 +1145,7 @@ void AuCityReport::operator>>(QDataStream& out) const
 		out << quint16(m_LegacyIndustryTechnology.size());
 		for(auto industry = m_LegacyIndustryTechnology.cbegin(); industry != m_LegacyIndustryTechnology.cend(); ++industry)
 			out << quint8(industry.key()) << industry.value().first << industry.value().second;
+		out << m_LegacyCrisisDeaths;
 	}
 }
 
@@ -1154,6 +1160,7 @@ void AuCityReport::operator<<(QDataStream& in)
 	m_LegacyAccounting.clear();
 	m_LegacyMoraleChange = 0;
 	m_LegacyPopulationAfter = 0;
+	m_LegacyCrisisDeaths = 0;
 	quint16 bits;
 	in >> bits;
 	m_AteEnoughFood = (bits & 0x0001);
@@ -1174,7 +1181,7 @@ void AuCityReport::operator<<(QDataStream& in)
 	quint8 version = 0;
 	if(bits & 0x8000)
 		in >> version;
-	if(version > 18)
+	if(version > 19)
 	{ in.setStatus(QDataStream::ReadCorruptData); return; }
 
 	in >> m_AirConsumed;
@@ -1611,6 +1618,7 @@ void AuCityReport::operator<<(QDataStream& in)
 			{ in.setStatus(QDataStream::ReadCorruptData); return; }
 			m_LegacyIndustryTechnology.insert(INDUSTRYID(industry), qMakePair(minimum, maximum));
 		}
+		if(version >= 19) in >> m_LegacyCrisisDeaths;
 		if(in.status() == QDataStream::Ok && !ValidLegacyDetails(*this))
 			in.setStatus(QDataStream::ReadCorruptData);
 		m_HasLegacyDetails = in.status() == QDataStream::Ok;
@@ -5566,7 +5574,7 @@ quint64 AuCityReport::MemoryUsage() const
 	mem += sizeof(m_AteEnoughFood);
 	mem += sizeof(m_Bank);
 	mem += sizeof(m_LegacyAccounting) + m_LegacyAccounting.capacity();
-	mem += sizeof(m_LegacyMoraleChange) + sizeof(m_LegacyPopulationAfter);
+	mem += sizeof(m_LegacyMoraleChange) + sizeof(m_LegacyPopulationAfter) + sizeof(m_LegacyCrisisDeaths);
 	mem += sizeof(m_HasLegacyDetails) + sizeof(m_LegacyReportedPopulation)
 		+ m_LegacyReportedPopulation.moraleFactors.capacity() * sizeof(AuLegacyCity::MoraleFactor);
 	mem += sizeof(m_LegacyOccupied) + sizeof(m_LegacyAllegianceEmpire) + sizeof(m_LegacyLoyalPopulation);

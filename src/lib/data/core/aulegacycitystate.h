@@ -9,7 +9,7 @@
 
 namespace AuLegacyCity
 {
-constexpr quint8 StateVersion = 4;
+constexpr quint8 StateVersion = 5;
 inline bool SupportedStateVersion(quint32 version) { return version >= 1 && version <= StateVersion; }
 constexpr int MaximumStateBytes = 8 * 1024 * 1024;
 constexpr int MaximumDevelopments = 32768;
@@ -71,6 +71,29 @@ struct Flag
 	qint64 capturedAt = 0;
 };
 
+struct Bounty
+{
+	QString reason;
+	double reward = 0;
+	qint64 createdAt = 0;
+};
+
+struct Crisis
+{
+	quint8 type = 0; // 1 poison, 2 disease, 3 rats: original AuSituation types.
+	quint8 strength = 0, contagion = 0, quality = 1;
+	qint64 createdAt = 0;
+	quint32 treatedUnits = 0;
+	QByteArray species;
+};
+
+struct CityEvent
+{
+	quint8 type = 0; // AuEventLogEntry::TYPE.
+	QString text;
+	qint64 when = 0;
+};
+
 struct State
 {
 	QString name;
@@ -87,6 +110,9 @@ struct State
 	QByteArray citizenSpecies;
 	QVector<Development> developments;
 	QVector<Flag> flags;
+	QVector<Bounty> bounties;
+	QVector<Crisis> crises;
+	QVector<CityEvent> pendingEvents;
 	// Versioned opaque groups preserve ownership of future city-wide systems
 	// without substituting modern DaBd economics during infrastructure recovery.
 	QByteArray inventory;

@@ -13,6 +13,7 @@
 #include "auterraininfo.h"
 #include "daatomlist.h"
 #include "dabd.h"
+#include "dalegacycity.h"
 #include "daeffect.h"
 #include "dagalaxy.h"
 #include "daitem.h"
@@ -323,6 +324,12 @@ void DaWorld::ReportEnemySensorContact(const DaSolarSystem* system, quint32 empi
 	ListNormalSubatoms(subs);
 	for(DaAtomList::const_iterator it = subs.cbegin(); it != subs.cend(); it++)
 	{
+		if(g_Au.IsLegacyGeneration())
+		{
+			auto* city = dynamic_cast<DaLegacyCity*>(*it);
+			if(city && city->EmpireId() == empireId) city->ReportEnemySensorContact(system, sensorBlips, sensorRange);
+			continue;
+		}
 		DaBd* city = dynamic_cast<DaBd*>(*it);
 		if(!city)
 			continue;
