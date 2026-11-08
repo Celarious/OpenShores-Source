@@ -399,15 +399,23 @@ bool PrepareSpacecraftProduction(DaLegacyCity& city, DaWorldLL& world, const Sta
 						: !stations.isEmpty() && (newShips < 4 || (newShips == 4 && replacement))));
 					if(capacity)
 					{
+						Data::Candidate candidate;
+						if(!buyer && ((attempt.station && stations.size() == maximumStations) || (!attempt.station && newShips == 4)))
+							candidate.replaced = replacement;
 						AuPoint origin = buyer || attempt.station ? city.Location() : stations.first()->Location();
-						if(!buyer && attempt.station && !stations.isEmpty()) origin = -stations.first()->Location();
+						if(!buyer && attempt.station)
+							for(const DaVessel* station : stations)
+								if(station != candidate.replaced)
+								{
+									// 2016 excludes the replaced station before choosing
+									// the opposite-side reference. If none remain, use the city.
+									origin = -station->Location();
+									break;
+								}
 						const double altitude = world.AtmosphereRadius() + ParkAltAboveAtm();
 						const AuPoint location = world.FindOrbitSpawnLoc(origin, attempt.ship->Id(), report.RoughHullRadius(), altitude, true);
 						if(!location.IsZero() && !location.IsNaN())
 						{
-							Data::Candidate candidate;
-							if(!buyer && ((attempt.station && stations.size() == maximumStations) || (!attempt.station && newShips == 4)))
-								candidate.replaced = replacement;
 							candidate.placement.Translate(location);
 							candidate.placement *= AuPoint(0, 0, 1).GetAlignmentTransform(-world.GravityDir(location));
 							attempt.candidates.append(candidate);
