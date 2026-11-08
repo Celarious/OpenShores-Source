@@ -538,7 +538,7 @@ void DaLegacyCity::ServiceVehicle(DaVehicle& vehicle, DaPerson& person)
 	}
 	else if(needsRepair && !repairRestricted)
 	{
-		AuCommThought message(tr("Slab repairs require one mechanical part and one metal, plus a torque wrench and hammer in the city's supplies."),
+		AuCommThought message(tr("Failed to repair! Slab repairs require one mechanical part and one metal, plus a torque wrench and hammer in the city's supplies."),
 			person.Id(), person.Name());
 		g_Au.SendAtomChat(message);
 	}

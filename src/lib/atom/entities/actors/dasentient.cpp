@@ -13127,6 +13127,20 @@ void DaSentient::OperateFireControlConsole(DaVessel* ship)
 
 	// Insure the weapon bay is ready to fire again. It may still be waiting to fire since it takes a couple of seconds to rearm.
 	// No need to do lots of AI work while waiting.
+	const DaSc* legacyShip = dynamic_cast<const DaSc*>(ship);
+	if(legacyShip && legacyShip->IsLegacyDebug() && console->SystemWhich() == StationId())
+	{
+		QList<quint16> bays;
+		ship->WeaponBayIds(bays);
+		if(!bays.isEmpty() && !bays.contains(console->SystemWhich()))
+		{
+			// A saved occupant may still have the old station-part ID as its
+			// bay ID. Remanning resolves the authored control mapping again.
+			UnlockConsole();
+			ExitConsole();
+			return;
+		}
+	}
 	if(!ship->WeaponBayCanFire(console->SystemWhich()))
 	{
 		UnlockConsole();

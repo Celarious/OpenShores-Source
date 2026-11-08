@@ -2725,7 +2725,9 @@ bool DaSc::ClosestUnoccupiedCrewStation(const AuPoint& toLoc, quint16& stationId
 
 			stationId = pi.key();
 			station = (*pi)->OperatorStation(gravityN);
-			which = pi.key();
+			// Use the same Legacy control mapping as CanEnterConsole; the
+			// generated console part ID is not the controlled system ID.
+			which = IsLegacyDebug() ? quint16(LegacyStationField(**pi, QStringLiteral("control"), pi.key())) : pi.key();
 		}
 	}
 	UnlockDesign();
