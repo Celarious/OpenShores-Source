@@ -1815,8 +1815,7 @@ bool DaLegacyCity::WriteReportHistory(const AuCityReportHistory& history, QByteA
 	writer << history;
 	if(writer.status() != QDataStream::Ok || raw.size() > 128 * 1024 * 1024)
 	{ error = QStringLiteral("Legacy city report history exceeds its expanded limit."); return false; }
-	// Keep existing small histories byte-identical. Large flag arrays repeat
-	// across 48 hours of reports, so compress rather than shorten retention.
+	// Large flag arrays can still require compression within three reports.
 	QByteArray stored = raw.size() <= AuLegacyCity::MaximumStateBytes / 2
 		? raw : QByteArray("LCRH", 4) + qCompress(raw);
 	if(stored.size() > AuLegacyCity::MaximumStateBytes / 2)
@@ -1847,8 +1846,8 @@ bool DaLegacyCity::ReadReportHistory(const QByteArray& bytes, AuCityReportHistor
 	if(countReader.status() != QDataStream::Ok || !count || count > 240) return false;
 	QDataStream reader(raw); reader.setVersion(QDataStream::Qt_4_1);
 	AuCityReportHistory candidate; reader >> candidate;
-	// The shared display history applies its normal retention and inventory
-	// minimization. Storage retains the full history in raw or compressed form.
+	// Accept older, longer histories; the shared reader retains only the last
+	// three reports, which the next cycle writes back to storage.
 	if(reader.status() != QDataStream::Ok || !reader.atEnd() || candidate.IsEmpty() || candidate.Count() > count) return false;
 	result = candidate;
 	return true;
@@ -4206,6 +4205,49 @@ bool DaLegacyCity::Route(quint32 development, const AuPoint& from, const AuPoint
 			if(!building.paths.Route(transform.UnProject(from), transform.UnProject(to), points, useGroundLevelDoors)) return false;
 			for(auto& point : points) point.location = transform.Project(point.location);
 			return true;
+		}
+	return false;
+}
+
+bool DaLegacyCity::DevelopmentAt(const AuGlobeLL& location, AuLegacyCity::Development& result) const
+{
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	if(!world || !catalogue || !g_Au.IsLegacyGeneration() || IsDead()) return false;
+	const auto state = Snapshot();
+	// DaCity::DevelopmentContainingBuildingsLocked (2016 0x28d700) gives
+	// buildings priority over roads, with biodomes as the final fallback.
+	for(int pass = 0; pass < 3; ++pass)
+		for(const auto& development : state.developments)
+		{
+			const int category = development.industryId == 129 ? 2 : development.industryId == 2 ? 1 : 0;
+			if(category != pass || development.demolished || development.IsLandscaper()) continue;
+			AuMatrix4x4 placement;
+			world->BuildingConstructionTransform(world->LocOfLL(development.location, development.altitudeMSL),
+				development.facingRadians, nullptr, AuPoint(), placement);
+			bool contains = false;
+			if(development.industryId == 2)
+			{
+				const double halfLength = development.roadLengthMeters * FeetPerMeter() / 2;
+				AuGlobeLLF start, end;
+				if(world->LLOfLoc(start, placement.Project(AuPoint(0, -halfLength, 0)))
+					&& world->LLOfLoc(end, placement.Project(AuPoint(0, halfLength, 0))))
+					contains = RoadContains(*world, development, start, end, location.ToLLF(), 0);
+			}
+			else
+			{
+				const auto* recipe = ConstructionRecipe(development.industryId, development.constructionProcessId);
+				if(!recipe) continue;
+				const double radius = (development.industryId == 129 ? development.biodomeRadiusMeters : recipe->buildRadius) * FeetPerMeter();
+				const AuPoint point = world->LocOfLL(location, development.altitudeMSL);
+				// The original building-map index rejects distant sites before
+				// Contains tests the tangent-plane square. Reject the far side too.
+				if(point.Distance2(placement.Translation()) > 4 * radius * radius) continue;
+				const AuPoint local = placement.UnProject(point);
+				contains = development.industryId == 129 ? std::hypot(local.x, local.y) <= radius
+					: std::abs(local.x) <= radius && std::abs(local.y) <= radius;
+			}
+			if(contains) { result = development; return true; }
 		}
 	return false;
 }

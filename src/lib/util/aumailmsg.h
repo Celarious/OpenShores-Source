@@ -23,7 +23,8 @@ class QTcpSocket;
 class AUUTIL_DLL AuMailMsg
 {
 public:
-	// NOTE: All message types are deleted by the mail server, in DtMailServer::DeleteOldMail. Refer to ListAutoDeletedTypes for decay schedule.
+	// City reports retain the latest three per city/recipient on the server.
+	// Other message types expire according to ListAutoDeletedTypes.
 	enum MSGTYPE
 	{
 		MSG_Mail = 0,
@@ -137,17 +138,8 @@ public:
 		// Cadets send their reports every hour and they don't contain important information.
 		deleteEveryHour.append(MSG_OfficerReady);
 
-		// Cities and officers send a lot of reports.
-		deleteEvery2Days.append(MSG_CityDistressReport);
-		deleteEvery2Days.append(MSG_CityIntelligenceReport);
-		deleteEvery2Days.append(MSG_CityOccupationReport);
-		deleteEvery2Days.append(MSG_CityStatusReport);
-		deleteEvery2Days.append(MSG_CityStatusReportInfo);
-		deleteEvery2Days.append(MSG_DormantDistressReport);
-		deleteEvery2Days.append(MSG_DormantIntelligenceReport);
-		deleteEvery2Days.append(MSG_DormantOccupationReport);
-		deleteEvery2Days.append(MSG_DormantStatusReport);
-		deleteEvery2Days.append(MSG_DormantStatusReportInfo);
+		// City reports use count-based retention in TrimCityReports instead.
+		// Officers send a lot of reports.
 		deleteEvery2Days.append(MSG_OfficerContact);
 		deleteEvery2Days.append(MSG_ShipLog);
 		deleteEvery2Days.append(MSG_ShipLogAlert);
@@ -167,17 +159,22 @@ public:
 		deleteEveryMonth.append(MSG_OfficerDeath);
 		deleteEveryMonth.append(MSG_ShipLogFinal);
 
-		// City decay takes a long time so we keep those around for a while afterwards.
 		// Government messages are kept for two months due to the announcement of loss of office, which happens after one month.
-		deleteEvery2Months.append(MSG_CityFinalDecayReport);
 		deleteEvery2Months.append(MSG_Government);
 
-		// Every message type must be accounted for. No mail messages get to live forever.
+		// Every message type must have either count-based or age-based retention.
+		int cityReportTypes = 0;
+		AuMailMsg message;
+		for(int type = 0; type < MSG_Types; ++type)
+		{
+			message.m_msgType = quint8(type);
+			if(message.HasHierarchyHeader()) ++cityReportTypes;
+		}
 		Q_ASSERT(deleteEveryHour.count() +
 				deleteEvery2Days.count() +
 				deleteEveryWeek.count() +
 				deleteEveryMonth.count() +
-				deleteEvery2Months.count() == MSG_Types);
+				deleteEvery2Months.count() + cityReportTypes == MSG_Types);
 	}
 
 	// Returns true if this message is important enough to alert the player when it arrives.
@@ -209,7 +206,8 @@ public:
 		return false;
 	}
 
-	// Returns true if this message is ready to be automatically deleted from the client, based on client mail settings.
+	// City reports use count-based retention; their two legacy arguments remain
+	// for mail protocol compatibility. Other types follow the client settings.
 	bool IsReadyToAutoDelete(bool doCityReports, int cityOldAge, bool doFleetReports, int fleetOldAge, bool doOfficerReports,
 			int officerOldAge) const;
 
@@ -337,6 +335,9 @@ public:
 	void Rx(QDataStream& in);
 
 	void Store(QSqlDatabase& db) const;
+	// Physically prune city report mail, keeping three per city and recipient.
+	// Null ids apply the limit to all cities/recipients (server maintenance).
+	static void TrimCityReports(QSqlDatabase& db, const AuId& cityId = AuId(), const AuId& toId = AuId());
 
 	inline MSGTYPE Type() const
 	{

@@ -22,8 +22,6 @@ private:
 	QTimer*								m_timer;				// UpdateContents timer
 
 	// Widgets
-	QCheckBox*							citycb;
-	QSpinBox*							cityhr;
 	QComboBox*							ckmail;
 	QCheckBox*							fleetcb;
 	QSpinBox*							fleethr;

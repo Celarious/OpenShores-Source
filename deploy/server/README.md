@@ -33,6 +33,16 @@ The image build uses a unique temporary context under `build/server/` and remove
 
 ## Local development
 
+`environments/local.ini` accepts `mailReports=false` (the default) or
+`mailReports=true`. When enabled, each periodic city report is mailed to the
+empire members whose authority covers that city, using the existing chain of
+command rules. The scene master passes the option to managers and workers.
+City histories retain three reports; server mail retains three report messages
+per city and recipient. Clients keep the newest ten downloaded city report mails
+per city and automatically delete older entries. Older saved histories shrink
+when the city next generates a report; existing mail is pruned during
+mail-server maintenance.
+
 Start one Debug scene worker:
 
 ```bash

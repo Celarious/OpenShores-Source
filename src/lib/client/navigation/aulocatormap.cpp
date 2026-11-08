@@ -11,6 +11,7 @@
 #include "auapp.h"
 #include "auclientglobal.h"
 #include "auframe.h"
+#include "aulegacycitycatalogue.h"
 #include "auterraininfo.h"
 #include "auview.h"
 #include "daatomlist.h"
@@ -760,6 +761,34 @@ void AuLocatorMapWidget::paintEvent(QPaintEvent* pe)
 							.arg(indName)
 							.arg(empName);
 					devColor = bd->MapColor();
+				}
+				else if(g_Au.IsLegacyGeneration())
+				{
+					DaAtomList cities;
+					llworld->FindLegacyCitiesRecursive(cities);
+					for(const DaAtom* atom : cities)
+					{
+						const auto* city = dynamic_cast<const DaLegacyCity*>(atom);
+						AuLegacyCity::Development development;
+						if(!city || !city->DevelopmentAt(mapLL, development)) continue;
+						const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+						const auto* industry = catalogue ? catalogue->Industry(AuLegacyCity::IndustryId(development.industryId)) : nullptr;
+						if(!industry) continue;
+						QString empireName;
+						const DgData& data = g_Au.LockDataForRead();
+						data.EmpireName(city->EmpireId(), empireName);
+						g_Au.UnlockData();
+						const QString industryName = development.industryId == 2
+							? (development.roadSlab ? tr("Road Slab") : tr("Road")) : industry->name;
+						devType = QString("%1, %2, %3").arg(city->Name()).arg(industryName).arg(empireName);
+						devColor = QColor(255, 255, 32);
+						if(development.industryId == 2) devColor = development.roadSlab ? QColor(0, 0, 0) : QColor(32, 32, 32);
+						else if(development.industryId == 111) devColor = QColor(32, 255, 32);
+						else if(development.industryId == 1) devColor = QColor(192, 32, 255);
+						else if(development.industryId == 10 || development.industryId == 11
+							|| development.industryId == 12 || development.industryId == 128) devColor = QColor(255, 128, 32);
+						break;
+					}
 				}
 			}
 		}

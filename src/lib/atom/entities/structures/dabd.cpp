@@ -11298,7 +11298,7 @@ void DaBd::CityCycle()
 	}
 	SetModified();
 
-	if(IsDormant() && system)
+	if((IsDormant() || g_Au.MailReports()) && system && !InArena() && !InDesignPreview())
 	{
 		const DaWorld* planet = FindParentPlanetInEnv();
 		if(planet)
@@ -11319,7 +11319,9 @@ void DaBd::CityCycle()
 				if(galaxy)
 				{
 					system->GetLocationRelativeToParent(galaxyLoc, galaxy);
-					QString reportText = report.ReportHtml(report, true);
+					m_BdLock.lockForRead();
+					QString reportText = report.ReportHtml(m_ReportHistory.Count() > 1 ? m_ReportHistory.NextToLast() : report, true);
+					m_BdLock.unlock();
 					g_Au.SendBulkMail(idPlayer, confirmNum, Id(), Name(), recipients, (AuMailMsg::MSGTYPE)report.m_MessageType,
 							report.Title(), reportText, system->Id(), system->Name(), planet->Id(), planet->Name(),
 							galaxy->Galaxy(), galaxyLoc);

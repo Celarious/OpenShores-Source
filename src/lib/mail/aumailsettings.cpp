@@ -36,19 +36,8 @@ AuMailSettings::AuMailSettings(QWidget* parent) : AuDialog(parent)
 				"</html>"));
 
 	//--City
-	citycb = new QCheckBox(tr("Automatically delete routine city reports."), this);
-	citycb->setCheckState(g_Au.MailCityReportAutoDelete() ? Qt::Checked : Qt::Unchecked);
-	citycb->setToolTip(tr("<html>This excludes the final decay messages of dying cities. "
-				"Those messages are not automatically deleted.</html>"));
-
-	QLabel* citylb = new QLabel(tr("Age to delete city reports, in hours. "
-				"Cities create a report about every 13 minutes."), this);
+	QLabel* citylb = new QLabel(tr("The newest 10 city report mails per city are kept locally. Older entries are deleted automatically."), this);
 	citylb->setWordWrap(true);
-
-	cityhr = new QSpinBox;
-	cityhr->setMinimum(1);
-	cityhr->setMaximum(100);
-	cityhr->setValue(g_Au.MailCityReportOldAge());
 
 	//--Fleet
 	fleetcb = new QCheckBox(tr("Automatically delete routine fleet contacts."), this);
@@ -91,10 +80,7 @@ AuMailSettings::AuMailSettings(QWidget* parent) : AuDialog(parent)
 	int row=0;
 	lay->addWidget(ckmail, row,0, 1,3);
 	row++;
-	lay->addWidget(citycb, row,0, 1,3);
-	row++;
-	lay->addWidget(citylb, row,1, 1,1);
-	lay->addWidget(cityhr, row,2, 1,1);
+	lay->addWidget(citylb, row,0, 1,3);
 	row++;
 	lay->addWidget(fleetcb, row,0, 1,3);
 	row++;
@@ -159,9 +145,6 @@ void AuMailSettings::RestoreDefaults()
 {
 	ckmail->setCurrentIndex(1);
 
-	citycb->setCheckState(Qt::Checked);
-	cityhr->setValue(4);
-
 	fleetcb->setCheckState(Qt::Checked);
 	fleethr->setValue(6);
 
@@ -171,8 +154,6 @@ void AuMailSettings::RestoreDefaults()
 
 void AuMailSettings::Accept()
 {
-	g_Au.SetMailCityReportAutoDelete(citycb->checkState() == Qt::Checked);
-	g_Au.SetMailCityReportOldAge(cityhr->value());
 	g_Au.SetMailFleetReportAutoDelete(fleetcb->checkState() == Qt::Checked);
 	g_Au.SetMailFleetReportOldAge(fleethr->value());
 	g_Au.SetMailNotificationMode(ckmail->currentIndex());

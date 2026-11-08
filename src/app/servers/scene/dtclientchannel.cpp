@@ -1351,8 +1351,12 @@ bool DtClientChannel::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 			players << block;
 			AuGameGenerationIdentity identity;
 			const bool generationMatches = block.status() == QDataStream::Ok && (block.atEnd() ? !g_Au.IsLegacyGeneration()
-				: AuReadGameGenerationIdentity(block, identity) && block.atEnd() && identity == g_Au.GenerationIdentity());
-			if(!generationMatches)
+				: AuReadGameGenerationIdentity(block, identity) && identity == g_Au.GenerationIdentity());
+			// The scene master owns this setting; managers pass it down to workers.
+			// Older parents omit it, which preserves the default of no routine mail.
+			bool mailReports = false;
+			if(generationMatches && !block.atEnd()) block >> mailReports;
+			if(!generationMatches || block.status() != QDataStream::Ok || !block.atEnd())
 			{
 				qCritical() << "Parent server game generation or catalogue manifest mismatch. Server stopped.";
 				QMetaObject::invokeMethod(auSceneServerApp, [](){ QCoreApplication::exit(1); }, Qt::QueuedConnection);
@@ -1360,6 +1364,7 @@ bool DtClientChannel::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 				return false;
 			}
 			m_ParentGenerationMatched = true;
+			g_Au.SetMailReports(mailReports);
 			emit PlayerOnlineStatus(players);
 		}
 		break;

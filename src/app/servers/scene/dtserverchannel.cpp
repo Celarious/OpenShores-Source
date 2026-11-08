@@ -2763,6 +2763,7 @@ void DtServerChannel::SendPlayerStatus(AuPlayerOnlineStatusVector players)
 	out << (quint8)P_Status;
 	players >> out;
 	AuWriteGameGenerationIdentity(out, g_Au.GenerationIdentity());
+	out << g_Au.MailReports();
 	SendPacket(ba);
 }
 

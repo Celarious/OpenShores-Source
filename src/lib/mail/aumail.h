@@ -130,6 +130,7 @@ public slots:
 
 protected slots:
 	void CachedMessageReceived(AuMailMsg msg);
+	void CachedMessageRemoved(quint32 messageId);
 	void LoginError();
 	void MailSettings();
 	void MessageRightClicked(const QModelIndex& idx);

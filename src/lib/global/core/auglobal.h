@@ -426,12 +426,15 @@ class AUGLOBAL_DLL AuGlobal
 {
 private:
 	std::atomic<AuGameGeneration> m_GameGeneration { AuGameGeneration::Modern };
+	std::atomic<bool> m_MailReports { false };
 	mutable QReadWriteLock m_GenerationIdentityLock;
 	AuGameGenerationIdentity m_GenerationIdentity;
 
 public:
 	AuGameGeneration Generation() const { return m_GameGeneration.load(); }
 	bool IsLegacyGeneration() const { return Generation() == AuGameGeneration::Legacy; }
+	bool MailReports() const { return m_MailReports.load(); }
+	void SetMailReports(bool enabled) { m_MailReports = enabled; }
 	// Set only before loading game data/atoms, or after clearing a disconnected client.
 	void SetGeneration(AuGameGeneration generation) { m_GameGeneration = generation; }
 	AuGameGenerationIdentity GenerationIdentity() const

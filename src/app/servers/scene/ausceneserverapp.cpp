@@ -173,6 +173,14 @@ AuSceneServerApp::AuSceneServerApp(int& argc, char** argv) : QCoreApplication(ar
 		}
 	}
 	QSettings settings(settingsFile, QSettings::IniFormat);
+	const QString mailReports = settings.value("Settings/mailReports", "false").toString().trimmed().toLower();
+	if(mailReports != "false" && mailReports != "true")
+	{
+		qCritical() << "Invalid Settings/mailReports in" << settingsFile
+			<< "- expected false or true. Server startup stopped.";
+		QTimer::singleShot(0, [this](){ exit(1); });
+		return;
+	}
 	m_HasRequestedGeneration = settings.contains("Settings/gameGeneration");
 	if(!AuParseGameGeneration(settings.value("Settings/gameGeneration", "modern").toString(), m_RequestedGeneration))
 	{
@@ -341,6 +349,9 @@ AuSceneServerApp::AuSceneServerApp(int& argc, char** argv) : QCoreApplication(ar
 			else
 				g_Au.Error("Chat server port not set. -cPORTNUMBER option needed.");
 		}
+
+		// All server roles have created gp_AuGlobal before applying this setting.
+		g_Au.SetMailReports(mailReports == "true");
 
 		// Server processes can use private service endpoints while advertising
 		// separate public endpoints to game clients.

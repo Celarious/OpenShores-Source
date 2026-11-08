@@ -77,6 +77,8 @@ public:
 	AuPoint FindSpacecraftLandingSite(const DaVessel& ship) const;
 	// A finished building establishes the settlement; flags and landscaping do not.
 	bool HasCompletedBuilding() const;
+	// Surface-map query: ordinary buildings, then roads, then enclosing domes.
+	bool DevelopmentAt(const AuGlobeLL& location, AuLegacyCity::Development& result) const;
 	void RegisterEmpireVisit(quint32 empireId, qint64 now);
 	// Newly authored shared display envelope; no 2016 database binary import.
 	bool ReportHistory(AuCityReportHistory& result) const;

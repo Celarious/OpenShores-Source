@@ -9,6 +9,7 @@
 #include "dtmailserver.h"
 #include <QDataStream>
 #include <QSqlDatabase>
+#include <QSqlError>
 #include <QSqlQuery>
 #include <QTcpSocket>
 #include <QVariant>
@@ -208,6 +209,33 @@ void AuMailMsg::Store(QSqlDatabase& db) const
 
 	if(!qa.exec())
 		qWarning() << "AuMailMsg::Store INSERT FAILED!" << m_id << m_idFrom << m_nameFrom << m_subject;
+	else if(HasHierarchyHeader())
+		TrimCityReports(db, m_idFrom, m_idTo);
+}
+
+void AuMailMsg::TrimCityReports(QSqlDatabase& db, const AuId& cityId, const AuId& toId)
+{
+	// HasHierarchyHeader identifies the city report family, including dormant
+	// and final reports. Keep each recipient's latest three across all types.
+	QString types;
+	AuMailMsg message;
+	for(int type = 0; type < MSG_Types; ++type)
+	{
+		message.m_msgType = quint8(type);
+		if(!message.HasHierarchyHeader()) continue;
+		if(!types.isEmpty()) types += ',';
+		types += QString::number(type);
+	}
+	QString filter = QString("msgType IN (%1)").arg(types);
+	if(!cityId.IsNull()) filter += QString(" AND idFrom = %1").arg(cityId.GetID());
+	if(!toId.IsNull()) filter += QString(" AND idTo = %1").arg(toId.GetID());
+	QSqlQuery prune(db);
+	// Include delivered/deleted rows so their stored HTML cannot accumulate.
+	if(!prune.exec(QString("DELETE FROM g_Mail WHERE id IN ("
+		"SELECT id FROM (SELECT id, row_number() OVER ("
+		"PARTITION BY idFrom, idTo ORDER BY tmSent DESC, id DESC) AS reportNumber "
+		"FROM g_Mail WHERE %1) AS reports WHERE reportNumber > 3)").arg(filter)))
+		qWarning() << "AuMailMsg::TrimCityReports failed" << prune.lastError().text();
 }
 
 bool AuMailMsg::IsAlert() const
@@ -272,7 +300,7 @@ bool AuMailMsg::ApplyFieldLimits()
 	return true;
 }
 
-bool AuMailMsg::IsReadyToAutoDelete(bool doCityReports, int cityOldAge, bool doFleetReports, int fleetOldAge, bool doOfficerReports,
+bool AuMailMsg::IsReadyToAutoDelete(bool /*doCityReports*/, int /*cityOldAge*/, bool doFleetReports, int fleetOldAge, bool doOfficerReports,
 		int officerOldAge) const
 {
 	switch(Type())
@@ -302,9 +330,8 @@ bool AuMailMsg::IsReadyToAutoDelete(bool doCityReports, int cityOldAge, bool doF
 	case MSG_DormantOccupationReport:
 	case MSG_DormantStatusReport:
 	case MSG_DormantStatusReportInfo:
-		// Routine city reports.
-		if(doCityReports && m_tmSent.ElapsedSec() > cityOldAge * 60 * 60)
-			return true;
+		// City report mail is a local archive. Server retention must not age
+		// out reports that have already been downloaded by the client.
 		break;
 
 	case MSG_OfficerReady:

@@ -319,8 +319,7 @@ bool DaLegacyCity::CompleteCityReport(AuCityReport& report, const State& state,
 
 void DaLegacyCity::MailLastReport(const AuId& toId) const
 {
-	// Original DaCity::MailLastReport 0x2a23d0 is an explicit request. Ordinary
-	// report cycles do not mail a status message to every governor.
+	// Original DaCity::MailLastReport 0x2a23d0 is an explicit request.
 	if(InArena() || InDesignPreview() || toId.IsNull()) return;
 	AuCityReportHistory history;
 	if(!ReportHistory(history) || history.IsEmpty()) return;
@@ -357,8 +356,9 @@ void DaLegacyCity::SendCityReport(const AuCityReport& report, const AuCityReport
 	emit CityStatusChanged(Id(), report.AlertCondition(), qint8(satisfaction));
 	if(!previous || previous->m_Industries != report.m_Industries)
 		emit CityFacilitiesChanged(Id(), report.m_Industries);
+	const bool fullReport = g_Au.MailReports();
 	if(InArena() || InDesignPreview()
-		|| (report.m_MessageType != AuMailMsg::MSG_CityDistressReport
+		|| (!fullReport && report.m_MessageType != AuMailMsg::MSG_CityDistressReport
 			&& report.m_MessageType != AuMailMsg::MSG_CityFinalDecayReport)) return;
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	const auto* system = world ? world->FindParentSolarSystem() : nullptr;
@@ -376,6 +376,6 @@ void DaLegacyCity::SendCityReport(const AuCityReport& report, const AuCityReport
 	AuPoint galaxyLocation;
 	system->GetLocationRelativeToParent(galaxyLocation, galaxy);
 	g_Au.SendBulkMail(player, confirmation, Id(), Name(), recipients, AuMailMsg::MSGTYPE(report.m_MessageType),
-		report.Title(), report.LegacyAlertMailHtml(), system->Id(), system->Name(),
+		report.Title(), fullReport ? report.ReportHtml(previous ? *previous : report, true) : report.LegacyAlertMailHtml(), system->Id(), system->Name(),
 		world->Id(), world->Name(), galaxy->Galaxy(), galaxyLocation);
 }

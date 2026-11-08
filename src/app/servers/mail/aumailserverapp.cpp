@@ -368,8 +368,7 @@ void AuMailServerApp::DeleteOldMail()
 	logmsg = QString("DeleteOldMail Started");
 	g_Au.Log(logmsg);
 
-	// Get the list of mail message types that should be deleted at various intervals.
-	// This should comprise all the kinds of mail we store. No messages get to stay around forever.
+	// City reports use a count limit; other mail expires at these intervals.
 	QList<AuMailMsg::MSGTYPE> deleteEveryHour;
 	QList<AuMailMsg::MSGTYPE> deleteEvery2Days;
 	QList<AuMailMsg::MSGTYPE> deleteEveryWeek;
@@ -418,6 +417,7 @@ void AuMailServerApp::DeleteOldMail()
 			}
 			countAffected = qdel.numRowsAffected();
 		}
+		AuMailMsg::TrimCityReports(db);
 		db.close();
 	}
 

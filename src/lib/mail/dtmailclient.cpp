@@ -10,6 +10,9 @@
 #include "auglobal.h"
 #include "dgdata.h"
 #include "dtmailserver.h"
+#include <algorithm>
+#include <QMap>
+#include <QVector>
 
 DtMailClient::DtMailClient(QObject *parent) : QThread(parent), m_semAlive(1)
 {
@@ -313,9 +316,8 @@ void DtMailClient::RxMail(const AuId &personId)
 			out << personId;
 			out << unused;
 			SquelchIds >> out;
-			out << (quint8)g_Au.MailCityReportAutoDelete();
-			if (g_Au.MailCityReportAutoDelete())
-				out << (quint32)g_Au.MailCityReportOldAge();
+			// Download all retained city reports regardless of their age.
+			out << quint8(0);
 			out << (quint8)g_Au.MailFleetReportAutoDelete();
 			if (g_Au.MailFleetReportAutoDelete())
 				out << (quint32)g_Au.MailFleetReportOldAge();
@@ -524,6 +526,7 @@ int DtMailClient::ReadPacket(const QByteArray &ba)
 					StoreMessageInCache(msg);
 
 					emit NewMessageReceived(msg);
+					if(msg.HasHierarchyHeader()) PruneReportCache();
 				}
 				else
 				{
@@ -556,6 +559,7 @@ int DtMailClient::ReadPacket(const QByteArray &ba)
 					StoreMessageInCache(msg);
 
 					emit NewMessageReceived(msg);
+					if(msg.HasHierarchyHeader()) PruneReportCache();
 				}
 				else
 				{
@@ -645,6 +649,9 @@ void DtMailClient::StoreMessageInCache(const AuMailMsg &msg)
 
 void DtMailClient::LoadMessageCache()
 {
+	// Apply count-based retention before publishing an existing cache to the UI.
+	QList<quint32> oldMailIds;
+	DeleteOldMail(m_idPerson, oldMailIds);
 	// Insure Mail folder exists.
 	QString mailPath(g_Au.CacheMail());
 	QDir mailDir(mailPath);
@@ -757,60 +764,56 @@ bool DtMailClient::LoadMessage(quint32 msgId, AuMailMsg &msg)
 // static
 void DtMailClient::DeleteOldMail(const AuId &toId, QList<quint32> &oldMailIds)
 {
-	// g_Au.Log(QString("DtMailClient::DeleteOldMail to %1 started").arg(toId.GetID()));
-	if (g_Au.MailCityReportAutoDelete() || g_Au.MailFleetReportAutoDelete() || g_Au.MailOfficerReportAutoDelete())
+	struct CachedReport
 	{
-		// Autodeletion is enabled.
-		// Insure Mail folder exists.
-		QString mailPath(g_Au.CacheMail());
-		QDir mailDir(mailPath);
-		if (mailDir.exists())
+		QString fileName;
+		AuTime sent;
+		quint32 id;
+	};
+	QMap<AuId, QVector<CachedReport>> reportsByCity;
+	const QString mailPath = g_Au.CacheMail();
+	QDir mailDir(mailPath);
+	if(!mailDir.exists() || toId.IsNull()) return;
+	QStringList filters;
+	filters << QString("%1.*.*.m").arg(toId.StringId());
+	const QStringList mailFiles = mailDir.entryList(filters);
+	for(const QString& fileName : mailFiles)
+	{
+		QFile file(mailPath + "/" + fileName);
+		if(!file.open(QFile::ReadOnly)) continue;
+		QDataStream stream(&file);
+		stream.setVersion(QDataStream::Qt_4_1);
+		quint8 fileType = 0, fileVersion = 0;
+		stream >> fileType >> fileVersion;
+		if(fileType != MAIL_FILE_TYPE || fileVersion != MAIL_FILE_VER) continue;
+		AuMailMsg msg;
+		msg.Rx(stream);
+		if(stream.status() != QDataStream::Ok || msg.m_idTo != toId || !msg.ApplyFieldLimits()) continue;
+		file.close();
+		if(msg.HasHierarchyHeader())
 		{
-			QStringList nameFilters;
-			nameFilters << QString("%1.*.*.m").arg(toId.StringId()); // All mail messages to the player id.
-			QStringList mailFiles = mailDir.entryList(nameFilters);
-			// g_Au.Log(QString("DtMailClient::DeleteOldMail %1 mail files").arg(mailFiles.count()));
-
-			for (QStringList::const_iterator mfi = mailFiles.constBegin(); mfi != mailFiles.constEnd(); mfi++)
-			{
-				// Load the mail message file.
-				bool deleteFile = false; // true if we determine the message should be deleted due to being too old.
-				QFile file(mailPath + "/" + *mfi);
-				if (file.open(QFile::ReadOnly))
-				{
-					QDataStream ds(&file);
-					ds.setVersion(QDataStream::Qt_4_1);
-
-					// Read type/version stamp of the file.
-					quint8 fileType, fileVer;
-					ds >> fileType;
-					ds >> fileVer;
-
-					if (fileType == MAIL_FILE_TYPE && fileVer == MAIL_FILE_VER)
-					{
-						// Read the message.
-						AuMailMsg msg;
-						msg.Rx(ds);
-
-						// Watch for messages that the person considers too old to deliver.
-						if (msg.IsReadyToAutoDelete(g_Au.MailCityReportAutoDelete(), g_Au.MailCityReportOldAge(),
-													g_Au.MailFleetReportAutoDelete(), g_Au.MailFleetReportOldAge(),
-													g_Au.MailOfficerReportAutoDelete(), g_Au.MailOfficerReportOldAge()))
-						{
-							// The message is ready to be autodeleted.
-							oldMailIds.append(msg.m_id);
-							deleteFile = true;
-						}
-					}
-
-					file.close();
-				}
-
-				// Delete messages that are too old from the local cache.
-				if (deleteFile)
-					mailDir.remove(*mfi);
-			}
+			CachedReport report;
+			report.fileName = fileName; report.sent = msg.m_tmSent; report.id = msg.m_id;
+			reportsByCity[msg.m_idFrom].append(report);
 		}
+		else if(msg.IsReadyToAutoDelete(false, 0, g_Au.MailFleetReportAutoDelete(), g_Au.MailFleetReportOldAge(),
+			g_Au.MailOfficerReportAutoDelete(), g_Au.MailOfficerReportOldAge()) && mailDir.remove(fileName))
+			oldMailIds.append(msg.m_id);
 	}
-	// g_Au.Log(QString("DtMailClient::DeleteOldMail to %1 done").arg(toId.GetID()));
+	for(auto city = reportsByCity.begin(); city != reportsByCity.end(); ++city)
+	{
+		auto& reports = city.value();
+		std::sort(reports.begin(), reports.end(), [](const CachedReport& left, const CachedReport& right) {
+			return left.sent == right.sent ? left.id > right.id : left.sent > right.sent;
+		});
+		for(int index = 10; index < reports.size(); ++index)
+			if(mailDir.remove(reports[index].fileName)) oldMailIds.append(reports[index].id);
+	}
+}
+
+void DtMailClient::PruneReportCache()
+{
+	QList<quint32> oldMailIds;
+	DeleteOldMail(m_idPerson, oldMailIds);
+	for(quint32 messageId : oldMailIds) emit CachedMessageRemoved(messageId);
 }

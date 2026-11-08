@@ -44,7 +44,8 @@ public:
 		return !m_semAlive.available();
 	}
 
-	// 'oldMailIds' is an output parameter, filled with the ids of mail messages that are deleted
+	// Keep ten reports per city and apply configured fleet/cadet age limits.
+	// 'oldMailIds' is filled with the ids of mail messages that are deleted.
 	static void DeleteOldMail(const AuId& toId, QList<quint32>& oldMailIds);
 
 	inline void Kill()
@@ -75,6 +76,7 @@ protected:
 	void RxMail(const AuId& personId);
 	void RxMailSolo(const AuId& personId);
 	void StoreMessageInCache(const AuMailMsg& msg);
+	void PruneReportCache();
 	void TxDeletions();
 	void TxMail();
 
@@ -83,6 +85,7 @@ private slots:
 
 signals:
 	void CachedMessageReceived(AuMailMsg msg);
+	void CachedMessageRemoved(quint32 messageId);
 	void DeferFailed();
 	void LoginError();
 	void MailBatchEnd();

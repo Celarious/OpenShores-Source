@@ -184,6 +184,7 @@ AuMail::AuMail(QWidget* parent) : QWidget(parent)
 	// The mail client thread is created now, so it can respond to the VisibilityChanged signal.
 	m_tMailClient = new DtMailClient(this);
 	connect(m_tMailClient, SIGNAL(CachedMessageReceived(AuMailMsg)), SLOT(CachedMessageReceived(AuMailMsg)), Qt::QueuedConnection);
+	connect(m_tMailClient, SIGNAL(CachedMessageRemoved(quint32)), SLOT(CachedMessageRemoved(quint32)), Qt::QueuedConnection);
 	connect(m_tMailClient, SIGNAL(DeferFailed()), SLOT(ServerError()), Qt::QueuedConnection);
 	connect(m_tMailClient, SIGNAL(MailBatchEnd()), SLOT(MailBatchEnd()), Qt::QueuedConnection);
 	connect(m_tMailClient, SIGNAL(MailBatchStart(int)), SLOT(MailBatchStart(int)), Qt::QueuedConnection);
@@ -268,7 +269,7 @@ void AuMail::NewMessage()
 	mail->show();
 }
 
-// Deletes old mail that is supposed to be automatically deleted, according to global settings.
+// Applies the city report count limit and configured age limits for other mail.
 void AuMail::DeleteOldMail()
 {
 	QList<quint32> oldMailIds;
@@ -276,15 +277,13 @@ void AuMail::DeleteOldMail()
 
 	// Locate each mail id to be deleted in my data model.
 	for(QList<quint32>::const_iterator omi = oldMailIds.constBegin(); omi != oldMailIds.constEnd(); omi++)
-	{
-		//qDebug() << "AuMail::DeleteOldMail looking for message" << *omi;
-		QModelIndex mailIdx = FindMail(*omi, QModelIndex());	// Recursively search, beginning at the root.
-		if(mailIdx != QModelIndex())
-		{
-			//qDebug() << "AuMail::DeleteOldMail deleting message" << *omi;
-			DeleteMessage(mailIdx);								// Delete the mail message tree item and local file cache.
-		}
-	}
+		CachedMessageRemoved(*omi);
+}
+
+void AuMail::CachedMessageRemoved(quint32 messageId)
+{
+	const QModelIndex mailIdx = FindMail(messageId, QModelIndex());
+	if(mailIdx.isValid()) DeleteMessage(mailIdx);
 }
 
 QModelIndex AuMail::FindMail(quint32 findMsgId, const QModelIndex& parIdx)

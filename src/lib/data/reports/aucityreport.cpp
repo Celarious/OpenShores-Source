@@ -5749,23 +5749,10 @@ void AuCityReportHistory::Append(const AuCityReport& report)
 {
 	append(report);
 
-	// Keep 48 hours of history for each city.
-	int histlen = (48 * 60 * 60) / d_CityReportInterval;
-	while(count() > histlen)
+	// Keep the last three complete reports. Mailed reports have their own
+	// client cache, independent of this city-owned server history.
+	while(count() > 3)
 		removeFirst();
-
-	// Remove the inventory from all but the last 8 reports (2 hours/~2 game days).
-	int countToErase = count() - 8;
-	if(countToErase <= 0)
-		return;
-
-	int index=0;
-	for(iterator ri = begin(); ri != end(); ri++, index++)
-	{
-		if(index >= countToErase)
-			break;
-		(*ri).MinimizeData();
-	}
 }
 
 quint64 AuCityReportHistory::MemoryUsage() const
