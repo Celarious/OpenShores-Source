@@ -3436,7 +3436,7 @@ bool DaSolarSystem::IsReadyToDecay() const
 	// Land solar systems do not decay.
 	// Active time is reset once per day by avatars who have designated this system as their land and whose account is active.
 	m_LastAvatarAccountActiveLock.lock();
-	bool v = !m_LastAvatarAccountActive.IsNull() && m_LastAvatarAccountActive.ElapsedDay() < 3;	// true = protected
+	bool v = !g_Au.IsLegacyGeneration() && !m_LastAvatarAccountActive.IsNull() && m_LastAvatarAccountActive.ElapsedDay() < 3;	// true = protected
 	m_LastAvatarAccountActiveLock.unlock();
 	if(v)
 	{

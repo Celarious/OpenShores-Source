@@ -48,10 +48,7 @@ AuBldBuilding::AuBldBuilding(QWidget* parent) : QWidget(parent)
 				"Declares this building to be your home. "
 				"A building must be friendly toward your empire to declare it your home."
 				"</p>"
-				"<p>"
-				"Your home solar system is automatically part of your land. "
-				"Buildings on your land are immune to abandonment decay for 30 days after this avatar was last on line. "
-				"</p>"
+				"%1"
 				"<p>"
 				"You appear near your current location when you die or recall home. "
 				"The building must be friendly to your empire at the time. "
@@ -59,7 +56,10 @@ AuBldBuilding::AuBldBuilding(QWidget* parent) : QWidget(parent)
 				"<p>"
 				"When recalling home, your berth aboard a spacecraft takes precedence over a building."
 				"</p>"
-				"</html>"));
+				"</html>").arg(g_Au.IsLegacyGeneration() ? QString() : tr("<p>"
+				"Your home solar system is automatically part of your land. "
+				"Buildings on your land are immune to abandonment decay for 30 days after this avatar was last on line. "
+				"</p>")));
 	connect(declareHome, SIGNAL(clicked()), auApp->Frame(), SLOT(SpawnTie()));
 
 	m_Rename = new AuIconButton(QIcon(":data/RenameBuilding.png"), this);

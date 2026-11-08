@@ -106,7 +106,7 @@ void AuStarMapPlaces::mouseReleaseEvent(QMouseEvent* event)
 					reportObserved = menu.addAction(QIcon(":data/bObservatory.png"),
 							tr("%1 Observatory Report...").arg(m_PreviewName));
 
-				if(!auApp->IsSingleUserDesignerMode())
+				if(!g_Au.IsLegacyGeneration() && !auApp->IsSingleUserDesignerMode())
 					domainAdd = menu.addAction(QIcon(":data/AvatarDomain.png"),
 							tr("Add %1 to Land...").arg(m_PreviewName));
 			}

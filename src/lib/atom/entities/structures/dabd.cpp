@@ -38913,7 +38913,7 @@ int DaBd::DaysAbandoned() const
 		return d_AbandonDaysBegin+1;				// wut?
 
 	AuTime lastVisit(system->LastPersonVisited());
-	AuTime lastAvatarAccountActive(system->LastAvatarAccountActive());
+	AuTime lastAvatarAccountActive(g_Au.IsLegacyGeneration() ? AuTime() : system->LastAvatarAccountActive());
 	if(lastAvatarAccountActive.IsNull() && lastVisit.IsNull())
 		return d_AbandonDaysBegin+1;				// Nobody has ever visited or been active here? Not likely.
 

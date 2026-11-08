@@ -350,6 +350,7 @@ void AuSystemScan::TimerUpdate()
 
 void AuSystemScan::setVisible(bool visible)
 {
+	m_LandAdd->setVisible(!g_Au.IsLegacyGeneration());
 	if(visible)
 	{
 		QWidget::setVisible(visible);

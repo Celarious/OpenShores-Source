@@ -572,7 +572,7 @@ void AuStarMapWidget::mouseReleaseEvent(QMouseEvent* e)
 						reportObserved = menu.addAction(QIcon(":data/bObservatory.png"),
 								tr("%1 Observatory Report...").arg(m_TargetName));
 
-					if(!auApp->IsSingleUserDesignerMode())
+					if(!g_Au.IsLegacyGeneration() && !auApp->IsSingleUserDesignerMode())
 						domainAdd = menu.addAction(QIcon(":data/AvatarDomain.png"), tr("Add %1 to Land...").arg(m_TargetName));
 				}
 			}
@@ -4271,7 +4271,7 @@ void AuStarMapGL::mouseReleaseEvent(QMouseEvent* e)
 						reportObserved = menu.addAction(QIcon(":data/bObservatory.png"),
 								tr("%1 Observatory Report...").arg(m_TargetName));
 
-					if(!auApp->IsSingleUserDesignerMode())
+					if(!g_Au.IsLegacyGeneration() && !auApp->IsSingleUserDesignerMode())
 						domainAdd = menu.addAction(QIcon(":data/AvatarDomain.png"), tr("Add %1 to Land...").arg(m_TargetName));
 				}
 			}

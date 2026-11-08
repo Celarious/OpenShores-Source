@@ -257,6 +257,7 @@ void AuGovCities::CityRightClicked(AuId /*cityId*/)
 	surrender->setEnabled(govOrOwn == 2);
 
 	QAction* domainAdd = menu.addAction(QIcon(":data/AvatarDomain.png"), tr("Add to Land..."));
+	domainAdd->setVisible(!g_Au.IsLegacyGeneration());
 
 	QAction* action = menu.exec(QCursor::pos());
 	if(!action)

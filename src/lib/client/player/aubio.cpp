@@ -56,7 +56,7 @@ AuBioPages::AuBioPages(QWidget* parent, bool staged) : QWidget(parent),
 bool AuBioPages::InitializeNextPage()
 {
 	if(IsInitialized()) return true;
-	const int pageIndex = m_InitializePage;
+	const int pageIndex = m_Pages->count();
 	int itab;
 	switch(m_InitializePage)
 	{
@@ -98,6 +98,7 @@ bool AuBioPages::InitializeNextPage()
 	}
 	case 3:
 	{
+		if(g_Au.IsLegacyGeneration()) break;
 		m_DomainPage = new AuBioDomain(this);
 		m_Pages->insertWidget(pageIndex, m_DomainPage);
 
@@ -134,6 +135,7 @@ bool AuBioPages::InitializeNextPage()
 	}
 	case 6:
 	{
+		if(g_Au.IsLegacyGeneration()) break;
 		m_AccountPage = new AuBioAccount(this);
 		m_Pages->insertWidget(pageIndex, m_AccountPage);
 
