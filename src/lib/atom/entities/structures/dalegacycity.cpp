@@ -1963,6 +1963,35 @@ bool DaLegacyCity::SitePavementEdgeDistance(const DaWorldLL& world, const AuGlob
 	return m_Runtime->PavementEdgeDistance(world,ll,dist);
 }
 
+bool DaLegacyCity::BlocksWildAnimalSpawn(const DaWorldLL& world, const AuGlobeLL& ll) const
+{
+	if(!g_Au.IsLegacyGeneration() || IsDead()) return false;
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->EnsureSites(*this, world);
+	const double margin = 10 * FeetPerMeter();
+	const auto candidates = m_Runtime->NearbySites(world, ll);
+	for(const int index : candidates)
+	{
+		const Runtime::Site& site = m_Runtime->sites[index];
+		if(site.state.demolished || site.state.IsLandscaper()) continue;
+		const AuPoint location = world.LocOfLL(ll, site.state.altitudeMSL);
+		if(!Runtime::SiteInRange(site, location)) continue;
+		if(site.state.industryId == 2)
+		{
+			float fraction, grade;
+			const double distance2 = Runtime::RoadDistance2(site, world, ll, fraction, grade);
+			const double width = site.halfWidth + margin;
+			if(distance2 <= width * width) return true;
+		}
+		else
+		{
+			const AuPoint local = site.inverse.Project(location);
+			if(std::abs(local.x) <= site.halfWidth + margin
+				&& std::abs(local.y) <= site.halfLength + margin) return true;
+		}
+	}
+	return false;
+}
+
 void DaLegacyCity::AddRoadPaint(const DaWorldLL& world, QList<AuGlobeTriAltVegNPave>& triangles) const
 {
 	if(!g_Au.IsLegacyGeneration() || IsDead()) return;

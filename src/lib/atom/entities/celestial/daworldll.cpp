@@ -2814,6 +2814,7 @@ int DaWorldLL::AnimalEncounter(const AuGlobeLLF& nearLL, int mode)
 	AuTerrainInfo ter;
 	QueryTerrain(ter, encLL);
 
+	QList<const DaLegacyCity*> spawnBlockingCities;
 	// Don't bother if there are too many wild animals in this terrain.
 	if(mode == 0)
 	{
@@ -2823,10 +2824,19 @@ int DaWorldLL::AnimalEncounter(const AuGlobeLLF& nearLL, int mode)
 
 		// Count wild animals present.
 		int wildAnimals = 0;
+		AuGlobeLL encounterLL;
+		encounterLL.FromGlobeLLF(encLL);
 		DaAtomList subs;
 		ListNormalSubatoms(subs);
 		for(DaAtomList::const_iterator ait = subs.cbegin(); ait != subs.cend(); ait++)
 		{
+			// Legacy developments are absent from the modern building map.
+			if(g_Au.IsLegacyGeneration())
+				if(const auto* city = dynamic_cast<const DaLegacyCity*>(*ait))
+				{
+					if(city->BlocksWildAnimalSpawn(*this, encounterLL)) return 9;
+					spawnBlockingCities.append(city);
+				}
 			// Count wild animals.
 			DaAnimal* animal = dynamic_cast<DaAnimal*>(*ait);
 			if(!animal)
@@ -2913,6 +2923,12 @@ int DaWorldLL::AnimalEncounter(const AuGlobeLLF& nearLL, int mode)
 		AuGlobeLL ell;
 		if(!LLOfLoc(ell, eloc))
 			continue;
+
+		// Group scatter can cross into a city even when its origin is outside.
+		bool blockedByCity = false;
+		for(const auto* city : spawnBlockingCities)
+			if(city->BlocksWildAnimalSpawn(*this, ell)) { blockedByCity = true; break; }
+		if(blockedByCity) continue;
 
 		// Determine altitude of animal.
 		AuTerrainInfo ter;

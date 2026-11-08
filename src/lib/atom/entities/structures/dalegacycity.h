@@ -208,6 +208,8 @@ public:
 	// Signed distance in feet from 'll' to the nearest edge of pavement that
 	// AdjustSiteTerrain paints, negative inside. False if no site paints pavement.
 	bool SitePavementEdgeDistance(const DaWorldLL& world, const AuGlobeLL& ll, float& dist) const;
+	// Cached site footprints with a ten-meter buffer; does not restrict movement.
+	bool BlocksWildAnimalSpawn(const DaWorldLL& world, const AuGlobeLL& ll) const;
 	// Visual rock distributions only: retain the procedural resource nodes used
 	// by placement, mining and labor, but clear padded building footprints.
 	void RemoveInteriorRocks(const DaWorldLL& world, QMap<AuResKey, AuGlobeRock>& rocks) const;
