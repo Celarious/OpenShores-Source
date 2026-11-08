@@ -219,7 +219,7 @@ void DaLegacyCity::RxChatMessage(const AuCommPacket* message, quint32& countSupp
 	using namespace AuLegacyCity;
 	const auto* catalogue = ShopCatalogue();
 	if(!message || !catalogue || IsDead()) return;
-	if(RxPersonnelChat(message, countSupplied) || RxSpacecraftBlueprintMessage(message)
+	if(RxStatusChat(message) || RxPersonnelChat(message, countSupplied) || RxSpacecraftBlueprintMessage(message)
 		|| RxGoodsSaleMessage(message) || RxSpacecraftServiceMessage(message)) return;
 	COMMODITYFILTER filter = FILTER_All;
 	const bool solicit = SalesFilter(message->Type(), filter);

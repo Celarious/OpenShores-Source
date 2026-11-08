@@ -548,6 +548,11 @@ void AuLegacyCityManufacture::ReceiveReply(QByteArray payload)
 	if(!AuLegacyCityProtocol::DecodeReply(payload, reply) || !m_PendingToken || reply.token != m_PendingToken) return;
 	m_PendingToken = 0; m_Timeout->stop();
 	QString message = reply.message;
+	if(reply.action == AuLegacyCityProtocol::BuySpacecraft && !reply.accepted && !message.isEmpty())
+	{
+		if(auApp->Frame() && auApp->Frame()->View()) auApp->Frame()->View()->LocalLogMessage(message);
+		message.clear();
+	}
 	if(reply.truncated && reply.economyIndustry == 87)
 	{
 		if(!message.isEmpty()) message += QLatin1Char('\n');

@@ -82,6 +82,7 @@ public:
 	bool ReportHistory(AuCityReportHistory& result) const;
 	// Diagnostic snapshot only: no population cycle, stock consumption or history mutation.
 	bool ReportCurrent(AuCityReport& report);
+	bool RxStatusChat(const AuCommPacket* message);
 	static bool ReadReportHistory(const QByteArray& bytes, AuCityReportHistory& result);
 	static bool WriteReportHistory(const AuCityReportHistory& history, QByteArray& bytes, QString& error);
 	// Gather world/global facts before the city transaction. Completion reads
@@ -256,6 +257,8 @@ public:
 		RENDERPASS pass, DaAtomList& sc, DaAtomList& scFog, DaAtomList& scGlobe,
 		DaAtomList& scGlobeFog, DaAtomList& scRing, DaAtomList& scRingFog) override;
 private:
+	bool MailReport(const AuCityReport& report, const AuCityReport& previous, const AuId& toId,
+		const QString& extraHtml = QString()) const;
 	void RenderAirportNavBeacon(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom) const;
 	void RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
@@ -266,6 +269,7 @@ private:
 	AuLegacyCity::State m_City;
 	quint64 m_CityRevision = 1;
 	QHash<quint32, qint64> m_ConstructionLaborTimes;
+	QHash<AuId, qint64> m_StatusRequestTimes;
 	bool m_TradeMonitored = false;
 	AuTime m_LastEconomyTock;
 	QHash<QByteArray, QPair<quint32, qint64>> m_ShopPrices;

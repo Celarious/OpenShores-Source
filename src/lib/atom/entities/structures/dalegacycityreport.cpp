@@ -1,5 +1,6 @@
 #include "dalegacycity.h"
 #include "aucityreport.h"
+#include "aucommpacket.h"
 #include "auitem.h"
 #include "aulegacycityinfrastructure.h"
 #include "aulegacycitypopulationruntime.h"
@@ -7,17 +8,93 @@
 #include "aulegacycityinventory.h"
 #include "aulegacycitycommerce.h"
 #include "auglobal.h"
+#include "auqueryenvironment.h"
 #include "auspecies.h"
 #include "dagalaxy.h"
 #include "dasector.h"
 #include "dasolarsystem.h"
 #include "daworldll.h"
+#include "daperson.h"
+#include "davessel.h"
 #include "dgdata.h"
 #include "dhdna.h"
 #include <algorithm>
 #include <limits>
+#include <QWriteLocker>
 
 using namespace AuLegacyCity;
+
+bool DaLegacyCity::RxStatusChat(const AuCommPacket* message)
+{
+	if(!message || message->Type() != AuCommPacket::RequestInventory) return false;
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	auto* world = dynamic_cast<DaWorldLL*>(Parent());
+	const auto* sector = FindParentSector();
+	auto* system = FindEnvironmentAtom();
+	auto* person = system ? dynamic_cast<DaPerson*>(system->FindIdRecursive(message->FromId())) : nullptr;
+	if(!g_Au.IsLegacyGeneration() || !catalogue || !world || !sector || !person || person->IsDead()) return true;
+	if(person->IsInsideSpacecraft())
+	{
+		const auto* ship = person->FindParentVesselInEnv();
+		if(!ship || !CanAccessSpacecraft(*ship)) return true;
+	}
+	else
+	{
+		const auto* environment = person->LockEnvironmentQuery();
+		const bool inCity = environment->LegacyCityId() == Id();
+		person->UnlockEnvironmentQuery();
+		if(!inCity || person->FindParentPlanetInEnv() != world) return true;
+	}
+	const State state = Snapshot();
+	AuIdList places; places.append(Id()); ChainOfPlaces(places);
+	const DgData& authorityData = g_Au.LockDataForRead();
+	const bool authorized = state.controllingEmpire && person->EmpireId() == state.controllingEmpire
+		&& authorityData.IsEmpirePlaceInDomain(state.controllingEmpire, places, person->Id());
+	g_Au.UnlockData();
+	const auto range = AuCommStdChannel::RANGE(qMin(int(message->ReceptionRange()), int(AuCommStdChannel::SolarSystem)));
+	if(!authorized && !person->HasAgentPower())
+	{
+		AuCommCityMessage response(AuCommCityMessage::NoChainNoInventory, message->ChannelName(), Id(), Name(),
+			sector->Id(), Galaxy(), range, message->Scope());
+		g_Au.SendAtomChat(response);
+		return true;
+	}
+	// Transient server-side cooldown, per city and requester. Silently ignore
+	// repeated clicks so neither mail nor Trade chat can be flooded.
+	const qint64 now = AuTime::CurrentMSecsSinceEpoch();
+	{
+		QWriteLocker lock(&m_CityLock);
+		for(auto request = m_StatusRequestTimes.begin(); request != m_StatusRequestTimes.end();)
+			if(now >= request.value() && now - request.value() >= 30000) request = m_StatusRequestTimes.erase(request);
+			else ++request;
+		if(m_StatusRequestTimes.contains(person->Id())) return true;
+		m_StatusRequestTimes.insert(person->Id(), now);
+	}
+	// ReportCurrent decodes stock only after Legacy metadata is active. It
+	// does not run a population cycle or replace the saved periodic report.
+	AuCityReport report;
+	if(!ReportCurrent(report)) return true;
+	QString flagsHtml = tr("<br><b>FLAG STATUS</b><div style=\"margin-left: 10px;\">");
+	for(int index = 0; index < report.m_Flags.size(); ++index)
+	{
+		const auto& flag = report.m_Flags[index];
+		QString empire;
+		const DgData& data = g_Au.LockDataForRead();
+		if(flag.m_Empire) data.EmpireName(flag.m_Empire, empire);
+		g_Au.UnlockData();
+		if(empire.isEmpty()) empire = flag.m_Empire ? tr("Empire %1").arg(flag.m_Empire) : tr("Unclaimed");
+		const QString flagName = index == 0 ? tr("Town square flag")
+			: tr("Military flag %1 (%2)").arg(index).arg(flag.m_DevLL.ToString());
+		flagsHtml += tr("%1: %2, raised %3%.<br>").arg(flagName.toHtmlEscaped()).arg(empire.toHtmlEscaped())
+			.arg(qRound(100.0 * flag.m_Level / MaxFlagLevel));
+	}
+	flagsHtml += QStringLiteral("</div>");
+	if(!MailReport(report, report, person->Id(), flagsHtml)) return true;
+	AuCommCityChat response(tr("Current city status report sent to %1 by mail.").arg(person->Name()),
+		AuCommStdChannel::TradeChannelName(), Id(), Name(), sector->Id(), Galaxy(), range, AuCommStdChannel::Everyone);
+	g_Au.SendAtomChat(response);
+	return true;
+}
 
 bool DaLegacyCity::ReportCurrent(AuCityReport& report)
 {
@@ -152,7 +229,7 @@ AuCityReport DaLegacyCity::GatherCityReport(const State& state, const Population
 		flag.m_Capture = AuTime(source.capturedAt);
 		flag.m_DevLL = source.location;
 		flag.m_Terrain = world->Id();
-		flag.m_IID = index == 0 ? IID_TownSquare : IID_BaseHeadquarters;
+		flag.m_IID = index == 0 ? IID_TownSquare : IID_BaseFlag;
 		report.m_Flags.append(flag);
 	}
 	return report;
@@ -245,22 +322,30 @@ void DaLegacyCity::MailLastReport(const AuId& toId) const
 	// Original DaCity::MailLastReport 0x2a23d0 is an explicit request. Ordinary
 	// report cycles do not mail a status message to every governor.
 	if(InArena() || InDesignPreview() || toId.IsNull()) return;
-	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
-	const auto* system = world ? world->FindParentSolarSystem() : nullptr;
-	const auto* galaxy = system ? system->FindParentGalaxy() : nullptr;
-	if(!world || !system || !galaxy) return;
 	AuCityReportHistory history;
 	if(!ReportHistory(history) || history.IsEmpty()) return;
 	const auto& report = history.Last();
 	const auto& previous = history.Count() > 1 ? history.NextToLast() : report;
+	MailReport(report, previous, toId);
+}
+
+bool DaLegacyCity::MailReport(const AuCityReport& report, const AuCityReport& previous,
+	const AuId& toId, const QString& extraHtml) const
+{
+	if(InArena() || InDesignPreview() || toId.IsNull()) return false;
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	const auto* system = world ? world->FindParentSolarSystem() : nullptr;
+	const auto* galaxy = system ? system->FindParentGalaxy() : nullptr;
+	if(!world || !system || !galaxy) return false;
 	const auto& data = g_Au.LockDataForRead();
 	const quint32 player = data.PlayerId(), confirmation = data.ConfirmationNumber();
 	g_Au.UnlockData();
 	AuPoint galaxyLocation;
 	system->GetLocationRelativeToParent(galaxyLocation, galaxy);
 	g_Au.SendMail(player, confirmation, Id(), Name(), toId, AuMailMsg::MSGTYPE(report.m_MessageType),
-		report.Title(), report.ReportHtml(previous, true), system->Id(), system->Name(), world->Id(), world->Name(),
+		report.Title(), report.ReportHtml(previous, true) + extraHtml, system->Id(), system->Name(), world->Id(), world->Name(),
 		galaxy->Galaxy(), galaxyLocation);
+	return true;
 }
 
 void DaLegacyCity::SendCityReport(const AuCityReport& report, const AuCityReport* previous)

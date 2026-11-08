@@ -523,7 +523,7 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 		{
 			const AuLegacyCity::IndustryRecord* town = catalogue->Industry(AuLegacyCity::IndustryId(1));
 			const AuLegacyCity::IndustryRecord* flag = catalogue->Industry(AuLegacyCity::IndustryId(10));
-			const int bases = report.BuildingLevels(IID_BaseHeadquarters);
+			const int bases = report.BuildingLevels(IID_BaseFlag);
 			const int contingent = (town ? std::abs(int(town->employees)) : 0) + bases * (flag ? std::abs(int(flag->employees)) : 0);
 			if(contingent)
 			{
@@ -537,10 +537,10 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 							: QObject::tr("%1 citizens were drafted into military service.<br><br>").arg(report.m_TroopsDrafted);
 						population = std::max(0, population - report.m_TroopsDrafted);
 					}
-					html += QObject::tr("Garrison %1 troops. Contingent %2 troops.<br>").arg(report.m_TroopsAtCity).arg(contingent);
+					html += QObject::tr("Garrison %1 troops. Required contingent %2 troops.<br>").arg(report.m_TroopsAtCity).arg(contingent);
 					if(populationLimit < contingent) html += QObject::tr("Population limits garrison to %1 troops.<br>").arg(populationLimit);
-					const int buildings = report.BuildingLevels(IID_BaseWeapon) + report.BuildingLevels(IID_BaseShield) + report.BuildingLevels(IID_BaseAirTerminal);
-					if(buildings > bases * 2) html += QObject::tr("All %1 military base buildings cannot be manned. %2 base flags can only support %3 buildings.<br>")
+					const int buildings = report.BuildingLevels(IID_BaseWeapon) + report.BuildingLevels(IID_BaseShield) + report.BuildingLevels(IID_BaseGuardTower);
+					if(buildings > bases * 2) html += QObject::tr("Military building levels: %1. %2 military flags support %3 levels; excess levels cannot be manned.<br>")
 						.arg(buildings).arg(bases).arg(bases * 2);
 				}
 			}
