@@ -517,7 +517,7 @@ void AuSound::Play(unsigned int& audioSource, SOUND_EFFECT& curSound, SOUND_EFFE
 {
 	if(!m_ALContext)
 		return;
-	float gainSnd = gain * s_Sounds[sound].Gain() * g_Au.SoundGain(sound);	// Adjust gain with user's gain adjustment.
+	float gainSnd = gain * s_Sounds[sound].Gain();
 	const float minSoundGain = .001f;
 	if(sound != SOUND_None && gainSnd > minSoundGain)
 	{
