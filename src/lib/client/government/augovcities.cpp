@@ -151,6 +151,8 @@ AuGovCities::AuGovCities(QWidget* parent) : QWidget(parent)
 
 void AuGovCities::UpdateGenerationUI()
 {
+	m_QuitClaim->setVisible(!g_Au.IsLegacyGeneration());
+	m_QuitClaim->setEnabled(!g_Au.IsLegacyGeneration());
 	QString tooltip = tr("<html><p><b>Empire Cities</b><br>All cities of the empire are listed. </p>"
 		"<p>Right-click selected cities for options. ");
 	if(!g_Au.IsLegacyGeneration())
@@ -279,6 +281,7 @@ void AuGovCities::CityRightClicked(AuId /*cityId*/)
 
 void AuGovCities::QuitClaim()
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	auApp->GovQuitClaim();
 }
 

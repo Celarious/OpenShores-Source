@@ -703,7 +703,7 @@ public:	// Methods
 		if(cid < m_Commerce.count())
 			return (EXPORT_POLICY)m_Commerce[cid];
 		else
-			return EXPOL_ToNeutral;	// Default enables export to neutrals, friends and empire.
+			return EXPOL_ToFriend;	// Default enables export only to friends and empire.
 	}
 
 	// Returns true if any data in this empire record is changed.
@@ -1493,7 +1493,7 @@ public:	// Methods
 		// The commerce array is indexed using the COMMODITYID.
 		// Fill default values up to and including the commodity that is set.
 		while(m_Commerce.count() <= cid)
-			m_Commerce.append(EXPOL_ToNeutral);
+			m_Commerce.append(EXPOL_ToFriend);
 		m_Commerce[cid] = com;	// Set the commodity commerce value.
 	}
 

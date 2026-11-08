@@ -522,7 +522,7 @@ void DgData::SetEmpireCommerce(quint32 empireId, const QByteArray& commerce)
 		inCommerce.append(iVal);
 	}
 	while(inCommerce.count() < CID_Count)
-		inCommerce.append(EXPOL_ToNeutral);	// Grow commerce array to include nu commodities that have been added.
+		inCommerce.append(EXPOL_ToFriend);	// New commodities default to friends-only exports.
 
 	DgEmpireHash::iterator it = m_gEmpires.find(empireId);
 	if(it != m_gEmpires.end())

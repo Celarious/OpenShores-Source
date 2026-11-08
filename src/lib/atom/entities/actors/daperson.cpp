@@ -21525,6 +21525,7 @@ bool DaPerson::ClaimWorld(DaWorldLL* llworld, const AuPoint& flagLoc)
 
 void DaPerson::QuitClaimWorld()
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	DaWorldLL* llworld = dynamic_cast<DaWorldLL*>(Parent());
 	if(!llworld)
 		return;

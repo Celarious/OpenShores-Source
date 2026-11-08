@@ -11927,6 +11927,7 @@ void AuApp::BankGAWithdraw(double amount, const AuId& opBd)
 
 void AuApp::GovQuitClaim()
 {
+	if(g_Au.IsLegacyGeneration()) return;
 	if(IsSingleUserMode())
 	{
 		m_I->GovQuitClaim();

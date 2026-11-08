@@ -165,7 +165,7 @@ DgEmpire::DgEmpire(const QString& name)
 	m_name = name;
 
 	while(m_Commerce.size() < CID_Count)
-		m_Commerce.append(EXPOL_ToNeutral);	// Grow commerce array to include nu commodities that have been added.
+		m_Commerce.append(EXPOL_ToFriend);	// New commodities default to friends-only exports.
 
 	InitWarPolicy();	// Initialize war policy to something reasonable.
 }
@@ -812,7 +812,7 @@ void DgEmpire::Rx(QDataStream& in)
 			ds >> m_Commerce;
 		}
 		while(m_Commerce.size() < CID_Count)
-			m_Commerce.append(EXPOL_ToNeutral);	// Grow commerce array to include nu commodities that have been added.
+			m_Commerce.append(EXPOL_ToFriend);	// New commodities default to friends-only exports.
 	}
 	// Citizens
 	{
@@ -996,7 +996,7 @@ bool DgEmpire::Select(QSqlDatabase& db, unsigned int id)
 				ds >> m_Commerce;
 			}
 			while(m_Commerce.size() < CID_Count)
-				m_Commerce.append(EXPOL_ToNeutral);	// Grow commerce array to include nu commodities that have been added.
+				m_Commerce.append(EXPOL_ToFriend);	// New commodities default to friends-only exports.
 		}
 
 		// Citizens
@@ -1220,7 +1220,7 @@ void DgEmpire::operator<<(QDataStream& in)
 		m_Commerce.append(com);
 	}
 	while(m_Commerce.size() < CID_Count)
-		m_Commerce.append(EXPOL_ToNeutral);	// Grow array to include nu commodities that have been added.
+		m_Commerce.append(EXPOL_ToFriend);	// New commodities default to friends-only exports.
 
 	in >> m_JoinMessage;
 
@@ -2434,7 +2434,7 @@ void DgEmpireHash::Load()
 				ds >> ob.m_Commerce;
 			}
 			while(ob.m_Commerce.size() < CID_Count)
-				ob.m_Commerce.append(EXPOL_ToNeutral);	// Grow array to include nu commodities that have been added.
+				ob.m_Commerce.append(EXPOL_ToFriend);	// New commodities default to friends-only exports.
 		}
 		// Citizens
 		{

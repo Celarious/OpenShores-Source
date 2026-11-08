@@ -12537,6 +12537,7 @@ void DaSc::Tock(const AuTime& last, const AuTime& now, const AuScripts& scripts,
 	{
 		if(!m_Tocked)
 		{
+			if(!InDesignEnvironment()) MonitorCommChannels();
 			InvalidateEnvironmentRecursive();
 			m_Tocked = true;
 		}
@@ -12551,6 +12552,9 @@ void DaSc::Tock(const AuTime& last, const AuTime& now, const AuScripts& scripts,
 		m_ConShieldAI = m_ConShieldPerson = 0;
 		m_ConWeaponAI = m_ConWeaponPerson = 0;
 		if(!IsNormal() || InDesignEnvironment() || last.IsNull()) return;
+		// Legacy bypasses the shared vessel tick. Renew channel subscriptions
+		// before their twenty-minute expiry, as modern ships do.
+		if(last.IsNewPeriod(now, 15*d_MSecPerMin, Id().GetID())) MonitorCommChannels();
 		// DaSpaceShip::Tock, AuAtom13:18046d6e0, closes automatic doors each world tick.
 		CloseAutomaticDoors();
 		if(StartMoving()) SetModified();
