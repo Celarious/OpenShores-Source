@@ -8284,24 +8284,13 @@ void DaSc::ListSystems(QList<AuSystemInfo>& systems) const
 	const AuShipSystemArray& ssa = LockSystems();
 
 	m_DesignLock.lockForRead();
-	if(m_Design.LegacyStats())
-	{
-		// Legacy quantities are authoritative without creating operational systems.
-		QSet<AuSysId> ids;
-		m_Design.SystemIds(ids, true);
-		m_Design.SystemIds(ids, false);
-		for(const AuSysId& id : ids)
-			if(id.System() != SYS_CommandAndControl && id.System() != SYS_VehicleLaunch
-				&& id.System() != SYS_VehicleLanding)
-				systems.append(AuSystemInfo(m_Design.SystemName(id), id.System(), id.Which(),
-					m_Design.Quality(), CID_Invalid));
-	}
-	else
-		for(AuShipSystemArray::const_iterator ssi = ssa.constBegin(); ssi != ssa.constEnd(); ssi++)
-			if((*ssi).GetSystemType() != SYS_CommandAndControl &&
-					(*ssi).GetSystemType() != SYS_VehicleLaunch &&
-					(*ssi).GetSystemType() != SYS_VehicleLanding)
-				systems.append(AuSystemInfo(*ssi, m_Design));
+	// Legacy ships also have installed systems with independent qualities.
+	// The report's overall quality is the highest installed Q, not each system's Q.
+	for(AuShipSystemArray::const_iterator ssi = ssa.constBegin(); ssi != ssa.constEnd(); ssi++)
+		if((*ssi).GetSystemType() != SYS_CommandAndControl &&
+				(*ssi).GetSystemType() != SYS_VehicleLaunch &&
+				(*ssi).GetSystemType() != SYS_VehicleLanding)
+			systems.append(AuSystemInfo(*ssi, m_Design));
 	m_DesignLock.unlock();
 
 	UnlockSystems();

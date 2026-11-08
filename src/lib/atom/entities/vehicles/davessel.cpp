@@ -19820,6 +19820,31 @@ unsigned int DaVessel::WorstSystemDamage() const
 
 int DaVessel::SystemModuleInstallTime(const AuSysId& sysId, COMMODITYID cid) const
 {
+	if(g_Au.IsLegacyGeneration())
+	{
+		// DaSpaceShip::SystemModuleInstallTime, AuAtom13:18046bca0.
+		// A single module upgrades a whole system; its size sets the time.
+		if(ScModuleSystem(cid) != sysId.System()) return 0;
+		const quint64 units = SystemModuleCount(sysId);
+		switch(sysId.System())
+		{
+		case SYS_CommandAndControl:
+			return int(qMin(quint64(0x7fffffff), quint64(SystemModuleCount(AuSysId(SYS_CommandAndControl, 0))) * 2));
+		case SYS_ManeuverDrive: return int((units + 99) / 100);
+		case SYS_Hull: return int((quint64(DesignHitsStructural()) + 499) / 500);
+		case SYS_LifeSupport: return int(qMin(units, quint64(0x7fffffff)));
+		case SYS_PowerPlant: return int((units + 99) / 100);
+		case SYS_Sensor: return int((units + 9) / 10);
+		case SYS_Shield: return int((units + 49) / 50);
+		case SYS_SurgeryUnit: return 15;
+		case SYS_Transporter: return int(qMin(quint64(0x7fffffff), units * 2));
+		case SYS_Turret: return 10;
+		case SYS_Weapon: return int((units + 49) / 50);
+		case SYS_FTLDrive: return int((units + 9) / 10);
+		default: return 0;
+		}
+	}
+
 	if(sysId.System() == SYS_Hull)
 	{
 		// Hull is upgraded using units of metal, magmium, etc. instead of modules.

@@ -458,8 +458,9 @@ bool DaLegacyCity::RxSpacecraftServiceMessage(const AuCommPacket* message)
 		g_Au.UnlockData();
 		if(restricted) { reply(tr("The city empire prohibits spacecraft upgrades.")); return true; }
 		const AuSysId target(message->SysId());
-		const quint32 quantity = ship->SystemModuleCount(target);
-		if(!quantity) { reply(tr("That system has no replaceable upgrade modules.")); return true; }
+		// 2016 upgrades consume one module for the selected system, regardless
+		// of its equipment count. Equipment count determines installation time.
+		const quint32 quantity = 1;
 		const bool installationReachable = GroundService(*this, *ship) || StationService(*this, *ship);
 		AuLegacyFinanceTransfer finance(ship);
 		QWriteLocker lock(&m_CityLock);
@@ -478,7 +479,7 @@ bool DaLegacyCity::RxSpacecraftServiceMessage(const AuCommPacket* message)
 				Offer offer; offer.item.AddItemCount(*item.second, quantity);
 				offer.price = subsidized ? 0 : quint32(qMin(quint64(0xffffffffu),
 					quint64(CachedShopPrice(*catalogue, m_City, inventory, production, *item.second, 110)) * quantity * 2));
-				offer.seconds = quint16(qMin(quint64(65535), qMax(quint64(10), (quint64(work) * quantity + 3) / 4)));
+				offer.seconds = quint16(qMin(work, 65535));
 				offers.insert(item.second->ListDesc(), offer);
 			}
 			lock.unlock();
@@ -499,7 +500,7 @@ bool DaLegacyCity::RxSpacecraftServiceMessage(const AuCommPacket* message)
 		if(work <= 0) return true;
 		const quint32 price = subsidized ? 0 : quint32(qMin(quint64(0xffffffffu),
 			quint64(CachedShopPrice(*catalogue, m_City, inventory, production, *item->second, 110)) * quantity * 2));
-		const quint16 duration = quint16(qMin(quint64(65535), qMax(quint64(10), (quint64(work) * quantity + 3) / 4)));
+		const quint16 duration = quint16(qMin(work, 65535));
 		if(price > accepted->Price() || price > ship->AccountBalance()) { lock.unlock(); reply(tr("The spacecraft cannot afford the current upgrade price.")); return true; }
 		if(!installationReachable) { lock.unlock(); reply(tr("Move onto a city road slab or near a friendly station for installation.")); return true; }
 		if(ship->RepairSecondsRemaining() || ship->IsMoving() || ship->SensorsWorking() || ship->ShieldsWorkingAndOn()

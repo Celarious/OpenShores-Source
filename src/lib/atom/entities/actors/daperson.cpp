@@ -13041,6 +13041,43 @@ AuItem* DaPerson::UseItemOnTarget(AuItem* item, const AuId& target, unsigned int
 		DaVessel* ship = dynamic_cast<DaVessel*>(pTarget);
 		if(ship)
 		{
+			// DaPerson::ApplyItem, AuAtom13:1803603b0: a held module installs
+			// directly. It is not a repair tool and does not replace one part.
+			if(g_Au.IsLegacyGeneration() && DbCommodity::IsModule(item->CommodityId()))
+			{
+				const AuSysId system = ship->SightedSystem(part);
+				const SYSTEM type = system.System();
+				const quint8 commandTechnology = ship->LockSystems().SystemTechLevel(SYS_CommandAndControl, 0);
+				ship->UnlockSystems();
+				const bool needsCommandTechnology = type != SYS_CommandAndControl && type != SYS_Hull
+					&& type != SYS_LifeSupport && type != SYS_Turret;
+				if(!AgentPowerEnabled() && (!ship->IsReadyForRepairs() || (!ship->IsOnGround() && !ship->IsMoored())))
+					Thought(tr("Land or moor the ship to install a system module. The ship must be at rest with power plant, maneuver drive, FTL drive, sensors and shields off."));
+				else if(needsCommandTechnology && item->TechLevel() > commandTechnology)
+					Thought(tr("%1 requires minimum TL%2 command and control.").arg(item->SayName()).arg(int(item->TechLevel()) + 1));
+				else
+				{
+					const int seconds = ship->SystemModuleInstallTime(system, item->CommodityId());
+					const quint16 duration = quint16(qBound(0, seconds, 65535));
+					if(seconds <= 0)
+						Thought(tr("%1 cannot be installed there.").arg(item->SayName()));
+					else if(ship->InstallSystemModule(system, *item, duration))
+					{
+						if(AgentPowerEnabled()) ship->ResetRepairTime();
+						Thought(tr("%1 installation will be done in %2 seconds.").arg(item->ListDesc()).arg(AgentPowerEnabled() ? 0 : int(duration)));
+						Stats().ItemUsedOnOther(*item);
+						Stats().SpacecraftSystemUpgraded(type);
+						item->Consume(1);
+						m_tmGearChange.Set();
+						SetModified();
+						ship->SetModified();
+					}
+					else
+						Thought(tr("%1 installation failed.").arg(item->SayName()));
+				}
+				return replacementItem;
+			}
+
 			// NOTE: Some tools can repair/remove multiple kinds of commodities. The same object should not be made of
 			// overlapping commodities because a slight ambiguity occurs. The result of repairing/removing a commodity will
 			// be in the order the commodities are added to the repairCIDs list here. e.g. A ScrewDriver will repair/remove
