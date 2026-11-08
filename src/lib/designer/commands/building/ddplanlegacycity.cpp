@@ -1,4 +1,5 @@
 #include "ddplanlegacycity.h"
+#include "ddroadconstruction.h"
 #include "auatomrenderinfo.h"
 #include "audesignerview.h"
 #include "augleffects.h"
@@ -128,7 +129,7 @@ struct ClearTarget
 	bool allowed = false;
 };
 
-bool FindClearTarget(const DaWorldLL& world, const AuPoint& point, ClearTarget& hit)
+bool FindClearTarget(const DaWorldLL& world, const AuPoint& point, ClearTarget& hit, bool roadsOnly = false)
 {
 	AuGlobeLLF ll; if(!world.LLOfLoc(ll, point)) return false;
 	DaAtomList atoms; world.ListNormalSubatoms(atoms);
@@ -140,6 +141,7 @@ bool FindClearTarget(const DaWorldLL& world, const AuPoint& point, ClearTarget& 
 			// Original lookup prefers buildings, then roads, then enclosing biodomes.
 			for(int kind = 0; kind < 3; ++kind) for(const auto& dev : state.developments)
 			{
+				if(roadsOnly && (dev.demolished || dev.industryId != 2 || dev.IsLandscaper())) continue;
 				if((dev.industryId == 129 ? 2 : dev.industryId == 2 ? 1 : 0) != kind) continue;
 				const double radius = ClearSiteRadius(dev);
 				const double halfLength = dev.roadLengthMeters * FeetPerMeter() / 2;
@@ -169,6 +171,13 @@ bool FindClearTarget(const DaWorldLL& world, const AuPoint& point, ClearTarget& 
 			}
 		}
 	return false;
+}
+
+bool RoadSwapMode(const AuLegacyCityProtocol::Request& request, Qt::KeyboardModifiers modifiers)
+{
+	return request.action == AuLegacyCityProtocol::Build && request.industryId == 2
+		&& (request.processId == 2 || request.processId == 3 || request.processId == 4 || request.processId == 7)
+		&& (modifiers & Qt::ControlModifier);
 }
 
 void ClearOutline(const DaWorldLL& world, const ClearTarget& hit,
@@ -313,6 +322,7 @@ void DdPlanLegacyCity::UpdateSelection(const AuLegacyCityProtocol::Request& requ
 
 void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, const QPoint& pixel)
 {
+	const bool roadSwap = RoadSwapMode(m_Request, QGuiApplication::keyboardModifiers());
 	if(person && m_Request.action == AuLegacyCityProtocol::Build && m_Request.industryId != 2 && m_Request.industryId != 129)
 	{
 		AuPoint point;
@@ -332,7 +342,7 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 		AuPoint point;
 		if(const auto* world = FindPlacementLocation(person, pixel, point))
 		{
-			if(m_HasStart && m_StartWorld == world->Id().GetID())
+			if(!roadSwap && m_HasStart && m_StartWorld == world->Id().GetID())
 			{
 				AuLegacyCityProtocol::Request request;
 				m_SiteStatus = PrepareRoadRequest(*world, point, QGuiApplication::keyboardModifiers() & Qt::ShiftModifier,
@@ -357,6 +367,7 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 	// road bitmap, doubled to 32 pixels for slabs, with a centered hotspot.
 	if(m_Request.action == AuLegacyCityProtocol::Build && m_Request.industryId == 2)
 	{
+		if(roadSwap) { m_pWnd->setCursor(DdRoadConstruction::Cursor(m_Request.processId, true, m_Request.roadSlab)); return; }
 		m_pWnd->setCursor(QCursor(m_Request.roadSlab ? icon.scaledToWidth(32) : icon)); return;
 	}
 	// Building 0x140321130, biodome 0x14031bd50 and clear 0x14031d920.
@@ -669,7 +680,7 @@ void DdPlanLegacyCity::OnMouseWheel(QWheelEvent* event)
 DaWorldLL* DdPlanLegacyCity::FindPlacementLocation(DaPerson* person, const QPoint& pixel, AuPoint& point) const
 {
 	if(m_Request.action != AuLegacyCityProtocol::Build || m_Request.industryId != 2
-		|| !m_Request.roadSlab || !m_HasStart)
+		|| !m_Request.roadSlab || !m_HasStart || RoadSwapMode(m_Request, QGuiApplication::keyboardModifiers()))
 		return m_pWnd->FindTerrainLocationAtPixel(person, pixel, point);
 
 	auto* world = person && person->Parent() ? person->Parent()->FindParentWorldInEnv() : nullptr;
@@ -767,6 +778,18 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 	bool submit = false;
 	if(world)
 	{
+		if(RoadSwapMode(request, event->modifiers()))
+		{
+			ClearTarget hit;
+			if(FindClearTarget(*world, point, hit, true) && hit.development.constructionProcessId != request.processId)
+			{
+				request.action = AuLegacyCityProtocol::ChangeRoad;
+				request.cityId = hit.city; request.developmentId = hit.development.id; submit = true;
+			}
+			m_pWnd->UnlockSceneAtom();
+			if(submit) m_Interface->Submit(request);
+			return;
+		}
 		if(request.action == AuLegacyCityProtocol::Build && request.industryId != 2 && request.industryId != 129)
 		{
 			UpdateSite(*world, point, *person);
@@ -865,7 +888,8 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 		preview.levels = quint8(m_ExistingLevels + qMin(int(preview.levels), m_MaximumLevels));
 	if(m_SiteMaterial) { preview.material = m_SiteMaterial; preview.designId = m_SiteDesignId; }
 	AuPoint roadEnd;
-	const bool roadDrag = m_Request.industryId == 2 && m_HasStart && m_StartWorld == world->Id().GetID();
+	const bool roadSwap = RoadSwapMode(m_Request, QGuiApplication::keyboardModifiers());
+	const bool roadDrag = !roadSwap && m_Request.industryId == 2 && m_HasStart && m_StartWorld == world->Id().GetID();
 	if(preview.action == AuLegacyCityProtocol::Build && preview.industryId != 2 && preview.industryId != 129)
 	{
 		// SetCursor samples this site before drawing each frame. Reuse its
@@ -906,6 +930,12 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 	{
 		ClearTarget hit; if(!FindClearTarget(*world, point, hit)) return;
 		ClearOutline(*world, hit, vertices, ground); clearAllowed = hit.allowed;
+		model = worldModel;
+	}
+	else if(roadSwap)
+	{
+		ClearTarget hit;
+		if(FindClearTarget(*world, point, hit, true)) ClearOutline(*world, hit, vertices, ground);
 		model = worldModel;
 	}
 	else if(m_Request.industryId == 2)
@@ -1101,7 +1131,8 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 	if(m_Request.industryId != 2 && m_Request.industryId != 129) return;
 	QFont font; font.setPixelSize(14);
 	QString text;
-	if (m_Request.industryId == 2) {
+	if(roadSwap) text = QObject::tr("Ctrl+click to swap road type");
+	else if (m_Request.industryId == 2) {
 		text = !m_Request.roadSlab ? m_HasStart ? QObject::tr("Click road end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr("Click road start") : text = m_HasStart ? QObject::tr("Click slab end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr("Click slab start");
 	} else if (m_Request.industryId == 129) {
 		m_HasStart ? QObject::tr("Click biodome radius — %1 m").arg(preview.biodomeRadiusMeters, 0, 'f', 1) : QObject::tr("Click biodome center");

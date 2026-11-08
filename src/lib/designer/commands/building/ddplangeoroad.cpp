@@ -5,6 +5,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "ddplangeoroad.h"
+#include "ddroadconstruction.h"
 //
 #include "auapp.h"
 #include "auclientglobal.h"
@@ -17,6 +18,15 @@
 #include <QCursor>
 #include <QKeyEvent>
 #include <QMouseEvent>
+
+QCursor DdRoadConstruction::Cursor(quint8 process, bool change, bool slab, const QPoint& hotspot)
+{
+	const QString surface = process == 4 ? QStringLiteral("Concrete") : process == 3 ? QStringLiteral("Asphalt")
+		: process == 7 ? QStringLiteral("Pressurized") : QStringLiteral("Dirt");
+	QPixmap pix(QStringLiteral(":data/bp_Road%1%2.bmp").arg(surface, change ? QStringLiteral("Chg") : QString()));
+	if(!change && slab) pix = pix.scaledToWidth(32);
+	return pix.isNull() ? QCursor(Qt::CrossCursor) : QCursor(pix, hotspot.x(), hotspot.y());
+}
 
 DdPlanGeoRoad::DdPlanGeoRoad(quint8 geoType, AuDesignerView* view) : DdCommand(view)
 {
@@ -1015,33 +1025,10 @@ void DdPlanGeoRoad::SetCursor(const AuMatrix4x4& /*tCamera*/, DaPerson* pSceneAt
 		// Location is good. Show the building material on the cursor.
 		if(m_Cursor.pixmap().isNull() || m_CtrlDown != m_CursorCtrlDown)
 		{
-			QPixmap pix;
-			if(m_CtrlDown && m_GeoType != AuGeoRoadGrade::GeoType())
-			{
-				if(m_GeoType == AuGeoRoadConcrete::GeoType())
-					pix.load(":data/bp_RoadConcreteChg.bmp");
-				else if(m_GeoType == AuGeoRoadAsphalt::GeoType())
-					pix.load(":data/bp_RoadAsphaltChg.bmp");
-				else
-					pix.load(":data/bp_RoadDirtChg.bmp");
-				if(!pix.isNull())
-					m_Cursor = QCursor(pix, 16,16);
-				m_CursorCtrlDown = true;
-			}
-			else
-			{
-				if(m_GeoType == AuGeoRoadConcrete::GeoType())
-					pix.load(":data/bp_RoadConcrete.bmp");
-				else if(m_GeoType == AuGeoRoadAsphalt::GeoType())
-					pix.load(":data/bp_RoadAsphalt.bmp");
-				else
-					pix.load(":data/bp_RoadDirt.bmp");
-				if(g_AuClient.RoadType())
-					pix = pix.scaledToWidth(32);
-				if(!pix.isNull())
-					m_Cursor = QCursor(pix, 0,0);
-				m_CursorCtrlDown = false;
-			}
+			const bool change = m_CtrlDown && m_GeoType != AuGeoRoadGrade::GeoType();
+			m_Cursor = DdRoadConstruction::Cursor(ConstructionProcessId(), change, g_AuClient.RoadType() != 0,
+				change ? QPoint(16, 16) : QPoint(0, 0));
+			m_CursorCtrlDown = change;
 		}
 
 		if(m_Cursor.pixmap().isNull())
