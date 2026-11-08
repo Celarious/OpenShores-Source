@@ -233,22 +233,39 @@ int DaLegacyCity::SpacecraftPersonnelAvailable(const DaVessel& ship, NPC_ROLE ro
 void DaLegacyCity::EquipSpacecraftPersonnel(DaNpc& npc)
 {
 	if(!MetadataReady()) return;
+	QMutexLocker operation(&personnelLock);
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
-	const auto* gear = npc.LockGearForRead();
-	if(!gear) { npc.UnlockGear(); return; }
-	const AuGear previous(*gear);
-	npc.UnlockGear();
-	QWriteLocker lock(&m_CityLock);
-	AuItemHash inventory, taken; QString error;
-	if(!AuLegacyCity::ReadCityInventory(m_City.inventory, *catalogue, inventory, error)) return;
-	// InitGear/AddGearItemUseDropNoLock with dropIt=false only edits gear;
-	// DaCitizen's weight refresh reads cached environment flags, not the city.
-	npc.InitGear(inventory, taken, true);
-	QByteArray bytes;
-	if(!AuLegacyCity::WriteCityInventory(inventory, bytes, error))
-	{ lock.unlock(); npc.SetGear(previous); return; }
-	m_City.inventory = bytes; ++m_CityRevision;
-	lock.unlock(); SetModified();
+	for(;;)
+	{
+		const auto before = Snapshot();
+		if(IsDead()) return;
+		const auto* gear = npc.LockGearForRead();
+		if(!gear) { npc.UnlockGear(); return; }
+		const AuGear previous(*gear);
+		npc.UnlockGear();
+		AuItemHash inventory, taken; QString error;
+		if(!AuLegacyCity::ReadCityInventory(before.inventory, *catalogue, inventory, error)) return;
+		// Gear changes refresh weight and can rebuild the NPC environment,
+		// including this city's terrain. Never hold the city lock across them.
+		npc.InitGear(inventory, taken, true);
+		QByteArray bytes;
+		if(!AuLegacyCity::WriteCityInventory(inventory, bytes, error))
+		{ npc.SetGear(previous); return; }
+		QWriteLocker lock(&m_CityLock);
+		const bool ownerChanged = m_City.controllingEmpire != before.controllingEmpire;
+		if(IsDead() || ownerChanged || m_City.inventory != before.inventory)
+		{
+			lock.unlock();
+			// Rollback can also refresh the environment. Restore outside the
+			// city lock, then retry against current stock after a competing sale.
+			npc.SetGear(previous);
+			if(IsDead() || ownerChanged) return;
+			continue;
+		}
+		m_City.inventory = bytes; ++m_CityRevision;
+		lock.unlock(); SetModified();
+		return;
+	}
 }
 
 void DaLegacyCity::InflictCitizenCrises(DaNpc& citizen) const
