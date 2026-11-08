@@ -173,7 +173,9 @@ bool FindClearTarget(const DaWorldLL& world, const AuPoint& point, ClearTarget& 
 	return false;
 }
 
-bool RoadSwapMode(const AuLegacyCityProtocol::Request& request, Qt::KeyboardModifiers modifiers)
+// Use live key state for both preview and clicks, including after a missed release.
+bool RoadSwapMode(const AuLegacyCityProtocol::Request& request,
+	Qt::KeyboardModifiers modifiers = QGuiApplication::queryKeyboardModifiers())
 {
 	return request.action == AuLegacyCityProtocol::Build && request.industryId == 2
 		&& (request.processId == 2 || request.processId == 3 || request.processId == 4 || request.processId == 7)
@@ -322,7 +324,7 @@ void DdPlanLegacyCity::UpdateSelection(const AuLegacyCityProtocol::Request& requ
 
 void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, const QPoint& pixel)
 {
-	const bool roadSwap = RoadSwapMode(m_Request, QGuiApplication::keyboardModifiers());
+	const bool roadSwap = RoadSwapMode(m_Request);
 	if(person && m_Request.action == AuLegacyCityProtocol::Build && m_Request.industryId != 2 && m_Request.industryId != 129)
 	{
 		AuPoint point;
@@ -639,6 +641,10 @@ bool DdPlanLegacyCity::OnKeyDown(QKeyEvent* event)
 {
 	switch(event->key())
 	{
+	case Qt::Key_Control:
+		if(!RoadSwapMode(m_Request, Qt::ControlModifier)) return DdCommand::OnKeyDown(event);
+		// Consume Ctrl before it reaches the viewport's temporary hand mode.
+		m_pWnd->update(); return true;
 	case Qt::Key_Left:
 		if(event->modifiers() & Qt::ControlModifier) ChangeProduct(-1);
 		else ChangeRotation(1, event->modifiers() & Qt::ShiftModifier);
@@ -670,6 +676,13 @@ bool DdPlanLegacyCity::OnKeyDown(QKeyEvent* event)
 	}
 }
 
+bool DdPlanLegacyCity::OnKeyUp(QKeyEvent* event)
+{
+	if(event->key() != Qt::Key_Control || !RoadSwapMode(m_Request, Qt::ControlModifier))
+		return DdCommand::OnKeyUp(event);
+	m_pWnd->update(); return true;
+}
+
 void DdPlanLegacyCity::OnMouseWheel(QWheelEvent* event)
 {
 	const int delta = event->angleDelta().y(); if(!delta) return;
@@ -680,7 +693,7 @@ void DdPlanLegacyCity::OnMouseWheel(QWheelEvent* event)
 DaWorldLL* DdPlanLegacyCity::FindPlacementLocation(DaPerson* person, const QPoint& pixel, AuPoint& point) const
 {
 	if(m_Request.action != AuLegacyCityProtocol::Build || m_Request.industryId != 2
-		|| !m_Request.roadSlab || !m_HasStart || RoadSwapMode(m_Request, QGuiApplication::keyboardModifiers()))
+		|| !m_Request.roadSlab || !m_HasStart || RoadSwapMode(m_Request))
 		return m_pWnd->FindTerrainLocationAtPixel(person, pixel, point);
 
 	auto* world = person && person->Parent() ? person->Parent()->FindParentWorldInEnv() : nullptr;
@@ -778,7 +791,7 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 	bool submit = false;
 	if(world)
 	{
-		if(RoadSwapMode(request, event->modifiers()))
+		if(RoadSwapMode(request))
 		{
 			ClearTarget hit;
 			if(FindClearTarget(*world, point, hit, true) && hit.development.constructionProcessId != request.processId)
@@ -888,7 +901,7 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 		preview.levels = quint8(m_ExistingLevels + qMin(int(preview.levels), m_MaximumLevels));
 	if(m_SiteMaterial) { preview.material = m_SiteMaterial; preview.designId = m_SiteDesignId; }
 	AuPoint roadEnd;
-	const bool roadSwap = RoadSwapMode(m_Request, QGuiApplication::keyboardModifiers());
+	const bool roadSwap = RoadSwapMode(m_Request);
 	const bool roadDrag = !roadSwap && m_Request.industryId == 2 && m_HasStart && m_StartWorld == world->Id().GetID();
 	if(preview.action == AuLegacyCityProtocol::Build && preview.industryId != 2 && preview.industryId != 129)
 	{
@@ -1131,11 +1144,11 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 	if(m_Request.industryId != 2 && m_Request.industryId != 129) return;
 	QFont font; font.setPixelSize(14);
 	QString text;
-	if(roadSwap) text = QObject::tr("Ctrl+click to swap road type");
+	if(roadSwap) text = QObject::tr(" Ctrl+click to swap road type");
 	else if (m_Request.industryId == 2) {
-		text = !m_Request.roadSlab ? m_HasStart ? QObject::tr("Click road end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr("Click road start") : text = m_HasStart ? QObject::tr("Click slab end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr("Click slab start");
+		text = !m_Request.roadSlab ? m_HasStart ? QObject::tr(" Click road end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr(" Click road start") : text = m_HasStart ? QObject::tr("Click slab end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr("Click slab start");
 	} else if (m_Request.industryId == 129) {
-		m_HasStart ? QObject::tr("Click biodome radius — %1 m").arg(preview.biodomeRadiusMeters, 0, 'f', 1) : QObject::tr("Click biodome center");
+		m_HasStart ? QObject::tr(" Click biodome radius — %1 m").arg(preview.biodomeRadiusMeters, 0, 'f', 1) : QObject::tr(" Click biodome center");
 	}
 	effects.RenderText(pixel.x() + 16, pixel.y() + 24, text, font, QColor(255, 230, 100), info.glw->width(), info.glw->height());
 }

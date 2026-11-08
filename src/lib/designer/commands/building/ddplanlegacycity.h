@@ -21,6 +21,7 @@ public:
 	bool UsesControls(const AuLegacyCityConstruction* controls) const;
 	void UpdateSelection(const AuLegacyCityProtocol::Request& request);
 	bool OnKeyDown(QKeyEvent* event) override;
+	bool OnKeyUp(QKeyEvent* event) override;
 	void OnButtonDown(QMouseEvent* event) override;
 	void OnMouseWheel(QWheelEvent* event) override;
 	void DeleteDeviceObjects(AuGLEffects& effects) override;
