@@ -18729,7 +18729,10 @@ void DaSentient::CommandShip(DaVessel* ship)
 			if(destCity)
 			{
 				// Destination city was found in the solar system.
-				if(destCity->Is(ship->InBdCity()))
+				const auto* legacyCity = g_Au.IsLegacyGeneration() ? dynamic_cast<const DaLegacyCity*>(destCity) : nullptr;
+				if(legacyCity)
+					orderComplete = legacyCity->IsSpacecraftOnSlab(*ship);
+				else if(destCity->Is(ship->InBdCity()))
 					orderComplete = true;	// Ship is sitting on a road slab in the destination city.
 				else
 				{
@@ -20215,6 +20218,11 @@ bool DaSentient::MissionOrderChanged(DaVessel* ship, const AuMissionOrder& prevO
 {
 	// Some orders require work as soon as they become the current order, such as pre-boarding announcements.
 	ResetOrderAnnounced();
+	// A seated officer may be in a thirty-second idle nap. These brief
+	// orders should wake him now, while retaining the normal rank delay.
+	if(g_Au.IsLegacyGeneration() && (ship->MissionOrderType() == AuMissionOrder::Report
+		|| ship->MissionOrderType() == AuMissionOrder::Christen || ship->MissionOrderType() == AuMissionOrder::LightState))
+		WakeUp();
 	switch(ship->MissionOrderType())
 	{
 	case AuMissionOrder::Repair:
@@ -24108,6 +24116,17 @@ void DaSentient::DoShipLightState(DaVessel* ship, bool headlight, bool navLight,
 	{
 		ship->HeadlightToggle(headlight);
 		anyChange = true;
+	}
+
+	if(g_Au.IsLegacyGeneration())
+	{
+		const INTERIOR_LIGHT interior = ship->LockMissionOrder().InteriorLightState();
+		ship->UnlockMissionOrder();
+		if(interior != INTLIGHT_Invalid && ship->InteriorLightToggle(interior))
+			anyChange = true;
+		if(anyChange)
+			ship->SetModified();
+		return;
 	}
 
 	if(ship->IsNavLightOn() != navLight)

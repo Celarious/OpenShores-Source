@@ -413,6 +413,7 @@ public:	// Methods
 	{
 		return false;
 	}
+	virtual INTERIOR_LIGHT InteriorLightState() const { return INTLIGHT_Invalid; }
 
 	virtual quint8 FuelThreshold() const
 	{
@@ -5405,9 +5406,11 @@ private:
 	bool								m_NavLight;
 	bool								m_RotatingBeacon;
 	bool								m_Strobe;
+	INTERIOR_LIGHT m_InteriorLight = INTLIGHT_Invalid; // Absent in existing modern orders.
 
 public:
 	AuMissionOrderLightState(bool headlight, bool navLight, bool beacon, bool strobe, EXECTYPE execType = Sequential);
+	AuMissionOrderLightState(bool headlight, INTERIOR_LIGHT interiorLight, EXECTYPE execType = Sequential);
 	AuMissionOrderLightState();
 	AuMissionOrderLightState(const AuMissionOrderLightState& c);
 
@@ -5418,6 +5421,7 @@ public:
 	{
 		return m_Headlight;
 	}
+	INTERIOR_LIGHT InteriorLightState() const override { return m_InteriorLight; }
 
 	// Same as operator== except that the MissionOrderId is not compared.
 	virtual bool IsSame(const AuMissionOrder& order) const
@@ -5434,6 +5438,8 @@ public:
 			if(m_RotatingBeacon != c.m_RotatingBeacon)
 				return false;
 			if(m_Strobe != c.m_Strobe)
+				return false;
+			if(m_InteriorLight != c.m_InteriorLight)
 				return false;
 			return true;
 		}
@@ -5485,6 +5491,8 @@ public:
 			if(m_RotatingBeacon != c.m_RotatingBeacon)
 				return false;
 			if(m_Strobe != c.m_Strobe)
+				return false;
+			if(m_InteriorLight != c.m_InteriorLight)
 				return false;
 			return true;
 		}

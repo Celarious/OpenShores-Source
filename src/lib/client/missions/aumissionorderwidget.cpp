@@ -340,6 +340,7 @@ AuMissionOrderWidget::AuMissionOrderWidget(const AuId& authorization, const AuId
 	m_IsDoOnce = false;
 	m_IsMailCoC = false;
 	m_LightStateHeadlight = g_Au.Settings().readBoolEntry("MissionOrderWidget/LightHeadlight", true);
+	m_LightStateInterior = INTERIOR_LIGHT(qBound(0, g_Au.Settings().readNumEntry("MissionOrderWidget/LightInterior", INTLIGHT_Dim), 2));
 	m_LightStateNavLight = g_Au.Settings().readBoolEntry("MissionOrderWidget/LightNavLight", true);
 	m_LightStateRotatingBeacon = g_Au.Settings().readBoolEntry("MissionOrderWidget/LightRotatingBeacon", true);
 	m_LightStateStrobe = g_Au.Settings().readBoolEntry("MissionOrderWidget/LightStrobe", true);
@@ -1141,6 +1142,14 @@ AuMissionOrderWidget::AuMissionOrderWidget(const AuId& authorization, const AuId
 			bg->addButton(m_LightHeadlightOff);
 			bg->addButton(m_LightHeadlightOn);
 		}
+
+		m_LightInteriorLabel = new QLabel(tr("Interior Lights"), this);
+		m_LightInterior = new QComboBox(this);
+		m_LightInterior->addItem(tr("Off"), INTLIGHT_Dark);
+		m_LightInterior->addItem(tr("Dim"), INTLIGHT_Dim);
+		m_LightInterior->addItem(tr("Bright"), INTLIGHT_Bright);
+		m_LightInterior->setCurrentIndex(m_LightInterior->findData(m_LightStateInterior));
+		connect(m_LightInterior, SIGNAL(currentIndexChanged(int)), SLOT(LightInteriorSelected(int)));
 
 		QVBoxLayout* lightNavLightRadios = new QVBoxLayout;
 		{
@@ -2028,6 +2037,8 @@ AuMissionOrderWidget::AuMissionOrderWidget(const AuId& authorization, const AuId
 		lay->addLayout(coordRadios);
 		lay->addLayout(coords);
 		lay->addLayout(lightHeadlightRadios);
+		lay->addWidget(m_LightInteriorLabel);
+		lay->addWidget(m_LightInterior);
 		lay->addLayout(lightNavLightRadios);
 		lay->addLayout(lightRotatingBeaconRadios);
 		lay->addLayout(lightStrobeRadios);
@@ -2946,6 +2957,8 @@ void AuMissionOrderWidget::GetValuesFromOrder(const AuMissionOrder* order)
 
 	case AuMissionOrder::LightState:
 		m_LightStateHeadlight = order->HeadlightOn();
+		if(order->InteriorLightState() != INTLIGHT_Invalid)
+			m_LightStateInterior = order->InteriorLightState();
 		m_LightStateNavLight = order->NavLightOn();
 		m_LightStateRotatingBeacon = order->RotatingBeaconOn();
 		m_LightStateStrobe = order->StrobeOn();
@@ -3314,6 +3327,12 @@ void AuMissionOrderWidget::EnableControls()
 		showit.insert(m_LightHeadlightLabel);
 		showit.insert(m_LightHeadlightOff);
 		showit.insert(m_LightHeadlightOn);
+		if(g_Au.IsLegacyGeneration())
+		{
+			showit.insert(m_LightInteriorLabel);
+			showit.insert(m_LightInterior);
+			break;
+		}
 		showit.insert(m_LightNavLightLabel);
 		showit.insert(m_LightNavLightOff);
 		showit.insert(m_LightNavLightOn);
@@ -4021,6 +4040,10 @@ void AuMissionOrderWidget::SetControlVisibility(const QSet<QWidget*>& visibleCon
 		m_LightHeadlightOff->setVisible(show);
 	if(visibleControls.contains(m_LightHeadlightOn) == show)
 		m_LightHeadlightOn->setVisible(show);
+	if(visibleControls.contains(m_LightInteriorLabel) == show)
+		m_LightInteriorLabel->setVisible(show);
+	if(visibleControls.contains(m_LightInterior) == show)
+		m_LightInterior->setVisible(show);
 	if(visibleControls.contains(m_LightNavLightLabel) == show)
 		m_LightNavLightLabel->setVisible(show);
 	if(visibleControls.contains(m_LightNavLightOff) == show)
@@ -4725,6 +4748,8 @@ AuMissionOrder* AuMissionOrderWidget::Order() const
 		return new AuMissionOrderHoldMission(execType);
 
 	case AuMissionOrder::LightState:
+		if(g_Au.IsLegacyGeneration())
+			return new AuMissionOrderLightState(m_LightStateHeadlight, m_LightStateInterior, execType);
 		return new AuMissionOrderLightState(m_LightStateHeadlight, m_LightStateNavLight, m_LightStateRotatingBeacon,
 				m_LightStateStrobe, execType);
 
@@ -7936,6 +7961,13 @@ void AuMissionOrderWidget::LightHeadlightOnSelected()
 {
 	m_LightStateHeadlight = true;
 	g_Au.Settings().writeEntry("MissionOrderWidget/LightHeadlight", m_LightStateHeadlight);
+	EnableControls();
+}
+
+void AuMissionOrderWidget::LightInteriorSelected(int index)
+{
+	m_LightStateInterior = INTERIOR_LIGHT(m_LightInterior->itemData(index).toInt());
+	g_Au.Settings().writeEntry("MissionOrderWidget/LightInterior", int(m_LightStateInterior));
 	EnableControls();
 }
 

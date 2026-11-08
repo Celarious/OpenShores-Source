@@ -4728,12 +4728,19 @@ AuMissionOrderLightState::AuMissionOrderLightState()
 	m_Strobe = false;
 }
 
+AuMissionOrderLightState::AuMissionOrderLightState(bool headlight, INTERIOR_LIGHT interiorLight, EXECTYPE execType) :
+	AuMissionOrderLightState(headlight, false, false, false, execType)
+{
+	m_InteriorLight = interiorLight;
+}
+
 AuMissionOrderLightState::AuMissionOrderLightState(const AuMissionOrderLightState& c) : AuMissionOrder(c)
 {
 	m_Headlight = c.m_Headlight;
 	m_NavLight = c.m_NavLight;
 	m_RotatingBeacon = c.m_RotatingBeacon;
 	m_Strobe = c.m_Strobe;
+	m_InteriorLight = c.m_InteriorLight;
 }
 
 void AuMissionOrderLightState::operator>>(QDataStream& out) const
@@ -4749,6 +4756,10 @@ void AuMissionOrderLightState::operator>>(QDataStream& out) const
 		lights |= 0x04;
 	if(m_Strobe)
 		lights |= 0x08;
+	// Extend the existing byte using its unused bits; modern orders keep
+	// their original encoding. The marker distinguishes Off from absent.
+	if(m_InteriorLight >= INTLIGHT_Dark && m_InteriorLight < INTLIGHT_Invalid)
+		lights |= 0x10 | (quint8(m_InteriorLight) << 5);
 	out << lights;
 }
 
@@ -4762,6 +4773,8 @@ void AuMissionOrderLightState::operator<<(QDataStream& in)
 	m_NavLight = lights & 0x02;
 	m_RotatingBeacon = lights & 0x04;
 	m_Strobe = lights & 0x08;
+	const quint8 interior = (lights >> 5) & 0x03;
+	m_InteriorLight = (lights & 0x10) && interior < INTLIGHT_Invalid ? INTERIOR_LIGHT(interior) : INTLIGHT_Invalid;
 }
 
 // Returns a duplicate of this mission order, allocated on the heap.
@@ -4778,6 +4791,12 @@ QString AuMissionOrderLightState::ListDescription() const
 		headlight = QObject::tr("on");
 	else
 		headlight = QObject::tr("off");
+	if(m_InteriorLight != INTLIGHT_Invalid)
+	{
+		const QString interior = m_InteriorLight == INTLIGHT_Dark ? QObject::tr("off")
+			: m_InteriorLight == INTLIGHT_Dim ? QObject::tr("dim") : QObject::tr("bright");
+		return QObject::tr("Switch headlight %1 and interior lights %2.").arg(headlight).arg(interior);
+	}
 
 	QString navLight;
 	if(m_NavLight)
@@ -4821,6 +4840,8 @@ QString AuMissionOrderLightState::ListNameIcon() const
 
 QString AuMissionOrderLightState::ListToolTip() const
 {
+	if(g_Au.IsLegacyGeneration()) return QObject::tr("<html>Sets the headlight on or off and interior lights off, dim or bright. "
+		"The captain, an officer or the pilot carries out this order.</html>");
 	return QObject::tr("<html>Sets up lights. "
 			"The exterior lighting of the ship is configured. "
 			"Headlight, nav lights, rotating beacons and strobes are configured individually.<br>"
@@ -4845,6 +4866,7 @@ quint64 AuMissionOrderLightState::MemoryUsage() const
 	mem += sizeof(m_NavLight);
 	mem += sizeof(m_RotatingBeacon);
 	mem += sizeof(m_Strobe);
+	mem += sizeof(m_InteriorLight);
 	return mem;
 }
 

@@ -72,7 +72,7 @@ public:
 	// Stable terrain-only fingerprint; economy and inventory do not affect it.
 	QByteArray TerrainCacheKey() const;
 	void AddRoadPaint(const DaWorldLL& world, QList<AuGlobeTriAltVegNPave>& triangles) const;
-	// Original airport perimeter candidates and road fallback, in the world's frame.
+	// Airport perimeter candidates and completed slab landing sites, in the world's frame.
 	void AirportTerminalLandingSpots(QList<AuPoint>& spots) const;
 	AuPoint FindSpacecraftLandingSite(const DaVessel& ship) const;
 	// A finished building establishes the settlement; flags and landscaping do not.

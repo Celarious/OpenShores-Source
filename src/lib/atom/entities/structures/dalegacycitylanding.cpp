@@ -1,6 +1,7 @@
 #include "dalegacycity.h"
 #include "aulegacycitycatalogue.h"
 #include "aulegacycityvehicles.h"
+#include "aubox.h"
 #include "auglobal.h"
 #include "davessel.h"
 #include "daatomlist.h"
@@ -38,14 +39,26 @@ bool AtSite(const DaWorldLL& world, const AuLegacyCity::Development& site, const
 	return std::abs(local.x) <= width + margin && std::abs(local.y) <= length + margin;
 }
 
-bool ClearLanding(const DaWorldLL& world, const DaVessel& ship, AuPoint& point)
+bool ClearLanding(const DaWorldLL& world, const DaVessel& ship, const AuLegacyCity::Development& slab,
+	const QVector<AuLegacyCity::Development>& buildings, AuPoint& point)
 {
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	const double clearance = ship.RoughRadius() + 5 * FeetPerMeter();
+	if(!catalogue || slab.industryId != 2 || !slab.roadSlab || !slab.completedLevels
+		|| !AtSite(world, slab, point, -clearance)) return false;
 	AuGlobeLLF ll;
 	if(!world.LLOfLoc(ll, point)) return false;
 	const double altitude = world.SurfaceAltitudeMSL(ll);
 	if(world.Hydrographics() && altitude < 0) return false;
 	point = world.LocOfLL(ll, altitude);
-	return !world.IsLandingAreaObstructed(point, ship.RoughRadius() + 5 * FeetPerMeter(), &ship);
+	// Reuse manufacturing's footprint checks; legacy buildings are city
+	// developments, so the shared unit obstruction query cannot see them.
+	AuMatrix4x4 placement;
+	world.BuildingConstructionTransform(point, slab.facingRadians, nullptr, AuPoint(), placement);
+	AuBox occupied(AuPoint(-clearance, -clearance, 0), AuPoint(clearance, clearance, 0));
+	occupied.Transform(placement);
+	if(!AuLegacyCity::ProductionLandSpawnFits(world, *catalogue, slab, occupied, buildings)) return false;
+	return !world.IsLandingAreaObstructed(point, clearance, &ship);
 }
 }
 
@@ -84,13 +97,20 @@ AuPoint DaLegacyCity::FindSpacecraftLandingSite(const DaVessel& ship) const
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!g_Au.IsLegacyGeneration() || !world || IsDead()) return AuPoint();
+	auto state = Snapshot();
+	QVector<AuLegacyCity::Development> buildings = state.developments;
+	DaAtomList cities;
+	world->FindLegacyCitiesRecursive(cities);
+	for(const auto* atom : cities)
+		if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+			if(city != this) buildings += city->Snapshot().developments;
 	QList<AuPoint> airport;
 	AirportTerminalLandingSpots(airport);
-	for(AuPoint point : airport) if(ClearLanding(*world, ship, point)) return point;
-	// DaSentient::FindLandingSite, AuAtom13:1803844e0. Scan road
-	// centerlines at ship-clearance intervals; prefer completed slabs beside
-	// terminals, then ordinary city buildings, then industrial buildings.
-	auto state = Snapshot();
+	for(AuPoint point : airport)
+		for(const auto& slab : state.developments)
+			if(ClearLanding(*world, ship, slab, buildings, point)) return point;
+	// Keep the historical preference for airport/ordinary/industrial sites,
+	// but city landing orders now require a completed slab with full clearance.
 	std::stable_sort(state.developments.begin(), state.developments.end(),
 		[](const AuLegacyCity::Development& a, const AuLegacyCity::Development& b) { return a.location < b.location; });
 	const AuPoint center = Transform().Translation();
@@ -99,7 +119,8 @@ AuPoint DaLegacyCity::FindSpacecraftLandingSite(const DaVessel& ship) const
 	AuPoint best;
 	for(const auto& road : state.developments)
 	{
-		if(road.demolished || road.IsLandscaper() || road.industryId != 2) continue;
+		if(road.demolished || road.IsLandscaper() || road.industryId != 2 || !road.roadSlab
+			|| !road.completedLevels || road.roadWidthMeters * FeetPerMeter() < clearance * 2) continue;
 		AuGlobeLLF start, end;
 		if(!AuLegacyCity::ProductionRoadEndpoints(*world, road, start, end)) continue;
 		const AuPoint first = world->LocOfLL(start, road.roadStartAltitudeMSL);
@@ -108,47 +129,24 @@ AuPoint DaLegacyCity::FindSpacecraftLandingSite(const DaVessel& ship) const
 		const double length = direction.Length();
 		if(length < clearance * 2) continue;
 		direction /= length;
-		for(double distance = clearance; distance < length; distance += clearance)
+		for(double distance = clearance; distance <= length - clearance; distance += clearance)
 		{
 			AuPoint point = first + direction * distance;
-			if(center.Distance2(point) > 4900.0 * 4900.0 || !ClearLanding(*world, ship, point)) continue;
+			if(center.Distance2(point) > 4900.0 * 4900.0 || !ClearLanding(*world, ship, road, buildings, point)) continue;
 			int adjacent = 3; // No neighboring building.
-			if(road.roadSlab)
-				for(const auto& building : state.developments)
-				{
-					if(building.industryId == 2 || building.industryId == 129 || !AtSite(*world, building, point, 40 * FeetPerMeter())) continue;
-					if(building.industryId == 111) { adjacent = 0; break; }
-					const bool industrial = building.industryId == 70 || building.industryId == 126
-						|| building.industryId == 87 || building.industryId == 88;
-					adjacent = industrial ? 2 : 1;
-					break;
-				}
-			if(road.roadSlab && adjacent == 3) continue;
-			const int rank = !road.roadSlab ? (road.completedLevels ? 3 : 7)
-				: adjacent + (road.completedLevels ? 0 : 4);
+			for(const auto& building : state.developments)
+			{
+				if(building.industryId == 2 || building.industryId == 129 || !AtSite(*world, building, point, 40 * FeetPerMeter())) continue;
+				if(building.industryId == 111) { adjacent = 0; break; }
+				const bool industrial = building.industryId == 70 || building.industryId == 126
+					|| building.industryId == 87 || building.industryId == 88;
+				adjacent = industrial ? 2 : 1;
+				break;
+			}
+			const int rank = adjacent;
 			if(!rank) return point;
 			if(rank <= bestRank) { bestRank = rank; best = point; }
 		}
 	}
-	if(!best.IsZero()) return best;
-	// Sixteen original fallback directions, at 4 * 980 feet from the square.
-	AuPoint vertical = -world->GravityDir(center), axis;
-	vertical.ArbitraryAxis(axis);
-	const AuPoint other = vertical.Cross(axis);
-	QVector<AuLegacyCity::Development> developments = state.developments;
-	DaAtomList cities;
-	world->FindLegacyCitiesRecursive(cities);
-	for(const auto* atom : cities)
-		if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
-			if(city != this) developments += city->Snapshot().developments;
-	for(int index = 0; index < 16; ++index)
-	{
-		const float angle = float(index) * PIf * 2.0f * .0625f;
-		AuPoint point = center + axis * (std::cos(angle) * 3920) + other * (std::sin(angle) * 3920);
-		bool developed = false;
-		for(const auto& site : developments)
-			if(AtSite(*world, site, point)) { developed = true; break; }
-		if(!developed && ClearLanding(*world, ship, point)) return point;
-	}
-	return AuPoint();
+	return best;
 }

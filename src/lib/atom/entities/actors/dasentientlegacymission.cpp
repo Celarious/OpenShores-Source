@@ -1,7 +1,9 @@
 #include "dasentient.h"
+#include "aucommpacket.h"
 #include "auglobal.h"
 #include "dalegacycity.h"
 #include "daworld.h"
+#include "dasector.h"
 
 void DaSentient::PilotToLegacyCity(DaVessel* ship, const DaLegacyCity* city, const DaWorld* planet)
 {
@@ -17,16 +19,7 @@ void DaSentient::PilotToLegacyCity(DaVessel* ship, const DaLegacyCity* city, con
 	}
 	if(ship->IsOnGround())
 	{
-		bool arrived = false;
-		if(ship->MissionOrderType() == AuMissionOrder::GoToCityAnywhere)
-		{
-			AuPoint location;
-			arrived = ship->GetLocationRelativeToParent(location, planet)
-				&& location.Distance(city->Transform().Translation()) < 4900;
-		}
-		else
-			arrived = city->IsSpacecraftOnSlab(*ship);
-		if(arrived)
+		if(city->IsSpacecraftOnSlab(*ship))
 		{
 			PilotHoldPosition(ship);
 			if(!ship->IsMoving()) DoShipArrivedAtDestination(ship, city->Id());
@@ -34,6 +27,16 @@ void DaSentient::PilotToLegacyCity(DaVessel* ship, const DaLegacyCity* city, con
 		}
 	}
 	const AuPoint landing = city->FindSpacecraftLandingSite(*ship);
-	if(landing.IsZero()) PilotHoldPosition(ship);
+	if(landing.IsZero())
+	{
+		PilotHoldPosition(ship);
+		if(const DaSector* sector = ship->FindParentSector())
+		{
+			AuCommChat message(tr("Captain, no clear spacecraft slab is available at %1. Holding position until a landing spot clears.")
+				.arg(city->Name()), AuCommStdChannel::CrewChannelName(), Id(), Name(), sector->Id(), Galaxy(),
+				AuCommStdChannel::SolarSystem, AuCommStdChannel::CrewMates);
+			SayNoRepeat(message, AuVisage::Perplexed);
+		}
+	}
 	else PilotToLandingSite(ship, planet, landing);
 }

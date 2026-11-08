@@ -109,6 +109,7 @@ private:
 	bool						m_IsDoOnce;
 	bool						m_IsMailCoC;
 	bool						m_LightStateHeadlight;
+	INTERIOR_LIGHT				m_LightStateInterior;
 	bool						m_LightStateNavLight;
 	bool						m_LightStateRotatingBeacon;
 	bool						m_LightStateStrobe;
@@ -269,6 +270,8 @@ private:
 	QLabel*						m_LightHeadlightLabel;
 	QRadioButton*				m_LightHeadlightOff;
 	QRadioButton*				m_LightHeadlightOn;
+	QLabel*						m_LightInteriorLabel;
+	QComboBox*					m_LightInterior;
 	QLabel*						m_LightNavLightLabel;
 	QRadioButton*				m_LightNavLightOff;
 	QRadioButton*				m_LightNavLightOn;
@@ -447,6 +450,7 @@ protected slots:
 	void HoverAltitudeChanged(int altitude);
 	void LightHeadlightOffSelected();
 	void LightHeadlightOnSelected();
+	void LightInteriorSelected(int index);
 	void LightNavLightOffSelected();
 	void LightNavLightOnSelected();
 	void LightRotatingBeaconOffSelected();
