@@ -7517,7 +7517,7 @@ unsigned int DaPerson::IsTocker() const
 	if(!IsNormal())
 		return ms;
 	// Here we know ms is not zero.
-	if(g_Au.IsLegacyGeneration() && ms > d_MSecPerSec && !IsInsideSpacecraft()
+	if(g_Au.IsLegacyGeneration() && ms > d_MSecPerSec && !IsInvisibleOffLine() && !IsInsideSpacecraft()
 		&& (InIndustry() == IID_TownSquare || InIndustry() == IID_BaseFlag)) ms = d_MSecPerSec;
 
 	if(ms > d_MSecPerSec)
@@ -7585,7 +7585,9 @@ void DaPerson::Tock(const AuTime& last, const AuTime& now, const AuScripts& scri
 
 	if(last.ElapsedSecTicks(now) > 0)
 		ClearDeletedLegacyHome(FindParentSolarSystem());
-	if(g_Au.IsLegacyGeneration() && last.ElapsedSecTicks(now) > 0 && !IsInsideSpacecraft())
+	// In 2016 this ran in Think, whose IsThinker guard excluded invisible
+	// offline avatars. Tock also runs for their persisted bodies.
+	if(g_Au.IsLegacyGeneration() && last.ElapsedSecTicks(now) > 0 && !IsInvisibleOffLine() && !IsInsideSpacecraft())
 	{
 		const auto* query = LockEnvironmentQuery();
 		const AuId cityId = query->LegacyCityId();
