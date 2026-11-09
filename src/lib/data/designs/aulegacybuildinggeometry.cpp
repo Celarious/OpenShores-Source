@@ -1061,7 +1061,11 @@ Mesh Build(const Design& design, const Options& options)
 		{
 			if(detail.deck < options.minimumDeck || detail.deck > options.maximumDeck) continue;
 			const QPointF location = AuLegacyShip::DecodePoint(detail.packedXY);
-			if(detail.detailType == 100) FlagPole(out, location, detail.deck);
+			if(detail.detailType == 100)
+			{
+				FlagPole(out, location, detail.deck);
+				out.mesh.cosmeticFlagPoles.append(Position(location, detail.deck * AuLegacyBd::DeckHeight));
+			}
 			else if(detail.detailType == 142) StreetLight(out, location, detail.deck);
 		}
 	return std::move(out.mesh);

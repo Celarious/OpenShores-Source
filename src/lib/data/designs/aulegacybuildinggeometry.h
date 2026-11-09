@@ -78,6 +78,7 @@ struct Mesh
 	QVector<Batch> batches;
 	QVector<FloorState> floors;
 	QVector<ExteriorLight> exteriorLights;
+	QVector<QVector3D> cosmeticFlagPoles; // Authored pole bases, in building-local feet.
 	QVector<AuLegacyShip::Rendering::HullOpening> wallOpenings;
 	QVector<AuLegacyShip::Rendering::HatchOpening> floorOpenings;
 	QVector3D minimum;

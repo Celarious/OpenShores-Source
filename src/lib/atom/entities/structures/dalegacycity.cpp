@@ -5410,7 +5410,13 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 	}
 	QVector<AuLegacyCity::Flag> flags;
 	bool powered;
-	{ QReadLocker stateLock(&m_CityLock); flags = m_City.flags; powered = m_City.capacitor > 0; }
+	quint32 controllingEmpire;
+	{
+		QReadLocker stateLock(&m_CityLock);
+		flags = m_City.flags;
+		powered = m_City.capacitor > 0;
+		controllingEmpire = m_City.controllingEmpire;
+	}
 	powered = powered || world->AtomType() == ATOM_WorldRingSection;
 	// DaCity::EnclosureNeeded 0x28f190, also used by CreateDeviceObjects.
 	const bool enclosureNeeded = AuLegacyCity::EnclosureNeeded(*world, Transform().Translation()) != 0;
@@ -5615,9 +5621,37 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		return;
 	}
 
-	for(int i = flags.size(); i < m_Runtime->flagDraws.size(); ++i)
+	struct FlagInstance
+	{
+		AuLegacyCity::Flag flag;
+		AuPoint base;
+	};
+	QVector<FlagInstance> flagInstances;
+	for(const auto& flag : flags)
+	{
+		const auto building = std::find_if(m_Runtime->buildings.cbegin(), m_Runtime->buildings.cend(),
+			[&flag](const Runtime::Building& b) { return b.state.location == flag.location; });
+		if(building == m_Runtime->buildings.cend() || !building->state.constructed || building->state.demolished) continue;
+		const auto view = buildingViews.constFind(building->state.id);
+		if(view != buildingViews.cend()) flagInstances.append({flag, view->placement.Translation()});
+	}
+	// Blueprint flagpoles are cosmetic. Only town squares and military flags
+	// are capture points in 2016 (DpDevelopment::HasFlagPole 0xf1d10).
+	for(const auto& building : m_Runtime->buildings)
+	{
+		if(!building.state.constructed || building.state.demolished || building.mesh.cosmeticFlagPoles.isEmpty()) continue;
+		const auto view = buildingViews.constFind(building.state.id);
+		if(view == buildingViews.cend()) continue;
+		AuLegacyCity::Flag flag;
+		flag.empire = controllingEmpire;
+		flag.location = building.state.location;
+		flag.level = 30;
+		for(const auto& pole : building.mesh.cosmeticFlagPoles)
+			flagInstances.append({flag, view->placement.Project(Point(pole))});
+	}
+	for(int i = flagInstances.size(); i < m_Runtime->flagDraws.size(); ++i)
 		if(m_Runtime->flagDraws[i].vao.VAO()) m_Runtime->flagDraws[i].vao.DeleteGL();
-	m_Runtime->flagDraws.resize(flags.size());
+	m_Runtime->flagDraws.resize(flagInstances.size());
 	const float seconds = AuTime::CurrentMinCycle() * 60.f;
 	const auto* ring = dynamic_cast<const DaWorldRingSection*>(world);
 	if(!m_Runtime->minePosts.isEmpty())
@@ -5642,13 +5676,11 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		}
 	}
 	const auto renderFlags = [&]() {
-		for(int i = 0; i < flags.size(); ++i)
+		for(int i = 0; i < flagInstances.size(); ++i)
 		{
-			const auto& flag = flags[i];
+			const auto& instance = flagInstances[i];
+			const auto& flag = instance.flag;
 			auto& draw = m_Runtime->flagDraws[i];
-			const auto building = std::find_if(m_Runtime->buildings.cbegin(), m_Runtime->buildings.cend(),
-				[&flag](const Runtime::Building& b) { return b.state.location == flag.location; });
-			if(building == m_Runtime->buildings.cend() || !building->state.constructed || building->state.demolished) continue;
 			if(!draw.vao.VAO() || draw.empire != flag.empire)
 			{
 				if(draw.vao.VAO()) draw.vao.DeleteGL();
@@ -5666,11 +5698,7 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 			if(!draw.texture) continue;
 			// DaCity::CreateDeviceObjects 0x2813b0. Use the flag's own
 			// weather and level; building heading does not turn the cloth.
-			const auto& dev = building->state;
-			AuMatrix4x4 placement;
-			world->BuildingConstructionTransform(world->LocOfLL(dev.location, dev.altitudeMSL),
-				dev.facingRadians, nullptr, AuPoint(), placement);
-			const AuPoint base = placement.Translation();
+			const AuPoint& base = instance.base;
 			const AuPoint up = -world->GravityDir(base);
 			const AuPoint location = base + up * 3.0 + (up * 27.0) * double(float(flag.level) / 30.f);
 			// Cloth can rotate and bend beyond its undeformed vertex bounds.
@@ -5695,7 +5723,7 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 				RenderFlag(ari.re->GLSL().FlagShader(), flagModel, ambientUp, draw.texture, force, period, draw.vao);
 		}
 	};
-	if(!flags.isEmpty())
+	if(!flagInstances.isEmpty())
 	{
 		if(ring)
 		{
