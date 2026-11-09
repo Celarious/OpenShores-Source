@@ -23,6 +23,7 @@
 #include "dadesignplane.h"
 #include "daeffect.h"
 #include "dagalaxy.h"
+#include "dalegacycity.h"
 #include "daitem.h"
 #include "damissile.h"
 #include "daperson.h"
@@ -804,6 +805,7 @@ bool DtClient::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 	}
 
 	quint32 empireId = 0;
+	QSet<quint32> empireIds;
 	AuId atomId;
 	if(atom)
 	{
@@ -845,6 +847,13 @@ bool DtClient::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 
 		atomId = atom->Id();
 		empireId = atom->EmpireId();
+		if(g_Au.IsLegacyGeneration())
+			if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+			{
+				const auto state = city->Snapshot();
+				for(const auto& flag : state.flags)
+					if(flag.empire) empireIds.insert(flag.empire);
+			}
 
 		// Notify app to ensure space ship design is loaded.
 		DaBd* bd = dynamic_cast<DaBd*>(atom);
@@ -951,12 +960,21 @@ bool DtClient::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 	g_Au.UnlockEtheriumDelete();
 
 	// Insure empire data is available locally.
-	// This will pick up all units (animals, people, spaceships) and cities.
+	// Include captured Legacy flags, whose empire can differ from the city.
 	if(!atomId.IsNull() && empireId)
+		empireIds.insert(empireId);
+	for(const quint32 requestedEmpire : empireIds)
 	{
 		const DgData& gd = g_Au.LockDataForRead();
-		bool hasEmpire = gd.HasEmpire(empireId);
-		if(gd.ClientUnitId() == atomId)
+		const bool hasEmpire = gd.HasEmpire(requestedEmpire);
+		bool missingFlag = false;
+		if(g_Au.IsLegacyGeneration())
+		{
+			QImage flag;
+			gd.EmpireFlag(requestedEmpire, flag);
+			missingFlag = flag.isNull();
+		}
+		if(requestedEmpire == empireId && gd.ClientUnitId() == atomId)
 		{
 			m_ClientUnitEmpire = empireId;
 			m_HasClientUnitEmpire = hasEmpire;			// Constantly updated because client unit can change.
@@ -966,15 +984,15 @@ bool DtClient::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 		// Don't request the same empire more than once from a given server. The list is cleared when we change servers.
 		// When requesting an empire by id, the server always replies, even if it's a bogus empire record named Forgotten
 		// Empire NNN.
-		if(!hasEmpire && !m_EmpiresRequested.contains(empireId))
+		if((!hasEmpire || missingFlag) && !m_EmpiresRequested.contains(requestedEmpire))
 		{
 			if(g_Au.m_DebugSwitches & 0x00000004)
 			{
-				QString logmsg = tr("DtClient::ReadPacket Requesting empire %3.").arg(empireId);
+				QString logmsg = tr("DtClient::ReadPacket Requesting empire %3.").arg(requestedEmpire);
 				g_Au.Log(g_Au.CacheApp() + "/soh.txt", logmsg);
 			}
-			m_EmpiresRequested.insert(empireId);
-			emit EmpireRequested(empireId);
+			m_EmpiresRequested.insert(requestedEmpire);
+			emit EmpireRequested(requestedEmpire);
 		}
 	}
 	return true;
