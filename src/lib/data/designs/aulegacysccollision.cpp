@@ -787,7 +787,9 @@ public:
 		forward.Unit();
 		double reach = 0;
 		for(const AuPoint& corner : body.corners) reach = std::max(reach, corner.Dot(forward));
-		const double maximumRise = .75;
+		// Building stair exits need enough lift for the body's leading edge
+		// to clear the upper floor while its origin is still over the ramp.
+		const double maximumRise = 1.5;
 		const AuPoint probe = to + forward * reach + up * maximumRise;
 		const double floor = Floor(probe, up, normal, stair, nullptr, doorStates) - maximumRise;
 		if(stair || normal.Dot(up) < .999) return false;

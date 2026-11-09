@@ -71,6 +71,7 @@ public:
 	// terrain height, so their exit slide can still cancel downward contact.
 	// Optional contacts retain every slide obstruction in ship coordinates,
 	// so velocity response does not lose an earlier wall to a later floor hit.
+	// Buildings opt into a swept stair-to-floor exit with up to 1.5 ft of lift.
 	AuPoint ResolveDestination(const AuPoint& from, const AuPoint& to, const AuBox& bodyOffsets,
 		const AuPoint& gravityUp, double standingHeight, bool allowGroundSnap, AuPoint& hitNormal,
 		bool preserveGroundHeight = false, const AuDoorStateHash* doorStates = nullptr,

@@ -2287,9 +2287,11 @@ double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altit
 		++levelSites;
 		hideGrass = 1;
 		// DoesHideRocks/Shrubs/Trees 0x5a00d0/0x5a0180/0x5a0260.
-		// Military bases and guard towers override all three with false.
+		// Military bases and guard towers override all three with true (0x169600).
 		const int industry = dev.industryId;
-		if(industry != 11 && industry != 12 && industry != 128)
+		if(industry == 11 || industry == 12 || industry == 128)
+			hideRocks = hideShrubs = hideTrees = true;
+		else
 		{
 			if(industry != 50 && industry != 51 && industry != 113 && industry != 114) hideRocks = true;
 			if(industry != 20 && industry != 31 && industry != 51 && industry != 66
