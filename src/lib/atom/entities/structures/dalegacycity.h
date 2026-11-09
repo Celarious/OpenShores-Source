@@ -264,6 +264,10 @@ public:
 	bool Station(const DaCreature& who, AuStation& station, AuLegacyCity::Development* development = nullptr,
 		AuMatrix4x4* placement = nullptr, quint16* roomId = nullptr) const;
 	bool StationsPowered() const;
+	bool BasementAmbientLight(const AuPoint& location, float& red, float& green, float& blue) const;
+	bool CanGrabLadder(const DaCreature& who, AuMatrix4x4& matrix) const;
+	bool IsLadderAttachmentBlocked(const DaCreature& who, const AuPoint& oldOrigin,
+		const AuBox& oldOffsets, const AuPoint& oldEye) const;
 	struct DefensePost
 	{
 		AuLegacyCity::Development development;

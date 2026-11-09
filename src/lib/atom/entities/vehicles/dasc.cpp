@@ -2163,8 +2163,7 @@ bool DaSc::FindLegacyLadder(const AuPoint& loc, AuMatrix4x4& mLadder, QString* d
 	const AuBox* bodyOffsets, const AuPoint* routeTarget) const
 {
 	if(diagnostic) diagnostic->clear();
-	struct HatchLadder { AuPoint anchor, facing; };
-	QVector<HatchLadder> ladders;
+	QVector<AuLegacyScGeometry::HatchLadder> ladders;
 	m_DesignLock.lockForRead();
 	const AuScDesign* design = LockDesign();
 	if(design)
@@ -2175,53 +2174,15 @@ bool DaSc::FindLegacyLadder(const AuPoint& loc, AuMatrix4x4& mLadder, QString* d
 				// Closing the hatch blocks passage through its panel, not access
 				// to the ladder below it. The offline walk controller does the same.
 				const AuScPathLadder* ladder = dynamic_cast<const AuScPathLadder*>(part);
-				if(ladder) ladders.append(HatchLadder{ladder->PathSegment(0).Loc2(), ladder->Facing()});
+				if(ladder) ladders.append(AuLegacyScGeometry::HatchLadder{ladder->PathSegment(0).Loc2(), ladder->Facing()});
 			}
 	UnlockDesign();
 	m_DesignLock.unlock();
-	double closest = 36;
-	bool found = false;
-	int onDeck = 0, withinReach = 0, blocked = 0;
-	for(const HatchLadder& ladder : ladders)
-	{
-		// Preserve the body origin's height when attaching on this deck or the next.
-		if(loc.z < ladder.anchor.z - AuLegacyShip::DeckHeight - .05
-			|| loc.z >= ladder.anchor.z + AuLegacyShip::DeckHeight - .05) continue;
-		if(routeTarget)
-		{
-			// Legacy routes place the body origin above each deck floor. Select
-			// the requested hatch column and keep the origin between its two
-			// corresponding route endpoints, including on stacked ladders.
-			if(std::abs(routeTarget->x - ladder.anchor.x) > .05
-				|| std::abs(routeTarget->y - ladder.anchor.y) > .05
-				|| routeTarget->z < ladder.anchor.z - AuLegacyShip::DeckHeight - .05
-				|| routeTarget->z >= ladder.anchor.z + AuLegacyShip::DeckHeight - .05) continue;
-			const double topOriginZ = routeTarget->z < ladder.anchor.z - .05
-				? routeTarget->z + AuLegacyShip::DeckHeight : routeTarget->z;
-			// Allow the same one-foot attachment tolerance as modern ladders.
-			if(loc.z < topOriginZ - AuLegacyShip::DeckHeight - 1
-				|| loc.z > topOriginZ + 1) continue;
-		}
-		++onDeck;
-		const AuPoint target(ladder.anchor.x, ladder.anchor.y, loc.z);
-		const double distance = loc.Distance2(target);
-		if(distance >= closest) continue;
-		++withinReach;
-		AuPoint hit, normal;
-		if(bodyOffsets && IsLegacyBodyPathBlocked(loc, target, *bodyOffsets, hit, normal))
-		{
-			++blocked;
-			continue;
-		}
-		const AuPoint right = ladder.facing.Cross(AuPoint(0, 0, 1));
-		mLadder = AuMatrix4x4(target, right, ladder.facing);
-		closest = distance;
-		found = true;
-	}
-	if(!found && diagnostic)
-		*diagnostic = QStringLiteral("stage=ladder-reach ladders=%1 onDeck=%2 withinReach=%3 blocked=%4")
-			.arg(ladders.size()).arg(onDeck).arg(withinReach).arg(blocked);
-	return found;
+	return AuLegacyScGeometry::FindLadderToGrab(ladders, loc, AuLegacyShip::DeckHeight, mLadder,
+		[this, bodyOffsets](const AuPoint& from, const AuPoint& to) {
+			AuPoint hit, normal;
+			return bodyOffsets && IsLegacyBodyPathBlocked(from, to, *bodyOffsets, hit, normal);
+		}, routeTarget, diagnostic);
 }
 
 bool DaSc::CanSetInMotion() const

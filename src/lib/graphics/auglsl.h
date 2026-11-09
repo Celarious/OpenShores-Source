@@ -10698,6 +10698,7 @@ private:
 	GLint								m_texPaletteLow;		// Location of 'texPaletteLow' uniform variable.
 	GLint								m_directTexture;		// Use unmodified UVs for a single texture.
 	GLint								m_directTextureGlobe;	// Globe center in eye space, w enables the horizon test.
+	GLint								m_directOpaqueWindow;	// Legacy exterior glass keeps window pixels opaque.
 
 	//--------------------
 	// Lighting parameters
@@ -10741,6 +10742,7 @@ public:
 		m_texPaletteLow = -1;
 		m_directTexture = -1;
 		m_directTextureGlobe = -1;
+		m_directOpaqueWindow = -1;
 
 		m_LightsValid = false;
 		m_SunsValid = false;
@@ -10908,9 +10910,15 @@ public:
 	inline void SetTexture(GLuint texture) const
 	{
 		m_GLf->glUniform1i(m_directTexture, 1);
+		m_GLf->glUniform1i(m_directOpaqueWindow, 0);
 		m_GLf->glUniform1i(m_texPaletteLow, 0);
 		m_GLf->glActiveTexture(GL_TEXTURE0);
 		m_GLf->glBindTexture(GL_TEXTURE_2D, texture);
+	}
+
+	inline void SetDirectOpaqueWindow(bool opaque) const
+	{
+		m_GLf->glUniform1i(m_directOpaqueWindow, opaque);
 	}
 
 	// Sets the high and low resolution texture palettes.

@@ -6979,7 +6979,19 @@ void DaAtom::SceneRenderParameters(const DaAtom* sceneAtom, float& ambientR, flo
 
 	// My ambient lighting does not depend on the scene atom.
 	float fillum = 0;
-	if(IsInsideCapsule())
+	bool sealedLegacyBasement = false;
+	if(g_Au.IsLegacyGeneration() && !IsInsideCapsule() && IsInsideLegacyBuilding())
+	{
+		const AuId cityId = LockEnvironmentQuery()->LegacyCityId();
+		UnlockEnvironmentQuery();
+		const auto* city = world ? dynamic_cast<const DaLegacyCity*>(world->FindSubatomId(cityId)) : nullptr;
+		AuPoint location;
+		if(city && GetLocationRelativeToParent(location, world))
+			sealedLegacyBasement = city->BasementAmbientLight(location, ambientR, ambientG, ambientB);
+	}
+	if(sealedLegacyBasement)
+		sunsBlocked = true;
+	else if(IsInsideCapsule())
 	{
 		// I am inside a capsule.
 		const DaCapsule* capsule = mypar->FindParentCapsuleInEnv();

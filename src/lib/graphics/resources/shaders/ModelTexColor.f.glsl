@@ -9,6 +9,7 @@
 uniform sampler2D						texPaletteHigh;			// Palette of textures for various combinations of materials.
 uniform sampler2D						texPaletteLow;			// Palette of textures for various combinations of materials.
 uniform bool directTexture;
+uniform bool directOpaqueWindow;
 
 in vec4									vertColor;				// Incoming fragment color interpolated from the vertex color.
 in vec2									vertTexCoord;			// Incoming texture coordinate (xy)
@@ -21,8 +22,9 @@ void main()
 	if(directTexture)
 	{
 		vec4 surface = texture(texPaletteLow, vertTexCoord);
-		// Original BuildingsDayNear shader cuts out ordinary window pixels.
-		if(surface.a < .91)
+		// 2016 exterior glass retains window pixels; interior glass uses
+		// BuildingsDayNear's cutout rule so occupants can see outside.
+		if(surface.a < .91 && !directOpaqueWindow)
 			discard;
 		fragColor = surface * vertColor;
 		fragColor.a = 1;

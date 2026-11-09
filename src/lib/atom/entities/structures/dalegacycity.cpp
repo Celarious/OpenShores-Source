@@ -34,6 +34,7 @@
 #include "deprocesscomponent.h"
 #include "aulegacyshipequipment.h"
 #include "aulegacysccollision.h"
+#include "aulegacyshipdetails.h"
 #include "aunoise.h"
 #include "autriangle.h"
 #include "daanimal.h"
@@ -201,6 +202,22 @@ quint32 StationElectricity(const QByteArray& bytes, bool* metadataReady = nullpt
 	return inventory.RawCount(COMMODITYID(catalogue->RuntimeCommodityId(AuLegacyCity::CommodityId(3))));
 }
 
+QVector<AuLegacyScGeometry::HatchLadder> BuildingLadders(const AuLegacyBd::Design& design,
+	const AuLegacyCity::Development& development)
+{
+	QVector<AuLegacyScGeometry::HatchLadder> ladders;
+	for(const auto& detail : design.details)
+		if(!detail.hiddenRaw && AuLegacyShip::Rendering::IsHatchDetail(detail.detailType)
+			&& detail.deck >= development.minimumDeck && detail.deck <= development.maximumDeck + 1)
+		{
+			const QPointF point = AuLegacyShip::DecodePoint(detail.packedXY);
+			const double angle = AuLegacyShip::DetailRotationStep(detail.detailType) * PI / 4;
+			ladders.append({AuPoint(point.x(), point.y(), detail.deck * AuLegacyBd::DeckHeight),
+				AuPoint(std::cos(angle), std::sin(angle), 0)});
+		}
+	return ladders;
+}
+
 struct LegacyBuildingStation
 {
 	quint16 id = 0, room = 0;
@@ -317,6 +334,14 @@ bool ExteriorLightsOn(const DaWorldLL& world, const AuLegacyCity::Development& d
 		|| !world.LLOfLoc(start, placement.Project(AuPoint(0, -halfLength, 0)))) return false;
 	return DaAtom::IsDark(world.QuerySunlight(world.LocOfLL(end, development.roadEndAltitudeMSL)))
 		|| DaAtom::IsDark(world.QuerySunlight(world.LocOfLL(start, development.roadStartAltitudeMSL)));
+}
+
+void BuildingInteriorAmbient(bool powered, float& red, float& green, float& blue)
+{
+	const QColor& color = AuGLLight::ColorFluorescentTubeDaylight();
+	red = powered ? AuGLLight::AmbientLitBuilding() * color.redF() : AuGLLight::AmbientDarkness();
+	green = powered ? AuGLLight::AmbientLitBuilding() * color.greenF() : AuGLLight::AmbientDarkness();
+	blue = powered ? AuGLLight::AmbientLitBuilding() * color.blueF() : AuGLLight::AmbientDarkness();
 }
 
 QColor ExteriorLightColor(bool runway, bool powered)
@@ -829,6 +854,8 @@ struct DaLegacyCity::Runtime
 		bool twoSided = false;
 		bool interior = false;
 		bool depthOnly = false;
+		bool exteriorGlass = false;
+		bool sealedBasement = false;
 		quint8 exteriorLens = 0; // 1: street light, 2: runway light.
 		QVector4D tint = QVector4D(1,1,1,1);
 		float selfIllumination = 0;
@@ -1352,6 +1379,8 @@ struct DaLegacyCity::Runtime
 			prepared.draw.turretId = batch.turretId;
 			prepared.draw.twoSided = batch.twoSided; prepared.draw.interior = batch.interior;
 			prepared.draw.depthOnly = batch.depthOnly;
+			prepared.draw.exteriorGlass = batch.exteriorGlass;
+			prepared.draw.sealedBasement = batch.sealedBasement;
 			prepared.draw.exteriorLens = batch.textureSlot == 37 ? 1 : batch.textureSlot == 38 ? 2 : 0;
 			prepared.draw.tint = batch.tint; prepared.draw.selfIllumination = batch.selfIllumination;
 			prepared.buildingAtlas = batch.textureFile.isEmpty() && batch.textureSlot >= 0;
@@ -3874,6 +3903,15 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 			continue;
 		}
 		const auto& building = *prepared;
+		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(building.state.designId);
+		AuMatrix4x4 ladder;
+		if(actor.IsClimbingLadder() && design && AuLegacyScGeometry::FindLadderToGrab(BuildingLadders(*design, building.state), local,
+			AuLegacyBd::DeckHeight, ladder, {})) query.m_Environment |= EB_InLadderWell;
+		for(const auto& opening : building.mesh.floorOpenings)
+			if(local.z >= opening.deck * AuLegacyBd::DeckHeight - .05
+				&& local.z < (opening.deck + 1) * AuLegacyBd::DeckHeight - .05
+				&& opening.boundary.containsPoint(QPointF(local.x, local.y), Qt::OddEvenFill))
+			{ query.m_Environment |= EB_InLadderWell; break; }
 		const auto up = transform.UnProjectVector(-world->GravityDir(location));
 		AuPoint floorNormal;
 		const double height = building.collision->HeightAboveFloor(local, up, floorNormal);
@@ -3913,6 +3951,87 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 				query.m_InIndustry = static_cast<INDUSTRYID>(catalogue->RuntimeIndustryId(AuLegacyCity::IndustryId{building.state.industryId}));
 		}
 	}
+}
+
+bool DaLegacyCity::CanGrabLadder(const DaCreature& who, AuMatrix4x4& matrix) const
+{
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	if(!g_Au.IsLegacyGeneration() || !world || who.ParentId() != world->Id()) return false;
+	AuBox anatomy;
+	if(!who.LegacyCollisionExtents(anatomy)) return false;
+	const AuPoint up = who.Transform().ProjectVector(who.GravityNormal());
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this, true);
+	double closest = 36; bool found = false;
+	for(const auto& building : m_Runtime->buildings)
+	{
+		if(!m_Runtime->CurrentCollision(building)) continue;
+		if(!building.collision->IsValid()) continue;
+		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(building.state.designId);
+		if(!design) continue;
+		AuMatrix4x4 placement;
+		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
+			building.state.facingRadians, nullptr, AuPoint(), placement);
+		const AuPoint local = placement.UnProject(who.Location());
+		const AuBox body = AuLegacyScGeometry::MovementBodyOffsets(anatomy, placement.UnProjectVector(up));
+		AuMatrix4x4 candidate;
+		if(!AuLegacyScGeometry::FindLadderToGrab(BuildingLadders(*design, building.state), local,
+			AuLegacyBd::DeckHeight, candidate, [&building, &body](const AuPoint& from, const AuPoint& to) {
+				AuPoint hit, normal; return building.collision->IsBodyPathBlocked(from, to, body, hit, normal);
+			})) continue;
+		const double distance = candidate.Translation().Distance2(local);
+		if(distance >= closest) continue;
+		closest = distance; matrix = placement * candidate; found = true;
+	}
+	return found;
+}
+
+bool DaLegacyCity::IsLadderAttachmentBlocked(const DaCreature& who, const AuPoint& oldOrigin,
+	const AuBox& oldOffsets, const AuPoint& oldEye) const
+{
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	AuBox newOffsets;
+	if(!world || !who.LegacyCollisionExtents(newOffsets)) return true;
+	const AuPoint up = who.Transform().ProjectVector(who.GravityNormal());
+	const AuPoint newEye = who.Transform().Project(who.CameraOffset());
+	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this, true);
+	for(const auto& building : m_Runtime->buildings)
+	{
+		if(!m_Runtime->CurrentCollision(building)) continue;
+		// Match walking/path checks: an empty mesh is not an obstruction.
+		if(!building.collision->IsValid()) continue;
+		AuMatrix4x4 placement;
+		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
+			building.state.facingRadians, nullptr, AuPoint(), placement);
+		const AuPoint localUp = placement.UnProjectVector(up);
+		const AuBox before = AuLegacyScGeometry::MovementBodyOffsets(oldOffsets, localUp);
+		const AuBox after = AuLegacyScGeometry::MovementBodyOffsets(newOffsets, localUp);
+		AuPoint hit, normal;
+		if(building.collision->IsBodyTransitionBlocked(placement.UnProject(oldOrigin), placement.UnProject(who.Location()),
+			before, after, hit, normal)) return true;
+		const AuBox eye(AuPoint(0, 0, 0), AuPoint(0, 0, 0));
+		if(building.collision->IsBodyPathBlocked(placement.UnProject(oldEye), placement.UnProject(newEye), eye, hit, normal)) return true;
+	}
+	return false;
+}
+
+bool DaLegacyCity::BasementAmbientLight(const AuPoint& location, float& red, float& green, float& blue) const
+{
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	if(!g_Au.IsLegacyGeneration() || !world) return false;
+	const bool powered = StationsPowered();
+	QMutexLocker lock(&m_Runtime->lock);
+	if(!m_Runtime->CollisionInRange(*this, *world, location, location, 0)) return false;
+	for(const auto& proxy : m_Runtime->collisionProxies)
+	{
+		const AuPoint local = proxy.placement.UnProject(location);
+		if(local.z >= 0) continue;
+		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(proxy.state.designId);
+		const auto* room = design ? BasementRoom(*design, proxy.state, local) : nullptr;
+		if(!room || AuLegacyBd::Geometry::HasGlassAt(*design, room->deck, QPointF(local.x, local.y))) continue;
+		BuildingInteriorAmbient(powered, red, green, blue);
+		return true;
+	}
+	return false;
 }
 
 bool DaLegacyCity::StationsPowered() const
@@ -5390,6 +5509,10 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 	GLboolean colorMask[4];
 	ari.re->glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
 	const bool depthClampEnabled = ari.re->glIsEnabled(GL_DEPTH_CLAMP);
+	const bool polygonOffsetEnabled = ari.re->glIsEnabled(GL_POLYGON_OFFSET_FILL);
+	GLfloat polygonOffsetFactor = 0, polygonOffsetUnits = 0;
+	ari.re->glGetFloatv(GL_POLYGON_OFFSET_FACTOR, &polygonOffsetFactor);
+	ari.re->glGetFloatv(GL_POLYGON_OFFSET_UNITS, &polygonOffsetUnits);
 	for(const auto& draw : m_Runtime->drawBatches)
 	{
 		if(draw.interior != beforeTerrain) continue;
@@ -5407,6 +5530,16 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 			if(!draw.vao.IntersectsFrustum(frustum)) continue;
 		}
 		shader.SetModelView(buildingModel); shader.SetTexture(draw.texture);
+		shader.SetDirectOpaqueWindow(draw.exteriorGlass);
+		float red = ambientR, green = ambientG, blue = ambientB;
+		if(draw.sealedBasement) BuildingInteriorAmbient(powered, red, green, blue);
+		shader.SetAmbientLight(red, green, blue);
+		for(int sun = 0; sun < MAX_SUNS; ++sun)
+		{
+			const AuGLSun& light = ari.re->Sun(sun);
+			shader.SetSun(sun, light.m_Enabled && !sunsBlocked && !draw.sealedBasement, light.m_Attenuation,
+				light.m_ColorR, light.m_ColorG, light.m_ColorB, light.m_LocX, light.m_LocY, light.m_LocZ, light.m_DiskRadius);
+		}
 		AuPoint ambientUp = buildingModel.ProjectVector(0, 0, 1);
 		ambientUp.Unit();
 		shader.SetAmbientLightUp(ambientUp.x, ambientUp.y, ambientUp.z);
@@ -5424,16 +5557,20 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 			// Keep the terrain mask when the camera's near plane crosses it
 			// before crossing the terrain immediately beneath the entrance.
 			if(!depthClampEnabled) ari.re->glEnable(GL_DEPTH_CLAMP);
+			ari.re->glEnable(GL_POLYGON_OFFSET_FILL);
+			ari.re->glPolygonOffset(-1, -1);
 		}
 		draw.vao.SelectGL(); draw.vao.DrawGL(); draw.vao.DeselectGL();
 		if(draw.depthOnly)
 		{
 			if(!depthClampEnabled) ari.re->glDisable(GL_DEPTH_CLAMP);
+			ari.re->glPolygonOffset(polygonOffsetFactor, polygonOffsetUnits);
+			if(!polygonOffsetEnabled) ari.re->glDisable(GL_POLYGON_OFFSET_FILL);
 			ari.re->glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
 		}
 		if(draw.twoSided && cullingEnabled) ari.re->glEnable(GL_CULL_FACE);
 	}
-	if(sunsBlocked) shader.InvalidateSuns();
+	shader.InvalidateSuns();
 	shader.Deselect();
 	if(beforeTerrain)
 	{

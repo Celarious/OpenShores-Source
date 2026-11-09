@@ -24,6 +24,30 @@ namespace Geometry
 {
 namespace
 {
+bool RoomHasGlass(const Design& design, const AuLegacyShip::Room& room)
+{
+	// A basement glass room on deck -1 still has its glass roof at grade.
+	// Glass surfaces strictly below grade become opaque foundations.
+	if(room.roomType == 2 && room.deck >= -1) return true;
+	const QPolygonF boundary = AuLegacyShip::RoomBoundary(room);
+	for(const auto& above : design.rooms)
+		if(above.roomType == 2 && above.deck >= 0 && above.deck == room.deck + 1
+			&& !boundary.intersected(AuLegacyShip::RoomBoundary(above)).isEmpty()) return true;
+	return false;
+}
+}
+
+bool HasGlassAt(const Design& design, int deck, const QPointF& location)
+{
+	// A glass room, or the glass floor of the room above, admits outside light.
+	for(const auto& room : design.rooms)
+		if(room.deck == deck && AuLegacyShip::RoomBoundary(room).containsPoint(location, Qt::OddEvenFill))
+			return RoomHasGlass(design, room);
+	return false;
+}
+
+namespace
+{
 constexpr int RasterSize = 516;
 constexpr int RasterOrigin = 256;
 constexpr double RasterSpacing = 1.41421356225;
@@ -57,6 +81,8 @@ int MaterialIndex(quint16 commodity)
 
 struct Builder
 {
+	const Design* design = nullptr;
+	QHash<int, QVector<QPolygonF>> glassRooms;
 	Mesh mesh;
 	QHash<QString, int> batchIndices;
 	int vertices = 0;
@@ -72,7 +98,7 @@ struct Builder
 		const QVector3D& c, const QVector2D& ua = {0, 0}, const QVector2D& ub = {1, 0},
 		const QVector2D& uc = {1, 1}, quint32 doorId = 0, quint32 detailId = 0,
 		bool twoSided = false, bool stairs = false, bool collisionOnly = false, bool depthOnly = false,
-		bool equipment = false)
+		bool equipment = false, bool exteriorGlass = false)
 	{
 		if(vertices + 3 > MaximumVertices)
 		{
@@ -81,8 +107,14 @@ struct Builder
 		QVector3D normal = QVector3D::crossProduct(b - a, c - a);
 		if(normal.lengthSquared() < 1e-12f) return;
 		normal.normalize();
-		const QString key = QStringLiteral("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10/%11/%12/%13")
-			.arg(slot).arg(deck).arg(interior).arg(doorId).arg(detailId).arg(twoSided).arg(stairs).arg(collisionOnly).arg(depthOnly).arg(equipment).arg(noCollision).arg(textureFile).arg(shininess);
+		exteriorGlass = exteriorGlass || (!interior && (slot == 12 || slot == 15));
+		const QVector3D center = (a + b + c) / 3 + normal * .05f;
+		bool sealedBasement = design && interior && deck < 0;
+		if(sealedBasement)
+			for(const auto& boundary : glassRooms.value(deck))
+				if(boundary.containsPoint(QPointF(center.x(), center.y()), Qt::OddEvenFill)) { sealedBasement = false; break; }
+		const QString key = QStringLiteral("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10/%11/%12/%13/%14/%15")
+			.arg(slot).arg(deck).arg(interior).arg(doorId).arg(detailId).arg(twoSided).arg(stairs).arg(collisionOnly).arg(depthOnly).arg(equipment).arg(noCollision).arg(textureFile).arg(shininess).arg(sealedBasement).arg(exteriorGlass);
 		int index = batchIndices.value(key, -1);
 		if(index < 0)
 		{
@@ -96,6 +128,8 @@ struct Builder
 			batch.textureFile = textureFile;
 			batch.shininess = shininess;
 			batch.depthOnly = depthOnly;
+			batch.exteriorGlass = exteriorGlass;
+			batch.sealedBasement = sealedBasement;
 			mesh.batches.append(batch);
 		}
 		QVector<AuLegacyShip::Rendering::Vertex>& result = mesh.batches[index].vertices;
@@ -271,7 +305,7 @@ QPolygonF ClipConvexPolygon(const QPolygonF& polygon, const QPolygonF& boundary,
 }
 
 void Plane(Builder& out, const QPoint points[3], int x, int y, double z, int slot,
-	int deck, bool interior, bool up, const QVector<Opening>& openings)
+	int deck, bool interior, bool up, const QVector<Opening>& openings, bool exteriorGlass = false)
 {
 	const auto appendPolygon = [&](const QPolygonF& polygon, int texture, const Opening* opening)
 	{
@@ -296,7 +330,8 @@ void Plane(Builder& out, const QPoint points[3], int x, int y, double z, int slo
 		{
 			const QPointF a = polygon.first(), b = polygon.at(up ? i : i + 1), c = polygon.at(up ? i + 1 : i);
 			out.Triangle(texture, deck, interior, Position(a, z), Position(b, z), Position(c, z),
-				uv(a), uv(b), uv(c), opening ? opening->id : 0, opening ? opening->id : 0);
+				uv(a), uv(b), uv(c), opening ? opening->id : 0, opening ? opening->id : 0,
+				false, false, false, false, false, exteriorGlass && !opening);
 		}
 	};
 	QPolygonF triangle;
@@ -496,21 +531,40 @@ void DeckSurfaces(Builder& out, const Raster& raster, const Design& design,
 				const auto plane = [&](int slot, int planeDeck, bool interior, bool up)
 				{
 					if(interior ? !options.interior : !options.exterior) return;
-					Plane(out, points, x, y, deck * AuLegacyBd::DeckHeight, slot, planeDeck, interior, up, openings);
+					const bool exteriorGlass = window && up && (tag & 0x8000);
+					Plane(out, points, x, y, deck * AuLegacyBd::DeckHeight, slot, planeDeck, interior, up, openings, exteriorGlass);
 				};
+				// Mask only transparent/open surfaces at grade. An opaque cap
+				// renders after terrain and must not be hidden by the depth bias.
+				if(deck == 0 && HasInterior(Type(tag)) && options.interior)
+				{
+					QPolygonF triangle;
+					for(const QPoint& point : points) triangle.append(PlanPoint(point));
+					QVector<QPolygonF> masks;
+					// A glass cap from the basement below also reaches grade.
+					if((window && ((tag & 0x8000) || !(tag & 0x4000))) || (tag & 0x2000))
+						masks.append(triangle);
+					else for(const Opening& opening : openings)
+						if(opening.id && triangle.boundingRect().intersects(opening.boundary.boundingRect()))
+						{
+							QVector<QPolygonF> outside;
+							masks.append(ClipConvexPolygon(triangle, opening.boundary, outside));
+						}
+					for(const QPolygonF& mask : masks)
+						for(int i = 1; i + 1 < mask.size(); ++i)
+							out.Triangle(-1, deck, true, Position(mask.first(), 0),
+								Position(mask.at(i), 0), Position(mask.at(i + 1), 0),
+								{}, {}, {}, 0, 0, false, false, false, true);
+				}
 				if(tag & 0x8000)
 				{
-					plane(window ? 12 : 11, deck - 1, false, true);
+					// Glass at grade must draw before its terrain mask, like a
+					// glass floor; otherwise the mask also hides its artwork.
+					const bool beforeMask = window && deck == 0 && options.interior;
+					plane(window ? 12 : 11, deck - 1, beforeMask, true);
 					plane(window ? 12 : 16, deck - 1, true, false);
 					continue;
 				}
-				// RenderInteriorFloors (2016 0x5ccc20) emits invisible, upward
-				// depth-writing triangles over ground-floor open-below rooms.
-				// Draw these after the interior and before terrain, never as floors.
-				if(deck == 0 && (tag & 0x2000) && options.interior)
-					out.Triangle(-1, deck, true, Position(PlanPoint(points[0]), 0),
-						Position(PlanPoint(points[1]), 0), Position(PlanPoint(points[2]), 0),
-						{}, {}, {}, 0, 0, false, false, false, true);
 				if(!(tag & 0x4000))
 				{
 					plane(window ? 12 : 8, deck, false, false);
@@ -751,6 +805,11 @@ void SharedDetails(Builder& out, const Design& design, const Options& options)
 			}
 			Batch imported; imported.vertices = batch.vertices; imported.deck = deck + batch.deck;
 			imported.textureSlot = -1; imported.interior = true; imported.detailId = batch.detailId;
+			if(deck < 0 && !batch.vertices.isEmpty())
+			{
+				const auto& point = batch.vertices.first().position;
+				imported.sealedBasement = !HasGlassAt(design, deck, QPointF(point.x(), point.y()));
+			}
 			imported.equipment = batch.equipment;
 			imported.turretId = batch.turretId;
 			imported.rotationPivot = batch.rotationPivot + QVector3D(0, 0, float(deck * AuLegacyBd::DeckHeight));
@@ -931,6 +990,9 @@ AuLegacyShip::Design AuthoringDesign(const Design& design, const Options& option
 Mesh Build(const Design& design, const Options& options)
 {
 	Builder out;
+	out.design = &design;
+	for(const auto& room : design.rooms)
+		if(room.deck < 0 && RoomHasGlass(design, room)) out.glassRooms[room.deck].append(AuLegacyShip::RoomBoundary(room));
 	const int material = MaterialIndex(options.materialCommodity);
 	if(material < 0 || options.minimumDeck < -127 || options.maximumDeck > 126
 		|| options.minimumDeck > options.maximumDeck || options.maximumDeck - options.minimumDeck > 127)

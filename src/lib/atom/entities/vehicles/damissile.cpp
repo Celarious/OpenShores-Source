@@ -1559,6 +1559,13 @@ DaAtom::COLLISION_TYPE DaMissile::CheckCollisionRelativeToAtom(DaAtom* pParent, 
 			// This logic lets bases fire without hitting their own city buildings, like a ship fires without hitting its own hull.
 			if(pAtom->BdId() == aid && pAtom->IsInsideBd())
 				continue;
+			if(g_Au.IsLegacyGeneration() && !aid.IsNull())
+			{
+				const auto* query = pAtom->LockEnvironmentQuery();
+				const bool insideLauncher = query->LegacyCityId() == aid && query->IsInsideLegacyBuilding();
+				pAtom->UnlockEnvironmentQuery();
+				if(insideLauncher) continue;
+			}
 		}
 
 		// Get the extents of the peer atom.

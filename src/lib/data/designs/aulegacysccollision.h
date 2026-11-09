@@ -5,6 +5,7 @@
 #include "aupoint.h"
 #include <QScopedPointer>
 #include <QVector>
+#include <functional>
 
 class AuBox;
 class AuDoorStateHash;
@@ -14,6 +15,12 @@ namespace AuLegacyShip { namespace Rendering { struct Mesh; } }
 
 namespace AuLegacyScGeometry
 {
+struct HatchLadder { AuPoint anchor, facing; };
+// Shared Legacy ship/building reach, facing and attachment-height rules.
+AUDATA_DLL bool FindLadderToGrab(const QVector<HatchLadder>& ladders, const AuPoint& loc, double deckHeight,
+	AuMatrix4x4& matrix, const std::function<bool(const AuPoint&, const AuPoint&)>& blocked,
+	const AuPoint* routeTarget = nullptr, QString* diagnostic = nullptr);
+
 // Only newly generated legacy blueprints opt in to shared movement collision.
 AUDATA_DLL bool IsCollisionDesign(const AuScDesign& design);
 

@@ -336,6 +336,7 @@ public:
 	// Returns false if the path from my current eye position to my nu eye position on the ladder is blocked.
 	bool GrabLadderOnMyShip();
 	bool GrabLadderOnMyShipAt(const AuPoint& ladderLoc);
+	bool GrabLadderOnLegacyCity(DaLegacyCity& city);
 
 	// I am not aboard 'ship'. It could be anywhere in the environment.
 	// Returns true on success.

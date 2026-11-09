@@ -37,6 +37,8 @@ struct Batch
 	bool noCollision = false; // Streetlights remain visible without blocking movement.
 	bool enclosure = false; // City frame, not an authored building aiming surface.
 	bool depthOnly = false; // Original AuBuildingTri window effect 4: terrain mask.
+	bool exteriorGlass = false; // Exterior pane opacity is independent of the terrain render pass.
+	bool sealedBasement = false;
 	bool empireFlag = false;
 	// Identifies an always-open door/hatch frame. Render its alpha-cutout art,
 	// but omit the full frame quad from collision and sight obstruction.
@@ -90,6 +92,7 @@ struct Mesh
 // CPU triangles use CCW order for shared collision; scene upload reverses their
 // vertex order to the original 2016 CW rendering convention, preserving normals.
 AUDATA_DLL Mesh Build(const Design& design, const Options& options);
+AUDATA_DLL bool HasGlassAt(const Design& design, int deck, const QPointF& location);
 struct RoadFixtureGround
 {
 	double altitude, foundationAltitude; // Feet relative to the road site's MSL.

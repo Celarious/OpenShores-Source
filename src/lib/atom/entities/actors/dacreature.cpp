@@ -7802,6 +7802,13 @@ bool DaCreature::GrabLadder()
 	// Check for ladder when I am aboard a bd.
 	if(GrabLadderOnMyBd())
 		return true;
+	if(g_Au.IsLegacyGeneration() && Parent())
+	{
+		DaAtomList cities; Parent()->FindLegacyCitiesRecursive(cities);
+		for(DaAtom* atom : cities)
+			if(auto* city = dynamic_cast<DaLegacyCity*>(atom))
+				if(GrabLadderOnLegacyCity(*city)) return true;
+	}
 
 	// Check for exterior ladders on spacecraft and buildings in my environment.
 	DaAtomList ships;
@@ -7817,6 +7824,27 @@ bool DaCreature::GrabLadder()
 			return true;
 	}
 	return false;
+}
+
+bool DaCreature::GrabLadderOnLegacyCity(DaLegacyCity& city)
+{
+	AuMatrix4x4 ladder; AuBox offsets;
+	if(!city.CanGrabLadder(*this, ladder) || !LegacyCollisionExtents(offsets)) return false;
+	const AuPose pose = CurrentGeneralPose();
+	const quint16 station = StationId();
+	const AuMatrix4x4 before = Transform();
+	const AuPoint eye = before.Project(CameraOffset());
+	ChangePosAndOrient(AuAtomPos(ParentId(), ladder));
+	InvalidateEnvironment(); SetGeneralPose(AuPose::Ladder, false);
+	if(city.IsLadderAttachmentBlocked(*this, before.Translation(), offsets, eye))
+	{
+		SetGeneralPose(pose, station, false);
+		ChangePosAndOrient(AuAtomPos(ParentId(), before)); InvalidateEnvironment();
+		return false;
+	}
+	{ QWriteLocker lock(&m_BodyLock); m_StationId = 0; m_tmPoseChange.Set(); }
+	SetAtRest(); InvalidateEnvironment(); SetModified();
+	return true;
 }
 
 bool DaCreature::GrabLadderOnMyBd()

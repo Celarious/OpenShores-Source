@@ -358,6 +358,40 @@ AuBox MovementBodyOffsets(const AuBox& anatomy, const AuPoint& gravityUp)
 	return body;
 }
 
+bool FindLadderToGrab(const QVector<HatchLadder>& ladders, const AuPoint& loc, double deckHeight,
+	AuMatrix4x4& matrix, const std::function<bool(const AuPoint&, const AuPoint&)>& blockedPath,
+	const AuPoint* routeTarget, QString* diagnostic)
+{
+	if(diagnostic) diagnostic->clear();
+	double closest = 36;
+	bool found = false;
+	int onDeck = 0, withinReach = 0, blocked = 0;
+	for(const HatchLadder& ladder : ladders)
+	{
+		if(loc.z < ladder.anchor.z - deckHeight - .05 || loc.z >= ladder.anchor.z + deckHeight - .05) continue;
+		if(routeTarget)
+		{
+			if(std::abs(routeTarget->x - ladder.anchor.x) > .05 || std::abs(routeTarget->y - ladder.anchor.y) > .05
+				|| routeTarget->z < ladder.anchor.z - deckHeight - .05 || routeTarget->z >= ladder.anchor.z + deckHeight - .05) continue;
+			const double topOriginZ = routeTarget->z < ladder.anchor.z - .05 ? routeTarget->z + deckHeight : routeTarget->z;
+			if(loc.z < topOriginZ - deckHeight - 1 || loc.z > topOriginZ + 1) continue;
+		}
+		++onDeck;
+		const AuPoint target(ladder.anchor.x, ladder.anchor.y, loc.z);
+		const double distance = loc.Distance2(target);
+		if(distance >= closest) continue;
+		++withinReach;
+		if(blockedPath && blockedPath(loc, target)) { ++blocked; continue; }
+		const AuPoint right = ladder.facing.Cross(AuPoint(0, 0, 1));
+		matrix = AuMatrix4x4(target, right, ladder.facing);
+		closest = distance; found = true;
+	}
+	if(!found && diagnostic)
+		*diagnostic = QStringLiteral("stage=ladder-reach ladders=%1 onDeck=%2 withinReach=%3 blocked=%4")
+			.arg(ladders.size()).arg(onDeck).arg(withinReach).arg(blocked);
+	return found;
+}
+
 class CollisionWorld::Impl
 {
 public:
