@@ -258,9 +258,31 @@ public:
 		AuQueryEnvironment& result) const;
 	// Authored equipment stays in the world's frame, as in the original city.
 	bool CanEnterConsole(const DaPerson& who, quint16& stationId, AuStation& station, quint16& which) const;
+	void PlayerEnteredStation(const DaPerson& who);
+	bool WaitingForStation(const AuId& npc) const;
 	bool Station(const DaCreature& who, AuStation& station, AuLegacyCity::Development* development = nullptr,
 		AuMatrix4x4* placement = nullptr, quint16* roomId = nullptr) const;
 	bool StationsPowered() const;
+	struct DefensePost
+	{
+		AuLegacyCity::Development development;
+		quint16 stationId = 0;
+		AuStation station;
+		COMMODITYID module = CID_Invalid;
+		AuPoint emitter;
+		float range = 0;
+		quint64 Key() const { return (quint64(development.id) << 16) | stationId; }
+	};
+	QVector<DefensePost> DefensePosts() const;
+	bool TurretMatrices(const DaCreature& gunner, AuMatrix4x4& gunWorld, AuMatrix4x4& muzzleWorld,
+		quint64* drawKey = nullptr) const;
+	void TockDefenses();
+	void CombatArmorEffectiveness(WEAPONMODE mode, WEAPONEFFECT effect, bool hitShield,
+		const AuPoint& weapon, const AuPoint& hit, float& baseAbsorb, float& baseBlock,
+		float& auxAbsorb, float& auxBlock) const override;
+	void CombatApplyDamage(const AuCombatAttacker& attacker, const AuCombatWeapon& weapon,
+		const AuPoint& weaponLocation, const AuPoint& hit, AuCombatResult& result) override;
+	int TestMissileHit(const AuPoint& location, float proximity) const override;
 	int ReserveStationPower(int requested, AuItemHash& reserved);
 	void RefundStationPower(AuItemHash& reserved, int used);
 	bool TransporterPads(const DaCreature& who, AuMatrix4x4& frameWorld,
@@ -334,6 +356,16 @@ private:
 	bool OperateConstruction(DaPerson* person, quint32 developmentId, bool fetch, bool labor, QString& error, bool* accepted = nullptr);
 	void TockEconomy(qint64 previous, qint64 now);
 	void TockHospitalPatients();
+	bool FireDefenseWeapon(DaCreature& gunner, const DefensePost& post, const AuId& target, int powerSetting);
+	bool ManBuildingStation(DaNpc& troop, const AuLegacyCity::Development& development, quint16 stationId) const;
+	void TockStationOperators();
+	const DaPerson* DefensePostPlayer(const DefensePost& post) const;
+	AuItem* DefenseAmmunition(const DefensePost& post) const;
+	void WriteDefenseState(QDataStream& out) const;
+	bool ReadDefenseState(QDataStream& in);
+	void CopyDefenseState(const DaLegacyCity& source);
+	void RenderDefenseShields(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
+		AuModelMatrixHash& matrices, const DaPerson* sceneAtom) const;
 	void TockGarrison();
 	void TockSensors();
 	void InflictCitizenCrises(DaNpc& citizen) const;

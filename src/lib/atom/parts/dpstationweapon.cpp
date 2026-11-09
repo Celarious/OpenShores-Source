@@ -994,7 +994,10 @@ void DpStationWeapon::AnimateDeviceObjects(AuGLEffects& re, const DaAtom& ship, 
 		// display offset, reserving zero for an invalid native identifier.
 		const DaSc* legacy = dynamic_cast<const DaSc*>(&ship);
 		const bool legacyBay = legacy && legacy->IsLegacyDebug();
-		QString text = QVariant(m_WhichWeapon + (legacyBay ? 0 : 1)).toString();
+		// A Legacy city console controls the one bay in its building. Its
+		// authored station ID (for example 26) is not a displayed bay ordinal.
+		QString text = dynamic_cast<const DaLegacyCity*>(&ship) ? QStringLiteral("1")
+			: QVariant(m_WhichWeapon + (legacyBay ? 0 : 1)).toString();
 		p.drawText(QRect(0,0,48,16), Qt::AlignLeft|Qt::AlignTop, text);
 		p.end();
 

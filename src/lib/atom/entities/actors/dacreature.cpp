@@ -2127,8 +2127,7 @@ void DaCreature::ExitConsole()
 	}
 
 	// Get information based on my current pose before changing my pose.
-	const DaSc* legacyShip = dynamic_cast<const DaSc*>(Parent());
-	const bool legacyTurret = IsTurretPose() && legacyShip && legacyShip->IsLegacyDebug();
+	const bool legacyTurret = IsLegacyTurretStation();
 	const double oldHt = GroundHeightAboveCG();		// Sitting ht
 
 	// Change my pose to standing and get the change in Z so I can adjust my body perfectly.
@@ -2257,8 +2256,7 @@ float DaCreature::GroundHeightAboveCG() const
 		return AuStation::SeatHeight() - 1;		// Seat is sunken down into the bottom turret by 1'.
 	else if(pose == AuPose::ConsoleTurretTop)
 	{
-		const DaSc* ship = dynamic_cast<const DaSc*>(Parent());
-		return (ship && ship->IsLegacyDebug() ? AuLegacyShip::DeckHeight : DeckHeight()) - DpBody::SeatDrop();
+		return (IsLegacyTurretStation() ? AuLegacyShip::DeckHeight : DeckHeight()) - DpBody::SeatDrop();
 	}
 	return CGHeight();
 }
@@ -2665,8 +2663,7 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 void DaCreature::RenderItemInHand(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuAtomRenderInfo& ari, int pass,
 			const DaAtom* sceneAtom, AuRenderLastMap* renderLast)
 {
-	const DaSc* legacyShip = dynamic_cast<const DaSc*>(Parent());
-	if(IsTurretPose() && legacyShip && legacyShip->IsLegacyDebug()) return;
+	if(IsLegacyTurretStation()) return;
 	bool isLefty;
 	AuPose gp;
 	if(m_Body)
@@ -3172,9 +3169,8 @@ void DaCreature::SetupCamera(AuMatrix4x4& tCamera, double& rNearClip, double& rF
 		gp = m_Animalia->CurrentGeneralPose();
 		headTilt = m_Animalia->CurrentHeadTilt();
 	}
-	const DaSc* legacyShip = dynamic_cast<const DaSc*>(parent);
 	if(gp.IsTurret() && !gp.IsTurretIntegrated()
-		&& ((legacyShip && legacyShip->IsLegacyDebug()) || InDesignerNotPreview()))
+		&& (IsLegacyTurretStation() || InDesignerNotPreview()))
 	{
 		// SetupCamera:1802f1450 anchors the view at WeaponLoc rather than
 		// the avatar's head. Its sight height and clip setback rotate with aim.
@@ -5747,13 +5743,11 @@ AuPoint DaCreature::WeaponLoc() const
 	const double odxy = offdist * .7071;	// xy for 45 deg angles
 	AuPoint wpnloc;
 	AuPose gp = CurrentGeneralPose();
-	const DaSc* legacyShip = dynamic_cast<const DaSc*>(Parent());
-	if(gp.IsTurret() && !gp.IsTurretIntegrated() && legacyShip && legacyShip->IsLegacyDebug())
+	AuMatrix4x4 muzzle;
+	if(gp.IsTurret() && !gp.IsTurretIntegrated() && LegacyTurretMuzzle(muzzle))
 	{
 		// Use the occupied gun pivot, including diagonal seat offsets, with
 		// either avatar anatomy. The recovered muzzle is 6.5ft beyond it.
-		AuMatrix4x4 muzzle;
-		legacyShip->TurretMuzzleMatrix(StationId(), Rotation().z, CurrentHeadTilt(), muzzle);
 		return Transform().UnProject(muzzle.Project(AuPoint(0, 0, -6.5)));
 	}
 	const bool classicEnvironment = gp.IsTurret() && (IsInCapsule() || InDesignerNotPreview());
@@ -5854,11 +5848,9 @@ AuMatrix4x4 DaCreature::WeaponMatrix() const
 // Location for weapon muzzle flash effect.
 AuPoint DaCreature::WeaponMuzzleLoc() const
 {
-	const DaSc* legacyShip = dynamic_cast<const DaSc*>(Parent());
-	if(IsTurretPose() && legacyShip && legacyShip->IsLegacyDebug())
+	AuMatrix4x4 muzzle;
+	if(LegacyTurretMuzzle(muzzle))
 	{
-		AuMatrix4x4 muzzle;
-		legacyShip->TurretMuzzleMatrix(StationId(), Rotation().z, CurrentHeadTilt(), muzzle);
 		return Transform().UnProject(muzzle.Translation());
 	}
 	if(HasDNA3())
@@ -5894,11 +5886,9 @@ AuPoint DaCreature::WeaponMuzzleLoc() const
 
 AuPoint DaCreature::WeaponMuzzleVec() const
 {
-	const DaSc* legacyShip = dynamic_cast<const DaSc*>(Parent());
-	if(IsTurretPose() && legacyShip && legacyShip->IsLegacyDebug())
+	AuMatrix4x4 muzzle;
+	if(LegacyTurretMuzzle(muzzle))
 	{
-		AuMatrix4x4 muzzle;
-		legacyShip->TurretMuzzleMatrix(StationId(), Rotation().z, CurrentHeadTilt(), muzzle);
 		return Transform().UnProjectVector(muzzle.ProjectVector(0, 0, 1));
 	}
 	AuPose gp = CurrentGeneralPose();
@@ -9321,10 +9311,9 @@ AuPoint DaCreature::SceneCameraLocation() const
 	if(vehicle && vehicle->IsTankGunnerSeat(VehicleSeatIndex()) && !IsBodyDyingOrDead() && !RemoteCameraId() &&
 		vehicle->TankTurretSightMatrix(Rotation().z, CurrentHeadTilt(), tankSight))
 		return Transform().UnProject(tankSight.Translation());
-	const DaSc* legacyShip = dynamic_cast<const DaSc*>(Parent());
 	const AuPose pose = CurrentGeneralPose();
 	if(pose.IsTurret() && !pose.IsTurretIntegrated()
-		&& ((legacyShip && legacyShip->IsLegacyDebug()) || InDesignerNotPreview()))
+		&& (IsLegacyTurretStation() || InDesignerNotPreview()))
 	{
 		// Match SetupCamera for target queries made from the scene camera.
 		return WeaponLoc() + AuPoint(0, pose == AuPose::ConsoleTurretBottom ? -2.0027 : .6027011, 1.5)
@@ -9444,6 +9433,60 @@ DaLegacyCity* DaCreature::LegacyStationCity(AuStation* result) const
 				}
 	}
 	return nullptr;
+}
+
+bool DaCreature::IsLegacyTurretStation() const
+{
+	if(!IsTurretPose()) return false;
+	const auto* ship = dynamic_cast<const DaSc*>(Parent());
+	return (ship && ship->IsLegacyDebug()) || LegacyStationCity() != nullptr;
+}
+
+bool DaCreature::LegacyTurretMuzzle(AuMatrix4x4& muzzle) const
+{
+	if(!IsTurretPose()) return false;
+	if(const auto* ship = dynamic_cast<const DaSc*>(Parent()))
+		if(ship->IsLegacyDebug())
+		{
+			ship->TurretMuzzleMatrix(StationId(), Rotation().z, CurrentHeadTilt(), muzzle);
+			return true;
+		}
+	const auto* city = LegacyStationCity();
+	AuMatrix4x4 gun;
+	return city && city->TurretMatrices(*this, gun, muzzle);
+}
+
+double DaCreature::ConstrainTurretTurn(double turn) const
+{
+	double direction;
+	switch(CurrentGeneralPose().Pose())
+	{
+	case AuPose::ConsoleTurret0: direction = 270 * DEG2RAD; break;
+	case AuPose::ConsoleTurret45: direction = 315 * DEG2RAD; break;
+	case AuPose::ConsoleTurret90: direction = 0; break;
+	case AuPose::ConsoleTurret135: direction = 45 * DEG2RAD; break;
+	case AuPose::ConsoleTurret180: direction = 90 * DEG2RAD; break;
+	case AuPose::ConsoleTurret225: direction = 135 * DEG2RAD; break;
+	case AuPose::ConsoleTurret270: direction = 180 * DEG2RAD; break;
+	case AuPose::ConsoleTurret315: direction = 225 * DEG2RAD; break;
+	default: return turn;
+	}
+	double yaw = Rotation().z;
+	if(const auto* city = LegacyStationCity())
+	{
+		AuStation station; AuMatrix4x4 placement;
+		if(city->Station(*this, station, nullptr, &placement))
+		{
+			const AuPoint forward = placement.UnProjectVector(Transform().ProjectVector(0, 1, 0));
+			yaw = std::atan2(-forward.x, forward.y);
+		}
+	}
+	double delta = yaw + turn - direction;
+	while(delta < -PI) delta += PI * 2;
+	while(delta > PI) delta -= PI * 2;
+	if(delta < -PI / 2) return turn + (-PI / 2 - delta);
+	if(delta > PI / 2) return turn + (PI / 2 - delta);
+	return turn;
 }
 
 const DaAtom* DaCreature::StationOwner() const

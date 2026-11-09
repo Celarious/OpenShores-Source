@@ -131,22 +131,38 @@ void DaLegacyCity::TockGarrison()
 	if(!AuLegacyCity::ReadSpeciesDNA(before.citizenSpecies, dna)) return;
 	QMutexLocker operation(&personnelLock);
 	QHash<quint32, int> defenders;
-	for(DaNpc* troop : GroundTroops(*this, before.controllingEmpire, true))
+	QList<DaNpc*> troops = GroundTroops(*this, before.controllingEmpire, true);
+	QSet<AuId> assigned;
+	for(DaNpc* troop : troops)
 	{
 		const auto* query = troop->LockEnvironmentQuery();
 		if(query->LegacyCityId() == Id()) ++defenders[query->LegacyDevelopmentId()];
 		troop->UnlockEnvironmentQuery();
 	}
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
-	// DaCity::Tock 0x2d3100 and CountTroopsAtDevLL 0x511a80 maintain
-	// one living, assigned defender at each town/base controlled by the city.
+	QVector<DefensePost> posts = DefensePosts();
+	// Flag defenders and authored equipment operators draw from the same pool.
 	for(const auto& development : before.developments)
+		if((development.industryId == 1 || development.industryId == 10)
+			&& !development.demolished && development.completedLevels && !defenders.value(development.id))
+		{
+			const auto flag = std::find_if(before.flags.cbegin(), before.flags.cend(),
+				[&development](const AuLegacyCity::Flag& value) { return value.location == development.location; });
+			if(flag != before.flags.cend() && flag->empire == before.controllingEmpire)
+			{ DefensePost post; post.development = development; posts.prepend(post); }
+		}
+	for(const auto& post : posts)
 	{
-		if((development.industryId != 1 && development.industryId != 10) || development.demolished
-			|| !development.completedLevels || defenders.value(development.id)) continue;
-		const auto flag = std::find_if(before.flags.cbegin(), before.flags.cend(),
-			[&development](const AuLegacyCity::Flag& value) { return value.location == development.location; });
-		if(flag == before.flags.cend() || flag->empire != before.controllingEmpire) continue;
+		const auto& development = post.development;
+		if(post.stationId)
+		{
+			bool occupied = false;
+			for(DaNpc* troop : troops)
+				if(!assigned.contains(troop->Id()) && troop->Location().Distance2(post.station.OpM().Translation()) < 144)
+				{ assigned.insert(troop->Id()); occupied = true; break; }
+			if(occupied) continue;
+			if(DefensePostPlayer(post)) continue;
+		}
 		const auto* recipe = catalogue->ConstructionProcess(AuLegacyCity::ConstructionProcessId(development.constructionProcessId));
 		if(!recipe) recipe = catalogue->ConstructionProcessForIndustry(AuLegacyCity::IndustryId(development.industryId));
 		if(!recipe) continue;
@@ -171,15 +187,17 @@ void DaLegacyCity::TockGarrison()
 					&& value.location == development.location && value.completedLevels && !value.demolished; });
 			const auto liveFlag = std::find_if(m_City.flags.cbegin(), m_City.flags.cend(),
 				[&development](const AuLegacyCity::Flag& value) { return value.location == development.location; });
-			if(live == m_City.developments.cend() || liveFlag == m_City.flags.cend()
-				|| liveFlag->empire != m_City.controllingEmpire || m_City.citizenSpecies != before.citizenSpecies) continue;
+			if(live == m_City.developments.cend() || (!post.stationId && (liveFlag == m_City.flags.cend()
+				|| liveFlag->empire != m_City.controllingEmpire)) || m_City.citizenSpecies != before.citizenSpecies) continue;
 			--m_City.garrisonTroops; ++m_CityRevision;
 		}
 		DaNpc* troop = new DaNpc(ROLE_Troop, *dna,
 			AuDNABase::CHROMATID(g_Au.Dice().Roll(1, 2, -1)), HANDEDNESS(g_Au.Dice().Roll(1, 2, -1)),
 			g_Au.Dice().RandomPersonName());
 		troop->ConnectSignals(); troop->Create(); troop->SetHomeWorld(world); troop->Stand();
-		const AuPoint spawn = world->GetSurfaceLocation(location, troop->GroundHeightAboveCG());
+		const AuPoint spawn = post.stationId
+			? post.station.OpM().Translation()
+			: world->GetSurfaceLocation(location, troop->GroundHeightAboveCG());
 		AuMatrix4x4 placement;
 		placement.Translate(spawn);
 		placement *= AuPoint(0, 0, 1).GetAlignmentTransform(-world->GravityDir(spawn));
@@ -192,8 +210,13 @@ void DaLegacyCity::TockGarrison()
 		EquipSpacecraftPersonnel(*troop);
 		InflictCitizenCrises(*troop);
 		troop->SetOrder(ORDER_Stay, world->Id(), spawn);
+		// SetOrder's fallback Stay always targets the parent. Keep a city-owned
+		// station order above it, as hospital operators already do.
+		if(post.stationId) troop->AmendOrder(ORDER_Stay, Id(), spawn, post.stationId);
+		if(post.stationId) ManBuildingStation(*troop, development, post.stationId);
 		troop->SetInScene();
 		g_Au.AtomAdded(troop->Id()); troop->SetNormal(); troop->TickTock();
+		troops.append(troop); assigned.insert(troop->Id());
 		SetModified();
 	}
 }

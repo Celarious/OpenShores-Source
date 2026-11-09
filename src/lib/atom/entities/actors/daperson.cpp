@@ -5932,6 +5932,13 @@ void DaPerson::ProcessControlInput(const DiControlInputArray& aActiveControls, D
 						IncreaseSkill(AuSkill::Turret, 1);
 					}
 				}
+				else if(DaLegacyCity* city = LegacyStationCity())
+				{
+					if(city->FireStationWeapon(*this, AuId(0), 40))
+					{
+						QWriteLocker lock(&m_PersonLock); m_tmLastWeaponFired.restart();
+					}
+				}
 				else if(bd)
 				{
 					//DHH Person fire turret at a bd.
@@ -9551,74 +9558,7 @@ void DaPerson::ApplyMovement(unsigned int msElapsed)
 		// Constrain turn angle when engaged with a wall turret.
 		if(rTurnZ != 0 && (acti & (ACT_TurnLeft|ACT_TurnRight)))
 		{
-			double constrainTurn;
-			double gunDir;
-			switch(CurrentGeneralPose().Pose())
-			{
-			//DHH Sc Console constrain turn for turrets.
-			//case AuPose::Turret_Sit:
-			//case AuPose::Turret_SitStationary:
-			//case AuPose::Turret_SitSwivel3D:
-			//case AuPose::Turret_Stand:
-			//case AuPose::Turret_StandStationary:
-			case AuPose::ConsoleTurret0:
-				constrainTurn = PI/2;
-				gunDir = 270 * DEG2RAD;
-				break;
-			case AuPose::ConsoleTurret45:
-				constrainTurn = PI/2;
-				gunDir = 315 * DEG2RAD;
-				break;
-			case AuPose::ConsoleTurret90:
-				constrainTurn = PI/2;
-				gunDir = 0 * DEG2RAD;
-				break;
-			case AuPose::ConsoleTurret135:
-				constrainTurn = PI/2;
-				gunDir = 45 * DEG2RAD;
-				break;
-			case AuPose::ConsoleTurret180:
-				constrainTurn = PI/2;
-				gunDir = 90 * DEG2RAD;
-				break;
-			case AuPose::ConsoleTurret225:
-				constrainTurn = PI/2;
-				gunDir = 135 * DEG2RAD;
-				break;
-			case AuPose::ConsoleTurret270:
-				constrainTurn = PI/2;
-				gunDir = 180 * DEG2RAD;
-				break;
-			case AuPose::ConsoleTurret315:
-				constrainTurn = PI/2;
-				gunDir = 225 * DEG2RAD;
-				break;
-			default:
-				constrainTurn = 0;
-				break;
-			}
-			if(constrainTurn != 0)
-			{
-				// Constrain turn to the limits of my turret arc.
-				double zrot = Rotation().z;		// My current Z rotation.
-				double nuz = zrot + rTurnZ;	// My proposed Z rotation.
-				double deltaz = nuz - gunDir;	// Delta from turret direction.
-				while(deltaz < -PI)
-					deltaz += PI*2;
-				while(deltaz > PI)
-					deltaz -= PI*2;
-				// Prevent turning beyond arc of gun.
-				if(deltaz < -constrainTurn)
-				{
-					double diff = -constrainTurn - deltaz;
-					rTurnZ += diff;
-				}
-				else if(deltaz > constrainTurn)
-				{
-					double diff = constrainTurn - deltaz;
-					rTurnZ += diff;
-				}
-			}
+			rTurnZ = float(ConstrainTurretTurn(rTurnZ));
 
 			//if(rTurnZ < 0)
 				//qDebug("Turning right %g degrees from Z = %g degrees", -rTurnZ*RAD2DEG, Rotation().z*RAD2DEG);
@@ -15591,7 +15531,6 @@ bool DaPerson::CurrentWeaponIsShotgun(float& range, float& patternAngle) const
 
 AuStation::TYPE DaPerson::EnterLegacyBuildingConsole(CONTROL_CONTEXT cc)
 {
-	Q_UNUSED(cc);
 	DaWorldLL* world = dynamic_cast<DaWorldLL*>(Parent());
 	if(!world || !g_Au.IsLegacyGeneration()) return AuStation::TYPE_Count;
 	DaAtomList cities;
@@ -15604,6 +15543,12 @@ AuStation::TYPE DaPerson::EnterLegacyBuildingConsole(CONTROL_CONTEXT cc)
 		if(!city || !city->CanEnterConsole(*this, stationId, station, which)) continue;
 		ForcePosStop(AuAtomPos(world->Id(), station.OpM()));
 		const AuPose pose = SitAtConsole(stationId, station.Type(), station.OccPos(), station.SeatIndex(), which);
+		if(station.IsTurret())
+		{
+			AuAtomPos facing(Pos()); facing.RotateZ(ConstrainTurretTurn(0));
+			ForcePosStop(facing);
+		}
+		if(cc == CONTROL_Server) city->PlayerEnteredStation(*this);
 		SyncController(AuSyncPose(pose, 0, stationId, station.SeatIndex()));
 		InvalidateEnvironment();
 		SetAtRest();

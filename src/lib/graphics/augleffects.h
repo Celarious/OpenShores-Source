@@ -848,7 +848,8 @@ public:
 	void RenderShieldBubble(const AuMatrix4x4& projection, const AuMatrix4x4& model, float sizeX, float sizeY, float sizeZ,
 			float front, bool frontScram, float bottom, bool bottomScram, float left, bool leftScram, float back, bool backScram,
 			float top, bool topScram, float right, bool rightScram, float texOffset, float divisor,
-			float hitPosArray[MAX_SHIELD_HIT_EFFECTS*4], float hitDurArray[MAX_SHIELD_HIT_EFFECTS], bool hasShieldHits);
+			float hitPosArray[MAX_SHIELD_HIT_EFFECTS*4], float hitDurArray[MAX_SHIELD_HIT_EFFECTS], bool hasShieldHits,
+			int textureLayers = 4);
 
 	// 'speedMph' is clamped into the range 5mph to 85mph, which is the limits of the gauge.
 	// This function sets up it's own shaders.

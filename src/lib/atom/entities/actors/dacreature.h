@@ -1750,6 +1750,10 @@ protected:
 public:
 	// Legacy building stations remain parented to the world.
 	DaLegacyCity* LegacyStationCity(AuStation* station = nullptr) const;
+	bool IsLegacyTurretStation() const;
+	bool LegacyTurretMuzzle(AuMatrix4x4& muzzle) const;
+	// Shared player/NPC wall-turret arc; city yaw is relative to the building.
+	double ConstrainTurretTurn(double turn) const;
 	DaAtom* StationOwner();
 	const DaAtom* StationOwner() const;
 

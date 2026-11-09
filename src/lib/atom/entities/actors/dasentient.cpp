@@ -2586,75 +2586,7 @@ bool DaSentient::AnimateTurn(unsigned int msElapsed)
 	m_ThinkLock.unlock();
 
 	// Constrain turn angle when engaged with a wall turret.
-	double constrainTurn;
-	double gunDir;
-	switch(CurrentGeneralPose().Pose())
-	{
-	//DHH Sc Console constrain turn for turrets.
-	//case AuPose::Turret_Sit:
-	//case AuPose::Turret_SitStationary:
-	//case AuPose::Turret_SitSwivel3D:
-	//case AuPose::Turret_Stand:
-	//case AuPose::Turret_StandStationary:
-	case AuPose::ConsoleTurret0:
-		constrainTurn = PI/2;
-		gunDir = 270 * DEG2RAD;
-		break;
-	case AuPose::ConsoleTurret45:
-		constrainTurn = PI/2;
-		gunDir = 315 * DEG2RAD;
-		break;
-	case AuPose::ConsoleTurret90:
-		constrainTurn = PI/2;
-		gunDir = 0 * DEG2RAD;
-		break;
-	case AuPose::ConsoleTurret135:
-		constrainTurn = PI/2;
-		gunDir = 45 * DEG2RAD;
-		break;
-	case AuPose::ConsoleTurret180:
-		constrainTurn = PI/2;
-		gunDir = 90 * DEG2RAD;
-		break;
-	case AuPose::ConsoleTurret225:
-		constrainTurn = PI/2;
-		gunDir = 135 * DEG2RAD;
-		break;
-	case AuPose::ConsoleTurret270:
-		constrainTurn = PI/2;
-		gunDir = 180 * DEG2RAD;
-		break;
-	case AuPose::ConsoleTurret315:
-		constrainTurn = PI/2;
-		gunDir = 225 * DEG2RAD;
-		break;
-	default:
-		constrainTurn = 0;
-		gunDir = 0;
-		break;
-	}
-	if(constrainTurn != 0)
-	{
-		// Constrain turn to the limits of my turret arc.
-		double zrot = Rotation().z;		// My current Z rotation.
-		double nuz = zrot + turnZNow;	// My proposed Z rotation.
-		double deltaz = nuz - gunDir;	// Delta from turret direction.
-		while(deltaz < -PI)
-			deltaz += PI*2;
-		while(deltaz > PI)
-			deltaz -= PI*2;
-		// Prevent turning beyond arc of gun.
-		if(deltaz < -constrainTurn)
-		{
-			double diff = -constrainTurn - deltaz;
-			turnZNow += diff;
-		}
-		else if(deltaz > constrainTurn)
-		{
-			double diff = constrainTurn - deltaz;
-			turnZNow += diff;
-		}
-	}
+	turnZNow = float(ConstrainTurretTurn(turnZNow));
 
 	// The client is not updated with this transformation change because it calls this function to animate locally. The
 	// matrix change causes unnecessary network traffic if I am just turning on my axis.
@@ -11960,6 +11892,29 @@ void DaSentient::DoStayHere()
 
 	if(IsAboardVehicle())
 		return;													// Stay in the vehicle.
+
+	if(g_Au.IsLegacyGeneration())
+	{
+		DaAtom* parent = Parent();
+		const auto* city = parent ? dynamic_cast<const DaLegacyCity*>(parent->FindSubatomId(OrderTarget())) : nullptr;
+		if(city && city->IsNormal() && city->EmpireId() == EmpireId())
+		{
+			if(city->WaitingForStation(Id()))
+			{
+				StayIdle();
+				return;
+			}
+			if(IsNpcTroop())
+				for(const auto& post : city->DefensePosts())
+					if(Location().Distance2(post.station.OpM().Translation()) < 144)
+					{
+						// The city operates this authored defense post. Stay at it
+						// instead of abandoning the gun to pursue with a hand weapon.
+						StayIdle();
+						return;
+					}
+		}
+	}
 
 	// Must exit my console or turret.
 	if(IsLockedPose())

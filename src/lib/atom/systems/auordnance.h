@@ -11,6 +11,7 @@
 #include "aueffect.h"
 #include "auelapsedtimer.h"
 #include "dbcommodity.h"
+#include <QList>
 
 class AuItem;
 
@@ -49,6 +50,8 @@ public:	// Methods
 
 	// Returns true if this weapon can fire based on rate-of-fire since last fired and ammunition when appropriate.
 	bool CanFire() const;
+	// Shared recovered preference order; stock selection within a type uses TL/QL.
+	static QList<COMMODITYID> WeaponPreferences();
 
 	COMMODITYID CommodityId() const;
 

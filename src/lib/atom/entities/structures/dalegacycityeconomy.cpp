@@ -146,7 +146,7 @@ void DaLegacyCity::TockHospitalPatients()
 	}
 	// Includes patients who stood up and stations whose site was demolished.
 	for(DaNpc* civilian : medics)
-		if(!needed.contains(civilian)) civilian->Kill();
+		if(!needed.contains(civilian) && !WaitingForStation(civilian->Id())) civilian->Kill();
 }
 
 DaCreature* DaLegacyCity::FindPatient(const DaCreature& doctor) const

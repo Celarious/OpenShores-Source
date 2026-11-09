@@ -194,6 +194,32 @@ void AuOrdnance::Fired()
 	m_tmLastFired.Set();
 }
 
+QList<COMMODITYID> AuOrdnance::WeaponPreferences()
+{
+	QList<COMMODITYID> ammoNeeded;
+	ammoNeeded.append(CID_CompressorBeam);
+	ammoNeeded.append(CID_DisintegratorRay);
+	ammoNeeded.append(CID_ProtonBeam);
+	ammoNeeded.append(CID_StasisBeam);
+	ammoNeeded.append(CID_DisruptorBeam);
+	ammoNeeded.append(CID_ErgRay);
+	ammoNeeded.append(CID_HeatRay);
+	ammoNeeded.append(CID_FreezeRay);
+	ammoNeeded.append(CID_NeutronBeam);
+	ammoNeeded.append(CID_ElectronBeam);
+	ammoNeeded.append(CID_LargeMissileSlPo);
+	ammoNeeded.append(CID_LargeMissileBlBu);
+	ammoNeeded.append(CID_LargeMissileBl);
+	ammoNeeded.append(CID_LargeRocketBuDi);
+	ammoNeeded.append(CID_LargeRocketBlBu);
+	ammoNeeded.append(CID_LargeRocketBl);
+	ammoNeeded.append(CID_HeavyArmsAmmoPiRa);
+	ammoNeeded.append(CID_HeavyArmsAmmoPiAc);
+	ammoNeeded.append(CID_HeavyArmsAmmoPiBl);
+	ammoNeeded.append(CID_HeavyArmsAmmoPi);
+	return ammoNeeded;
+}
+
 void AuOrdnance::Load(const AuItem& item, int roundsCount)
 {
 	if(m_Ammo)

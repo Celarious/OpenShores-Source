@@ -42,6 +42,8 @@ struct Batch
 	// but omit the full frame quad from collision and sight obstruction.
 	quint32 doorId = 0;
 	quint32 detailId = 0;
+	quint32 turretId = 0;
+	QVector3D rotationPivot;
 	QString textureFile;
 	QVector4D tint = QVector4D(1, 1, 1, 1);
 	float selfIllumination = 0;

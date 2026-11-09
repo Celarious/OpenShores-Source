@@ -2121,27 +2121,7 @@ bool DaVessel::SelectBayWeapon(quint16 which)
 	// Nothing already loaded in that bay weapon or the hold contains no more ammo for it.
 	// We don't automatically replace an energy weapon due to low ammo.
 	// List ammo usable by bay weapons, in order of preference.
-	QList<COMMODITYID> ammoNeeded;
-	ammoNeeded.append(CID_CompressorBeam);
-	ammoNeeded.append(CID_DisintegratorRay);
-	ammoNeeded.append(CID_ProtonBeam);
-	ammoNeeded.append(CID_StasisBeam);
-	ammoNeeded.append(CID_DisruptorBeam);
-	ammoNeeded.append(CID_ErgRay);
-	ammoNeeded.append(CID_HeatRay);
-	ammoNeeded.append(CID_FreezeRay);
-	ammoNeeded.append(CID_NeutronBeam);
-	ammoNeeded.append(CID_ElectronBeam);
-	ammoNeeded.append(CID_LargeMissileSlPo);
-	ammoNeeded.append(CID_LargeMissileBlBu);
-	ammoNeeded.append(CID_LargeMissileBl);
-	ammoNeeded.append(CID_LargeRocketBuDi);
-	ammoNeeded.append(CID_LargeRocketBlBu);
-	ammoNeeded.append(CID_LargeRocketBl);
-	ammoNeeded.append(CID_HeavyArmsAmmoPiRa);
-	ammoNeeded.append(CID_HeavyArmsAmmoPiAc);
-	ammoNeeded.append(CID_HeavyArmsAmmoPiBl);
-	ammoNeeded.append(CID_HeavyArmsAmmoPi);
+	const QList<COMMODITYID> ammoNeeded = AuOrdnance::WeaponPreferences();
 	for(QList<COMMODITYID>::const_iterator mi = ammoNeeded.cbegin(); mi != ammoNeeded.cend(); mi++)
 	{
 		if(!DbCommodity::IsAmmunitionForWeapon(bayCID, *mi))

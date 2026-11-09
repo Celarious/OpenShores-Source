@@ -3892,8 +3892,10 @@ void AuGLEffects::RenderCrosshair(const QRect& clientRect, float xpos, float ypo
 void AuGLEffects::RenderShieldBubble(const AuMatrix4x4& projection, const AuMatrix4x4& model, float sizeX, float sizeY, float sizeZ,
 		float front, bool frontScram, float bottom, bool bottomScram, float left, bool leftScram, float back, bool backScram,
 		float top, bool topScram, float right, bool rightScram, float texOffset, float divisor,
-		float hitPosArray[MAX_SHIELD_HIT_EFFECTS*4], float hitDurArray[MAX_SHIELD_HIT_EFFECTS], bool hasShieldHits)
+		float hitPosArray[MAX_SHIELD_HIT_EFFECTS*4], float hitDurArray[MAX_SHIELD_HIT_EFFECTS], bool hasShieldHits, int textureLayers)
 {
+	textureLayers = qBound(1, textureLayers, 4);
+	divisor *= float(textureLayers) / 4.f;
 	// The vertex shader scales a unit sphere. Test the whole ellipsoid so a
 	// shield remains visible when its host hull lies outside the view.
 	const AuPoint extent(std::abs(double(sizeX)), std::abs(double(sizeY)), std::abs(double(sizeZ)));
@@ -3981,11 +3983,11 @@ void AuGLEffects::RenderShieldBubble(const AuMatrix4x4& projection, const AuMatr
 		GLSL().ShieldHitsShader().SetColor(.145f/divisor, .145f/divisor, .4325f/divisor);
 		GLSL().ShieldHitsShader().SetHits(hitPosArray, hitDurArray);
 
-		for(int i=0; i<4; i++)
+		for(int i=0; i<textureLayers; i++)
 		{
 			float fUOffset=0;
 			float fVOffset=0;
-			if(i==1)
+			if(i==1 || textureLayers == 1)
 			{
 				fUOffset = texOffset/20.f;
 				fVOffset = 0;
@@ -4021,11 +4023,11 @@ void AuGLEffects::RenderShieldBubble(const AuMatrix4x4& projection, const AuMatr
 		GLSL().ShieldShader().SetSideScram(frontScram, bottomScram, leftScram, backScram, topScram, rightScram);
 		GLSL().ShieldShader().SetColor(.145f/divisor, .145f/divisor, .4325f/divisor);
 
-		for(int i=0; i<4; i++)
+		for(int i=0; i<textureLayers; i++)
 		{
 			float fUOffset=0;
 			float fVOffset=0;
-			if(i==1)
+			if(i==1 || textureLayers == 1)
 			{
 				fUOffset = texOffset/20.f;
 				fVOffset = 0;
