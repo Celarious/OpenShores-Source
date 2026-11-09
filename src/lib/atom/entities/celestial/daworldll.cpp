@@ -8173,6 +8173,61 @@ void DaWorldLL::RenderTerrainInfo(const AuMatrix4x4& model, AuAtomRenderInfo& ar
 		ari.re->glEnable(GL_PROGRAM_POINT_SIZE); 
 
 		const int pct = g_Au.ResourceIconSize();
+		// Share development sprites and construction markers between Buildings and Flags.
+		const auto renderBuildingSprites = [&](bool flagsOnly)
+		{
+			UpdateBuildingOverlaySprites(worldLoc, scenePerson->EmpireId());
+			for(QMap<AuPoint, AuBldSprite>::const_iterator bi = m_OverlayBuildings.cbegin(); bi != m_OverlayBuildings.cend();
+					bi++)
+			{
+				const bool legacyFlag = !(*bi).m_IsBd
+					&& ((*bi).m_IID == IID_TownSquare || (*bi).m_IID == IID_BaseFlag);
+				if(legacyFlag != flagsOnly)
+					continue;
+				if((*bi).m_IID == IID_StreetLight || (*bi).m_IID == IID_Bridge || (*bi).m_IID == IID_Fence)
+					continue;
+				AuPoint txpt = model.Project(bi.key());
+				if(txpt.z > 0.)
+					continue;				// Skip those behind the viewer.
+				if(txpt.Length2() > 2000*FeetPerMeter() * 2000*FeetPerMeter())
+					continue;				// We don't need to see buildings on the other side of the planet.
+				txpt = tP.Project(txpt);	// Calculate screen space location of object.
+
+				QString sname = QString((*bi).m_IsBd ? "IID%1" : "LegacyIID%1").arg((*bi).m_IID);
+				GLuint texture1 = ari.re->UseTexture(STATIC_TEXTURE_ID, sname);
+				if(!texture1 && !(*bi).m_IsBd)
+					texture1 = ari.re->UseTexture(STATIC_TEXTURE_ID, QString("IID%1").arg((*bi).m_IID));
+
+				GLuint texQ;
+				if((*bi).IsBdUnderConstruction())
+					texQ = s_TexConstruction;
+				else
+					texQ = 0;
+
+				int texSize = 40 * pct / 100;
+
+				RenderTerrainInfoSprite(*ari.re, txpt, texture1, texSize, 0, 0, texQ, unitsPerPixel);
+
+				// Track building levels so we can show them after the sprites.
+				if(!(*bi).m_IsBd)
+				{
+					// Old style buildings can be multiple stories and some of them can be under construction.
+					if((*bi).m_LevelsUnderConstruction)
+					{
+						QString levels = QString("%1/%2")
+							.arg((*bi).m_CompletedLevels)
+							.arg((*bi).m_CompletedLevels + (*bi).m_LevelsUnderConstruction);
+						buildingLevelsUC.insert(txpt, levels);
+					}
+					else if((*bi).m_CompletedLevels > 1)
+						buildingLevels.insert(txpt, (*bi).m_CompletedLevels);
+				}
+
+				// Health bar.
+				if((*bi).m_MaxHits && (*bi).m_CurHits < (*bi).m_MaxHits)
+					buildingHealthBars.insert(txpt, AuBldHealth((*bi).m_CurHits, (*bi).m_MaxHits, (*bi).m_IsBurning));
+			}
+		};
 		switch(ari.TopViewInfo())
 		{
 		case AuAtomRenderInfo::VI_None: //   0 = no terrain info
@@ -8331,53 +8386,7 @@ void DaWorldLL::RenderTerrainInfo(const AuMatrix4x4& model, AuAtomRenderInfo& ar
 			}
 			break;
 		case AuAtomRenderInfo::VI_Buildings: //   4 = developments except roads and street lights
-			UpdateBuildingOverlaySprites(worldLoc, scenePerson->EmpireId());
-			for(QMap<AuPoint, AuBldSprite>::const_iterator bi = m_OverlayBuildings.cbegin(); bi != m_OverlayBuildings.cend();
-					bi++)
-			{
-				if((*bi).m_IID == IID_StreetLight || (*bi).m_IID == IID_Bridge || (*bi).m_IID == IID_Fence)
-					continue;
-				AuPoint txpt = model.Project(bi.key());
-				if(txpt.z > 0.)
-					continue;				// Skip those behind the viewer.
-				if(txpt.Length2() > 2000*FeetPerMeter() * 2000*FeetPerMeter())
-					continue;				// We don't need to see buildings on the other side of the planet.
-				txpt = tP.Project(txpt);	// Calculate screen space location of object.
-
-				QString sname = QString((*bi).m_IsBd ? "IID%1" : "LegacyIID%1").arg((*bi).m_IID);
-				GLuint texture1 = ari.re->UseTexture(STATIC_TEXTURE_ID, sname);
-				if(!texture1 && !(*bi).m_IsBd)
-					texture1 = ari.re->UseTexture(STATIC_TEXTURE_ID, QString("IID%1").arg((*bi).m_IID));
-
-				GLuint texQ;
-				if((*bi).IsBdUnderConstruction())
-					texQ = s_TexConstruction;
-				else
-					texQ = 0;
-
-				int texSize = 40 * pct / 100;
-
-				RenderTerrainInfoSprite(*ari.re, txpt, texture1, texSize, 0, 0, texQ, unitsPerPixel);
-
-				// Track building levels so we can show them after the sprites.
-				if(!(*bi).m_IsBd)
-				{
-					// Old style buildings can be multiple stories and some of them can be under construction.
-					if((*bi).m_LevelsUnderConstruction)
-					{
-						QString levels = QString("%1/%2")
-							.arg((*bi).m_CompletedLevels)
-							.arg((*bi).m_CompletedLevels + (*bi).m_LevelsUnderConstruction);
-						buildingLevelsUC.insert(txpt, levels);
-					}
-					else if((*bi).m_CompletedLevels > 1)
-						buildingLevels.insert(txpt, (*bi).m_CompletedLevels);
-				}
-
-				// Health bar.
-				if((*bi).m_MaxHits && (*bi).m_CurHits < (*bi).m_MaxHits)
-					buildingHealthBars.insert(txpt, AuBldHealth((*bi).m_CurHits, (*bi).m_MaxHits, (*bi).m_IsBurning));
-			}
+			renderBuildingSprites(false);
 			break;
 		case AuAtomRenderInfo::VI_Roads: //   5 = roads, landscaping and street lights
 			UpdateRoadOverlaySprites(worldLoc);
@@ -8455,6 +8464,7 @@ void DaWorldLL::RenderTerrainInfo(const AuMatrix4x4& model, AuAtomRenderInfo& ar
 			}
 			break;
 		case AuAtomRenderInfo::VI_Flags: //   6 = flags
+			renderBuildingSprites(true);
 			if(ClaimedByEmpire())
 			{
 				// Calculate eye-space location of the object.
