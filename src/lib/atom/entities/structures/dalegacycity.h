@@ -296,6 +296,8 @@ public:
 		COMMODITYID& module, AuPoint& emitterWorld, float& range) const;
 	AuItem* WeaponAmmunition(COMMODITYID module) const;
 	bool FireStationWeapon(DaPerson& gunner, const AuId& target, int powerSetting);
+	bool ShieldStation(const DaCreature& who, bool& enabled, float& charge, float& maximum) const;
+	void ToggleStationShield(const DaCreature& who);
 	bool HospitalPatient(const DaCreature& patient, quint32& developmentId,
 		AuStation& medic, quint16& medicStationId) const;
 	DaCreature* FindPatient(const DaCreature& doctor) const;

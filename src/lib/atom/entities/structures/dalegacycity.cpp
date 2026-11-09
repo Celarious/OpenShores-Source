@@ -924,6 +924,7 @@ struct DaLegacyCity::Runtime
 		quint8 technology = 0;
 		AuPoint center;
 		float charge = 0, maximum = 0;
+		bool enabled = true;
 		qint64 lastOperated = 0;
 	};
 	QMutex defenseLock;
@@ -3551,7 +3552,7 @@ DaAtom* DaLegacyCity::SightTarget(const DaAtom* observer, const AuPoint& eye,
 		const double radius = 500 * FeetPerMeter();
 		for(const auto& bubble : m_Runtime->shields)
 		{
-			if(bubble.charge <= 0) continue;
+			if(!bubble.enabled || bubble.charge <= 0) continue;
 			const AuPoint center = worldToObserver.Project(bubble.center);
 			if(eye.Distance2(center) <= radius * radius) continue;
 			AuPoint first, second;
@@ -4304,22 +4305,23 @@ void DaLegacyCity::CopyDefenseState(const DaLegacyCity& source)
 void DaLegacyCity::WriteDefenseState(QDataStream& out) const
 {
 	QMutexLocker lock(&m_Runtime->defenseLock);
-	out << quint8(1) << quint16(m_Runtime->shields.size());
+	out << quint8(2) << quint16(m_Runtime->shields.size());
 	for(const auto& shield : m_Runtime->shields)
-		out << shield.development << quint16(shield.module) << shield.technology << shield.center << shield.charge << shield.maximum;
+		out << shield.development << quint16(shield.module) << shield.technology << shield.center << shield.charge << shield.maximum << shield.enabled;
 }
 
 bool DaLegacyCity::ReadDefenseState(QDataStream& in)
 {
 	quint8 version = 0; quint16 count = 0;
 	in >> version >> count;
-	if(version != 1 || count > AuLegacyCity::MaximumDevelopments) return false;
+	if((version != 1 && version != 2) || count > AuLegacyCity::MaximumDevelopments) return false;
 	QVector<Runtime::Shield> shields;
 	QSet<quint32> seen;
 	for(int index = 0; index < count; ++index)
 	{
 		Runtime::Shield shield; quint16 module = 0;
 		in >> shield.development >> module >> shield.technology >> shield.center >> shield.charge >> shield.maximum;
+		if(version >= 2) in >> shield.enabled;
 		if(in.status() != QDataStream::Ok || !shield.development || seen.contains(shield.development)
 			|| shield.technology > 31 || !std::isfinite(shield.charge) || !std::isfinite(shield.maximum)
 			|| !std::isfinite(shield.center.x) || !std::isfinite(shield.center.y) || !std::isfinite(shield.center.z)
@@ -4328,6 +4330,51 @@ bool DaLegacyCity::ReadDefenseState(QDataStream& in)
 	}
 	QMutexLocker lock(&m_Runtime->defenseLock); m_Runtime->shields = shields;
 	return in.status() == QDataStream::Ok;
+}
+
+bool DaLegacyCity::ShieldStation(const DaCreature& who, bool& enabled, float& charge, float& maximum) const
+{
+	AuStation station; AuLegacyCity::Development development;
+	if(!g_Au.IsLegacyGeneration() || !Station(who, station, &development)
+		|| station.Type() != AuStation::Console_Shield || development.industryId != 12) return false;
+	enabled = true; charge = 0; maximum = development.completedLevels * 50.f;
+	QMutexLocker lock(&m_Runtime->defenseLock);
+	for(const auto& shield : m_Runtime->shields)
+		if(shield.development == development.id)
+		{
+			enabled = shield.enabled; charge = shield.charge; maximum = shield.maximum;
+			break;
+		}
+	return true;
+}
+
+void DaLegacyCity::ToggleStationShield(const DaCreature& who)
+{
+	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker()) return;
+	AuStation station; AuLegacyCity::Development development;
+	if(!Station(who, station, &development) || station.Type() != AuStation::Console_Shield) return;
+	for(const auto& post : DefensePosts())
+		if(post.development.id == development.id && post.stationId == who.StationId() && development.industryId == 12)
+		{
+			QMutexLocker lock(&m_Runtime->defenseLock);
+			auto shield = std::find_if(m_Runtime->shields.begin(), m_Runtime->shields.end(), [&development](const Runtime::Shield& value) {
+				return value.development == development.id;
+			});
+			if(shield == m_Runtime->shields.end())
+			{
+				Runtime::Shield initial;
+				initial.development = development.id; initial.module = post.module; initial.technology = development.technology;
+				initial.maximum = development.completedLevels * 50.f;
+				initial.center = static_cast<const DaWorldLL*>(Parent())->LocOfLL(development.location, development.altitudeMSL);
+				initial.enabled = false;
+				initial.lastOperated = AuTime::CurrentMSecsSinceEpoch();
+				m_Runtime->shields.append(initial);
+			}
+			else shield->enabled = !shield->enabled;
+			lock.unlock();
+			SetModified(NOTIFY_Scene);
+			return;
+		}
 }
 
 void DaLegacyCity::TockDefenses()
@@ -4377,10 +4424,16 @@ void DaLegacyCity::TockDefenses()
 			shield.maximum = post.development.completedLevels * 50.f;
 			shield.center = world->LocOfLL(post.development.location, post.development.altitudeMSL);
 			if(operatorActor) shield.lastOperated = now;
+			// The NPC operates the switch again when it resumes this station.
+			if(dynamic_cast<DaNpc*>(operatorActor)) shield.enabled = true;
 			// ShieldCharge 0x2cebb0 keeps an operated shield alive for 100 seconds.
-			if(!shield.lastOperated || now - shield.lastOperated > 100000) continue;
+			if(!shield.lastOperated || now - shield.lastOperated > 100000)
+			{
+				if(!shield.enabled) shields.append(shield);
+				continue;
+			}
 			shield.charge = qMin(shield.charge, shield.maximum);
-			if(powered && shield.charge < shield.maximum)
+			if(shield.enabled && powered && shield.charge < shield.maximum)
 			{
 				AuItemHash reserved;
 				shield.charge += ReserveStationPower(int(std::ceil(shield.maximum - shield.charge)), reserved);
@@ -4427,7 +4480,8 @@ void DaLegacyCity::TockDefenses()
 	if(!changed)
 		for(int index = 0; index < shields.size(); ++index)
 			if(shields[index].development != previous[index].development || shields[index].charge != previous[index].charge
-				|| shields[index].maximum != previous[index].maximum || shields[index].module != previous[index].module) { changed = true; break; }
+				|| shields[index].maximum != previous[index].maximum || shields[index].module != previous[index].module
+				|| shields[index].enabled != previous[index].enabled) { changed = true; break; }
 	{
 		QMutexLocker lock(&m_Runtime->defenseLock);
 		// Weapon impacts run on Tick; retain any charge spent since our snapshot.
@@ -4435,8 +4489,12 @@ void DaLegacyCity::TockDefenses()
 		{
 			const auto old = std::find_if(previous.cbegin(), previous.cend(), [&shield](const Runtime::Shield& item) { return item.development == shield.development; });
 			const auto live = std::find_if(m_Runtime->shields.cbegin(), m_Runtime->shields.cend(), [&shield](const Runtime::Shield& item) { return item.development == shield.development; });
-			if(old != previous.cend() && live != m_Runtime->shields.cend())
-				shield.charge = qMax(0.f, shield.charge - qMax(0.f, old->charge - live->charge));
+			if(live != m_Runtime->shields.cend())
+			{
+				if(old != previous.cend())
+					shield.charge = qMax(0.f, shield.charge - qMax(0.f, old->charge - live->charge));
+				if(old == previous.cend() || live->enabled != old->enabled) shield.enabled = live->enabled;
+			}
 		}
 		m_Runtime->shields = shields;
 	}
@@ -4452,7 +4510,7 @@ void DaLegacyCity::CombatArmorEffectiveness(WEAPONMODE mode, WEAPONEFFECT effect
 	QMutexLocker lock(&m_Runtime->defenseLock);
 	const double radius = 500 * FeetPerMeter();
 	for(const auto& shield : m_Runtime->shields)
-		if(shield.charge > 0 && location.Distance2(shield.center) <= (radius + 1) * (radius + 1)
+		if(shield.enabled && shield.charge > 0 && location.Distance2(shield.center) <= (radius + 1) * (radius + 1)
 			&& g_Au.HasLegacyCommodity(shield.module))
 		{
 			QScopedPointer<AuItem> module(AuItem::Create(shield.module, 1, EmpireId()));
@@ -4477,7 +4535,7 @@ void DaLegacyCity::CombatApplyDamage(const AuCombatAttacker& attacker, const AuC
 	{
 		QMutexLocker lock(&m_Runtime->defenseLock);
 		for(auto& shield : m_Runtime->shields)
-			if(shield.charge > 0 && location.Distance2(shield.center) <= (radius + 1) * (radius + 1))
+			if(shield.enabled && shield.charge > 0 && location.Distance2(shield.center) <= (radius + 1) * (radius + 1))
 			{
 				// DaCity::DamageBuilding 0x287de0: only damage blocked by the
 				// shield drains charge, at one unit per 10 * (1 + .05 * TL) hits.
@@ -4497,7 +4555,7 @@ int DaLegacyCity::TestMissileHit(const AuPoint& location, float proximity) const
 	const double radius = 500 * FeetPerMeter();
 	QMutexLocker lock(&m_Runtime->defenseLock);
 	for(const auto& shield : m_Runtime->shields)
-		if(shield.charge > 0 && location.Distance2(shield.center) <= radius * radius) return 2;
+		if(shield.enabled && shield.charge > 0 && location.Distance2(shield.center) <= radius * radius) return 2;
 	return 0;
 }
 
@@ -4516,7 +4574,7 @@ void DaLegacyCity::RenderDefenseShields(const AuMatrix4x4& projection, AuAtomRen
 	ari.re->glGetIntegerv(GL_FRONT_FACE, &previousFront);
 	for(const auto& shield : shields)
 	{
-		if(shield.charge <= 0 || shield.maximum <= 0) continue;
+		if(!shield.enabled || shield.charge <= 0 || shield.maximum <= 0) continue;
 		const float radius = 500 * FeetPerMeter();
 		AuMatrix4x4 shieldModel(worldModel); shieldModel.Translate(shield.center);
 		float hitPositions[MAX_SHIELD_HIT_EFFECTS * 4] = {}, hitDurations[MAX_SHIELD_HIT_EFFECTS] = {};
@@ -4680,7 +4738,12 @@ bool DaLegacyCity::FireDefenseWeapon(DaCreature& gunner, const DefensePost& post
 	DaAtom* target = environment ? environment->FindIdRecursive(targetId) : nullptr;
 	if(!target || target == this || target == Parent() || target->IsNoncombatant()) return false;
 	QScopedPointer<AuItem> ammo(DefenseAmmunition(post));
-	if(!ammo) return false;
+	if(!ammo)
+	{
+		if(auto* person = dynamic_cast<DaPerson*>(&gunner))
+			person->Thought(tr("No compatible ammunition is available in the city inventory."));
+		return false;
+	}
 	AuOrdnance towerRounds;
 	if(tower)
 	{

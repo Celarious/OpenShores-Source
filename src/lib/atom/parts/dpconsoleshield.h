@@ -28,6 +28,8 @@ public:
 
 	virtual void ProcessControlInput(const DiControlInputArray& controls, DaPerson* person, DaVessel& ship,
 			CONTROL_CONTEXT context, const AuPoint& location);
+	virtual void ProcessControlInput(const DiControlInputArray& controls, DaPerson* person, DaLegacyCity& city,
+			CONTROL_CONTEXT context, const AuPoint& location);
 
 	virtual void EnumControlPanels(AuQuadArray &aControlPanels, const AuMatrix4x4 &tModel, QVector<qint16>& idPanels,
 			const DaCreature& seatedCreature) const;

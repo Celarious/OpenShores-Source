@@ -10,10 +10,12 @@
 #include "auglobal.h"
 #include "ausound.h"
 #include "daperson.h"
+#include "dalegacycity.h"
 #include "dgdata.h"
 #include "dicontrolinput.h"
 #include "dipanelcontrol.h"
 #include "augleffects.h"
+#include <cmath>
 #include <qpainter.h>
 #include <qsqlquery.h>
 #include <QPixmap>
@@ -368,6 +370,39 @@ void DpStationShield::AnimateDeviceObjects(AuGLEffects& re, const DaVessel& ship
 
 		m_LastShieldsUnits = m_ShieldUnits;
 	}
+}
+
+void DpStationShield::AnimateDeviceObjects(AuGLEffects& re, const DaLegacyCity& city, const AuElapsedTimer& last,
+		const AuPoint& location, const DaCreature& sceneAtom)
+{
+	Q_UNUSED(last);
+	Q_UNUSED(location);
+	bool enabled = false; float charge = 0, maximum = 0;
+	if(!city.ShieldStation(sceneAtom, enabled, charge, maximum)) return;
+	AuGLTexture* texture = re.FindTexture(QString("HCon%1").arg(city.Id().GetID()));
+	if(!texture || (m_LastShieldsPower == int(enabled) && m_LastShieldsUnits == maximum && m_LastShields[0] == charge)) return;
+	// DpConsoleShield::AnimateDeviceObjects(city), AuAtom13:18061f820.
+	QImage powerButton(enabled ? ":/data/ec_PowerOn.bmp" : ":/data/ec_PowerOff.bmp");
+	QImage statusLight(enabled ? ":/data/ec_StatusLightGreen.bmp" : ":/data/ec_StatusLightOff.bmp");
+	texture->ReplaceSubImage(re, powerButton, 4, 108);
+	texture->ReplaceSubImage(re, statusLight, 5, 91);
+	const float fraction = enabled && maximum > 0 ? qBound(0.f, charge / maximum, 1.f) : 0.f;
+	QImage bar(9, 79, QImage::Format_ARGB32);
+	bar.fill(QColor(61, 75, 77));
+	{
+		QPainter painter(&bar);
+		const int height = int(std::ceil(fraction * 79));
+		painter.fillRect(0, 79 - height, 9, height, QColor(195, 241, 247));
+	}
+	texture->ReplaceSubImage(re, bar, 7, 8);
+	QImage bubble(":data/BldShield0.png");
+	{
+		QPainter painter(&bubble);
+		const QImage layer(":data/BldShieldBubble.png");
+		for(int index = 0; index < int(std::ceil(fraction * 10)); ++index) painter.drawImage(0, 0, layer);
+	}
+	texture->ReplaceSubImage(re, bubble, 23, 6);
+	m_LastShieldsPower = int(enabled); m_LastShieldsUnits = maximum; m_LastShields[0] = charge;
 }
 
 void DpStationShield::ConfigureControls(const DiControlInputArray &aAllControls)

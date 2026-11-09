@@ -4535,7 +4535,7 @@ void DaPerson::ProcessControlInput(const DiControlInputArray& aActiveControls, D
 	if(!capsule && HasConsole() && IsConsolePose())
 		if(DaLegacyCity* city = LegacyStationCity())
 		{
-			if(city->StationsPowered())
+			if(city->StationsPowered() || IsShieldStationPose())
 			{
 				DpStation* console = LockConsoleForRead();
 				if(console)
@@ -9733,7 +9733,7 @@ void DaPerson::AnimateDeviceObjects(AuAtomRenderInfo& ari, const DaPerson* scene
 	if(HasConsole() && !IsInCapsule())
 		if(DaLegacyCity* city = LegacyStationCity())
 		{
-			if(city->StationsPowered())
+			if(city->StationsPowered() || IsShieldStationPose())
 			{
 				DpStation* console = LockConsoleForRead();
 				if(console) console->AnimateDeviceObjects(*ari.re, *city, lastAnim, Location(), *this);

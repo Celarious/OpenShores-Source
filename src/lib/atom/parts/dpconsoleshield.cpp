@@ -8,6 +8,7 @@
 //
 #include "dacreature.h"
 #include "daperson.h"
+#include "dalegacycity.h"
 #include "dasc.h"
 #include "ausound.h"
 #include "dicontrolinput.h"
@@ -55,6 +56,20 @@ void DpConsoleShield::ProcessControlInput(const DiControlInputArray& controls, D
 		active.RemoveId(CI_PowerOnOff);
 	}
 	DpStationShield::ProcessControlInput(active, person, ship, context, location);
+}
+
+void DpConsoleShield::ProcessControlInput(const DiControlInputArray& controls, DaPerson* person, DaLegacyCity& city,
+		CONTROL_CONTEXT context, const AuPoint& location)
+{
+	Q_UNUSED(location);
+	// The original building console has one switch, not six directional shields.
+	if(!controls.HasId(CI_PowerOnOff)) return;
+	if(context != CONTROL_Client) city.ToggleStationShield(*person);
+	if(context != CONTROL_Server)
+	{
+		AuEffect click(person->ButtonSoundLoc(), AuPoint(), AuPoint(), SOUND_Bleep7, 1, 1);
+		person->AddEffect(click);
+	}
 }
 
 void DpConsoleShield::CreateDeviceObjects(AuAtomRenderInfo& ari, const DaAtom& parent, bool inBuilding)
