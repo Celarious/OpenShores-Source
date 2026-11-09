@@ -716,6 +716,8 @@ public:	// Methods
 	void AddResidentSpecies(const AuSpecies& species, bool isAlien, quint32 residents);
 
 	ALERT_CONDITION AlertCondition() const;
+	// Legacy military flags held by an empire other than the town-square owner.
+	int CapturedMilitaryFlags() const;
 
 	inline int BuildingLevels(INDUSTRYID iid) const
 	{

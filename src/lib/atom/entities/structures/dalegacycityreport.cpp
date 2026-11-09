@@ -306,6 +306,9 @@ bool DaLegacyCity::CompleteCityReport(AuCityReport& report, const State& state,
 	}
 	report.m_WhenCompiled = AuTime(now);
 	QString distress;
+	const int capturedFlags = report.CapturedMilitaryFlags();
+	if(capturedFlags)
+		distress += tr("Military flags captured by another empire: %1.<br>").arg(capturedFlags);
 	if(report.m_PopOrig && !report.m_HasBreathableAtmo && !report.HasPower())
 		distress += tr("Powerless in harsh environment.<br>");
 	if(population.change.suffocated) distress += tr("Citizens are suffocating.<br>");

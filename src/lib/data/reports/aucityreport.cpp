@@ -5686,6 +5686,16 @@ quint32 AuCityReport::Population() const
 	return pop;
 }
 
+int AuCityReport::CapturedMilitaryFlags() const
+{
+	if(m_CityType != CITY_City_Obsolete || m_Flags.isEmpty()) return 0;
+	const quint32 cityEmpire = EmpireId(0);
+	int captured = 0;
+	for(int index = 1; index < m_Flags.size(); ++index)
+		if(m_Flags.at(index).m_Empire != cityEmpire) ++captured;
+	return captured;
+}
+
 ALERT_CONDITION AuCityReport::AlertCondition() const
 {
 	if(m_PopOrig)
@@ -5699,6 +5709,11 @@ ALERT_CONDITION AuCityReport::AlertCondition() const
 		else if(!m_AteEnoughFood)
 			return ConditionYellow;		// Hungry
 	}
+
+	// Captured Legacy bases remain a danger even after their flags are fully
+	// raised and the original flag-lowering events have expired.
+	if(CapturedMilitaryFlags())
+		return ConditionYellow;
 
 	// Destroyed buildings are a sign of trouble.
 	if(m_HasDestroyedBuildings)
