@@ -7877,6 +7877,7 @@ bool DaWorldRingSection::SightTargetDetails(const AuPoint& eyeLoc, const AuMatri
 
 	// Integrate the sight segment in coarse 5' increments for speed, looking for the segment to go under ground.
 	AuPoint prevTestLoc = seg0;
+	const bool fromBasement = IsInLegacyBasement(seg0);
 	bool ug = false;					// True if the segment goes under ground.
 	AuPoint ugLoc;						// Underground location, if we find one.
 	for(double testDist = 0; testDist <= segLength; testDist += 6)
@@ -7887,6 +7888,11 @@ bool DaWorldRingSection::SightTargetDetails(const AuPoint& eyeLoc, const AuMatri
 		{
 			double testAlt = SurfaceAltitudeMSL(testLL);
 			double alt = AltitudeMSL(testLoc);
+			if(alt <= testAlt && IsInLegacyBasement(testLoc))
+			{
+				prevTestLoc = testLoc;
+				continue;
+			}
 			if(alt == testAlt)
 			{
 				// testLoc is exactly at the terrain altitude.
@@ -7922,8 +7928,9 @@ bool DaWorldRingSection::SightTargetDetails(const AuPoint& eyeLoc, const AuMatri
 				double alt = AltitudeMSL(testLoc);
 				if(alt <= testAlt)
 				{
+					if(IsInLegacyBasement(testLoc)) continue;
 					// testLoc is at or below the terrain.
-					ElevateLocMSL(testLoc, testAlt);				// Move testLoc to be exactly at the terrain surface.
+					if(!fromBasement) ElevateLocMSL(testLoc, testAlt);
 					sightedLoc = tModel.Project(testLoc);
 					sightedPart = 0xffff;							// Dirt was hit
 					sightedShield = false;

@@ -6754,6 +6754,16 @@ DaItem* DaWorldLL::CreateItem(const AuItem& item, const AuMatrix4x4& m)
 	return pc;
 }
 
+bool DaWorldLL::IsInLegacyBasement(const AuPoint& location) const
+{
+	if(!g_Au.IsLegacyGeneration()) return false;
+	DaAtomList atoms; ListNormalSubatoms(atoms);
+	for(const auto* atom : atoms)
+		if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+			if(city->ContainsBasement(location)) return true;
+	return false;
+}
+
 bool DaWorldLL::HasEstablishedLegacyCity() const
 {
 	if(!g_Au.IsLegacyGeneration()) return false;

@@ -209,6 +209,18 @@ struct LegacyBuildingStation
 	AuStation station;
 };
 
+const AuLegacyShip::Room* BasementRoom(const AuLegacyBd::Design& design,
+	const AuLegacyCity::Development& development, const AuPoint& local)
+{
+	if(!development.constructed || development.demolished || local.z >= 0) return nullptr;
+	for(const auto& room : design.rooms)
+		if(room.roomType && room.roomType != 9 && room.roomType < 22
+			&& room.deck >= development.minimumDeck && room.deck <= development.maximumDeck
+			&& local.z >= room.deck * AuLegacyBd::DeckHeight && local.z < (room.deck + 1) * AuLegacyBd::DeckHeight
+			&& AuLegacyShip::RoomBoundary(room).containsPoint(QPointF(local.x, local.y), Qt::OddEvenFill)) return &room;
+	return nullptr;
+}
+
 QVector<LegacyBuildingStation> BuildingStations(const AuLegacyBd::Design& design,
 	const AuLegacyCity::Development& development)
 {
@@ -3741,6 +3753,22 @@ bool DaLegacyCity::FilterDestination(DaAtom& actor, const AuPoint& from, AuPoint
 	return changed;
 }
 
+bool DaLegacyCity::ContainsBasement(const AuPoint& location) const
+{
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	if(!world || !g_Au.IsLegacyGeneration()) return false;
+	QMutexLocker lock(&m_Runtime->lock);
+	if(!m_Runtime->CollisionInRange(*this, *world, location, location, 0)) return false;
+	for(const auto& proxy : m_Runtime->collisionProxies)
+	{
+		const AuPoint local = proxy.placement.UnProject(location);
+		if(local.z >= 0 || !proxy.state.constructed || proxy.state.demolished) continue;
+		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(proxy.state.designId);
+		if(design && BasementRoom(*design, proxy.state, local)) return true;
+	}
+	return false;
+}
+
 void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& location, AuQueryEnvironment& query) const
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
@@ -3825,7 +3853,25 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 			if(enclosure==2 || (domePressure && undersea)) query.m_Environment&=~(EB_OnWater|EB_InWater|EB_MouthUnderwater);
 		}
 		const Runtime::Building* prepared = m_Runtime->CurrentBuilding(proxy);
-		if(!prepared || !prepared->collision->IsValid()) continue;
+		if(!prepared || !prepared->collision->IsValid())
+		{
+			// The authored basement is valid before its collision worker finishes.
+			// Do not let terrain-only fall distance eject a restored occupant or
+			// newly seated operator. Detailed floors resume when the mesh is ready.
+			QSharedPointer<const AuLegacyBd::Design> design;
+			if(dev.constructed && !dev.demolished && local.z < 0) design = AuLegacyBd::Catalog::BuiltIn().Find(dev.designId);
+			const auto* room = design ? BasementRoom(*design, dev, local) : nullptr;
+			if(room)
+			{
+				query.m_FallDist = 0;
+				query.m_OnGround = OG_HardFloor;
+				query.m_Environment |= EB_LegacyCity | EB_LegacyCityFloor;
+				query.m_LegacyCityId = Id(); query.m_LegacyDevelopmentId = dev.id;
+				query.m_LegacyRoomType = room->roomType;
+				query.m_CityEmpire = EmpireId();
+			}
+			continue;
+		}
 		const auto& building = *prepared;
 		const auto up = transform.UnProjectVector(-world->GravityDir(location));
 		AuPoint floorNormal;
@@ -4433,8 +4479,11 @@ void DaLegacyCity::CombatApplyDamage(const AuCombatAttacker& attacker, const AuC
 		for(auto& shield : m_Runtime->shields)
 			if(shield.charge > 0 && location.Distance2(shield.center) <= (radius + 1) * (radius + 1))
 			{
-				const float spent = float(result.m_Damage1 + result.m_Damage2 + result.m_AuxArmor1 + result.m_AuxArmor2);
-				shield.charge = qMax(0.f, shield.charge - qMax(0.f, spent)); changed = true;
+				// DaCity::DamageBuilding 0x287de0: only damage blocked by the
+				// shield drains charge, at one unit per 10 * (1 + .05 * TL) hits.
+				const float absorbed = float(result.m_AuxArmor1) + float(result.m_AuxArmor2);
+				const float spent = absorbed / (10.f * (1.f + .05f * shield.technology));
+				shield.charge = qMax(0.f, shield.charge - spent); changed = spent > 0;
 				break;
 			}
 	}

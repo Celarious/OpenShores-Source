@@ -4693,6 +4693,15 @@ void DaNpc::GoToWork()
 		}
 		else if(IsInAtmosphere())
 		{
+			// MinuteTock also dispatches troops whose explicit city station
+			// order is Stay. Keep that assignment, including before seating
+			// and while waiting for a player, instead of replacing the stack.
+			if(g_Au.IsLegacyGeneration() && Order() == ORDER_Stay && OrderStationId())
+			{
+				const DaAtom* parent = Parent();
+				const auto* city = parent ? dynamic_cast<const DaLegacyCity*>(parent->FindSubatomId(OrderTarget())) : nullptr;
+				if(city && city->IsNormal() && city->EmpireId() == EmpireId()) return;
+			}
 			// BattleStation order will figure out what to do and how to get there.
 			SetOrder(ORDER_BattleStation, FindParentPlanetInEnv()->Id(), AuPoint(0,0));
 			PoseVisage(AuVisage::Closed, AuVisage::Closed);

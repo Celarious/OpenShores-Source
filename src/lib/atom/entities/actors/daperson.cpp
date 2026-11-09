@@ -1233,7 +1233,8 @@ void DaPerson::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, 
 	if(sceneAtom != this || IsMini())
 		return;
 
-	if(InDesignerNotPreview() || IsEyeUnderWater())
+	if(InDesignerNotPreview() || IsEyeUnderWater()
+		|| (g_Au.IsLegacyGeneration() && IsInsideLegacyBuilding() && IsUnderGround()))
 		return;
 
 	// Since this currently seems to be entirely the rain/snow effects, we'll just test this and go about our business
@@ -1372,7 +1373,7 @@ void DaPerson::RenderLast(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, 
 
 	// Constraint is the minimum length a particle must be from the person
 	float fConstraint = 0;	// Default to 0 feet
-	if(IsInsideBd())
+	if(IsInsideBd() || (g_Au.IsLegacyGeneration() && IsInsideLegacyBuilding()))
 		fConstraint = 150;	// Try to keep the precip out of the building.
 	else if(IsInsideSpacecraft())
 		fConstraint = 100;	// Try to keep the precip out of the spaceship.
@@ -3526,7 +3527,8 @@ void DaPerson::RenderAudioSources(const DaPerson* sceneAtom, const AuMatrix4x4& 
 				{
 					// Rain from 2 degrees celsius to 100 degrees celsius.
 					float fHumidity = m_WxRelHumidity;
-					if(fHumidity > 1 && m_WxOAT > 0 && m_WxOAT < 100 && !std::isnan(fHumidity))
+					const bool legacyBasement = g_Au.IsLegacyGeneration() && IsInsideLegacyBuilding() && IsUnderGround();
+					if(fHumidity > 1 && m_WxOAT > 0 && m_WxOAT < 100 && !std::isnan(fHumidity) && !legacyBasement)
 						fHumidity = AuNoiseF::Linear_Interpolate(m_EnvHumidity, fHumidity, .05f);	// Change rain sound gradually.
 					else
 						fHumidity = AuNoiseF::Linear_Interpolate(m_EnvHumidity, 0, .25f);	// Terminate rain sound gradually.
@@ -3535,7 +3537,7 @@ void DaPerson::RenderAudioSources(const DaPerson* sceneAtom, const AuMatrix4x4& 
 					float fRainGain = fHumidity * .5f * AtmosphereDensity();
 
 					// Spaceship will quiet the outside rain and it increases rain noise due to speed.
-					if(IsInsideBd())
+					if(IsInsideBd() || (g_Au.IsLegacyGeneration() && IsInsideLegacyBuilding()))
 					{
 						// Rain is quietest inside buildings.
 						fRainGain *= .2f;

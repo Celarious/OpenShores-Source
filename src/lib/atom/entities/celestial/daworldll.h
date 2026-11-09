@@ -2477,6 +2477,7 @@ public:
 
 	// Legacy settlements replace indigenous encounters after their first building.
 	bool HasEstablishedLegacyCity() const;
+	bool IsInLegacyBasement(const AuPoint& location) const;
 	bool HasLegacyCitySurface() const { return g_Au.IsLegacyGeneration() && (m_HasLegacyCitySurface || HasEstablishedLegacyCity()); }
 	void PrepareLegacyCitySurface(AuAtomRenderInfo& ari);
 	void RenderLegacyCitySurface(AuAtomRenderInfo& ari, float radiansPerFootX, float radiansPerFootY);

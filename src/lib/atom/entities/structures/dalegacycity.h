@@ -256,6 +256,7 @@ public:
 	void RemoveInteriorRocks(const DaWorldLL& world, QMap<AuResKey, AuGlobeRock>& rocks) const;
 	void QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& locationWorld,
 		AuQueryEnvironment& result) const;
+	bool ContainsBasement(const AuPoint& locationWorld) const;
 	// Authored equipment stays in the world's frame, as in the original city.
 	bool CanEnterConsole(const DaPerson& who, quint16& stationId, AuStation& station, quint16& which) const;
 	void PlayerEnteredStation(const DaPerson& who);

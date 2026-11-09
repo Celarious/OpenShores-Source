@@ -764,6 +764,7 @@ bool DaWorldSphere::SightTargetDetails(const AuPoint& eyeLoc, const AuMatrix4x4 
 	// Integrate the sight segment in coarse 5' increments for speed, looking for the segment to go under ground.
 	double radius = SeaLevelRadius();
 	AuPoint prevTestLoc = seg0;
+	const bool fromBasement = IsInLegacyBasement(seg0);
 	bool ug = false;					// True if the segment goes under ground.
 	AuPoint ugLoc;						// Underground location, if we find one.
 	for(double testDist = 0; testDist <= segLength; testDist += 6)
@@ -774,6 +775,11 @@ bool DaWorldSphere::SightTargetDetails(const AuPoint& eyeLoc, const AuMatrix4x4 
 		double testAlt = radius + TerrainAltitudeMSL(testLL);
 		double testAlt2 = testAlt*testAlt;
 		double alt2 = testLoc.Length2();
+		if(alt2 <= testAlt2 && IsInLegacyBasement(testLoc))
+		{
+			prevTestLoc = testLoc;
+			continue;
+		}
 		if(alt2 == testAlt2)
 		{
 			// testLoc is exactly at the terrain altitude.
@@ -806,8 +812,11 @@ bool DaWorldSphere::SightTargetDetails(const AuPoint& eyeLoc, const AuMatrix4x4 
 			double testAlt = radius + TerrainAltitudeMSL(testLL);
 			if(testLoc.Length2() <= testAlt*testAlt)
 			{
+				if(IsInLegacyBasement(testLoc)) continue;
 				// testLoc is at or below the terrain.
-				testLoc.Unit(testAlt);								// Move testLoc to be exactly at the terrain surface.
+				// A shot from a basement must remain on its ray when it reaches
+				// solid ground; projecting up would beat the nearer building wall.
+				if(!fromBasement) testLoc.Unit(testAlt);
 				sightedLoc = tModel.Project(testLoc);
 				sightedPart = 0xffff;								// Dirt was hit
 				sightedShield = false;
