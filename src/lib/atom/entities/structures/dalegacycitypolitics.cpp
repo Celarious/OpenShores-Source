@@ -157,6 +157,13 @@ void DaLegacyCity::TockPolitics(qint64 now)
 	// Ownership changes, registry notifications and rewards happen after the
 	// actor's influence transaction, as in CaptureFlagLater/DaCity::Tick.
 	for(const auto& capture : pending) CaptureFlag(capture, now);
+	const auto before = Snapshot();
+	if(auto* system = FindParentSolarSystem())
+		for(const auto& flag : before.flags) system->SetEmpirePresent(flag.empire);
+	// DaCity::Tock 0x2d3100 gates native base influence on !IsInAnyScene
+	// (the byte at +0x10; IsInAnyScene 0x1aebe0). Visible flags are influenced
+	// by the actual actors at their sites, without an automatic defender.
+	if(IsInAnyScene()) return;
 	{
 		QWriteLocker lock(&m_CityLock);
 		if(m_LastAutonomousFlagInfluence && now / 1000 <= m_LastAutonomousFlagInfluence / 1000) return;
@@ -165,11 +172,8 @@ void DaLegacyCity::TockPolitics(qint64 now)
 	// DaCity::Tock 0x2d3100 lets the native allegiance influence base
 	// flags, independently of the town-square occupier. Insurgent influence
 	// does not refresh attack time or solar-system activity timestamps.
-	const auto before = Snapshot();
 	QVector<POLITICAL_STANCE> stances;
 	for(const auto& flag : before.flags) stances.append(FlagStance(before.allegianceEmpire, flag.empire));
-	if(auto* system = FindParentSolarSystem())
-		for(const auto& flag : before.flags) system->SetEmpirePresent(flag.empire);
 	QWriteLocker lock(&m_CityLock);
 	if(m_City.allegianceEmpire != before.allegianceEmpire || m_City.flags.size() != before.flags.size()) return;
 	bool changed = false;

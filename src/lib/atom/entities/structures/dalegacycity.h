@@ -62,7 +62,9 @@ public:
 	bool IsVisibleNearWorld() const override { return true; }
 	bool IsInScene(const DaPerson* sceneAtom, const AuPoint& cameraEnvironmentLocation) const override;
 	bool IsTicker() const override { return false; }
-	unsigned int IsTocker() const override { return 1; }
+	// This scheduler takes milliseconds, unlike the 2016 boolean IsTocker.
+	// Keep the inherited scene-presence countdown alive between scene updates.
+	unsigned int IsTocker() const override { return d_MSecPerSec; }
 	void Tock(const AuTime& last, const AuTime& now, const AuScripts& scripts, DtTockTransactions& transactions) override;
 	void RxChatMessage(const AuCommPacket* message, quint32& countSupplied, bool firstInGroup = true) override;
 	QString Name() const override;

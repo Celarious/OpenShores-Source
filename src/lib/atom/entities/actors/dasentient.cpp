@@ -12220,7 +12220,15 @@ void DaSentient::Look(DaAtom*& itemAtom, AuPoint& itemDir, float& itemRange,
 						if(!SpokeRecently(60))
 						{
 							DaVessel* ves = FindParentVesselInEnv();
-							if(ves)
+							const DaAnimal* animal = dynamic_cast<const DaAnimal*>(threatAtom);
+							if(g_Au.IsLegacyGeneration() && (!animal || !animal->IsWild()))
+							{
+								if(dynamic_cast<const DaSentient*>(threatAtom))
+									text = QObject::tr("Sir! Enemy spotted. %1").arg(threatAtom->SpottedLocation());
+								else
+									text = QObject::tr("Sir! I spotted a threat. %1").arg(threatAtom->SpottedLocation());
+							}
+							else if(ves)
 							{
 								QString origin;
 								switch(ves->MonsterOrigin())
