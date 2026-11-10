@@ -4582,7 +4582,7 @@ void DaLegacyCity::TockDefenses()
 		if(!operatorActor || dynamic_cast<DaPerson*>(operatorActor) || !powered || operatorActor->Posture() == POSTURE_HoldFire) continue;
 		QScopedPointer<AuItem> ammo(DefenseAmmunition(post));
 		if(!ammo) continue;
-		const float range = post.development.industryId == 128 ? AuCombatWeapon(ammo.data(), 1).m_Range : post.range;
+		const float range = post.range;
 		const AuPoint emitterSystem = world->EnvTransform().Project(post.emitter);
 		const DaAtom* target = nullptr; double distance = range; AuPoint targetLocation;
 		if(post.development.industryId == 128)
@@ -4790,6 +4790,12 @@ QVector<DaLegacyCity::DefensePost> DaLegacyCity::DefensePosts() const
 						break;
 					}
 			post.range = development.industryId == 11 ? 85000.f * (1.f + .05f * development.technology) : 0;
+			// DaSentient::OperateTurret(city) 0x399460 uses module range,
+			// not AuCombatWeapon's ammo-only range (zero for ballistic rounds).
+			if(development.industryId == 128)
+				post.range = post.module == CID_EnergyWeaponTurretModule
+					? float(1000 * FeetPerMeter()) * (1.f + .05f * development.technology)
+					: post.module == CID_WeaponLauncherTurretModule ? 85000.f : 2500.f;
 			posts.append(post);
 		}
 	}
@@ -4858,7 +4864,7 @@ bool DaLegacyCity::FireStationWeapon(DaPerson& gunner, const AuId& targetId, int
 				QScopedPointer<AuItem> ammo(DefenseAmmunition(post));
 				if(!ammo || !TurretMatrices(gunner, gun, muzzle)) return false;
 				const AuPoint eye = Transform().UnProject(muzzle.Translation());
-				const AuPoint look = eye + Transform().UnProjectVector(muzzle.ProjectVector(0, 0, 1)) * AuCombatWeapon(ammo.data(), 1).m_Range;
+				const AuPoint look = eye + Transform().UnProjectVector(muzzle.ProjectVector(0, 0, 1)) * post.range;
 				AuPoint hit = look; unsigned int part = 0; bool shield = false;
 				const auto* environment = FindEnvironmentAtom();
 				if(!environment) return false;
@@ -4928,7 +4934,7 @@ bool DaLegacyCity::FireDefenseWeapon(DaCreature& gunner, const DefensePost& post
 		if(!towerRounds.CanFire() || !DbCommodity::IsAmmunitionForWeapon(module, towerRounds.CommodityId())) return false;
 		ammo.reset(towerRounds.Ammo()->Clone());
 	}
-	const float range = tower ? AuCombatWeapon(ammo.data(), 1).m_Range : post.range;
+	const float range = post.range;
 	const AuPoint muzzleLocation = Transform().UnProject(emitterWorld);
 	const AuPoint targetSystem = target->WeaponLockLocation(EnvTransform().Project(muzzleLocation), module);
 	const AuPoint destination = EnvTransform().UnProject(targetSystem);
