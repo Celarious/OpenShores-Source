@@ -344,6 +344,16 @@ void BuildingInteriorAmbient(bool powered, float& red, float& green, float& blue
 	blue = powered ? AuGLLight::AmbientLitBuilding() * color.blueF() : AuGLLight::AmbientDarkness();
 }
 
+int BuildingWindowEffect(quint8 industry)
+{
+	// DpDevelopment::IsCandleLit 0xf33b0; other industries use electric-only windows.
+	switch(industry)
+	{
+	case 20: case 21: case 22: case 30: case 32: case 102: case 105: case 114: case 120: return 1;
+	default: return 2;
+	}
+}
+
 QColor ExteriorLightColor(bool runway, bool powered)
 {
 	// DaCity::RenderPostTerrain 0x2b2c20 keeps dim amber lights without
@@ -854,7 +864,7 @@ struct DaLegacyCity::Runtime
 		bool twoSided = false;
 		bool interior = false;
 		bool depthOnly = false;
-		bool exteriorGlass = false;
+		quint8 windowEffect = 0;
 		bool sealedBasement = false;
 		quint8 exteriorLens = 0; // 1: street light, 2: runway light.
 		QVector4D tint = QVector4D(1,1,1,1);
@@ -1379,7 +1389,8 @@ struct DaLegacyCity::Runtime
 			prepared.draw.turretId = batch.turretId;
 			prepared.draw.twoSided = batch.twoSided; prepared.draw.interior = batch.interior;
 			prepared.draw.depthOnly = batch.depthOnly;
-			prepared.draw.exteriorGlass = batch.exteriorGlass;
+			prepared.draw.windowEffect = batch.textureSlot == 39 ? 3
+				: batch.exteriorGlass ? BuildingWindowEffect(building.state.industryId) : 0;
 			prepared.draw.sealedBasement = batch.sealedBasement;
 			prepared.draw.exteriorLens = batch.textureSlot == 37 ? 1 : batch.textureSlot == 38 ? 2 : 0;
 			prepared.draw.tint = batch.tint; prepared.draw.selfIllumination = batch.selfIllumination;
@@ -5483,8 +5494,10 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		const Runtime::Building* building = nullptr;
 		AuMatrix4x4 placement, model;
 		AuViewFrustum frustum, maskFrustum;
+		bool insideVisible = true, dark = false;
 	};
 	QHash<quint32, BuildingView> buildingViews;
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
 	for(const auto& building : m_Runtime->buildings)
 	{
 		BuildingView view;
@@ -5492,6 +5505,12 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
 			building.state.facingRadians, nullptr, AuPoint(), view.placement);
 		view.model = worldModel * view.placement;
+		// DistanceInsideVisible 0xeff00 and DaCity::RenderEnvironmentObject
+		// select the near shader from camera distance, even outside the building.
+		const double radius = catalogue ? qMax(0.0, TerrainLevelRadius(building.state.industryId,
+			*catalogue, building.state.constructionProcessId)) : 0;
+		view.insideVisible = view.model.Translation().Length() < radius + 164.041994750656;
+		view.dark = ExteriorLightsOn(*world, building.state, view.placement);
 		if(ari.re->FrustumCulling())
 		{
 			const AuMatrix4x4 clip = projection * view.model;
@@ -5538,7 +5557,7 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 			if(!draw.vao.IntersectsFrustum(frustum)) continue;
 		}
 		shader.SetModelView(buildingModel); shader.SetTexture(draw.texture);
-		shader.SetDirectOpaqueWindow(draw.exteriorGlass);
+		shader.SetDirectBuildingWindow(draw.windowEffect, found->insideVisible, found->dark ? (powered ? 1 : 2) : 0);
 		float red = ambientR, green = ambientG, blue = ambientB;
 		if(draw.sealedBasement) BuildingInteriorAmbient(powered, red, green, blue);
 		shader.SetAmbientLight(red, green, blue);
@@ -5552,7 +5571,7 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		ambientUp.Unit();
 		shader.SetAmbientLightUp(ambientUp.x, ambientUp.y, ambientUp.z);
 		shader.SetColor(draw.tint.x(), draw.tint.y(), draw.tint.z(), draw.tint.w());
-		if(draw.exteriorLens && ExteriorLightsOn(*world, found->building->state, found->placement))
+		if(draw.exteriorLens && found->dark)
 		{
 			const QColor color = ExteriorLightColor(draw.exteriorLens == 2, powered);
 			shader.SetGlow(color.redF(), color.greenF(), color.blueF());

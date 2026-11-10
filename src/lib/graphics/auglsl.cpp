@@ -8083,7 +8083,7 @@ void AuGLSLModelTexColor::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& 
 	m_texPaletteLow = GetUniformLoc("texPaletteLow");
 	m_directTexture = GetUniformLoc("directTexture");
 	m_directTextureGlobe = GetUniformLoc("directTextureGlobe");
-	m_directOpaqueWindow = GetUniformLoc("directOpaqueWindow");
+	m_directBuildingWindow = GetUniformLoc("directBuildingWindow");
 
 	m_ambient = GetUniformLoc("light.ambient");
 	m_ambientUp = GetUniformLoc("light.ambientUp");

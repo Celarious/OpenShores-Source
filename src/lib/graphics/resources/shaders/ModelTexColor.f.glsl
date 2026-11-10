@@ -9,7 +9,7 @@
 uniform sampler2D						texPaletteHigh;			// Palette of textures for various combinations of materials.
 uniform sampler2D						texPaletteLow;			// Palette of textures for various combinations of materials.
 uniform bool directTexture;
-uniform bool directOpaqueWindow;
+uniform ivec3 directBuildingWindow; // Original effect, near mode, day/powered-night/unpowered-night.
 
 in vec4									vertColor;				// Incoming fragment color interpolated from the vertex color.
 in vec2									vertTexCoord;			// Incoming texture coordinate (xy)
@@ -22,11 +22,30 @@ void main()
 	if(directTexture)
 	{
 		vec4 surface = texture(texPaletteLow, vertTexCoord);
-		// 2016 exterior glass retains window pixels; interior glass uses
-		// BuildingsDayNear's cutout rule so occupants can see outside.
-		if(surface.a < .91 && !directOpaqueWindow)
-			discard;
 		fragColor = surface * vertColor;
+		// Recovered Buildings*Near vertex rule: ordinary windows become
+		// transparent with camera proximity; stained glass keeps its effect.
+		int effect = directBuildingWindow.x;
+		if(directBuildingWindow.y != 0 && effect < 3)
+			effect = 0;
+		if(surface.a < .91)
+		{
+			if(effect == 0)
+				discard;
+			// Recovered BuildingsLights/BuildingsNight fragment colours.
+			// Only window pixels bypass surface lighting, without bloom.
+			if(directBuildingWindow.z == 1)
+			{
+				if(effect == 1) fragColor.rgb = vec3(1., 214./255., 170./255.);
+				else if(effect == 2) fragColor.rgb = vec3(244./255., 1., 250./255.);
+				else if(effect == 3) fragColor.rgb = surface.rgb;
+			}
+			else if(directBuildingWindow.z == 2)
+			{
+				if(effect == 1) fragColor.rgb = vec3(1., 147./255., 41./255.) / 3.;
+				else if(effect == 3) fragColor.rgb = surface.rgb / 3.;
+			}
+		}
 		fragColor.a = 1;
 		return;
 	}

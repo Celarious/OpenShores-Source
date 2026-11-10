@@ -10698,7 +10698,7 @@ private:
 	GLint								m_texPaletteLow;		// Location of 'texPaletteLow' uniform variable.
 	GLint								m_directTexture;		// Use unmodified UVs for a single texture.
 	GLint								m_directTextureGlobe;	// Globe center in eye space, w enables the horizon test.
-	GLint								m_directOpaqueWindow;	// Legacy exterior glass keeps window pixels opaque.
+	GLint								m_directBuildingWindow;	// Legacy building window effect, near mode and lighting mode.
 
 	//--------------------
 	// Lighting parameters
@@ -10742,7 +10742,7 @@ public:
 		m_texPaletteLow = -1;
 		m_directTexture = -1;
 		m_directTextureGlobe = -1;
-		m_directOpaqueWindow = -1;
+		m_directBuildingWindow = -1;
 
 		m_LightsValid = false;
 		m_SunsValid = false;
@@ -10910,15 +10910,17 @@ public:
 	inline void SetTexture(GLuint texture) const
 	{
 		m_GLf->glUniform1i(m_directTexture, 1);
-		m_GLf->glUniform1i(m_directOpaqueWindow, 0);
+		m_GLf->glUniform3i(m_directBuildingWindow, 0, 0, 0);
 		m_GLf->glUniform1i(m_texPaletteLow, 0);
 		m_GLf->glActiveTexture(GL_TEXTURE0);
 		m_GLf->glBindTexture(GL_TEXTURE_2D, texture);
 	}
 
-	inline void SetDirectOpaqueWindow(bool opaque) const
+	// Original effects: 1 candle/electric, 2 electric only, 3 stained glass.
+	// Lighting: 0 daylight, 1 powered darkness, 2 unpowered darkness.
+	inline void SetDirectBuildingWindow(int effect, bool insideVisible, int lighting) const
 	{
-		m_GLf->glUniform1i(m_directOpaqueWindow, opaque);
+		m_GLf->glUniform3i(m_directBuildingWindow, effect, insideVisible ? 1 : 0, lighting);
 	}
 
 	// Sets the high and low resolution texture palettes.
