@@ -257,11 +257,12 @@ void DaLegacyCity::CaptureFlag(const PendingFlagCapture& capture, qint64 now)
 	QString attacker, defender;
 	data.EmpireName(capture.newEmpire, attacker); data.EmpireName(capture.oldEmpire, defender);
 	g_Au.UnlockData();
-	QList<DaPerson*> conquerors, flagConquerors;
+	QList<DaPerson*> conquerors, flagConquerors, captureWitnesses;
 	// The five-minute reward gate is strictly greater than 300 elapsed
 	// whole seconds. Pillage includes all hostile on-foot people in the city;
 	// capture rewards and mission credit require the captured flag's site.
-	if(!capture.insurgent && (now - lastCapture) / 1000 > 300)
+	const bool rewardEligible = (now - lastCapture) / 1000 > 300;
+	if(!capture.insurgent)
 	{
 		DaAtomList people; world->FindPeopleOnLineRecursive(people);
 		for(auto* atom : people)
@@ -274,8 +275,12 @@ void DaLegacyCity::CaptureFlag(const PendingFlagCapture& capture, qint64 now)
 			const bool atFlag = query->m_InIndustryLL == capture.location;
 			person->UnlockEnvironmentQuery();
 			if(!inCity || person->DaAtom::PoliticalStanceMakeContact(person->EmpireId(), this, capture.oldEmpire) != POL_Enemy) continue;
-			conquerors.append(person);
-			if(atFlag) flagConquerors.append(person);
+			if(rewardEligible) conquerors.append(person);
+			if(atFlag)
+			{
+				captureWitnesses.append(person);
+				if(rewardEligible) flagConquerors.append(person);
+			}
 		}
 	}
 	double pillage = 0;
@@ -371,10 +376,13 @@ void DaLegacyCity::CaptureFlag(const PendingFlagCapture& capture, qint64 now)
 			}
 			person->LegacyCityCaptured(*this);
 		}
-		person->Thought(index ? tr("%1 defense base captured in city %2.").arg(defender, Name())
-			: tr("%1 city %2 captured.").arg(defender, Name()));
 		person->SetModified();
 	}
+	// Confirm the completed transfer even when a recent capture prevents a
+	// reward. Feedback must not depend on the five-minute anti-farming gate.
+	for(auto* person : captureWitnesses)
+		person->Thought(index ? tr("%1 defense base captured in city %2.").arg(defender, Name())
+			: tr("%1 city %2 captured.").arg(defender, Name()));
 	if(pillage >= 1)
 		for(auto* person : conquerors)
 		{
