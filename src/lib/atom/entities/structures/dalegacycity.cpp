@@ -3646,6 +3646,10 @@ bool DaLegacyCity::IsPathBlocked(const AuPoint& from, const AuPoint& to, AuPoint
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!world || !g_Au.IsLegacyGeneration()) return false;
+	// Match DaWorldGlobe::IsPathBlocked 0x4e6580 and the modern world
+	// path: city bay projectiles pass through their launching city's buildings.
+	const auto* missile = dynamic_cast<const DaMissile*>(actor);
+	if(missile && missile->IsArmedBy(Id())) return false;
 	AuBox actorBody(AuPoint(-.01,-.01,-.01), AuPoint(.01,.01,.01));
 	double bodyReach = 0;
 	if(actor)
@@ -4601,11 +4605,21 @@ void DaLegacyCity::TockDefenses()
 				operatorActor->TiltHeadTo(float(std::atan2(direction.z, std::hypot(direction.x, direction.y))));
 			}
 		}
-		// A wall or friendly unit between this post and the target must block NPC fire.
-		const AuPoint muzzle = Transform().UnProject(post.emitter);
+		// Bay weapons sight as the city; turrets sight as their gunner so
+		// creatures remain valid targets and the operator cannot block itself.
+		AuPoint emitterWorld = post.emitter;
+		if(post.station.IsTurret())
+		{
+			AuMatrix4x4 gun, turretMuzzle;
+			if(TurretMatrices(*operatorActor, gun, turretMuzzle)) emitterWorld = turretMuzzle.Translation();
+		}
+		const AuPoint muzzle = Transform().UnProject(emitterWorld);
 		const AuPoint destination = EnvTransform().UnProject(targetLocation);
 		AuPoint hit = destination; unsigned int part = 0; bool hitShield = false;
-		DaAtom* obstruction = DaAtom::SightTarget(hit, part, hitShield, muzzle, destination);
+		const DaAtom* observer = this;
+		if(post.station.IsTurret()) observer = operatorActor;
+		DaAtom* obstruction = environment->SightTarget(observer, muzzle, EnvTransform().Inverse(), nullptr,
+			hit, part, hitShield, nullptr);
 		if(obstruction && obstruction != target) continue;
 		FireDefenseWeapon(*operatorActor, post, target->Id(), 40);
 	}
@@ -4846,7 +4860,10 @@ bool DaLegacyCity::FireStationWeapon(DaPerson& gunner, const AuId& targetId, int
 				const AuPoint eye = Transform().UnProject(muzzle.Translation());
 				const AuPoint look = eye + Transform().UnProjectVector(muzzle.ProjectVector(0, 0, 1)) * AuCombatWeapon(ammo.data(), 1).m_Range;
 				AuPoint hit = look; unsigned int part = 0; bool shield = false;
-				const DaAtom* sighted = DaAtom::SightTarget(hit, part, shield, eye, look);
+				const auto* environment = FindEnvironmentAtom();
+				if(!environment) return false;
+				const DaAtom* sighted = environment->SightTarget(&gunner, eye, EnvTransform().Inverse(), nullptr,
+					hit, part, shield, nullptr);
 				if(!sighted) return false;
 				target = sighted->Id();
 			}
@@ -4967,7 +4984,10 @@ bool DaLegacyCity::FireDefenseWeapon(DaCreature& gunner, const DefensePost& post
 	{
 		AuCombatWeapon weapon(ammo.data(), fired); weapon.m_Range = range;
 		AuPoint hit = destination; unsigned int part = 0; bool shield = false;
-		DaAtom* hitAtom = DaAtom::SightTarget(hit, part, shield, muzzleLocation, destination);
+		const DaAtom* observer = this;
+		if(tower) observer = &gunner;
+		DaAtom* hitAtom = environment->SightTarget(observer, muzzleLocation, EnvTransform().Inverse(), nullptr,
+			hit, part, shield, nullptr);
 		AuEffect effect(muzzleLocation, AuPoint(), AuPoint(), AuOrdnance::SoundFired(ammo->CommodityId()),
 			1, 1, AuOrdnance::VisualFired(ammo->CommodityId()));
 		effect.SetTargetLoc(hit); effect.SetEnergyBeamEffect(weapon.m_w1.m_Effect); AddEffect(effect);

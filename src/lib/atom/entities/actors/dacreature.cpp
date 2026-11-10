@@ -8084,6 +8084,10 @@ bool DaCreature::IsSightTarget(const DaAtom* toWho) const
 		return false;
 
 	// Creatures must not be a sight target to spacecraft or cities because they block shots by bay weapons and base weapons.
+	// DaCreature::IsSightTarget 0x2eaee0 also excludes the original city
+	// type. Legacy cities do not inherit the modern capsule/base hierarchy.
+	if(g_Au.IsLegacyGeneration() && dynamic_cast<const DaLegacyCity*>(toWho))
+		return false;
 	if(dynamic_cast<const DaCapsule*>(toWho))
 	{
 		// Guard towers do want to target creatures.
