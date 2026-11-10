@@ -132,6 +132,19 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 			"Changes take effect immediately. Uncheck to compare rendering performance.</html>"));
 	connect(frustumCulling, SIGNAL(stateChanged(int)), SLOT(SetFrustumCulling(int)));
 
+	QLabel* msaaLabel = new QLabel(tr("Antialiasing (MSAA)"));
+	QComboBox* msaa = new QComboBox(this);
+	msaa->addItem(tr("Off"), 0);
+	for(int samples : {2, 4, 8, 16}) msaa->addItem(tr("%1x").arg(samples), samples);
+	msaa->setCurrentIndex(msaa->findData(g_Au.SceneMsaaSamples()));
+	msaa->setToolTip(tr("Smooths polygon edges in the scene. Higher levels use more graphics memory and processing. "
+		"Available levels depend on your graphics hardware. Restart the client to apply changes."));
+	msaaLabel->setBuddy(msaa);
+	connect(msaa, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [msaa](int index) {
+		if(index < 0) return;
+		g_Au.Settings().writeEntry("/Settings/SceneMsaaSamples", msaa->itemData(index).toInt());
+	});
+
 	ckdrawhelmethud = new QCheckBox(tr("Draw Helmet HUD When Screen Elements Are Hidden"));
 	ckdrawhelmethud->setCheckState(g_Au.DrawHelmetHUDAlways()?Qt::Checked:Qt::Unchecked);
 	ckdrawhelmethud->setToolTip(tr("<html>When checked, the helmet HUD is drawn even if screen elements are hidden.<br>"
@@ -539,6 +552,10 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	QGridLayout* sliderlay = new QGridLayout;
 	{
 		int row=0;
+		sliderlay->addWidget(msaaLabel, row,0);
+		sliderlay->addWidget(msaa, row,1);
+		sliderlay->addWidget(new QLabel(tr("Restart required")), row,2);
+		row++;
 		sliderlay->addWidget(skyboxsizelabel, row,0);
 		sliderlay->addWidget(m_SkyBoxSizeSlider, row,1);
 		sliderlay->addWidget(m_SkyBoxSizeLabel, row,2);

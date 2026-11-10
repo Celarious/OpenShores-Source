@@ -1863,6 +1863,16 @@ public:
 		return m_FrustumCulling;
 	}
 
+	inline int SceneMsaaSamples() const
+	{
+		const int samples = m_Settings.readNumEntry("/Settings/SceneMsaaSamples", 4);
+		switch(samples)
+		{
+		case 0: case 2: case 4: case 8: case 16: return samples;
+		default: return 4;
+		}
+	}
+
 	inline bool CrosshairSmoothing() const
 	{
 		return m_CrosshairSmoothing;

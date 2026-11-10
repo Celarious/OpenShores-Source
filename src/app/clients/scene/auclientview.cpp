@@ -5,10 +5,16 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "auclientview.h"
+#include "auglobal.h"
+#include <QSurfaceFormat>
 //
 
 AuClientView::AuClientView(QWidget* parent) : AuDesignerView(parent)
 {
+	// Request edge antialiasing before Qt creates the scene framebuffer.
+	QSurfaceFormat requested = format();
+	requested.setSamples(g_Au.SceneMsaaSamples());
+	setFormat(requested);
 }
 
 AuClientView::~AuClientView()
