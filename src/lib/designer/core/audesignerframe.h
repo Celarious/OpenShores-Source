@@ -496,6 +496,7 @@ public:
 	virtual ~AuDesignerFrame();
 	void OpenLegacyDesign(const QString& fileName);
 	bool DockWidgetsReady() const { return m_DockWidgetsReady; }
+	void FinishSceneLoading();
 
 	virtual void DisableAFK();
 
@@ -900,6 +901,7 @@ private:
 	void ContinueDockInitialization();
 	std::deque<std::function<bool()> > m_DockInitSteps;
 	bool m_DockWidgetsReady = false;
+	std::function<void()> m_RestoreSceneWindows;
 	bool m_DockInitRunning = false;
 	QList<AuShipment> m_StartupShipments;
 	bool m_StartupShipmentsCleared = false;

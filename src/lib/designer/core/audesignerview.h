@@ -634,6 +634,7 @@ private:
 	AuGLVAO								m_BusyVAO;
 	bool								m_bWaitingForScene;		// True while waiting for scene atom.
 	bool m_WaitingForScenery;							// Initial Legacy terrain, buildings and decorations.
+	bool m_LoadingScreenShown = true;
 	float								m_CameraAnimSpeed;		// in feet per second. 0 = no animation
 	CURSOR								m_Cursor;				// Current cursor.
 	float								m_Fade;					// Fade-out effect. 0=black/quieter, 1=no fade
@@ -856,6 +857,7 @@ private:
 public:
 	AuDesignerView(QWidget *parent=0);
 	~AuDesignerView();
+	bool IsSceneLoading() const;
 
 	// Animate scene atom device objects, e.g. console textures.
 	// Called from DtGL thread when threaded OpenGL is supported. A shared context is selected as current.

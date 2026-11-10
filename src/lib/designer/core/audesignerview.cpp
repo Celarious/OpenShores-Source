@@ -1947,6 +1947,7 @@ AuDesignerView::AuDesignerView(QWidget* parent) : QOpenGLWidget(parent), m_Scene
 
 AuDesignerView::~AuDesignerView()
 {
+	if(auApp->Sound()) auApp->Sound()->SetMuted(false);
 	//qDebug() << "AuDesignerView::~AuView";
 	m_SceneRendered = false;	// Keeps ProcessControls and UpdateTarget from doing anything if they called by the model or
 								// control threads after this.
@@ -2239,17 +2240,29 @@ int AuDesignerView::SceneInterfaceWidth()
 	return qCeil((m_ViewButtonColumns * 2.1 + .9) * ViewButtonRadius() * height() / 2.);
 }
 
+bool AuDesignerView::IsSceneLoading() const
+{
+	return m_LoadingScreenShown || m_bWaitingForScene || m_SceneAtomTransition || !auApp->IsSceneConnected()
+		|| (g_Au.IsLegacyGeneration() && m_WaitingForScenery);
+}
+
 void AuDesignerView::paintGL()
 {
-	const AuDesignerFrame* frame = qobject_cast<AuDesignerFrame*>(auApp->Frame());
+	AuDesignerFrame* frame = qobject_cast<AuDesignerFrame*>(auApp->Frame());
 	bool showWait = m_bWaitingForScene || m_SceneAtomTransition || !auApp->IsSceneConnected()
 		|| (frame && !frame->DockWidgetsReady());
 	if(showWait) m_WaitingForScenery = true;
+	const bool wasLoading = m_LoadingScreenShown;
+	if(auApp->Sound()) auApp->Sound()->SetMuted(showWait || IsSceneLoading());
 
 	//qDebug() << "AuDesignerView::paintGL";
 	RenderScene();
 	showWait = showWait || (g_Au.IsLegacyGeneration() && m_WaitingForScenery);
+	m_LoadingScreenShown = showWait;
+	if(auApp->Sound()) auApp->Sound()->SetMuted(showWait);
 	window()->setEnabled(!showWait);
+	if(wasLoading && !showWait && frame)
+		QTimer::singleShot(0, frame, [frame]() { frame->FinishSceneLoading(); });
 
 	if(showWait)
 	{
@@ -2677,7 +2690,7 @@ void AuDesignerView::AnimateScene()
 	}
 
 	// Render narrative audio.
-	auApp->PlayQueuedSounds(g_Au.SoundEffectsGain() * m_Fade);
+	if(!IsSceneLoading()) auApp->PlayQueuedSounds(g_Au.SoundEffectsGain() * m_Fade);
 }
 
 void AuDesignerView::focusInEvent(QFocusEvent* e)

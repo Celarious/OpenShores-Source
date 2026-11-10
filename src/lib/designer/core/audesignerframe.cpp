@@ -1702,6 +1702,11 @@ void AuDesignerFrame::ChannelOpened(const QString& channelName, AuCommStdChannel
 
 void AuDesignerFrame::ChatReceived(AuCommPacket& msg)
 {
+	if(m_View && m_View->IsSceneLoading())
+	{
+		m_EarlyArrivals.append(msg.Clone());
+		return;
+	}
 	if(m_CommDock)
 		m_CommDock->m_Comm->ChatReceived(msg);
 	else
@@ -2929,8 +2934,8 @@ void AuDesignerFrame::CreateDockWidgets()
 			return true;
 		});
 
-		addStep([=]() {
-			// Restore positions and visibility of dock widgets.
+		m_RestoreSceneWindows = [=]() {
+			// Restore positions and visibility after the first scene is ready.
 			QByteArray windowState;
 			if(solo)
 				windowState = g_Au.Settings().value("/Widget/MainFrame/SoloWindowState").toByteArray();
@@ -2939,20 +2944,12 @@ void AuDesignerFrame::CreateDockWidgets()
 			if(!windowState.isEmpty())
 				restoreState(windowState);
 
-			for(QList<AuCommPacket*>::iterator ci = m_EarlyArrivals.begin(); ci != m_EarlyArrivals.end(); ci++)
-			{
-				ChatReceived(**ci);
-				delete *ci;
-			}
-			m_EarlyArrivals.clear();
-
 			if(m_DesignerBar) m_DesignerBar->hide();
 			if(m_DesignerBar2) m_DesignerBar2->hide();
 			if(m_DesignerPartsDock) m_DesignerPartsDock->hide();
 			if(m_DesignerTextureWrapDock) m_DesignerTextureWrapDock->hide();
 
-			return true;
-		});
+		};
 
 		// Hidden QOpenGLWidgets must be warmed in their final window too;
 		// otherwise the first visit to the Star Map tab would pay that cost.
@@ -2997,10 +2994,30 @@ void AuDesignerFrame::ContinueDockInitialization()
 	if(m_View && !m_DockWidgetsReady) m_View->update();
 }
 
+void AuDesignerFrame::FinishSceneLoading()
+{
+	if(!m_DockWidgetsReady || !m_View || m_View->IsSceneLoading()) return;
+	if(m_RestoreSceneWindows)
+	{
+		const std::function<void()> restore = m_RestoreSceneWindows;
+		m_RestoreSceneWindows = std::function<void()>();
+		restore();
+	}
+	SceneContextChanged(m_View->SceneContext());
+	QList<AuCommPacket*> arrivals;
+	arrivals.swap(m_EarlyArrivals);
+	for(AuCommPacket* message : arrivals)
+	{
+		ChatReceived(*message);
+		delete message;
+	}
+}
+
 // 'sceneContext' is an SCENE_CONTEXT value.
 void AuDesignerFrame::SceneContextChanged(int sceneContext)
 {
 	if(!m_DockWidgetsReady) return;
+	if(m_View && m_View->IsSceneLoading()) return;
 	// Entry/exit replication must not briefly expose the modern editor for
 	// the private sandbox used by the recovered spacecraft editor.
 	if(m_LegacyStudioPending || m_LegacyStudioOnline || m_LegacyStudioReturning)

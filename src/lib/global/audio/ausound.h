@@ -340,6 +340,12 @@ public:
 
 	void InitializeAudio();
 
+	// Silence every source, including scene loops, while the loading screen is visible.
+	inline void SetMuted(bool muted)
+	{
+		if(m_ALContext) alListenerf(AL_GAIN, muted ? 0.f : 1.f);
+	}
+
 	inline bool IsSoundPlaying(unsigned int audioSource) const
 	{
 		if(!m_ALContext)
