@@ -379,7 +379,7 @@ public:
 
 	inline bool IsInsideLegacyBuilding() const
 	{
-		return IsAtLegacyCityFloor() && m_LegacyRoomType != 0
+		return (m_Environment & EB_LegacyCity) && m_LegacyRoomType != 0
 			&& (m_LegacyRoomType < 22 || m_LegacyRoomType > 24);
 	}
 

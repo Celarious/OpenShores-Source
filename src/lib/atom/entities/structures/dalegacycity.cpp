@@ -228,16 +228,22 @@ struct LegacyBuildingStation
 	AuStation station;
 };
 
-const AuLegacyShip::Room* BasementRoom(const AuLegacyBd::Design& design,
+const AuLegacyShip::Room* BuildingRoom(const AuLegacyBd::Design& design,
 	const AuLegacyCity::Development& development, const AuPoint& local)
 {
-	if(!development.constructed || development.demolished || local.z >= 0) return nullptr;
+	if(!development.constructed || development.demolished) return nullptr;
 	for(const auto& room : design.rooms)
 		if(room.roomType && room.roomType != 9 && room.roomType < 22
 			&& room.deck >= development.minimumDeck && room.deck <= development.maximumDeck
 			&& local.z >= room.deck * AuLegacyBd::DeckHeight && local.z < (room.deck + 1) * AuLegacyBd::DeckHeight
 			&& AuLegacyShip::RoomBoundary(room).containsPoint(QPointF(local.x, local.y), Qt::OddEvenFill)) return &room;
 	return nullptr;
+}
+
+const AuLegacyShip::Room* BasementRoom(const AuLegacyBd::Design& design,
+	const AuLegacyCity::Development& development, const AuPoint& local)
+{
+	return local.z < 0 ? BuildingRoom(design, development, local) : nullptr;
 }
 
 QVector<LegacyBuildingStation> BuildingStations(const AuLegacyBd::Design& design,
@@ -3889,7 +3895,7 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 		const double siteHeight=farmField ? world->AltitudeMSL(location)-farmGroundAltitude
 			: curvedSite ? query.m_fAltitudeMSL-gradeAltitude : local.z;
 		const bool close=location.Distance2(transform.Translation())<std::pow(2*(qMax(halfWidth,halfLength)+32.8084),2);
-		if(close && !dev.demolished && (dev.industryId!=129 || query.m_LegacyDevelopmentId==0)
+		if(close && !dev.demolished && !query.IsInsideLegacyBuilding() && (dev.industryId!=129 || query.m_LegacyDevelopmentId==0)
 			&& std::abs(siteLocal.x)<=halfWidth+2.828427 && std::abs(siteLocal.y)<=halfLength+2.828427
 			&& (dev.industryId!=129 || std::hypot(siteLocal.x,siteLocal.y)<=radius+AuLegacyBd::Biodome::ContainmentMargin)
 			&& siteHeight>=(dev.minimumDeck-1)*AuLegacyBd::DeckHeight
@@ -3921,28 +3927,37 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 			query.m_Environment|=EB_Breathable;
 			if(enclosure==2 || (domePressure && undersea)) query.m_Environment&=~(EB_OnWater|EB_InWater|EB_MouthUnderwater);
 		}
+		// Room membership comes from authored volumes, not a successful floor
+		// ray or the asynchronous collision mesh. Keep it valid while airborne
+		// or seated, including queries cached before the mesh is ready.
+		const auto design = dev.constructed && !dev.demolished
+			? AuLegacyBd::Catalog::BuiltIn().Find(dev.designId) : QSharedPointer<const AuLegacyBd::Design>();
+		const auto* interiorRoom = design ? BuildingRoom(*design, dev, local) : nullptr;
+		if(interiorRoom)
+		{
+			query.m_Environment |= EB_LegacyCity;
+			if(interiorRoom->roomType == 11) query.m_Environment |= EB_GravityWell;
+			query.m_LegacyCityId = Id(); query.m_LegacyDevelopmentId = dev.id;
+			query.m_LegacyRoomType = interiorRoom->roomType; query.m_CityEmpire = EmpireId();
+			query.m_InIndustryLL = dev.location;
+			if(const auto* catalogue = AuLegacyCityCatalogue::BuiltIn())
+				query.m_InIndustry = static_cast<INDUSTRYID>(catalogue->RuntimeIndustryId(AuLegacyCity::IndustryId{dev.industryId}));
+		}
 		const Runtime::Building* prepared = m_Runtime->CurrentBuilding(proxy);
 		if(!prepared || !prepared->collision->IsValid())
 		{
 			// The authored basement is valid before its collision worker finishes.
 			// Do not let terrain-only fall distance eject a restored occupant or
 			// newly seated operator. Detailed floors resume when the mesh is ready.
-			QSharedPointer<const AuLegacyBd::Design> design;
-			if(dev.constructed && !dev.demolished && local.z < 0) design = AuLegacyBd::Catalog::BuiltIn().Find(dev.designId);
-			const auto* room = design ? BasementRoom(*design, dev, local) : nullptr;
-			if(room)
+			if(interiorRoom && local.z < 0)
 			{
 				query.m_FallDist = 0;
 				query.m_OnGround = OG_HardFloor;
 				query.m_Environment |= EB_LegacyCity | EB_LegacyCityFloor;
-				query.m_LegacyCityId = Id(); query.m_LegacyDevelopmentId = dev.id;
-				query.m_LegacyRoomType = room->roomType;
-				query.m_CityEmpire = EmpireId();
 			}
 			continue;
 		}
 		const auto& building = *prepared;
-		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(building.state.designId);
 		AuMatrix4x4 ladder;
 		if(actor.IsClimbingLadder() && design && AuLegacyScGeometry::FindLadderToGrab(BuildingLadders(*design, building.state), local,
 			AuLegacyBd::DeckHeight, ladder, {})) query.m_Environment |= EB_InLadderWell;
@@ -3975,19 +3990,10 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 		if(cell && (cell->stairs || (cell->flags & 0xff00))) query.m_Environment |= EB_Stairs;
 		// ConnectBelow carries the well into its bottom landing as flag 4.
 		if(cell && (cell->flags & 4)) query.m_Environment |= EB_GravityWell;
-		if(room && room->roomType != 9 && (room->roomType < 22 || room->roomType > 24))
+		if(interiorRoom)
 		{
-			query.m_Environment |= EB_LegacyCity;
-			// DpBuilding::FloorHt/DeckBelow report weightlessness throughout
-			// authored gravity-well rooms, independently of city electricity.
-			if(room->roomType == 11) query.m_Environment |= EB_GravityWell;
 			if(cell && cell->type != 0 && cell->type != 1 && cell->type != 15 && cell->type != 18)
 				query.m_Environment |= EB_Pathable;
-			query.m_LegacyCityId = Id(); query.m_LegacyDevelopmentId = building.state.id;
-			query.m_LegacyRoomType = room->roomType; query.m_CityEmpire = EmpireId();
-			query.m_InIndustryLL = building.state.location;
-			if(const auto* catalogue = AuLegacyCityCatalogue::BuiltIn())
-				query.m_InIndustry = static_cast<INDUSTRYID>(catalogue->RuntimeIndustryId(AuLegacyCity::IndustryId{building.state.industryId}));
 		}
 	}
 }
@@ -4640,36 +4646,42 @@ void DaLegacyCity::TockDefenses()
 			shields.append(shield);
 			continue;
 		}
-		if(!operatorActor || dynamic_cast<DaPerson*>(operatorActor) || !powered || operatorActor->Posture() == POSTURE_HoldFire) continue;
+		if(!operatorActor || dynamic_cast<DaPerson*>(operatorActor) || !powered) continue;
 		QScopedPointer<AuItem> ammo(DefenseAmmunition(post));
-		if(!ammo) continue;
 		const float range = post.range;
 		const AuPoint emitterSystem = world->EnvTransform().Project(post.emitter);
 		const DaAtom* target = nullptr; double distance = range; AuPoint targetLocation;
-		if(post.development.industryId == 128)
+		if(ammo && operatorActor->Posture() != POSTURE_HoldFire)
 		{
-			const AuPoint hemisphere = world->EnvTransform().ProjectVector(post.station.OpM().ProjectVector(
-				DaCreature::LegacyTurretHemiVector(operatorActor->CurrentGeneralPose())));
-			environment->FindClosestShipTurretTargetRecursive(Id(), 2, world->Id(), empire, operatorActor->Posture(),
-				emitterSystem, range, hemisphere, target, distance, targetLocation);
+			if(post.development.industryId == 128)
+			{
+				const AuPoint hemisphere = world->EnvTransform().ProjectVector(post.station.OpM().ProjectVector(
+					DaCreature::LegacyTurretHemiVector(operatorActor->CurrentGeneralPose())));
+				environment->FindClosestShipTurretTargetRecursive(Id(), 2, world->Id(), empire, operatorActor->Posture(),
+					emitterSystem, range, hemisphere, target, distance, targetLocation);
+			}
+			else
+				environment->FindClosestShipWeaponTargetRecursive(Id(), 2, world->Id(), empire, operatorActor->Posture(),
+					emitterSystem, range, target, distance, targetLocation);
 		}
-		else
-			environment->FindClosestShipWeaponTargetRecursive(Id(), 2, world->Id(), empire, operatorActor->Posture(),
-				emitterSystem, range, target, distance, targetLocation);
-		if(!target || target->IsNoncombatant()) continue;
+		if(target && target->IsNoncombatant()) target = nullptr;
 		if(post.station.IsTurret())
 		{
 			AuStation station; AuMatrix4x4 placement;
 			if(Station(*operatorActor, station, nullptr, &placement))
 			{
-				const AuPoint direction = placement.UnProjectVector(world->EnvTransform().UnProject(targetLocation) - operatorActor->Location());
+				// StayIdle already turns the NPC like a ship gunner. Publish that
+				// facing too, so the separately animated gun follows idle scanning.
+				const AuPoint direction = placement.UnProjectVector(target
+					? world->EnvTransform().UnProject(targetLocation) - operatorActor->Location()
+					: operatorActor->Transform().ProjectVector(0, 1, 0));
 				const float yaw = float(std::atan2(-direction.x, direction.y));
 				const AuPoint forward = placement.UnProjectVector(operatorActor->Transform().ProjectVector(0, 1, 0));
 				const double currentYaw = std::atan2(-forward.x, forward.y);
 				const double turn = std::atan2(std::sin(yaw - currentYaw), std::cos(yaw - currentYaw));
 				const double allowedTurn = operatorActor->ConstrainTurretTurn(turn);
-				if(std::abs(allowedTurn - turn) > 1e-5) continue;
-				float pitch = float(std::atan2(direction.z, std::hypot(direction.x, direction.y)));
+				if(target && std::abs(allowedTurn - turn) > 1e-5) continue;
+				float pitch = target ? float(std::atan2(direction.z, std::hypot(direction.x, direction.y))) : operatorActor->CurrentHeadTilt();
 				if(station.Type() == AuStation::Turret_Top) pitch = qMax(0.f, pitch);
 				if(station.Type() == AuStation::Turret_Bottom) pitch = qMin(0.f, pitch);
 				{
@@ -4679,13 +4691,17 @@ void DaLegacyCity::TockDefenses()
 					aimChanged |= aim.yaw != yaw || aim.pitch != pitch;
 					aim.yaw = yaw; aim.pitch = pitch;
 				}
-				AuMatrix4x4 facing(placement);
-				facing.Translate(placement.UnProject(operatorActor->Location()));
-				facing.RotateZ(yaw);
-				operatorActor->ForcePosStop(AuAtomPos(world->Id(), facing));
-				operatorActor->TiltHeadTo(pitch);
+				if(target)
+				{
+					AuMatrix4x4 facing(placement);
+					facing.Translate(placement.UnProject(operatorActor->Location()));
+					facing.RotateZ(yaw);
+					operatorActor->ForcePosStop(AuAtomPos(world->Id(), facing));
+					operatorActor->TiltHeadTo(pitch);
+				}
 			}
 		}
+		if(!target) continue;
 		// Bay weapons sight as the city; turrets sight as their gunner so
 		// creatures remain valid targets and the operator cannot block itself.
 		AuPoint emitterWorld = post.emitter;

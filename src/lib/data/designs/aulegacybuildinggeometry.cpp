@@ -542,7 +542,9 @@ void DeckSurfaces(Builder& out, const Raster& raster, const Design& design,
 					for(const QPoint& point : points) triangle.append(PlanPoint(point));
 					QVector<QPolygonF> masks;
 					// A glass cap from the basement below also reaches grade.
-					if((window && ((tag & 0x8000) || !(tag & 0x4000))) || (tag & 0x2000))
+					// A glass floor with no room below must retain the ground
+					// beneath it. Only a basement cap or open-below room cuts it.
+					if((window && (tag & 0x8000)) || (tag & 0x2000))
 						masks.append(triangle);
 					else for(const Opening& opening : openings)
 						if(opening.id && triangle.boundingRect().intersects(opening.boundary.boundingRect()))
