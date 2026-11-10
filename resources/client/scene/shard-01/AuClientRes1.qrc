@@ -357,5 +357,6 @@
 	<file>data/wt_Sonic.png</file>
 	<file>data/wt_Stun.png</file>
 	<file>data/wt_Suffocate.png</file>
+	<file>data/AlertCapture.png</file>
 </qresource>
 </RCC>

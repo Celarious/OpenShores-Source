@@ -147,6 +147,7 @@ public:
 	bool								m_IsBd;
 	quint8								m_LevelsUnderConstruction;
 	QColor								m_StanceColor;
+	bool m_FlagChanging = false;
 
 public:
 	inline AuBldSprite(const QString& cityName, const QColor& stanceColor, INDUSTRYID iid, bool isUnderConstruction,
@@ -184,6 +185,7 @@ public:
 		m_IsBd = c.m_IsBd;
 		m_LevelsUnderConstruction = c.m_LevelsUnderConstruction;
 		m_StanceColor = c.m_StanceColor;
+		m_FlagChanging = c.m_FlagChanging;
 	}
 
 public:	// Operators
@@ -196,6 +198,7 @@ public:	// Operators
 		m_IsBd = c.m_IsBd;
 		m_LevelsUnderConstruction = c.m_LevelsUnderConstruction;
 		m_StanceColor = c.m_StanceColor;
+		m_FlagChanging = c.m_FlagChanging;
 		return *this;
 	}
 

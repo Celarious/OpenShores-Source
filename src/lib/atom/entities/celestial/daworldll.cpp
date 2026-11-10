@@ -10,6 +10,7 @@
 #include "aubddesign.h"
 #include "aubox.h"
 #include "aucombat.h"
+#include "aucityreport.h"
 #include "aucommpacket.h"
 #include "aufireparticles.h"
 #include "auglmodelmaker.h"
@@ -43,6 +44,8 @@
 #include "deflora.h"
 #include "dgdata.h"
 #include "dprock.h"
+#include <QDateTime>
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -50,6 +53,8 @@
 #define d_SiteEdgeStep					(50*FeetPerMeter())
 #define d_MinVillageRange				(75*FeetPerMeter())
 #define d_MaxVillageRange				(175*FeetPerMeter())
+
+static constexpr qint64 CaptureAlertFlashIntervalMs = 250;
 
 bool AuGlobeTerrainTriCen::OverlapsDetailRange(const DaWorldLL& world, const AuPoint& groundPos, double range) const
 {
@@ -8187,6 +8192,7 @@ void DaWorldLL::RenderTerrainInfo(const AuMatrix4x4& model, AuAtomRenderInfo& ar
 		const auto renderBuildingSprites = [&](bool flagsOnly)
 		{
 			UpdateBuildingOverlaySprites(worldLoc, scenePerson->EmpireId());
+			const bool captureFlash = flagsOnly && (QDateTime::currentMSecsSinceEpoch() / CaptureAlertFlashIntervalMs) % 2 == 0;
 			for(QMap<AuPoint, AuBldSprite>::const_iterator bi = m_OverlayBuildings.cbegin(); bi != m_OverlayBuildings.cend();
 					bi++)
 			{
@@ -8214,9 +8220,20 @@ void DaWorldLL::RenderTerrainInfo(const AuMatrix4x4& model, AuAtomRenderInfo& ar
 				else
 					texQ = 0;
 
+				GLuint captureTexture = 0;
+				if(captureFlash && bi->m_FlagChanging)
+					captureTexture = ari.re->PrepareSceneTexture(STATIC_TEXTURE_ID, "LegacyFlagCaptureAlert", []() -> QImage {
+						const QImage image(":data/AlertCapture.png");
+						const int side = qMax(image.width(), image.height());
+						// Pad the tall icon for the existing square overlay badge.
+						return image.convertToFormat(QImage::Format_ARGB32).copy(
+							(image.width() - side) / 2, (image.height() - side) / 2, side, side);
+					});
+
 				int texSize = 40 * pct / 100;
 
 				RenderTerrainInfoSprite(*ari.re, txpt, texture1, texSize, 0, 0, texQ, unitsPerPixel);
+				RenderTerrainInfoSprite(*ari.re, txpt, 0, 0, captureTexture, texSize, 0, unitsPerPixel, true);
 
 				// Track building levels so we can show them after the sprites.
 				if(!(*bi).m_IsBd)
@@ -8728,8 +8745,14 @@ void DaWorldLL::UpdateBuildingOverlaySprites(const AuPoint& worldLoc, quint32 sc
 					const AuPoint buildLoc = LocOfLL(development.location, development.altitudeMSL);
 					// City Names shares this cache; label the town square once.
 					const QString name = development.industryId == 1 ? state.name : QString();
-					m_OverlayBuildings.insert(buildLoc, AuBldSprite(name, color, industry,
-						development.completedLevels, pending));
+					AuBldSprite sprite(name, color, industry, development.completedLevels, pending);
+					if(development.industryId == 1 || development.industryId == 10)
+					{
+						const auto flag = std::find_if(state.flags.cbegin(), state.flags.cend(),
+							[&development](const AuLegacyCity::Flag& value) { return value.location == development.location; });
+						sprite.m_FlagChanging = flag != state.flags.cend() && flag->level < MaxFlagLevel;
+					}
+					m_OverlayBuildings.insert(buildLoc, sprite);
 				}
 			}
 	}
