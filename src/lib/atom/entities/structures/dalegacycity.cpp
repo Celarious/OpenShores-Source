@@ -1722,10 +1722,11 @@ struct DaLegacyCity::Runtime
 				draw.texture = ari.re->UseTexture(id.GetID(), prepared.textureKey);
 				if(!draw.texture)
 				{
-					// Original building atlas filters: GL_LINEAR, no mipmaps.
+					// Keep atlas texels crisp, with mipmaps for distant facade details.
 					draw.texture = ari.re->CreateTextureFromBitmap(id.GetID(), prepared.textureKey,
-						prepared.texture, GL_LINEAR, prepared.buildingAtlas ? GL_LINEAR : GL_LINEAR_MIPMAP_LINEAR,
-						!prepared.buildingAtlas);
+						prepared.texture, prepared.buildingAtlas ? GL_NEAREST : GL_LINEAR,
+						prepared.buildingAtlas ? GL_NEAREST : GL_LINEAR_MIPMAP_LINEAR, true);
+					if(prepared.buildingAtlas) ari.re->SetTextureAnisotropy(draw.texture);
 					if(budget.nsecsElapsed() >= 4000000) return;
 				}
 				draw.vao.CreateForModelTexFog(*ari.re, prepared.vertices, GL_STATIC_DRAW);
