@@ -260,8 +260,6 @@ QString LegacyStatsListing(const AuLegacyScStats& snapshot)
 		QObject::tr("Medical"), QObject::tr("Transporter"), QObject::tr("Turret"), QObject::tr("Weapon"), QObject::tr("FTL Drive")};
 	for(int i = 0; i < 11; ++i)
 		count(QObject::tr("hp %1").arg(equipmentNames[i]), performance.systemHitPoints[equipmentSystems[i]], 3);
-	section(QObject::tr("MANUFACTURE"));
-	line(QObject::tr("Work in progress"));
 	return html;
 }
 }
