@@ -30,6 +30,7 @@
 #include <cmath>
 #include <memory>
 #include <limits>
+#include <QDebug>
 #include <QMutex>
 #include <QMutexLocker>
 
@@ -101,14 +102,14 @@ void EconomyRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityPr
 {
 	using namespace AuLegacyCityProtocol;
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
-	if(!catalogue) { reply.message = QObject::tr("The legacy economy catalogue is unavailable."); return; }
+	if(!catalogue) { qWarning("The legacy economy catalogue was unavailable during a request."); return; }
 	// Production snapshots include a tool inventory. Require the complete,
 	// active descriptors before either the operation or the reply decodes it.
 	if(!g_Au.IsLegacyGeneration() || !catalogue->IsValid())
-	{ reply.message = QObject::tr("Legacy commodity metadata is not ready."); return; }
+	{ qWarning("Legacy commodity metadata was not ready during economy request!"); return; }
 	for(const quint16 commodity : catalogue->RuntimeCommodityIds())
 		if(!g_Au.HasLegacyCommodity(COMMODITYID(commodity)))
-		{ reply.message = QObject::tr("Legacy commodity metadata is not ready."); return; }
+		{ qWarning("Legacy commodity metadata was not ready during economy request!"); return; }
 	quint32 cityId = request.cityId, developmentId = request.developmentId;
 	if(request.action == EconomyList && !cityId && !developmentId)
 	{
@@ -129,7 +130,7 @@ void EconomyRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityPr
 		if(development.id == developmentId && !development.demolished) { selected = &development; break; }
 	// A saved or stale UI target cannot operate a city from another site.
 	if(!selected || !ContainsSite(world, *selected, origin))
-	{ if(request.action != EconomyList) reply.message = QObject::tr("Stand at this industry to operate it."); return; }
+	{ if(request.action != EconomyList) return; }
 	reply.selectedCity = cityId; reply.selectedDevelopment = developmentId;
 	if(request.action == BuySpacecraft)
 		reply.accepted = selected->industryId == 87
