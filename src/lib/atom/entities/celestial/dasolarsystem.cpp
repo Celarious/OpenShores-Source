@@ -3200,8 +3200,9 @@ void DaSolarSystem::AdminGoTo(DaAtom* moveAtom, DaAtom* destAtom)
 			}
 			else if(destPlanet)
 			{
-				// Put the moving creature on the surface.
-				AuPoint loc = destPlanet->RandomAvatarLocation();
+				// Legacy city destinations use the town-square spawn area.
+				const DaLegacyCity* destCity = dynamic_cast<const DaLegacyCity*>(destAtom);
+				AuPoint loc = destCity ? destCity->SpawnLocation() : destPlanet->RandomAvatarLocation();
 				double cg = destPlanet->CGAltitude(loc);
 				destPlanet->ElevateLoc(loc, cg + moveCreature->GroundHeightAboveCG());
 				AuMatrix4x4 t;
