@@ -371,6 +371,11 @@ public:	// Methods
 	// Apparent alert condition is controlled by the commander.
 	virtual ALERT_CONDITION ApparentAlertCondition() const
 	{
+		if(IsLegacyDebug())
+		{
+			const ALERT_CONDITION assessed = AlertCondition();
+			if(assessed > m_AlertCondition) return assessed;
+		}
 		return m_AlertCondition;
 	}
 

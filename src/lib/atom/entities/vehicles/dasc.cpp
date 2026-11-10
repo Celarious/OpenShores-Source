@@ -35,6 +35,7 @@
 #include "dadesigner.h"
 #include "dagalaxy.h"
 #include "daitem.h"
+#include "dalegacycity.h"
 #include "damissile.h"
 #include "danpc.h"
 #include "daperson.h"
@@ -74,9 +75,6 @@ constexpr qint64 LegacyAutomaticDoorCloseDelayMSec = 2500;
 constexpr unsigned int LegacyAutomaticDoorCheckIntervalMSec = 250;
 // Open a hatch before a descending climber's feet meet its deck plane (feet).
 constexpr double LegacyHatchDescentOpenClearance = .5;
-// Temporarily disabled for testing; true restores 2016 neutral outside-entry
-// restrictions while a legacy ship is awaiting system initialization.
-constexpr bool LegacyRestrictNeutralAccessToNewShips = false;
 // The original core equipment effects advance every 100 milliseconds.
 constexpr int LegacyEffectFrameMSec = 100;
 // DaSpaceShip stores one pressure byte for the entire legacy hull. Keep that
@@ -1066,12 +1064,12 @@ void DaSc::AnimateDeviceObjects(AuAtomRenderInfo& ari, const DaPerson* sceneAtom
 	if(IsLegacyDebug())
 	{
 		// AuAtom13:1803c9950 alternates normal lighting on even seconds with
-		// the assessed system/structure warning on odd seconds.
+		// the warning condition on odd seconds, including the manual setting.
 		const qint64 second = AuTime::CurrentSecsSinceEpoch();
 		if(second != m_LegacyAlertSecond)
 		{
 			m_LegacyAlertSecond = second;
-			m_LegacyApparentAlertCondition = (second & 1) ? AlertCondition() : ConditionGreen;
+			m_LegacyApparentAlertCondition = (second & 1) ? ApparentAlertCondition() : ConditionGreen;
 		}
 	}
 
@@ -1602,7 +1600,9 @@ void DaSc::OpenLegacyAutomaticDoors(const DaAtom& who, const AuPoint& from, cons
 	m_DesignLock.unlock();
 	const DaSentient* sentient = dynamic_cast<const DaSentient*>(&who);
 	for(quint16 door : candidates)
-		if(!IsDoorLocked(door) || (sentient && CanOpenDoor(*sentient, door))) OpenDoor(door);
+		if(sentient ? CanOpenDoor(*sentient, door)
+			: !IsDoorLocked(door) && (!IsHullDoor(door) || who.FindParentVesselInEnv() == this
+				|| (creature && CheckAccess(creature)))) OpenDoor(door);
 }
 
 bool DaSc::IsLegacyBodyPathBlocked(const AuPoint& from, const AuPoint& to, const AuBox& bodyOffsets,
@@ -3389,7 +3389,7 @@ void DaSc::CombatApplyDamage(const AuCombatAttacker& attacker, const AuCombatWea
 
 	// Apparent alert condition may have changed due to damage. This is not the same as the alert condition set by the commander.
 	ALERT_CONDITION nuCondition = AlertCondition();
-	if(oldCondition != nuCondition)
+	if(oldCondition != nuCondition && (!IsLegacyDebug() || nuCondition > m_AlertCondition))
 		SetAlertCondition(nuCondition);
 
 	// Check because a bug somehow allowed ships to have more damage than should be allowed.
@@ -4795,20 +4795,7 @@ bool DaSc::CanOpenDoor(const DaSentient& who, unsigned int doorIndex) const
 	const bool withinReach = (deckDelta == 0 || deckDelta == -1) && LegacyDoorDistance2(*door, location) <= 36;
 	m_DesignLock.unlock();
 	if(!withinReach) return false;
-	if(!IsDoorLocked(doorIndex))
-	{
-		if(IsHullDoor(doorIndex) && !(who.IsInsideSpacecraft() && who.FindParentVesselInEnv() == this))
-		{
-			// AuAtom13:18016c140 treats either empireless party as neutral.
-			const POLITICAL_STANCE stance = EmpireId() && who.EmpireId()
-				? PoliticalStance(EmpireId(), who.EmpireId()) : POL_Neutral;
-			if(stance == POL_Enemy || (LegacyRestrictNeutralAccessToNewShips && IsNew() && stance == POL_Neutral))
-				return false;
-		}
-		return true;
-	}
-	if(IsHullDoor(doorIndex) && who.IsInsideSpacecraft() && who.FindParentVesselInEnv() == this) return true;
-	return who.AgentEntity() || IsCrewOrTroop(who.Id()) || InChainOfCommand(&who);
+	return DaVessel::CanOpenDoor(who, doorIndex);
 }
 
 void DaSc::CycleCapacitor()
@@ -13241,7 +13228,26 @@ void DaSc::FetchVehicle()
 	// Locate city or station within trade range of the ship.
 	AuId onSlabInCity;
 	DaWorld* planet;
-	if(IsInBd() || IsAtBd())
+	if(IsLegacyDebug())
+	{
+		planet = FindParentPlanetInEnv();
+		DaAtomList sites;
+		if(planet) planet->ListNormalSubatoms(sites);
+		for(DaAtom* atom : sites)
+			if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+				if(city->IsSpacecraftOnSlab(*this))
+				{
+					if(PoliticalStance(city->EmpireId(), EmpireId()) == POL_Enemy) return;
+					onSlabInCity = city->Id(); break;
+				}
+		if(onSlabInCity.IsNull())
+		{
+			bool hasStation;
+			if(!StationInTradeRange(RoughRadius(), hasStation)) return;
+			planet = nullptr;
+		}
+	}
+	else if(IsInBd() || IsAtBd())
 	{
 		// Ship is at a bd.
 		planet = FindParentPlanetInEnv();

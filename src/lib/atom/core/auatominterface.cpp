@@ -352,6 +352,12 @@ void AuAtomInterface::GovDossierDispatchCourier(quint32 dosEmpire, const QString
 
 void AuAtomInterface::AlertCondition(int condition)
 {
+	if(g_Au.IsLegacyGeneration())
+	{
+		if(condition >= ConditionGreen && condition <= ConditionRed)
+			GovSetPilotPolicy(2, quint8(condition));
+		return;
+	}
 	DaPerson* person = LockAvatar();
 	if(person)
 	{

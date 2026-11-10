@@ -4168,6 +4168,35 @@ DaVehicle* DaWorldLL::FindNewVehicleType(VEHICLE_SPOT_TYPE spotType, unsigned in
 	bool inBdCity = false;
 	DaAtomList subs;
 	ListNormalSubatoms(subs);
+	if(g_Au.IsLegacyGeneration())
+	{
+		QHash<AuId, const DaLegacyCity*> cities;
+		for(DaAtom* atom : subs)
+			if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+				if(!city->IsDead()) cities.insert(city->Id(), city);
+		DaVehicle* available = nullptr;
+		for(DaAtom* atom : subs)
+		{
+			auto* vehicle = dynamic_cast<DaVehicle*>(atom);
+			if(!vehicle || !vehicle->CanFetch(spotType)) continue;
+			const auto* query = vehicle->LockEnvironmentQuery();
+			const AuId cityId = query->LegacyCityId();
+			vehicle->UnlockEnvironmentQuery();
+			const auto* city = cities.value(cityId, nullptr);
+			const quint8 factory = spotType == SPOT_GroundVehicle ? 88 : spotType == SPOT_WaterVehicle ? 85 : 70;
+			if(!city || city->EmpireId() != vehicle->EmpireId()
+				|| !city->HasSpacecraftService(factory)
+				|| (cityId != onSlabInCity && !city->HasSpacecraftService(111))) continue;
+			const POLITICAL_STANCE stance = PoliticalStance(city->EmpireId(), empireId);
+			const DgData& gd = g_Au.LockDataForRead();
+			const bool restricted = gd.EmpireCommerceRestricted(city->EmpireId(), vehicle->CommodityId(), stance);
+			g_Au.UnlockData();
+			if(restricted || stance == POL_Enemy) continue;
+			if(cityId == onSlabInCity) return vehicle;
+			if(!available) available = vehicle;
+		}
+		if(available) return available;
+	}
 	for(DaAtomList::const_iterator it = subs.cbegin(); it != subs.cend(); it++)
 	{
 		DaBd* bd = dynamic_cast<DaBd*>(*it);

@@ -8348,7 +8348,9 @@ void DaPerson::Tock(const AuTime& last, const AuTime& now, const AuScripts& scri
 									// On DaSc ships, I must manage the alert condition. It triggers upward automatically.
 									// I must lower it when appropriate.
 									ALERT_CONDITION alert = ship->AlertCondition();	// Alert based on ship conditions.
-									if(alert < ship->ApparentAlertCondition())
+									// Legacy manual alerts remain selected until explicitly
+									// lowered; room lighting still assesses active hazards.
+									if(!g_Au.IsLegacyGeneration() && alert < ship->ApparentAlertCondition())
 										ship->SetAlertCondition(alert);			// Reduce alert condition.
 
 									// Man a station if I am not doing anything else.

@@ -10979,7 +10979,8 @@ bool DaVehicle::CanFetch(VEHICLE_SPOT_TYPE spotType) const
 	if(ParkingSpotType() != spotType)
 		return false;					// Wrong type of parking spot.
 
-	// Spacecraft only fetch vehicles from certain buildings.
+	// Legacy factories park their unused outputs on city slabs or water;
+	// the world lookup validates their city and its export facilities.
 	switch(spotType)
 	{
 	case SPOT_Invalid:
@@ -10988,18 +10989,18 @@ bool DaVehicle::CanFetch(VEHICLE_SPOT_TYPE spotType) const
 		return false;
 	case SPOT_GroundVehicle:
 		// Ground vehicles are fetched from vehicle factories.
-		if(InIndustry() != IID_VehicleFactory)
+		if(!g_Au.IsLegacyGeneration() && InIndustry() != IID_VehicleFactory)
 			return false;
 		break;
 	case SPOT_Rocket:
 	case SPOT_SpaceVehicle:
 		// Space vehicles are fetched from aircraft factories.
-		if(InIndustry() != IID_AircraftFactory)
+		if(!g_Au.IsLegacyGeneration() && InIndustry() != IID_AircraftFactory)
 			return false;
 		break;
 	case SPOT_WaterVehicle:
 		// Water vehicles are fetched from ship yards.
-		if(InIndustry() != IID_ShipYard)
+		if(!g_Au.IsLegacyGeneration() && InIndustry() != IID_ShipYard)
 			return false;
 		break;
 	}

@@ -64,11 +64,12 @@ AuSpacecraftPolicy::AuSpacecraftPolicy(QWidget* parent) : QWidget(parent)
 				"%1 Yellow - Structural damage is 50% or greater.<br>"
 				"%1 Yellow - Worst system damage is more than 50%.<br>"
 				"Only a person in the ship's chain-of-command may change the alert condition. "
-				"<b>On old style spacecraft, alert condition cannot be changed; "
-				"it always reflects the conditions shown above.</b> "
-				"<b>On new style spacecraft, events may trigger a higher alert condition; "
-				"a person or officer with the con must lower it.</b> "
-				"</html>").arg(g_Au.MiddleDotSymbol()));
+				"%2</html>").arg(g_Au.MiddleDotSymbol()).arg(g_Au.IsLegacyGeneration()
+				? tr("<b>The selected condition controls warning lighting. Active hazards may require a higher condition.</b>")
+				: tr("<b>On old style spacecraft, alert condition cannot be changed; "
+					"it always reflects the conditions shown above.</b> "
+					"<b>On new style spacecraft, events may trigger a higher alert condition; "
+					"a person or officer with the con must lower it.</b> ")));
 	connect(m_AlertCondition, SIGNAL(currentIndexChanged(int)), SLOT(AlertConditionChanged(int)));
 
 	m_PilotUpPolicies = new QComboBox(this);
@@ -335,6 +336,7 @@ void AuSpacecraftPolicy::showEvent(QShowEvent* event)
 	}
 	if(!m_timer->isActive())
 		m_timer->start(1000);
+	if(g_Au.IsLegacyGeneration()) UpdateContents();
 }
 
 void AuSpacecraftPolicy::UpdateContents()
@@ -441,29 +443,18 @@ void AuSpacecraftPolicy::UpdateContents()
 			m_ShieldFuelPolicies->blockSignals(false);
 
 			// Set check boxes to reflect automatic berth acceptance policies.
-			if(ship->CanAcceptBerthType(AuRosterEntry::Crew))
-				ckcrewopen->setCheckState(Qt::Checked);
-			else
-				ckcrewopen->setCheckState(Qt::Unchecked);
-			if(ship->CanAcceptBerthType(AuRosterEntry::PassengerHuman))
-				ckpassopen->setCheckState(Qt::Checked);
-			else
-				ckpassopen->setCheckState(Qt::Unchecked);
-
-			if(ship->CanPassengersAccessSeaChest())
-				ckpassSeaChest->setCheckState(Qt::Checked);
-			else
-				ckpassSeaChest->setCheckState(Qt::Unchecked);
-
-			if(ship->CanAcceptBerthType(AuRosterEntry::Troop))
-				cktroopopen->setCheckState(Qt::Checked);
-			else
-				cktroopopen->setCheckState(Qt::Unchecked);
-
-			if(ship->AutoFetchVehicles())
-				m_AutoFetchVehicles->setCheckState(Qt::Checked);
-			else
-				m_AutoFetchVehicles->setCheckState(Qt::Unchecked);
+			const auto reflectChecked = [](QCheckBox* check, bool value) {
+				// A Legacy snapshot refresh must not send policy commands back
+				// to the worker, especially while holding the scene atom lock.
+				const bool blocked = check->blockSignals(g_Au.IsLegacyGeneration() || check->signalsBlocked());
+				check->setChecked(value);
+				check->blockSignals(blocked);
+			};
+			reflectChecked(ckcrewopen, ship->CanAcceptBerthType(AuRosterEntry::Crew));
+			reflectChecked(ckpassopen, ship->CanAcceptBerthType(AuRosterEntry::PassengerHuman));
+			reflectChecked(ckpassSeaChest, ship->CanPassengersAccessSeaChest());
+			reflectChecked(cktroopopen, ship->CanAcceptBerthType(AuRosterEntry::Troop));
+			reflectChecked(m_AutoFetchVehicles, ship->AutoFetchVehicles());
 		}
 		else
 		{
