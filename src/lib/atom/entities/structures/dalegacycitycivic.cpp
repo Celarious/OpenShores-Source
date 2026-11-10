@@ -31,6 +31,9 @@ using namespace AuLegacyCity;
 
 namespace
 {
+// Re-enable once capture/recapture offers have a normal-player client UI.
+constexpr bool LegacyCityCaptureJobsEnabled = false;
+
 quint32 JobPrice(double funds, quint32 quantity, quint32 maximum)
 {
 	if(!quantity || !std::isfinite(funds) || funds <= 0) return 0;
@@ -234,9 +237,10 @@ void DaLegacyCity::ReportEnemySensorContact(const DaSolarSystem* system, const A
 		case AuEventLogEntry::EnemyCapital:
 		case AuEventLogEntry::EnemyCity:
 			LogEvent(quint8(kind), contact->HtmlDesc(system));
-			job.reset(new AuJobCaptureLegacyCity(contact->AtomId(), contact->ScreenName(), system->Id(), system->Name(), address,
-				contact->IsEmpireCapitol() ? AuJobCaptureLegacyCity::EmpireCapital
-					: contact->IsSectorCapitol() ? AuJobCaptureLegacyCity::SectorCapital : AuJobCaptureLegacyCity::Enemy));
+			if(LegacyCityCaptureJobsEnabled)
+				job.reset(new AuJobCaptureLegacyCity(contact->AtomId(), contact->ScreenName(), system->Id(), system->Name(), address,
+					contact->IsEmpireCapitol() ? AuJobCaptureLegacyCity::EmpireCapital
+						: contact->IsSectorCapitol() ? AuJobCaptureLegacyCity::SectorCapital : AuJobCaptureLegacyCity::Enemy));
 			break;
 		case AuEventLogEntry::EnemyStation:
 		case AuEventLogEntry::EnemyStationS:
@@ -270,6 +274,7 @@ void DaLegacyCity::ReportEnemySensorContact(const DaSolarSystem* system, const A
 
 void DaLegacyCity::PostCityBountyJob()
 {
+	if(!LegacyCityCaptureJobsEnabled) return;
 	if(!g_Au.IsLegacyGeneration() || !g_Au.IsSceneWorker() || !g_Au.m_EnableJobPosting
 		|| InArena() || InDesignPreview() || IsDead()) return;
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
@@ -320,7 +325,7 @@ void DaLegacyCity::PostCivicJobs(const AuCityReport& report)
 	QSet<quint32> flagHolders;
 	for(const Flag& flag : state.flags)
 		if(flag.empire && flag.empire != state.controllingEmpire) flagHolders.insert(flag.empire);
-	if(!flagHolders.isEmpty())
+	if(LegacyCityCaptureJobsEnabled && !flagHolders.isEmpty())
 	{
 		AuJobCaptureLegacyCity job(Id(), state.name, system->Id(), system->Name(), sector->Name(), AuJobCaptureLegacyCity::UnderAttack);
 		post(job, state.allegianceEmpire);
@@ -351,8 +356,11 @@ void DaLegacyCity::PostCivicJobs(const AuCityReport& report)
 		if(!InArena() && !InDesignPreview())
 			g_Au.SendBulkMail(player, confirmation, Id(), state.name, governors, AuMailMsg::MSG_CityIntelligenceReport,
 				tr("City Intelligence Report"), body, system->Id(), system->Name(), world->Id(), world->Name(), Galaxy(), galaxyLocation);
-		AuJobCaptureLegacyCity job(Id(), state.name, system->Id(), system->Name(), sector->Name(), reason);
-		post(job, empire);
+		if(LegacyCityCaptureJobsEnabled)
+		{
+			AuJobCaptureLegacyCity job(Id(), state.name, system->Id(), system->Name(), sector->Name(), reason);
+			post(job, empire);
+		}
 	};
 	for(const quint32 holder : flagHolders) intelligence(holder, AuJobCaptureLegacyCity::InProgress);
 	if(report.m_LegacyOccupied && state.population && state.allegianceEmpire
