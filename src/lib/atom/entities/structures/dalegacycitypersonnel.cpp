@@ -142,6 +142,8 @@ void DaLegacyCity::TockGarrison()
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
 	QVector<DefensePost> posts = DefensePosts();
 	// Flag defenders and authored equipment operators draw from the same pool.
+	// DaCity::Tock 0x2d3f50 deploys one defender per friendly flag, not
+	// the city's full IndustryTroops contingent at each flag.
 	for(const auto& development : before.developments)
 		if((development.industryId == 1 || development.industryId == 10)
 			&& !development.demolished && development.completedLevels && !defenders.value(development.id))
@@ -209,7 +211,7 @@ void DaLegacyCity::TockGarrison()
 		troop->InitTraining(); troop->SetGarrisonPosture(); troop->UpdateEnvironment();
 		EquipSpacecraftPersonnel(*troop);
 		InflictCitizenCrises(*troop);
-		troop->SetOrder(ORDER_Stay, world->Id(), spawn);
+		troop->SetOrder(post.stationId ? ORDER_Stay : ORDER_BattleStation, world->Id(), spawn);
 		// SetOrder's fallback Stay always targets the parent. Keep a city-owned
 		// station order above it, as hospital operators already do.
 		if(post.stationId) troop->AmendOrder(ORDER_Stay, Id(), spawn, post.stationId);

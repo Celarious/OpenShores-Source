@@ -3287,6 +3287,20 @@ void DaNpc::DoBattleStation()
 
 	if(!IsInSpacecraft())
 	{
+		if(g_Au.IsLegacyGeneration() && IsNpcTroop() && !IsInsideSpacecraft())
+		{
+			const auto* world = FindParentPlanetInEnv();
+			const auto* city = world ? dynamic_cast<const DaLegacyCity*>(world->FindSubatomId(GarrisonBd())) : nullptr;
+			if(city && city->IsNormal() && city->EmpireId() == EmpireId())
+			{
+				// DaCitTroop::DoBattleStation 0x25bd80 scans on each thought
+				// and keeps ground defenders on duty without taking a nap.
+				if(!IsTroopStationPose() && IsInAnyScene() && LookForThreats(false))
+					return;
+				StayIdle();
+				return;
+			}
+		}
 		// I'm not in a vehicle or a spacecraft. Cancel this order and move on to the next order.
 		RequestOrder();	// Ask for my next order.
 		return;
