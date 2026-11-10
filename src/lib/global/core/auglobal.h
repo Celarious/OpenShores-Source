@@ -1869,7 +1869,7 @@ public:
 		switch(samples)
 		{
 		case 0: case 2: case 4: case 8: case 16: return samples;
-		default: return 4;
+		default: return 2;
 		}
 	}
 
