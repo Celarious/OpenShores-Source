@@ -3562,7 +3562,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 	for(AuCityIndustryHash::const_iterator ii = m_Industries.cbegin(); ii != m_Industries.cend(); ii++)
 	{
 		// Don't show zeros. Shouldn't exist any more now that it's a hash and not an array.
-		if((*ii).Levels() == 0 || (legacyFormat && ii.key() == IID_Road))
+		if((*ii).Levels() == 0 || (legacyFormat && (ii.key() == IID_Road || ii.key() == IID_TownSquare)))
 			continue;
 		const DgData& gd = g_Au.LockDataForRead();
 		QString ind = gd.IndustryName(ii.key());
@@ -3574,7 +3574,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 		if(!facil.isEmpty())
 		{
 			rpt += QObject::tr("<b>FACILITIES</b><div style=\"margin-left: 10px;\"><table border=\"0\" cellpadding=\"2\" cellspacing=\"0\" style=\"background-color: rgb(7, 62, 94);\"><tbody>");
-			rpt += QObject::tr("<tr><td><b>Name</b></td><td><b>TL</b></td><td><b>Levels</b></td><td></td><td><b>Name</b></td><td><b>TL</b></td><td><b>Levels</b></td></tr>");
+			rpt += QObject::tr("<tr><td width=\"180\"><b>Name</b></td><td><b>TL</b></td><td><b>Levels</b></td><td></td><td width=\"180\"><b>Name</b></td><td><b>TL</b></td><td><b>Levels</b></td></tr>");
 			int column = 0;
 			for(QMap<QString, AuCityIndustryIID>::const_iterator it = facil.cbegin(); it != facil.cend(); ++it)
 			{
@@ -3598,7 +3598,7 @@ QString AuCityReport::ReportCapitol(const AuCityReport& prevReport, bool mailFor
 					else name = QString("<span style=\"color: rgb(%1);\">%2 <b>%3</b></span>").arg(color).arg(icon).arg(it.key());
 					tech = QString("<span style=\"color: rgb(%1);\"><b>%2</b></span>").arg(color).arg(levels);
 				}
-				rpt += QString("<td valign=\"top\">%1</td><td valign=\"top\">%2</td><td valign=\"top\">%3</td>")
+				rpt += QString("<td valign=\"top\" style=\"white-space: nowrap;\">%1</td><td valign=\"top\">%2</td><td valign=\"top\">%3</td>")
 					.arg(name).arg(tech).arg(it.value().Levels());
 				if(column == 1 || next == facil.cend()) rpt += "</tr>";
 				column = 1 - column;
