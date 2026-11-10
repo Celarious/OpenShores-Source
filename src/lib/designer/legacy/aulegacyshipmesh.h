@@ -92,6 +92,7 @@ struct Batch
 	float selfIllumination = 0;
 	bool twoSided = false;
 	QVector3D rotationPivot;
+	QVector3D turretMuzzle;
 	QVector3D rotationAxis = QVector3D(0, 0, 1);
 	float degreesPerSecond = 0;
 	QVector2D uvVelocity;

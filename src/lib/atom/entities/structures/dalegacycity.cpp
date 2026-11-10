@@ -81,6 +81,8 @@
 
 namespace
 {
+constexpr qint64 TurretAimInterpolationMs = 200;
+
 // Unwrap each footprint before drawing it. The viewport clips the duplicate
 // at the opposite map edge, keeping cities crossing 180 E/W continuous.
 void AppendCitySurfaceQuad(AuPointArray& vertices, AuPoint a, AuPoint b, AuPoint c, AuPoint d)
@@ -966,6 +968,25 @@ struct DaLegacyCity::Runtime
 	};
 	QMutex defenseLock;
 	QVector<Shield> shields;
+	struct TurretAim
+	{
+		float yaw = 0, pitch = 0;
+		quint32 shot = 0;
+	};
+	QHash<quint64, TurretAim> turretAims;
+	struct TurretAnimation
+	{
+		TurretAim target;
+		AuPoint start;
+		qint64 changed = 0;
+		AuPoint Sample(qint64 now) const
+		{
+			const double t = qBound(0., double(now - changed) / TurretAimInterpolationMs, 1.);
+			const double yawDelta = std::atan2(std::sin(target.yaw - start.x), std::cos(target.yaw - start.x));
+			return AuPoint(start.x + yawDelta * t, start.y + (target.pitch - start.y) * t, 0);
+		}
+	};
+	QHash<quint64, TurretAnimation> turretAnimations; // Client presentation only.
 	bool asynchronous = false;
 	bool asyncBuildAllowed = false;
 	int enclosure = -1;
@@ -4398,11 +4419,27 @@ bool DaLegacyCity::TurretMatrices(const DaCreature& gunner, AuMatrix4x4& gunWorl
 {
 	AuStation station; AuLegacyCity::Development development; AuMatrix4x4 placement;
 	if(!gunner.IsTurretPose() || !Station(gunner, station, &development, &placement) || !station.IsTurret()) return false;
+	const AuPoint forward = placement.UnProjectVector(gunner.Transform().ProjectVector(AuPoint(0, 1, 0)));
+	float yaw = float(std::atan2(-forward.x, forward.y)), pitch = gunner.CurrentHeadTilt();
+	if(dynamic_cast<const DaNpc*>(&gunner))
+	{
+		QMutexLocker lock(&m_Runtime->defenseLock);
+		const auto aim = m_Runtime->turretAims.constFind((quint64(development.id) << 16) | gunner.StationId());
+		if(aim != m_Runtime->turretAims.cend()) { yaw = aim->yaw; pitch = aim->pitch; }
+	}
+	return TurretMatrices(development, gunner.StationId(), yaw, pitch, gunWorld, muzzleWorld, drawKey);
+}
+
+bool DaLegacyCity::TurretMatrices(const AuLegacyCity::Development& development, quint16 stationId,
+	float yaw, float pitch, AuMatrix4x4& gunWorld, AuMatrix4x4& muzzleWorld, quint64* drawKey) const
+{
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	if(!world || development.demolished || !development.completedLevels) return false;
 	const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
-	const int index = int(gunner.StationId()) - 1;
+	const int index = int(stationId) - 1;
 	if(!design || index < 0 || index >= design->details.size()) return false;
 	const auto& detail = design->details[index];
-	AuPoint pivot;
+	AuPoint pivot, emitter;
 	bool found = false;
 	{
 		QMutexLocker lock(&m_Runtime->lock);
@@ -4410,7 +4447,7 @@ bool DaLegacyCity::TurretMatrices(const DaCreature& gunner, AuMatrix4x4& gunWorl
 			if(building.state.id == development.id)
 				for(const auto& batch : building.mesh.batches)
 					if(batch.turretId == detail.detailId)
-					{ pivot = Point(batch.rotationPivot); found = true; break; }
+					{ pivot = Point(batch.rotationPivot); emitter = Point(batch.turretMuzzle); found = true; break; }
 	}
 	if(!found) return false;
 	// Use the same part and recovered gun/muzzle matrices as Legacy spacecraft.
@@ -4420,12 +4457,13 @@ bool DaLegacyCity::TurretMatrices(const DaCreature& gunner, AuMatrix4x4& gunWorl
 	const double angle = detail.detailType == 22 || detail.detailType == 33 ? PI / 2
 		: (detail.detailType == 21 ? 0 : detail.detailType - 33) * PI / 4;
 	const AuPoint direction(std::cos(angle), std::sin(angle), 0);
-	turret.SetGunEmitVec(direction); turret.SetGunEmitLoc(pivot + direction * 6.5);
-	const AuPoint forward = placement.UnProjectVector(gunner.Transform().ProjectVector(AuPoint(0, 1, 0)));
-	const float yaw = float(std::atan2(-forward.x, forward.y));
+	turret.SetGunEmitVec(direction); turret.SetGunEmitLoc(emitter);
+	AuMatrix4x4 placement;
+	world->BuildingConstructionTransform(world->LocOfLL(development.location, development.altitudeMSL),
+		development.facingRadians, nullptr, AuPoint(), placement);
 	AuMatrix4x4 gun, muzzle;
-	turret.TurretGunMatrix(yaw, gunner.CurrentHeadTilt(), gun);
-	turret.TurretMuzzleMatrix(yaw, gunner.CurrentHeadTilt(), muzzle);
+	turret.TurretGunMatrix(yaw, pitch, gun);
+	turret.TurretMuzzleMatrix(yaw, pitch, muzzle);
 	gunWorld = placement * gun; muzzleWorld = placement * muzzle;
 	if(drawKey) *drawKey = (quint64(development.id) << 32) | detail.detailId;
 	return true;
@@ -4435,23 +4473,28 @@ void DaLegacyCity::CopyDefenseState(const DaLegacyCity& source)
 {
 	if(&source == this) return;
 	QVector<Runtime::Shield> shields;
-	{ QMutexLocker lock(&source.m_Runtime->defenseLock); shields = source.m_Runtime->shields; }
-	QMutexLocker lock(&m_Runtime->defenseLock); m_Runtime->shields = shields;
+	QHash<quint64, Runtime::TurretAim> aims;
+	{ QMutexLocker lock(&source.m_Runtime->defenseLock); shields = source.m_Runtime->shields; aims = source.m_Runtime->turretAims; }
+	QMutexLocker lock(&m_Runtime->defenseLock); m_Runtime->shields = shields; m_Runtime->turretAims = aims;
 }
 
 void DaLegacyCity::WriteDefenseState(QDataStream& out) const
 {
 	QMutexLocker lock(&m_Runtime->defenseLock);
-	out << quint8(2) << quint16(m_Runtime->shields.size());
+	out << quint8(3) << quint16(m_Runtime->shields.size());
 	for(const auto& shield : m_Runtime->shields)
 		out << shield.development << quint16(shield.module) << shield.technology << shield.center << shield.charge << shield.maximum << shield.enabled;
+	if(m_Runtime->turretAims.size() > AuLegacyCity::MaximumDevelopments) { out.setStatus(QDataStream::WriteFailed); return; }
+	out << quint16(m_Runtime->turretAims.size());
+	for(auto aim = m_Runtime->turretAims.cbegin(); aim != m_Runtime->turretAims.cend(); ++aim)
+		out << aim.key() << aim->yaw << aim->pitch << aim->shot;
 }
 
 bool DaLegacyCity::ReadDefenseState(QDataStream& in)
 {
 	quint8 version = 0; quint16 count = 0;
 	in >> version >> count;
-	if((version != 1 && version != 2) || count > AuLegacyCity::MaximumDevelopments) return false;
+	if((version < 1 || version > 3) || count > AuLegacyCity::MaximumDevelopments) return false;
 	QVector<Runtime::Shield> shields;
 	QSet<quint32> seen;
 	for(int index = 0; index < count; ++index)
@@ -4465,7 +4508,22 @@ bool DaLegacyCity::ReadDefenseState(QDataStream& in)
 			|| shield.charge < 0 || shield.maximum <= 0 || shield.maximum > 12750 || shield.charge > shield.maximum) return false;
 		shield.module = COMMODITYID(module); seen.insert(shield.development); shields.append(shield);
 	}
-	QMutexLocker lock(&m_Runtime->defenseLock); m_Runtime->shields = shields;
+	QHash<quint64, Runtime::TurretAim> aims;
+	if(version >= 3)
+	{
+		in >> count;
+		if(count > AuLegacyCity::MaximumDevelopments) return false;
+		for(int index = 0; index < count; ++index)
+		{
+			quint64 key = 0; Runtime::TurretAim aim;
+			in >> key >> aim.yaw >> aim.pitch >> aim.shot;
+			if(in.status() != QDataStream::Ok || !(key >> 16) || (key >> 16) > std::numeric_limits<quint32>::max()
+				|| !quint16(key) || aims.contains(key) || !std::isfinite(aim.yaw) || !std::isfinite(aim.pitch)
+				|| std::abs(aim.yaw) > PI + 1e-5 || std::abs(aim.pitch) > PI / 2 + 1e-5) return false;
+			aims.insert(key, aim);
+		}
+	}
+	QMutexLocker lock(&m_Runtime->defenseLock); m_Runtime->shields = shields; m_Runtime->turretAims = aims;
 	return in.status() == QDataStream::Ok;
 }
 
@@ -4523,6 +4581,8 @@ void DaLegacyCity::TockDefenses()
 	const auto posts = DefensePosts();
 	DaAtomList actors; world->ListNormalSubatoms(actors);
 	QSet<AuId> assigned;
+	QSet<quint64> staffedTurrets;
+	bool aimChanged = false;
 	QVector<Runtime::Shield> previous, shields;
 	{ QMutexLocker lock(&m_Runtime->defenseLock); previous = m_Runtime->shields; }
 	const qint64 now = AuTime::CurrentMSecsSinceEpoch();
@@ -4548,6 +4608,7 @@ void DaLegacyCity::TockDefenses()
 			if(operatorActor && dynamic_cast<DaPerson*>(operatorActor)) break;
 		}
 		if(operatorActor) assigned.insert(operatorActor->Id());
+		if(post.station.IsTurret() && dynamic_cast<DaNpc*>(operatorActor)) staffedTurrets.insert(post.Key());
 		if(post.development.industryId == 12)
 		{
 			if(std::any_of(shields.cbegin(), shields.cend(), [&post](const Runtime::Shield& shield) {
@@ -4586,8 +4647,12 @@ void DaLegacyCity::TockDefenses()
 		const AuPoint emitterSystem = world->EnvTransform().Project(post.emitter);
 		const DaAtom* target = nullptr; double distance = range; AuPoint targetLocation;
 		if(post.development.industryId == 128)
+		{
+			const AuPoint hemisphere = world->EnvTransform().ProjectVector(post.station.OpM().ProjectVector(
+				DaCreature::LegacyTurretHemiVector(operatorActor->CurrentGeneralPose())));
 			environment->FindClosestShipTurretTargetRecursive(Id(), 2, world->Id(), empire, operatorActor->Posture(),
-				emitterSystem, range, AuPoint(), target, distance, targetLocation);
+				emitterSystem, range, hemisphere, target, distance, targetLocation);
+		}
 		else
 			environment->FindClosestShipWeaponTargetRecursive(Id(), 2, world->Id(), empire, operatorActor->Posture(),
 				emitterSystem, range, target, distance, targetLocation);
@@ -4598,11 +4663,27 @@ void DaLegacyCity::TockDefenses()
 			if(Station(*operatorActor, station, nullptr, &placement))
 			{
 				const AuPoint direction = placement.UnProjectVector(world->EnvTransform().UnProject(targetLocation) - operatorActor->Location());
+				const float yaw = float(std::atan2(-direction.x, direction.y));
+				const AuPoint forward = placement.UnProjectVector(operatorActor->Transform().ProjectVector(0, 1, 0));
+				const double currentYaw = std::atan2(-forward.x, forward.y);
+				const double turn = std::atan2(std::sin(yaw - currentYaw), std::cos(yaw - currentYaw));
+				const double allowedTurn = operatorActor->ConstrainTurretTurn(turn);
+				if(std::abs(allowedTurn - turn) > 1e-5) continue;
+				float pitch = float(std::atan2(direction.z, std::hypot(direction.x, direction.y)));
+				if(station.Type() == AuStation::Turret_Top) pitch = qMax(0.f, pitch);
+				if(station.Type() == AuStation::Turret_Bottom) pitch = qMin(0.f, pitch);
+				{
+					QMutexLocker lock(&m_Runtime->defenseLock);
+					aimChanged |= !m_Runtime->turretAims.contains(post.Key());
+					auto& aim = m_Runtime->turretAims[post.Key()];
+					aimChanged |= aim.yaw != yaw || aim.pitch != pitch;
+					aim.yaw = yaw; aim.pitch = pitch;
+				}
 				AuMatrix4x4 facing(placement);
 				facing.Translate(placement.UnProject(operatorActor->Location()));
-				facing.RotateZ(std::atan2(-direction.x, direction.y));
+				facing.RotateZ(yaw);
 				operatorActor->ForcePosStop(AuAtomPos(world->Id(), facing));
-				operatorActor->TiltHeadTo(float(std::atan2(direction.z, std::hypot(direction.x, direction.y))));
+				operatorActor->TiltHeadTo(pitch);
 			}
 		}
 		// Bay weapons sight as the city; turrets sight as their gunner so
@@ -4623,7 +4704,7 @@ void DaLegacyCity::TockDefenses()
 		if(obstruction && obstruction != target) continue;
 		FireDefenseWeapon(*operatorActor, post, target->Id(), 40);
 	}
-	bool changed = shields.size() != previous.size();
+	bool changed = aimChanged || shields.size() != previous.size();
 	if(!changed)
 		for(int index = 0; index < shields.size(); ++index)
 			if(shields[index].development != previous[index].development || shields[index].charge != previous[index].charge
@@ -4644,6 +4725,9 @@ void DaLegacyCity::TockDefenses()
 			}
 		}
 		m_Runtime->shields = shields;
+		for(auto aim = m_Runtime->turretAims.begin(); aim != m_Runtime->turretAims.end();)
+			if(!staffedTurrets.contains(aim.key())) { aim = m_Runtime->turretAims.erase(aim); changed = true; }
+			else ++aim;
 	}
 	if(changed) SetModified(NOTIFY_Scene);
 }
@@ -4986,6 +5070,14 @@ bool DaLegacyCity::FireDefenseWeapon(DaCreature& gunner, const DefensePost& post
 		towerRounds.Fired();
 		QMutexLocker lock(&m_Runtime->lock); m_Runtime->towerOrdnance.insert(post.Key(), towerRounds);
 	}
+	if(tower && dynamic_cast<DaNpc*>(&gunner))
+	{
+		// Replicate the shot marker before AddEffect queues this shot. The
+		// client can then apply its exact aim in the same update as the effect.
+		QMutexLocker lock(&m_Runtime->defenseLock);
+		auto aim = m_Runtime->turretAims.find(post.Key());
+		if(aim != m_Runtime->turretAims.end()) ++aim->shot;
+	}
 	if(DbCommodity::IsEnergyWeapon(ammo->CommodityId()))
 	{
 		AuCombatWeapon weapon(ammo.data(), fired); weapon.m_Range = range;
@@ -5017,8 +5109,11 @@ bool DaLegacyCity::FireDefenseWeapon(DaCreature& gunner, const DefensePost& post
 		missile->ArmWeapon(cityCredit ? Id() : gunner.Id(), cityCredit ? Name() : gunner.Name(), gunner.EmpireId());
 		missile->SetOwnerIgnored(true);
 		g_Au.AtomAdded(missile->Id()); missile->SetNormal(); missile->TickTock();
-		AuEffect effect(muzzleLocation, AuPoint(), AuPoint(), AuOrdnance::SoundFired(ammo->CommodityId()),
-			1, 1, AuOrdnance::VisualFired(ammo->CommodityId()));
+		const VISUAL_EFFECT visual = AuOrdnance::VisualFired(ammo->CommodityId());
+		AuPoint effectRotation;
+		if(tower && visual == VISUAL_FireCannon)
+			effectRotation = AuPoint(0, 1, 0).GetAlignmentTransform(destination - muzzleLocation).GetRotation();
+		AuEffect effect(muzzleLocation, effectRotation, AuPoint(), AuOrdnance::SoundFired(ammo->CommodityId()), 1, 1, visual);
 		effect.SetTargetLoc(destination); AddEffect(effect);
 	}
 	SetModified();
@@ -5433,13 +5528,52 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 	DaAtomList stationOccupants;
 	world->ListNormalSubatoms(stationOccupants);
 	QHash<quint64, AuMatrix4x4> turretModels;
+	QSet<quint64> playerTurrets;
 	for(const DaAtom* atom : stationOccupants)
-		if(const auto* gunner = dynamic_cast<const DaCreature*>(atom))
+		if(const auto* gunner = dynamic_cast<const DaPerson*>(atom))
 			if(gunner->IsTurretPose())
 			{
 				AuMatrix4x4 gun, muzzle; quint64 key = 0;
-				if(TurretMatrices(*gunner, gun, muzzle, &key)) turretModels.insert(key, gun);
+				if(TurretMatrices(*gunner, gun, muzzle, &key))
+				{
+					turretModels.insert(key, gun);
+					playerTurrets.insert(key);
+				}
 			}
+	QHash<quint64, AuPoint> turretAngles;
+	const qint64 now = QDateTime::currentMSecsSinceEpoch();
+	{
+		QMutexLocker lock(&m_Runtime->defenseLock);
+		for(auto aim = m_Runtime->turretAims.cbegin(); aim != m_Runtime->turretAims.cend(); ++aim)
+		{
+			auto& animation = m_Runtime->turretAnimations[aim.key()];
+			if(!animation.changed || animation.target.shot != aim->shot)
+			{
+				// A new shot must not wait for presentation interpolation.
+				animation.start = AuPoint(aim->yaw, aim->pitch, 0);
+				animation.target = *aim; animation.changed = now;
+			}
+			else if(animation.target.yaw != aim->yaw || animation.target.pitch != aim->pitch)
+			{
+				animation.start = animation.Sample(now);
+				animation.target = *aim; animation.changed = now;
+			}
+			turretAngles.insert(aim.key(), animation.Sample(now));
+		}
+		for(auto animation = m_Runtime->turretAnimations.begin(); animation != m_Runtime->turretAnimations.end();)
+			if(!m_Runtime->turretAims.contains(animation.key())) animation = m_Runtime->turretAnimations.erase(animation);
+			else ++animation;
+	}
+	const auto developments = Snapshot().developments;
+	for(auto angles = turretAngles.cbegin(); angles != turretAngles.cend(); ++angles)
+	{
+		const quint32 id = quint32(angles.key() >> 16);
+		const auto development = std::find_if(developments.cbegin(), developments.cend(),
+			[id](const AuLegacyCity::Development& value) { return value.id == id; });
+		AuMatrix4x4 gun, muzzle; quint64 key = 0;
+		if(development != developments.cend() && TurretMatrices(*development, quint16(angles.key()),
+			float(angles->x), float(angles->y), gun, muzzle, &key) && !playerTurrets.contains(key)) turretModels.insert(key, gun);
+	}
 	UpdateSiteTerrain(ari);
 	if(!ari.IsViewTopDown() && world->AtomType() == ATOM_WorldGlobe)
 	{

@@ -364,6 +364,8 @@ private:
 	void TockEconomy(qint64 previous, qint64 now);
 	void TockHospitalPatients();
 	bool FireDefenseWeapon(DaCreature& gunner, const DefensePost& post, const AuId& target, int powerSetting);
+	bool TurretMatrices(const AuLegacyCity::Development& development, quint16 stationId, float yaw, float pitch,
+		AuMatrix4x4& gunWorld, AuMatrix4x4& muzzleWorld, quint64* drawKey = nullptr) const;
 	bool ManBuildingStation(DaNpc& troop, const AuLegacyCity::Development& development, quint16 stationId) const;
 	void TockStationOperators();
 	const DaPerson* DefensePostPlayer(const DefensePost& post) const;

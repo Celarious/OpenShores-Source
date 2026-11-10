@@ -1753,6 +1753,7 @@ public:
 	DaLegacyCity* LegacyStationCity(AuStation* station = nullptr) const;
 	bool IsLegacyTurretStation() const;
 	bool LegacyTurretMuzzle(AuMatrix4x4& muzzle) const;
+	static AuPoint LegacyTurretHemiVector(const AuPose& pose);
 	// Shared player/NPC wall-turret arc; city yaw is relative to the building.
 	double ConstrainTurretTurn(double turn) const;
 	DaAtom* StationOwner();

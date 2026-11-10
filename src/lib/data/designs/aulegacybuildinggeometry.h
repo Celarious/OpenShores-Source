@@ -46,6 +46,7 @@ struct Batch
 	quint32 detailId = 0;
 	quint32 turretId = 0;
 	QVector3D rotationPivot;
+	QVector3D turretMuzzle;
 	QString textureFile;
 	QVector4D tint = QVector4D(1, 1, 1, 1);
 	float selfIllumination = 0;

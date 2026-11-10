@@ -813,6 +813,7 @@ void SharedDetails(Builder& out, const Design& design, const Options& options)
 			imported.equipment = batch.equipment;
 			imported.turretId = batch.turretId;
 			imported.rotationPivot = batch.rotationPivot + QVector3D(0, 0, float(deck * AuLegacyBd::DeckHeight));
+			imported.turretMuzzle = batch.turretMuzzle + QVector3D(0, 0, float(deck * AuLegacyBd::DeckHeight));
 			imported.textureFile = batch.textureFile; imported.tint = batch.tint;
 			imported.selfIllumination = batch.selfIllumination; imported.twoSided = batch.twoSided;
 			const QVector3D offset(0, 0, float(deck * AuLegacyBd::DeckHeight));

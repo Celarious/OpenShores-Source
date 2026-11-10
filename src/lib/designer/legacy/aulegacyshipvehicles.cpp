@@ -367,12 +367,25 @@ void TurretGun(Appender& append, const Detail& detail, const QVector3D& location
 	QMatrix4x4 transform;
 	transform.translate(position);
 	transform.rotate(angle, 0, 0, 1);
+	// The barrel points along model +X. Its opening is below the model
+	// origin, so the rotation pivot is not a valid muzzle position.
+	QVector3D muzzleMinimum = gun.maximum, muzzleMaximum = gun.minimum;
+	for(const auto& batch : gun.batches)
+		for(const auto& vertex : batch.vertices)
+			if(vertex.position.x() >= gun.maximum.x() - .001f)
+				for(int axis = 0; axis < 3; ++axis)
+				{
+					muzzleMinimum[axis] = std::min(muzzleMinimum[axis], vertex.position[axis]);
+					muzzleMaximum[axis] = std::max(muzzleMaximum[axis], vertex.position[axis]);
+				}
+	const QVector3D muzzle = transform.map((muzzleMinimum + muzzleMaximum) * .5f);
 	const int first = append.mesh.batches.size();
 	append.AddModel(gun, transform, detail.detailType == 22 ? detail.deck - 1 : detail.deck);
 	for(int i = first; i < append.mesh.batches.size(); ++i)
 	{
 		append.mesh.batches[i].turretId = detail.detailId;
 		append.mesh.batches[i].rotationPivot = position;
+		append.mesh.batches[i].turretMuzzle = muzzle;
 	}
 }
 }

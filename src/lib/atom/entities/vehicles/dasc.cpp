@@ -16253,20 +16253,8 @@ AuPoint DaSc::TurretHemiVector(const AuPose& pose, quint16 which) const
 {
 	if(IsLegacyDebug())
 	{
-		switch(pose.Pose())
-		{
-		case AuPose::ConsoleTurretTop: return AuPoint(0, 0, 1);
-		case AuPose::ConsoleTurretBottom: return AuPoint(0, 0, -1);
-		case AuPose::ConsoleTurret0: return AuPoint(1, 0, 0);
-		case AuPose::ConsoleTurret45: return AuPoint(.7071, .7071, 0);
-		case AuPose::ConsoleTurret90: return AuPoint(0, 1, 0);
-		case AuPose::ConsoleTurret135: return AuPoint(-.7071, .7071, 0);
-		case AuPose::ConsoleTurret180: return AuPoint(-1, 0, 0);
-		case AuPose::ConsoleTurret225: return AuPoint(-.7071, -.7071, 0);
-		case AuPose::ConsoleTurret270: return AuPoint(0, -1, 0);
-		case AuPose::ConsoleTurret315: return AuPoint(.7071, -.7071, 0);
-		default: break;
-		}
+		const AuPoint direction = DaCreature::LegacyTurretHemiVector(pose);
+		if(!direction.IsZero()) return direction;
 	}
 	AuPoint hemiVec;
 	const AuScDesign* scd = LockDesign();

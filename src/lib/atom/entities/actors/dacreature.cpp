@@ -9488,6 +9488,24 @@ bool DaCreature::LegacyTurretMuzzle(AuMatrix4x4& muzzle) const
 	return city && city->TurretMatrices(*this, gun, muzzle);
 }
 
+AuPoint DaCreature::LegacyTurretHemiVector(const AuPose& pose)
+{
+	switch(pose.Pose())
+	{
+	case AuPose::ConsoleTurretTop: return AuPoint(0, 0, 1);
+	case AuPose::ConsoleTurretBottom: return AuPoint(0, 0, -1);
+	case AuPose::ConsoleTurret0: return AuPoint(1, 0, 0);
+	case AuPose::ConsoleTurret45: return AuPoint(.7071, .7071, 0);
+	case AuPose::ConsoleTurret90: return AuPoint(0, 1, 0);
+	case AuPose::ConsoleTurret135: return AuPoint(-.7071, .7071, 0);
+	case AuPose::ConsoleTurret180: return AuPoint(-1, 0, 0);
+	case AuPose::ConsoleTurret225: return AuPoint(-.7071, -.7071, 0);
+	case AuPose::ConsoleTurret270: return AuPoint(0, -1, 0);
+	case AuPose::ConsoleTurret315: return AuPoint(.7071, -.7071, 0);
+	default: return AuPoint();
+	}
+}
+
 double DaCreature::ConstrainTurretTurn(double turn) const
 {
 	double direction;
