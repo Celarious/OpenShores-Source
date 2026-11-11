@@ -5909,6 +5909,18 @@ void DaPerson::ProcessControlInput(const DiControlInputArray& aActiveControls, D
 					else
 						msfire = 750;
 					break;
+				case CID_Bow:
+					if(weapon.m_Mode == WM_Contact)
+						msfire = 800;
+					else
+						msfire = 1200;
+					break;
+				case CID_Spear:
+					msfire = 900;
+					break;
+				case CID_Javelin:
+					msfire = 1000;
+					break;
 				}
 				m_PersonLock.lockForRead();
 				bool f = millis < msfire && m_tmLastWeaponFired.isValid();
@@ -5918,6 +5930,16 @@ void DaPerson::ProcessControlInput(const DiControlInputArray& aActiveControls, D
 				m_PersonLock.lockForWrite();
 				m_tmLastWeaponFired.restart();
 				m_PersonLock.unlock();
+
+				quint8 arrowQ = 0;
+				if(weapon.m_CID == CID_Bow)
+				{
+					m_GearLock.lockForRead();
+					const AuItemWeaponAmmo* bow = dynamic_cast<const AuItemWeaponAmmo*>(m_Gear.ItemAt(gearPos));
+					if(bow && bow->Ammo1Loaded())
+						arrowQ = bow->Ammo1Quality();
+					m_GearLock.unlock();
+				}
 
 				// The scene atom "uses" the weapon in hand.
 				// This will consume ammo if applicable.
@@ -6068,6 +6090,14 @@ void DaPerson::ProcessControlInput(const DiControlInputArray& aActiveControls, D
 							AuCombatResult result;
 
 							AttackTarget(attacker, defender, weapon, true, result);
+						}
+
+						if(target && ci.TargetLoc().Length() <= weapon.m_Range)
+						{
+							if(weapon.m_CID == CID_Javelin)
+								DropMissileAt(CID_Javelin, weapon.m_Quality, ci.TargetLoc());
+							else if(weapon.m_CID == CID_Bow && arrowQ && g_Au.Dice().Roll(1,2) == 1)
+								DropMissileAt(CID_Arrows, arrowQ, ci.TargetLoc());
 						}
 					}
 					
@@ -7029,7 +7059,7 @@ bool DaPerson::BestWeaponAtRange(float targetRange, AuDNABase::WEAPONLOC& loc, A
 				if(weapon.m_Mode == WM_Contact)
 				{
 					// Melee weapons are affected by strength and strength increases damage.
-					weapon.m_w1.m_DamageMod += StrengthMod();				// Strength mod increases base damage.
+					weapon.m_w1.m_DamageMod += (weapon.m_CID == CID_Spear && StrengthMod() < 0) ? 0 : StrengthMod();				// Strength mod increases base damage.
 				}
 			}
 		}
@@ -7085,7 +7115,7 @@ void DaPerson::WeaponAtUsePos(const AuGearPos& gearPos, INVENTORYSUB sub, AuComb
 					if(weapon.m_Mode == WM_Contact)
 					{
 						// Melee weapons are affected by strength and strength increases damage.
-						weapon.m_w1.m_DamageMod += StrengthMod();					// Strength mod increases base damage.
+						weapon.m_w1.m_DamageMod += (weapon.m_CID == CID_Spear && StrengthMod() < 0) ? 0 : StrengthMod();					// Strength mod increases base damage.
 					}
 				}
 			}
@@ -9949,6 +9979,7 @@ void DaPerson::MoveGear(const AuGearPos& srcPos, const AuGearPos& destPos)
 
 	// Must get info about the items before we do the move because the pos indexes become invalid.
 	QString srcDesc = srcItem->ListDesc();
+	QString loadDesc = AuGear::OneUnitDesc(*srcItem);
 	QString destName = destItem->SayName();
 	COMMODITYID destCID = destItem->CommodityId();
 	quint8 destQ = destItem->Quality();
@@ -9961,7 +9992,7 @@ void DaPerson::MoveGear(const AuGearPos& srcPos, const AuGearPos& destPos)
 			// Send a log message to the player.
 			QString text = tr("%1 loaded with %2.")
 				.arg(destName)
-				.arg(srcDesc.toLower());
+				.arg(loadDesc.toLower());
 			Thought(text);
 		}
 		else if(moved == 3)
@@ -10241,6 +10272,50 @@ void DaPerson::ThrowCurrentItem()
 	item->SetInScene();					// Don't decay too fast right away.
 	item->SetNormal();					// New atom is ready for normal thread processing.
 	item->TickTock();					// Get it moving right away.
+}
+
+void DaPerson::DropMissileAt(COMMODITYID cid, quint8 quality, const AuPoint& targetLoc)
+{
+	AuEther* ether = Ether();
+	if(!ether || !quality)
+		return;
+
+	DaAtom* itemParent = Parent();
+	while(itemParent && (dynamic_cast<DaCreature*>(itemParent) || dynamic_cast<DaVehicle*>(itemParent)))
+		itemParent = itemParent->Parent();
+	if(!itemParent)
+		return;
+
+	AuItem* gearItem = AuItem::Create(cid, quality, EmpireId());
+	if(!gearItem)
+		return;
+
+	AuPoint loc = targetLoc;
+	AuPoint back = CameraOffset() - targetLoc;
+	if(back.Length() > 1)
+	{
+		back.Unit();
+		loc += back;
+	}
+
+	DaItem* item = new DaItem(*gearItem);
+	item->ConnectSignals();
+	item->Create();
+	AuMatrix4x4 t;
+	GetTransformRelativeToParent(t, itemParent);
+	t.Translate(loc);
+	t *= gearItem->GroundUpVector().GetAlignmentTransform(AuPoint(0,0,1));
+	delete gearItem;
+	item->SetPosAndOrient(AuAtomPos(itemParent->Id(), t));
+	ether->AddAtom(item);
+	item->SetVector(AuPoint(0,0));
+	item->SetInMotion();
+
+	g_Au.AtomAdded(item->Id());
+
+	item->SetInScene();
+	item->SetNormal();
+	item->TickTock();
 }
 
 // Throw the top level item.
@@ -16399,7 +16474,7 @@ void DaPerson::HandcraftItem(int mpid)
 			}
 			else
 			{
-				AuItem* item = AuItem::Create(cid, quality, EmpireId());
+				AuItem* item = AuItem::Create(cid, quality, EmpireId(), mp.LastOutputQuantity() > 1 ? (quint32)mp.LastOutputQuantity() : 1);
 				AuItemDNA* itemDNA = dynamic_cast<AuItemDNA*>(item);
 				if(itemDNA)
 				{

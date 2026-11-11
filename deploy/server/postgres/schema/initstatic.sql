@@ -715,6 +715,10 @@ INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVec
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, newcond) VALUES (636,'Lumber Hull',':data/c_Lumber.png',':data/ModuleHull.SoH',0.0,0,0,1,8192+1,1,2,2.2, 2);
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, newcond) VALUES (637,'Stone Hull',':data/c_Stone.png',':data/ModuleHull.SoH',0.0,0,0,1,8192+1,1,2,2.2, 2);
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, newcond) VALUES (638,'Adamantine Hull',':data/c_Adamantine.png',':data/ModuleHull.SoH',0.0,0,0,1,8192+1,1,2,2.2, 2);
+INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, newcond,health, wpn1Mode,wpn1Range,ammo1Type,ammo1Qty) VALUES (640,'Bow',':data/c_Bow.png',':data/mBow.3dsN',0.13,0,1,0,8192+256+1,2,8,2.5, 60,4, 5,300,10,1);
+INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, stackLimit, ammo1Type,wpn1Effect1,wpn1Damage1,wpn1DamageMod1,wpn1AP1) VALUES (641,'Arrows',':data/c_Arrows.png',':data/mArrows.3dsN',0.1,0,0,1,8192+1,1,3,.1, 100, 10,13,24,6,5);
+INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, newcond, wpn1Mode,wpn1Range,wpn1Effect1,wpn1Damage1,wpn1DamageMod1,wpn1AP1) VALUES (642,'Spear',':data/c_Spear.png',':data/mSpear.3dsN',0.17,0,0,1,8192+1,1,8,4, 80, 2,4,13,24,8,10);
+INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, newcond,stackLimit, wpn1Mode,wpn1Range,wpn1Effect1,wpn1Damage1,wpn1DamageMod1,wpn1AP1) VALUES (643,'Javelin',':data/c_Javelin.png',':data/mJavelin.3dsN',0.09,0,0,1,8192+1,1,8,2.5, 60,10, 5,90,13,30,8,10);
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt) VALUES (650,'Building Blueprint Drawing',':data/c_BdDesignDrawing.png',':data/Blueprint.SoH',0.05,1,0,0,1,1,1,.01);
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt) VALUES (651,'Building Blueprint Disk',':data/c_BdDesignDisk.png',':data/Disk.SoH',0.05,1,0,0,1,1,1,.22);
 INSERT INTO b_Commodity (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, health) VALUES (652,'Nuclear Fuel Rod',':data/c_FuelRod.png',':data/FuelRod.SoH',0.2,-1,0,0,8192+257,1,8,100, 9);
@@ -10193,6 +10197,22 @@ INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1152,161,0,
 INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1152,3,1,2); -- Electricity
 INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1152,116,0,2); -- Knife
 INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1152,14,1,5); -- Animal
+INSERT INTO b_ManufacturingProcess (id,name,idc,idi,qty,labor,craft) VALUES (1154,'Bow',640,77,1,40,1);
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1154,116,0,5);
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1154,48,1,5); -- Lumber
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1154,79,1,5); -- Textiles
+INSERT INTO b_ManufacturingProcess (id,name,idc,idi,qty,labor,craft) VALUES (1155,'Arrows',641,77,10,15,1);
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1155,116,0,5);
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1155,48,1,5); -- Lumber
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1155,76,1,5); -- Stone
+INSERT INTO b_ManufacturingProcess (id,name,idc,idi,qty,labor,craft) VALUES (1156,'Spear',642,77,1,20,1);
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1156,116,0,5);
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1156,86,1,5); -- Log
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1156,76,1,5); -- Stone
+INSERT INTO b_ManufacturingProcess (id,name,idc,idi,qty,labor,craft) VALUES (1157,'Javelin',643,77,1,15,1);
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1157,116,0,5);
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1157,48,1,5); -- Lumber
+INSERT INTO b_ManufacturingComponent (idmp,idc,consumed,ide) VALUES (1157,76,1,5); -- Stone
 -- End of b_ManufacturingProcess
 
 

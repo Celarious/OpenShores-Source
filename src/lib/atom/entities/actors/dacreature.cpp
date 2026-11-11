@@ -5842,6 +5842,10 @@ void DaCreature::UseItemEffect(COMMODITYID cid, WEAPONMODE wMode, WEAPONEFFECT e
 			sound = SOUND_FireShotgun;
 			visual = VISUAL_FireShotgun;
 			break;
+		case CID_Bow:
+		case CID_Javelin:
+			sound = SOUND_KnifeSwish;
+			break;
 		case CID_LaserPistol:
 			if(subMode == IPS_Weapon1)
 			{

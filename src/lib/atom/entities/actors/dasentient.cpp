@@ -4883,6 +4883,18 @@ bool DaSentient::IsReadyToShootAimedWeapon() const
 						if(elapsed > 600)
 							return true;
 						break;
+					case CID_Bow:
+						if(elapsed > 1200)
+							return true;
+						break;
+					case CID_Spear:
+						if(elapsed > 900)
+							return true;
+						break;
+					case CID_Javelin:
+						if(elapsed > 1000)
+							return true;
+						break;
 					default:
 						// How about 1 hit per second with everything else.
 						if(elapsed > 1000)
@@ -24792,6 +24804,7 @@ int DaSentient::UseItem(AuItem& item, INVENTORYSUB sub)
 	// Some items are consumed whenever they are used.
 	if(item.CanBeEaten(EcoRole()) ||							// Food and liquor is consumed when used/eaten.
 			item.CommodityId() == CID_Flag ||					// Flags are consumed to when a world is claimed.
+			item.CommodityId() == CID_Javelin ||
 			item.CommodityId() == CID_Seed)						// Seeds are consumed when planted in pots.
 
 	{

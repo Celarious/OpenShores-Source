@@ -1117,6 +1117,17 @@ public:	// Methods
 	// 10+11 = Source item mission stored successfully.
 	int MoveItem(const AuGearPos& srcPos, const AuGearPos& destPos);
 
+	static inline QString OneUnitDesc(const AuItem& ammo)
+	{
+		if(ammo.Count() <= 1)
+			return ammo.ListDesc();
+		AuItem* one = ammo.Clone();
+		one->SetCount(1);
+		QString desc = one->ListDesc();
+		delete one;
+		return desc;
+	}
+
 	// Returns an available which id for a slot type.
 	quint8 NextWhich(AuGearSlot::SLOTTYPE slotType) const;
 

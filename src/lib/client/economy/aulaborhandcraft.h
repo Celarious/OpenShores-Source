@@ -10,29 +10,33 @@
 #include "auclientlib.h"
 #include "audialog.h"
 #include "audockwidget.h"
+#include "auelapsedtimer.h"
 
 class DaPerson;
-class QComboBox;
+class QGroupBox;
 class QLabel;
+class QLineEdit;
 class QListWidget;
-class QTableWidget;
+class QPushButton;
 class QTimer;
-class QToolButton;
 
 class AUCLIENT_DLL AuHandCraftPanel : public QWidget
 {
 	Q_OBJECT;
 private:
 	int									m_MPID;					// manufacturing process id
+	QString								m_Category;
+	QList<int>							m_Plan;
+	AuElapsedTimer						m_FlagAfterEmpire;
 
 	// Widgets
-	QListWidget*						m_Components;
-	QToolButton*						m_Make;
-	QComboBox*							m_MakeWhat;
-	QTableWidget*						m_Modifiers;
+	QLineEdit*							m_Search;
+	QListWidget*						m_Categories;
+	QListWidget*						m_Recipes;
+	QListWidget*						m_Needs;
+	QGroupBox*							m_NeedsBox;
+	QPushButton*						m_Make;
 	QLabel*								m_Note;
-	QLabel*								m_Status;
-	QLabel*								m_StatusIcon;
 
 public:
 	AuHandCraftPanel(QWidget* parent=0);
@@ -41,11 +45,14 @@ public:
 	void UpdateContents(DaPerson* person);
 
 protected slots:
+	void CategoryChanged();
 	void GoPushed();
-	void ProcessSelectionChanged(int index);
+	void RecipeChanged();
+	void SearchChanged();
 
 signals:
 	void Go(int mpid);
+	void Refresh();
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|

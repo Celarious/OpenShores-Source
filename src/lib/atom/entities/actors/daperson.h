@@ -2279,6 +2279,8 @@ protected:
 
 	void ThrowCurrentItem();
 
+	void DropMissileAt(COMMODITYID cid, quint8 quality, const AuPoint& targetLoc);
+
 	// Use the current item's "item mode" on a target atom.
 	// 'isAltMode' uses the alternate mode of the item, e.g. remove parts rather than install parts.
 	void UseItemOnTarget(const AuId& target, unsigned int part, const AuPoint& targLoc, bool isAltMode);

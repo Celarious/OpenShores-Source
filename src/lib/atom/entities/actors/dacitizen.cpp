@@ -955,7 +955,7 @@ bool DaCitizen::BestWeaponAtRange(float targetRange, AuDNABase::WEAPONLOC& loc, 
 				if(weapon.m_Mode == WM_Contact)
 				{
 					// Melee weapons are affected by strength and strength increases damage.
-					weapon.m_w1.m_DamageMod += StrengthMod();						// Strength mod increases base damage.
+					weapon.m_w1.m_DamageMod += (weapon.m_CID == CID_Spear && StrengthMod() < 0) ? 0 : StrengthMod();						// Strength mod increases base damage.
 				}
 			}
 		}
@@ -1011,7 +1011,7 @@ void DaCitizen::WeaponAtUsePos(const AuGearPos& pos, INVENTORYSUB sub, AuCombatW
 						if(weapon.m_Mode == WM_Contact)
 						{
 							// Melee weapons are affected by strength and strength increases damage.
-							weapon.m_w1.m_DamageMod += StrengthMod();					// Strength mod increases base damage.
+							weapon.m_w1.m_DamageMod += (weapon.m_CID == CID_Spear && StrengthMod() < 0) ? 0 : StrengthMod();					// Strength mod increases base damage.
 						}
 					}
 				}

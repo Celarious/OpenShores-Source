@@ -28,7 +28,7 @@
 #include <QPixmap>
 #include <QStringList>
 
-#define GAME_DATA_VER					0x08					// GD file version.
+#define GAME_DATA_VER					0x09					// GD file version.
 #define SOLO_INIT_VER					0x01					// GS file version.
 
 DgData::DgData()
