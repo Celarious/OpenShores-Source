@@ -135,6 +135,8 @@ bool DaLegacyCity::ReportCurrent(AuCityReport& report)
 	if(!CompleteCityReport(report, state, inventory, inventory, production, accounting,
 		population, employment, AuTime::CurrentMSecsSinceEpoch(), error))
 	{ qWarning() << "Legacy current city report:" << Id() << error; return false; }
+	// Reuse the report's existing intermediate-query marker: no city cycle ran.
+	report.m_AirConsumed = -1;
 	return true;
 }
 

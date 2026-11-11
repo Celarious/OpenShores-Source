@@ -132,6 +132,8 @@ QString LegacyMoraleHtml(const AuCityReport& report, const AuLegacyCity::Populat
 	// AuData13.dll AuCityReport::ReportHtml 0x35d50: factors precede the
 	// morale change/total, and every line retains its trailing break.
 	QString html = QStringLiteral("<b>MORALE</b><div style=\"margin-left: 10px;\">");
+	if(report.m_AirConsumed < 0)
+		return html + QObject::tr("Morale %1.<br></div>").arg(report.m_SatOrig);
 	QString empire;
 	const auto& data = g_Au.LockDataForRead();
 	data.EmpireName(report.EmpireId(0), empire);
@@ -338,6 +340,9 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 	QString html;
 	const AuLegacyCity::PopulationCycleResult result = LegacyReportPopulation(report);
 	int population = int(report.m_PopOrig);
+	const bool occupied = report.m_LegacyOccupied;
+	// Intermediate queries contain current values, not population-cycle events.
+	if(report.m_AirConsumed >= 0)
 	{
 		if(report.m_LegacyCrisisDeaths)
 			html += QObject::tr("%1 citizens died from food poisoning or epidemic.<br>").arg(report.m_LegacyCrisisDeaths);
@@ -350,7 +355,6 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 				: QObject::tr("%1 citizens starved to death.<br>").arg(result.starved);
 		population = std::max(0, population - result.suffocated - result.starved);
 		const bool noRoute = report.m_IsIsolated && !report.HasAirport();
-		const bool occupied = report.m_LegacyOccupied;
 		int migration = result.satisfaction;
 		auto suicide = [&html](int count) {
 			if(count == 1) html += QObject::tr("One citizen committed suicide due to isolation and despair.<br>");
@@ -519,7 +523,10 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 		else if(quint32(population) > report.m_PopOrig)
 			html += QObject::tr("Population increased by %1 to %2.<br><br>").arg(population - report.m_PopOrig).arg(population);
 		else html += QObject::tr("Population remained steady at %1.<br><br>").arg(population);
+	}
+	else html += QObject::tr("Population %1.<br><br>").arg(population);
 
+	{
 		population = result.population;
 		const AuLegacyCityCatalogue* catalogue = AuLegacyCityCatalogue::BuiltIn();
 		if(catalogue)
