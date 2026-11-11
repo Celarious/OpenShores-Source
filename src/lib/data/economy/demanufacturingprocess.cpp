@@ -851,11 +851,26 @@ void DeManufacturingProcess::Run(const AuTime& start, unsigned int laborBoost, i
 	m_tmComplete = start.AddSecs(secsToRun);
 }
 
+static bool IsHandWeaponBatch(COMMODITYID cid)
+{
+	switch(cid)
+	{
+	case CID_Bow:
+	case CID_Arrows:
+	case CID_Spear:
+	case CID_Javelin:
+		return true;
+	default:
+		break;
+	}
+	return false;
+}
+
 void DeManufacturingProcess::RunHandCraft(const AuKnownPatents& patents)
 {
 	AuZoneResource naturalResourcesPresent;	// Not needed because no handcrafting process is affected by natural resources.
 	FinishOutput(naturalResourcesPresent, patents);
-	if(m_LastQuantity > 1)
+	if(m_LastQuantity > 1 && !IsHandWeaponBatch(CommodityId()))
 		m_LastQuantity = 1;				// Handcrafting only produces 1 item, regardless of the process.
 }
 

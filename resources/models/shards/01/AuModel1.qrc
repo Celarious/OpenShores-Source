@@ -130,6 +130,14 @@
 	<file>data/mKnifeM.png</file>
 	<file>data/mKnifeV.3dsN</file>
 	<file>data/mKnifeV.png</file>
+	<file>data/mBow.3dsN</file>
+	<file>data/mBow.png</file>
+	<file>data/mArrows.3dsN</file>
+	<file>data/mArrows.png</file>
+	<file>data/mSpear.3dsN</file>
+	<file>data/mSpear.png</file>
+	<file>data/mJavelin.3dsN</file>
+	<file>data/mJavelin.png</file>
 	<file>data/mLantern.3dsN</file>
 	<file>data/mLantern.png</file>
 	<file>data/mLaserPistol.3ds</file>

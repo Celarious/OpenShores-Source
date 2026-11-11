@@ -1161,6 +1161,7 @@ quint8 AuItem::ItemType(COMMODITYID cid)
 	case CID_FittingWrench:
 	case CID_GlueGun:
 	case CID_Hammer:
+	case CID_Javelin:
 	case CID_Knife:
 	case CID_MagmiumKnife:
 	case CID_NitrateExplosive:
@@ -1168,6 +1169,7 @@ quint8 AuItem::ItemType(COMMODITYID cid)
 	case CID_ScrewDriver:
 	case CID_SewingNeedle:
 	case CID_Shovel:
+	case CID_Spear:
 	case CID_SolderIron:
 	case CID_Tongs:
 	case CID_TorqueWrench:
@@ -1187,6 +1189,7 @@ quint8 AuItem::ItemType(COMMODITYID cid)
 	case CID_Rifle:
 	case CID_Shotgun:
 	case CID_LaserRifle:
+	case CID_Bow:
 		// Weapons that use ammo.
 		return AuItemWeaponAmmo::ItemType();
 
@@ -1197,6 +1200,7 @@ quint8 AuItem::ItemType(COMMODITYID cid)
 	case CID_HeavyArmsAmmoPiRa:
 	case CID_RifleAmmo:
 	case CID_ShotgunAmmo:
+	case CID_Arrows:
 	case CID_Gigacell:
 	case CID_SmallMissileBl:
 	case CID_LargeMissileBl:

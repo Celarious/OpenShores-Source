@@ -119,6 +119,7 @@ enum AMMOTYPE
 	AMMO_Tube = 7,
 	AMMO_Energy1 = 8,	// Used for weapon 2 when it uses energy ammo from weapon 1, basically sharing. e.g. Modes of a laser rifle
 	AMMO_Explosive = 9,	// Not specifically ammunition but explodes like ammo when damaged. e.g. propane tank, gigacell
+	AMMO_Arrow = 10,
 };
 
 enum COMMODITYBITS
@@ -817,6 +818,10 @@ enum COMMODITYID
 	CID_LumberHullModule = 636,
 	CID_StoneHullModule = 637,
 	CID_AdamantineHullModule = 638,
+	CID_Bow = 640,
+	CID_Arrows = 641,
+	CID_Spear = 642,
+	CID_Javelin = 643,
 
 	CID_BdDesignDrawing					= 650,
 	CID_BdDesignDisk					= 651,

@@ -702,6 +702,10 @@
 	<file>data/c_KhakiBDU.png</file>
 	<file>data/c_Knapsack.png</file>
 	<file>data/c_Knife.png</file>
+	<file>data/c_Bow.png</file>
+	<file>data/c_Arrows.png</file>
+	<file>data/c_Spear.png</file>
+	<file>data/c_Javelin.png</file>
 	<file>data/c_Lantern.png</file>
 	<file>data/c_LaserPistol.png</file>
 	<file>data/c_LaserRifle.png</file>

@@ -721,7 +721,7 @@ bool AuGear::ReloadItem(const AuGearPos& pos, INVENTORYSUB itemSub, QString& amm
 			if(ammo->AmmoType() == item->Ammo1Type())
 			{
 				// The inventory item is the appropriate kind of ammo for weapon 1.
-				ammoDesc = ammo->ListDesc();
+				ammoDesc = OneUnitDesc(*ammo);
 
 				// MoveItem handles reloading of weapons.
 				if(MoveItem(ammopos, pos))
@@ -734,7 +734,7 @@ bool AuGear::ReloadItem(const AuGearPos& pos, INVENTORYSUB itemSub, QString& amm
 			if(ammo->AmmoType() == item->Ammo2Type())
 			{
 				// The inventory item is the appropriate kind of ammo for weapon 2.
-				ammoDesc = ammo->ListDesc();
+				ammoDesc = OneUnitDesc(*ammo);
 
 				// MoveItem handles reloading of weapons.
 				if(MoveItem(ammopos, pos))
@@ -766,7 +766,7 @@ bool AuGear::ReloadItem(const AuGearPos& pos, INVENTORYSUB itemSub, QString& amm
 				if(ammo->AmmoType() == item->Ammo1Type())
 				{
 					// The inventory item is the appropriate kind of ammo for weapon 1.
-					ammoDesc = ammo->ListDesc();
+					ammoDesc = OneUnitDesc(*ammo);
 
 					// MoveItem handles reloading of weapons.
 					if(MoveItem(AuGearPos(*gi, (*ci).first), pos))
@@ -781,7 +781,7 @@ bool AuGear::ReloadItem(const AuGearPos& pos, INVENTORYSUB itemSub, QString& amm
 				if(ammo->AmmoType() == item->Ammo2Type())
 				{
 					// The inventory item is the appropriate kind of ammo for weapon 2.
-					ammoDesc = ammo->ListDesc();
+					ammoDesc = OneUnitDesc(*ammo);
 
 					// MoveItem handles reloading of weapons.
 					if(MoveItem(AuGearPos(*gi, (*ci).first), pos))
@@ -875,7 +875,11 @@ int AuGear::MoveItem(const AuGearPos& srcPos, const AuGearPos& destPos)
 	if(destItem->LoadAmmoIntoWeapon(*srcItem))
 	{
 		// Remove source item now that the ammo was loaded successfully.
-		Erase(srcPos);
+		AuItem* srcStack = ItemAt(srcPos);
+		if(srcStack && srcStack->Count() > 1)
+			srcStack->Consume(1);
+		else
+			Erase(srcPos);
 		return 2;
 	}
 	else if(destItem->PlantSeedInPot(*srcItem))
