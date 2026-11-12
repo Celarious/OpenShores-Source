@@ -805,6 +805,15 @@ bool ConstructionAuthority(const DaLegacyCity& city, const DaPerson& person, boo
 	return true;
 }
 
+bool ConstructionPlanAllowed(const AuLegacyCity::State& state, QString& error)
+{
+	// DaCity::IsOccupied (AuAtom13 0xf47a0) compares allegiance with control,
+	// independently of the remaining loyal population or the builder's powers.
+	if(state.allegianceEmpire == state.controllingEmpire) return true;
+	error = QStringLiteral("Buildings and roads cannot be planned or demolished while the city is occupied.");
+	return false;
+}
+
 int ConstructionThreat(DaWorldLL& world, const AuId& cityId, const AuLegacyCity::Development& dev, quint32 empire)
 {
 	// CheckWildAnimalOrEnemyCreature, AuAtom13 0x50edc0. These industries
@@ -2709,6 +2718,7 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 	ConstructedDecks(dev);
 	InitializeConstruction(dev, SitePreparationLabor(*world,dev), AuLegacyCity::ConstructionEnvironment(*world,dev));
 	QWriteLocker lock(&m_CityLock);
+	if(!ConstructionPlanAllowed(m_City, error)) return false;
 	if(m_City.developments.size() >= AuLegacyCity::MaximumDevelopments)
 	{ error = QStringLiteral("The city has reached its development limit."); return false; }
 	int flagSites=industry==1 || industry==10 ? 1 : 0;
@@ -2785,6 +2795,7 @@ bool DaLegacyCity::ReplaceFinishedDevelopment(const AuLegacyCity::Development& r
 	quint8 expectedProcess, quint8 expectedLevels, QString& error)
 {
 	QWriteLocker lock(&m_CityLock);
+	if(!ConstructionPlanAllowed(m_City, error)) return false;
 	auto candidate=m_City;
 	for(auto& current : candidate.developments) if(current.id==replacement.id)
 	{
@@ -2826,6 +2837,7 @@ bool DaLegacyCity::DemolishDevelopment(DaPerson& person, quint32 id, bool clear,
 	Q_UNUSED(clear);
 	if(!ConstructionAuthority(*this,person,true,error)) return false;
 	QWriteLocker lock(&m_CityLock);
+	if(!ConstructionPlanAllowed(m_City, error)) return false;
 	auto state = m_City;
 	for(int i=0;i<state.developments.size();++i) if(state.developments[i].id == id)
 	{
