@@ -22,6 +22,7 @@ bool Valid(const Request& r)
 		|| (IsBank(r.action) && r.action != BankState && r.action != SetEmpireCapital
 			&& r.action != BankClaimReward && r.money <= 0)) return false;
 	if(IsGameplay(r.action) && (!r.levels || r.levels > 32 || r.cityName.size() > 128
+		|| r.solarSystemName.size() > 128 || r.sectorName.size() > 128
 		|| !std::isfinite(r.roadLengthMeters) || r.roadLengthMeters < MinimumRoadLengthMeters || r.roadLengthMeters > MaximumRoadLengthMeters
 		|| !std::isfinite(r.roadWidthMeters) || r.roadWidthMeters < 1 || r.roadWidthMeters > 80)) return false;
 	if(IsGameplay(r.action) && (!std::isfinite(r.biodomeRadiusMeters)
@@ -73,7 +74,8 @@ QByteArray AuLegacyCityProtocol::EncodeRequest(const Request& r)
 	}
 	if(!Valid(r)) return QByteArray();
 	QByteArray bytes; QDataStream out(&bytes, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_4_1);
-	const quint8 version = IsStudio(r.action) ? quint8(6) : quint8(4);
+	const quint8 version = r.action == Build && r.industryId == 1 ? quint8(8)
+		: IsStudio(r.action) ? quint8(6) : quint8(4);
 	out << version << quint8(r.action) << r.token << r.cityId << r.developmentId << r.designId
 		// Preserve the retired door boolean's version-1 byte position.
 		<< r.material << r.minimumDeck << r.maximumDeck << r.constructed << false
@@ -87,6 +89,7 @@ QByteArray AuLegacyCityProtocol::EncodeRequest(const Request& r)
 		out << r.studioIndex;
 		if(!Text(out, r.studioPassword, 512)) return QByteArray();
 	}
+	if(version == 8 && (!Text(out, r.solarSystemName, 512) || !Text(out, r.sectorName, 512))) return QByteArray();
 	return out.status() == QDataStream::Ok && bytes.size() <= MaximumRequestBytes ? bytes : QByteArray();
 }
 bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& result)
@@ -104,7 +107,7 @@ bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& resul
 	in >> r.cityId >> r.developmentId >> r.designId
 		>> r.material >> r.minimumDeck >> r.maximumDeck >> r.constructed >> retiredDoorsOpen
 		>> r.distanceMeters >> r.headingDegrees >> r.elevationMeters >> r.targetX >> r.targetY >> r.targetZ;
-	if(version >= 2 && version <= 6)
+	if((version >= 2 && version <= 6) || version == 8)
 	{
 		in >> r.industryId >> r.processId >> r.levels >> r.roadLengthMeters >> r.roadWidthMeters >> r.citizenEnabled;
 		if(!ReadText(in, r.cityName, 512)) return false;
@@ -112,14 +115,16 @@ bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& resul
 	}
 	if(version >= 3) in >> r.manufacturingRecipe >> r.processSlot >> r.minimumTechnology;
 	if(version >= 4) in >> r.money;
-	if(version >= 5) in >> r.studioIndex;
-	if(version >= 6 && !ReadText(in, r.studioPassword, 512)) return false;
+	if(version == 5 || version == 6) in >> r.studioIndex;
+	if(version == 6 && !ReadText(in, r.studioPassword, 512)) return false;
+	if(version == 8 && (!ReadText(in, r.solarSystemName, 512) || !ReadText(in, r.sectorName, 512))) return false;
 	// Factory purchases reuse the version-4 economy envelope, including designId.
-	if((version < 1 || version > 6) || action > BuySpacecraft || (version == 1 && action > Route)
+	if((version < 1 || (version > 6 && version != 8)) || action > BuySpacecraft || (version == 1 && action > Route)
 		|| (version == 2 && action > ChangeRoad)
 		|| (version == 3 && action > RunIndustryProcess)
 		|| (version == 4 && action > BankClaimReward && action != TestingFinishIndustryProcess && action != BuySpacecraft)
-		|| (version >= 5 && !IsStudio(static_cast<Action>(action)))
+		|| ((version == 5 || version == 6) && !IsStudio(static_cast<Action>(action)))
+		|| (version == 8 && (action != Build || r.industryId != 1))
 		|| in.status() != QDataStream::Ok || !in.atEnd()) return false;
 	r.action = static_cast<Action>(action);
 	if(!Valid(r)) return false;

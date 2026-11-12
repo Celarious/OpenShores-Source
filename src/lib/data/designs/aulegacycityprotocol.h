@@ -61,6 +61,7 @@ struct Request
 	float biodomeRadiusMeters = 100;
 	bool citizenEnabled = true;
 	QString cityName;
+	QString solarSystemName, sectorName; // Optional names when founding in unnamed space.
 	bool explicitLocation = false;
 	quint32 worldId = 0;
 	float latitudeRadians = 0, longitudeRadians = 0;

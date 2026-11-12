@@ -3,6 +3,7 @@
 #include "aulegacycityconstructiontips.h"
 #include "aulegacycitymanufacture.h"
 #include "aulegacycitybank.h"
+#include "aunewcityname.h"
 #include "auapp.h"
 #include "aubldconstruct.h"
 #include "aublddesignstudio.h"
@@ -23,7 +24,6 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDialogButtonBox>
 #include <QDoubleValidator>
 #include <QFile>
 #include <QFrame>
@@ -598,15 +598,11 @@ void AuLegacyCityConstruction::Submit(AuLegacyCityProtocol::Request request)
 	}
 	if(request.action == AuLegacyCityProtocol::Build && request.industryId == 1 && request.cityName.isEmpty())
 	{
-		AuDialog dialog(this); dialog.setAuDlgTitle(tr("New City Name"));
-		auto* layout = new QVBoxLayout; layout->addWidget(new QLabel(tr("Enter a name for the city."), &dialog));
-		auto* name = new QLineEdit(&dialog); name->setMaxLength(30); layout->addWidget(name);
-		auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog); layout->addWidget(buttons);
-		dialog.setAuDlgLayout(layout);
-		connect(buttons, &QDialogButtonBox::accepted, &dialog, &AuDialog::accept);
-		connect(buttons, &QDialogButtonBox::rejected, &dialog, &AuDialog::reject);
+		AuNewCityName dialog(CITY_City_Obsolete, this);
 		if(auApp->Frame()->ExecDialog(dialog) != QDialog::Accepted) return;
-		request.cityName = name->text().trimmed();
+		request.cityName = dialog.CityName();
+		request.solarSystemName = dialog.SolarSystemName();
+		request.sectorName = dialog.SectorName();
 		if(request.cityName.isEmpty()) return;
 	}
 	m_PendingToken = auApp->RequestLegacyCityTool(request);

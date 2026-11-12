@@ -562,10 +562,27 @@ void DtChatChannel::ProcessLegacyConstructionRequest(const AuLegacyCityProtocol:
 
 	DaAtomList peers; world->ListNormalSubatoms(peers);
 	const bool founding = request.action == Build && request.industryId == 1;
+	QString foundingSectorName;
 	std::unique_ptr<DaLegacyCity> created;
 	if(founding)
 	{
 		if(!IsNameValid(request.cityName)) { reply.message = tr("Enter a valid city name (1 to 30 characters)."); return; }
+		if((!request.solarSystemName.isEmpty() && !IsNameValid(request.solarSystemName))
+			|| (!request.sectorName.isEmpty() && !IsNameValid(request.sectorName)))
+		{ reply.message = tr("Enter valid solar system and sector names (1 to 30 characters)."); return; }
+		if(const auto* system = world->FindParentSolarSystem())
+			if(const auto* sector = system->FindParentSector())
+			{
+				const QString systemName = request.solarSystemName.isEmpty() ? request.cityName : request.solarSystemName;
+				QStringList names; sector->ListSolarSystemNames(names);
+				if(!system->HasName() && names.contains(systemName))
+				{ reply.message = tr("This sector already has a solar system with that name."); return; }
+				foundingSectorName = request.sectorName;
+				while(foundingSectorName.endsWith(QStringLiteral(" Sector"))) foundingSectorName.chop(7);
+				foundingSectorName = foundingSectorName.trimmed();
+				if(foundingSectorName == QStringLiteral("Sector")) foundingSectorName.clear();
+				if(foundingSectorName.isEmpty()) foundingSectorName = systemName;
+			}
 		for(const DaAtom* atom : peers)
 			if(const auto* other = dynamic_cast<const DaLegacyCity*>(atom))
 				if(other->Name().compare(request.cityName, Qt::CaseInsensitive) == 0)
@@ -708,10 +725,23 @@ void DtChatChannel::ProcessLegacyConstructionRequest(const AuLegacyCityProtocol:
 			const auto* galaxy = system->FindParentGalaxy();
 			if(sector && galaxy)
 			{
+				// The worker saves the system and planets. CityCreated lets the
+				// responsible manager save and propagate an unnamed sector's name.
+				if(!system->HasName())
+				{
+					system->SetNameIncludePlanets(request.solarSystemName.isEmpty() ? request.cityName : request.solarSystemName, true);
+					person->Stats().NamedSystem();
+					person->IncreaseSkill(AuSkill::SpaceExploration, 1);
+				}
+				if(!sector->HasName())
+				{
+					person->Stats().NamedSector();
+					person->IncreaseSkill(AuSkill::SpaceExploration, 1);
+				}
 				AuPoint systemLocation; system->GetLocationRelativeToParent(systemLocation, galaxy);
 				emit CityCreated(person->EmpireId(), quint8(CITY_City_Obsolete), city->Id(), request.cityName,
 					person->Id(), person->Name(), world->Id(), world->Name(), system->Id(), system->Name(), systemLocation,
-					sector->Id(), sector->SectorName(), galaxy->Id(), quint8(galaxy->Galaxy()));
+					sector->Id(), sector->HasName() ? sector->SectorName() : foundingSectorName, galaxy->Id(), quint8(galaxy->Galaxy()));
 			}
 		}
 	}
