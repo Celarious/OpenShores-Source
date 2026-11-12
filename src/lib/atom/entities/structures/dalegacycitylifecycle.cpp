@@ -183,10 +183,7 @@ void CopyCityEvents(const State& state, AuCityReport& report)
 		event.m_Time = AuTime(pending.when); report.m_EventLog->AddEventTrim(event);
 	}
 	if(!state.pendingEvents.isEmpty())
-	{
 		report.m_MessageType = AuMailMsg::MSG_CityDistressReport;
-		report.m_DistressRpt += report.m_EventLog->ReportAlertsHtml();
-	}
 }
 
 void DrainCityEvents(State& state, AuCityReport& report)
