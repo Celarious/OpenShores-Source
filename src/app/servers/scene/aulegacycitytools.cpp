@@ -733,6 +733,8 @@ void DtChatChannel::ProcessLegacyConstructionRequest(const AuLegacyCityProtocol:
 					person->Stats().NamedSystem();
 					person->IncreaseSkill(AuSkill::SpaceExploration, 1);
 				}
+				// Founding explores the system, allowing its names to be sent to the founder.
+				system->ExploredBy(person->EmpireId());
 				if(!sector->HasName())
 				{
 					person->Stats().NamedSector();
