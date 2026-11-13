@@ -55,6 +55,8 @@ class AUCLIENT_DLL AuGovDiplomacy : public QWidget
 
 	// Widgets
 	QComboBox*			cbDefStance;
+	QWidget* m_ZoneBuildSettings;
+	QCheckBox* m_ZoneBuildPermits[4];
 	QPushButton*						m_AddNote;
 	QPushButton*						m_OpenDoc;
 	QPushButton*						m_CloseDoc;
@@ -92,6 +94,7 @@ signals:
 	void SetWarCriteria(AuWarCriteria crit);
 
 protected slots:
+	void SetZoneBuildPolicy();
 	void AddNote();
 	void CloseDoc();
 	void DeleteDoc();

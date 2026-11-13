@@ -754,6 +754,19 @@ QColor DgData::EmpireContrailColor(quint32 empireId) const
 	return color;
 }
 
+void DgData::SetEmpireZoneBuildPolicy(quint32 empireId, quint8 policy)
+{
+	auto it = m_gEmpires.find(empireId);
+	if(it != m_gEmpires.end()) it->second.SetZoneBuildPolicy(policy);
+}
+
+bool DgData::EmpireZoneBuildPermit(quint32 owner, quint32 builder) const
+{
+	if(owner == builder) return true;
+	const auto it = m_gEmpires.find(owner);
+	return it != m_gEmpires.end() && it->second.ZoneBuildPermit(it->second.PoliticalStance(builder));
+}
+
 void DgData::SetEmpireDefaultPoliticalStance(quint32 empireId, POLITICAL_STANCE stance)
 {
 	Q_ASSERT(stance != POL_Empire);	// This cannot be a stance toward anothe empire.

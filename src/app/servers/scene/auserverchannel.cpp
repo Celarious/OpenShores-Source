@@ -433,6 +433,9 @@ void AuServerChannel::incomingConnection(qintptr socketDescriptor)
 	connect(tserver, SIGNAL(GovSetDefaultPoliticalStance(quint32, quint8)),
 			auSceneServerApp, SLOT(GovSetDefaultPoliticalStanceUp(quint32, quint8)),
 			Qt::QueuedConnection);
+	connect(tserver, SIGNAL(GovSetZoneBuildPolicy(quint32, quint8)),
+			auSceneServerApp, SLOT(GovSetZoneBuildPolicyUp(quint32, quint8)),
+			Qt::QueuedConnection);
 
 	connect(tserver, SIGNAL(GovSetTax(quint32, quint8, quint8, quint8)),
 			auSceneServerApp, SLOT(GovSetTaxUp(quint32, quint8, quint8, quint8)),

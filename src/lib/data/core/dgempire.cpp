@@ -219,7 +219,7 @@ DgEmpire::DgEmpire(const DgEmpire& c) : m_BdPrefs(c.m_BdPrefs),
 	m_ScPrefs(c.m_ScPrefs),
 	m_Citizens(c.m_Citizens),
 	m_Commerce(c.m_Commerce),
-	m_Stance(c.m_Stance), m_WarCriteria(c.m_WarCriteria)
+	m_Stance(c.m_Stance), m_WarCriteria(c.m_WarCriteria), m_ZoneBuildPolicy(c.m_ZoneBuildPolicy)
 {
 	m_Announcements = c.m_Announcements;
 	m_Cities = new AuCityHash(*c.m_Cities);
@@ -296,6 +296,7 @@ const DgEmpire& DgEmpire::operator=(const DgEmpire& c)
 	m_RewSpotEnemy = c.m_RewSpotEnemy;
 	m_ScPrefs = c.m_ScPrefs;
 	m_Stance = c.m_Stance;
+	m_ZoneBuildPolicy = c.m_ZoneBuildPolicy;
 	m_TaxIncome = c.m_TaxIncome;
 	m_TaxSales = c.m_TaxSales;
 	m_TaxSubsidy = c.m_TaxSubsidy;
@@ -387,8 +388,9 @@ void DgEmpire::Insert(QSqlDatabase& db)
 			(*it).second >> ds;
 		ds << m_WarCriteria;
 		ds << m_Patents;
-		quint8 ver = 3;
+		quint8 ver = g_Au.IsLegacyGeneration() ? 4 : 3;
 		ds << ver;
+		if(ver >= 4) ds << m_ZoneBuildPolicy;
 		QByteArray bcomp = qCompress(ba);
 		qa.addBindValue(bcomp);
 	}
@@ -539,8 +541,9 @@ void DgEmpire::Update(QSqlDatabase& db)
 			(*it).second >> ds;
 		ds << m_WarCriteria;
 		ds << m_Patents;
-		quint8 ver = 3;
+		quint8 ver = g_Au.IsLegacyGeneration() ? 4 : 3;
 		ds << ver;
+		if(ver >= 4) ds << m_ZoneBuildPolicy;
 		QByteArray bcomp = qCompress(ba);
 		qa.addBindValue(bcomp);
 	}
@@ -688,6 +691,7 @@ void DgEmpire::Tx(QDataStream& out, bool includeAnnouncements) const
 			AuKnownPatents pat;
 			ds << pat;
 		}
+		if(g_Au.IsLegacyGeneration()) ds << m_ZoneBuildPolicy;
 		QByteArray bcomp = qCompress(ba);
 		out << bcomp;
 	}
@@ -795,6 +799,8 @@ void DgEmpire::Rx(QDataStream& in)
 
 			ds >> m_WarCriteria;
 			ds >> m_Patents;
+			m_ZoneBuildPolicy = 0;
+			if(!ds.atEnd()) ds >> m_ZoneBuildPolicy;
 		}
 	}
 
@@ -957,6 +963,8 @@ bool DgEmpire::Select(QSqlDatabase& db, unsigned int id)
 				ds >> m_Patents;
 				quint8 ver;
 				ds >> ver;
+				m_ZoneBuildPolicy = 0;
+				if(ver >= 4) ds >> m_ZoneBuildPolicy;
 				if(ver == 2)
 				{
 					AuKnownPatents p;
@@ -1104,7 +1112,7 @@ void DgEmpire::operator>>(QDataStream& out) const
 	out << m_name;					// Name of empire.
 	out << m_Announcements;
 
-	int ver = 2;
+	int ver = g_Au.IsLegacyGeneration() ? 3 : 2;
 	quint8 verImmig = (ver << 4) | m_immig;	// Top nibble is version.
 
 	out << verImmig;				// 0=open, 1=restricted
@@ -1160,6 +1168,7 @@ void DgEmpire::operator>>(QDataStream& out) const
 	out << m_ScPrefs;
 	out << m_OnLine;
 	out << m_immigPassCrypt;
+	if(ver >= 3) out << m_ZoneBuildPolicy;
 }
 
 void DgEmpire::operator<<(QDataStream& in)
@@ -1257,6 +1266,8 @@ void DgEmpire::operator<<(QDataStream& in)
 		in >> m_OnLine;
 	if(ver >= 2)
 		in >> m_immigPassCrypt;
+	m_ZoneBuildPolicy = 0;
+	if(ver >= 3) in >> m_ZoneBuildPolicy;
 }
 
 bool DgEmpire::ReconcileCities(const unordered_map<AuId, quint32, AuIdHash>& allCities)
@@ -2395,6 +2406,8 @@ void DgEmpireHash::Load()
 				ds >> ob.m_Patents;
 				quint8 ver;
 				ds >> ver;
+				ob.m_ZoneBuildPolicy = 0;
+				if(ver >= 4) ds >> ob.m_ZoneBuildPolicy;
 				if(ver == 2)
 				{
 					AuKnownPatents p;

@@ -5,6 +5,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "augovdiplomacy.h"
+#include <QCheckBox>
 //
 #include "auapp.h"
 #include "auclientglobal.h"
@@ -118,6 +119,20 @@ AuGovDiplomacy::AuGovDiplomacy(QWidget* parent) : QWidget(parent)
 				"%1 Only governors with appropriate rights can change this policy.</html>")
 			.arg(g_Au.MiddleDotSymbol()));
 	connect(cbDefStance, SIGNAL(currentIndexChanged(int)), auApp, SLOT(GovSetDefaultPoliticalStance(int)));
+
+	m_ZoneBuildSettings = new QWidget(this);
+	QVBoxLayout* zoneLayout = new QVBoxLayout(m_ZoneBuildSettings);
+	zoneLayout->setContentsMargins(0, 0, 0, 0);
+	zoneLayout->addWidget(new QLabel(tr("Zone Build Permission")));
+	const QString zoneLabels[] = {tr("Friends"), tr("Neutrals"), tr("Enemies"), tr("Vassals")};
+	for(int i = 0; i < 4; ++i)
+	{
+		m_ZoneBuildPermits[i] = new QCheckBox(zoneLabels[i], m_ZoneBuildSettings);
+		zoneLayout->addWidget(m_ZoneBuildPermits[i]);
+		connect(m_ZoneBuildPermits[i], SIGNAL(clicked()), SLOT(SetZoneBuildPolicy()));
+	}
+	m_ZoneBuildSettings->setToolTip(tr("Your empire can always build. These permissions allow foreign empires, according to our stance toward them, to build in resource zones controlled by our cities. Occupied zones remain blocked."));
+	m_ZoneBuildSettings->setVisible(g_Au.IsLegacyGeneration());
 
 	QPushButton* pbreq = new QPushButton(tr("Request Empires"));
 	pbreq->setToolTip(tr("<html><b>Request Empires</b><br>"
@@ -339,6 +354,7 @@ AuGovDiplomacy::AuGovDiplomacy(QWidget* parent) : QWidget(parent)
 	vlay->addStretch();
 	vlay->addWidget(lbdefstance);
 	vlay->addWidget(cbDefStance);
+	vlay->addWidget(m_ZoneBuildSettings);
 	vlay->addWidget(m_WarCriteria);
 	vlay->addStretch();
 	vlay->addWidget(m_DispatchCourier);
@@ -418,6 +434,9 @@ void AuGovDiplomacy::UpdateEmpireRecord()
 	cbDefStance->blockSignals(true);
 	cbDefStance->setCurrentIndex(defaultStance);
 	cbDefStance->blockSignals(false);
+	m_ZoneBuildSettings->setVisible(g_Au.IsLegacyGeneration());
+	for(int i = 0; i < 4; ++i)
+		m_ZoneBuildPermits[i]->setChecked(m_Empire.ZoneBuildPolicy() & (1 << i));
 
 	// Get selected empire to restore it when we're done.
 	quint32 selectedEmpire;
@@ -642,6 +661,7 @@ void AuGovDiplomacy::EnableControls()
 	m_PendDoc->setEnabled(enableDoc);
 
 	cbDefStance->setEnabled(canManageStance);
+	m_ZoneBuildSettings->setEnabled(canManageStance);
 
 	bool enableStance = canManageStance && empireSelected;
 	pbally->setEnabled(enableStance);
@@ -649,6 +669,13 @@ void AuGovDiplomacy::EnableControls()
 	pbfriend->setEnabled(enableStance);
 	pbneutral->setEnabled(enableStance);
 	pbvassal->setEnabled(enableStance);
+}
+
+void AuGovDiplomacy::SetZoneBuildPolicy()
+{
+	int policy = 0;
+	for(int i = 0; i < 4; ++i) if(m_ZoneBuildPermits[i]->isChecked()) policy |= 1 << i;
+	auApp->GovSetZoneBuildPolicy(policy);
 }
 
 void AuGovDiplomacy::SetEnemy()

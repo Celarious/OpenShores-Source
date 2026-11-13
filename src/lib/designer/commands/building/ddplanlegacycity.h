@@ -66,7 +66,7 @@ private:
 		const QPoint& pixel, AuAtomRenderInfo& info);
 	void RenderPlacementMessage(AuAtomRenderInfo& info) const;
 	void ConstrainRoad(const DaWorldLL& world, AuPoint& point, bool constrain) const;
-	int PrepareRoadRequest(const DaWorldLL& world, AuPoint point, bool constrain,
+	int PrepareRoadRequest(const DaWorldLL& world, quint32 builder, AuPoint point, bool constrain,
 		AuLegacyCityProtocol::Request& request, QString& message);
 };
 

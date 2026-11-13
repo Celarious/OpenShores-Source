@@ -214,6 +214,7 @@ signals:
 	void GovSetCommerce(quint32 idEmpire, QByteArray commerce);
 	void GovSetContrailColor(quint32 idEmpire, quint8 hue, quint8 sat);
 	void GovSetDefaultPoliticalStance(quint32 empire, quint8 stance);
+	void GovSetZoneBuildPolicy(quint32 empire, quint8 policy);
 	void GovSetJoinPassword(quint32 idEmpire, QByteArray passCrypt);
 
 	void GovSetPoliticalStance(quint32 idToEmpire, quint32 idFromEmpire, quint8 stance, quint8 vassalTributePercent,

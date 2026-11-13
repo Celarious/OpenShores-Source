@@ -548,6 +548,19 @@ void DtChatChannel::ProcessLegacyConstructionRequest(const AuLegacyCityProtocol:
 		&& site.Distance2(origin) > std::pow(500 * FeetPerMeter(), 2))
 	{ reply.message = tr("Move within 500 meters of the construction site."); return; }
 
+	if(request.action == Build && DaLegacyCity::ZoneConstructionBlocked(*world, location, person->EmpireId()))
+	{ reply.message = tr("Blocked by Foreign City in Resource Zone"); return; }
+
+	if(request.action == Build && request.industryId == 2)
+	{
+		AuLegacyCity::Development road;
+		road.industryId = 2; road.constructionProcessId = request.processId; road.location = location;
+		road.facingRadians = request.headingDegrees * DEG2RAD;
+		road.roadLengthMeters = request.roadLengthMeters; road.roadWidthMeters = request.roadWidthMeters;
+		road.roadSlab = request.roadSlab;
+		if(DaLegacyCity::PrepareRoadPlacement(*world, road, reply.message, person->EmpireId())) return;
+	}
+
 	DaLegacyCity* city = nullptr;
 	AuLegacyCity::State state;
 	if(request.cityId)

@@ -242,6 +242,9 @@ AuApp::AuApp(int& argc, char** argv) : QApplication(argc, argv), m_KeyFilter(thi
 	connect(m_I, SIGNAL(GovSetDefaultPoliticalStance(quint32, quint8)),
 			SLOT(GovSetDefaultPoliticalStance(quint32, quint8)),
 			Qt::QueuedConnection);
+	connect(m_I, SIGNAL(GovSetZoneBuildPolicy(quint32, quint8)),
+			SLOT(GovSetZoneBuildPolicy(quint32, quint8)),
+			Qt::QueuedConnection);
 	connect(m_I, SIGNAL(GovSetJoinPassword(quint32, QByteArray)),
 			SLOT(GovSetJoinPasswordUp(quint32, QByteArray)),
 			Qt::QueuedConnection);
@@ -4508,6 +4511,25 @@ void AuApp::GovSetDefaultPoliticalStance(int stance)
 		out.setVersion(QDataStream::Qt_4_1);
 		out << (quint8)DtChatChannelPacket::PV_SetDefStance;
 		out << (quint8)stance;
+		QueueChatPacket(ba);
+	}
+}
+
+void AuApp::GovSetZoneBuildPolicy(int policy)
+{
+	if(!g_Au.IsLegacyGeneration() || policy < 0 || policy > 15)
+		return;
+	if(IsSingleUserMode())
+	{
+		m_I->GovSetZoneBuildPolicy(policy);
+	}
+	else
+	{
+		QByteArray ba;
+		QDataStream out(&ba, QIODevice::WriteOnly);
+		out.setVersion(QDataStream::Qt_4_1);
+		out << (quint8)DtChatChannelPacket::PV_SetZoneBuildPolicy;
+		out << (quint8)policy;
 		QueueChatPacket(ba);
 	}
 }
@@ -15015,6 +15037,15 @@ void AuApp::GovSetDefaultPoliticalStance(quint32 empire, quint8 stance)
 		return;
 	DgData& gd = g_Au.LockDataForWrite();
 	gd.SetEmpireDefaultPoliticalStance(empire, (POLITICAL_STANCE)stance);
+	g_Au.UnlockData();
+}
+
+void AuApp::GovSetZoneBuildPolicy(quint32 empire, quint8 policy)
+{
+	if(!g_Au.IsLegacyGeneration() || policy > 15)
+		return;
+	DgData& gd = g_Au.LockDataForWrite();
+	gd.SetEmpireZoneBuildPolicy(empire, policy);
 	g_Au.UnlockData();
 }
 

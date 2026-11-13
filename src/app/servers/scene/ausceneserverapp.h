@@ -1264,6 +1264,7 @@ public slots:
 	void GovSetContrailColorUp(quint32 empire, quint8 hue, quint8 sat);
 
 	void GovSetDefaultPoliticalStanceUp(quint32 empire, quint8 stance);
+	void GovSetZoneBuildPolicyUp(quint32 empire, quint8 policy);
 
 	void GovSetJoinPasswordUp(quint32 empire, QByteArray passCrypt);
 

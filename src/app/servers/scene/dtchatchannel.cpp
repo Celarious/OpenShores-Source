@@ -149,6 +149,9 @@ DtChatChannel::DtChatChannel(int socketDesc, QObject* parent) : QThread(parent)/
 	connect(m_I, SIGNAL(GovSetDefaultPoliticalStance(quint32, quint8)),
 			SIGNAL(GovSetDefaultPoliticalStance(quint32, quint8)),
 			Qt::QueuedConnection);
+	connect(m_I, SIGNAL(GovSetZoneBuildPolicy(quint32, quint8)),
+			SIGNAL(GovSetZoneBuildPolicy(quint32, quint8)),
+			Qt::QueuedConnection);
 	connect(m_I, SIGNAL(GovSetPoliticalStance(quint32, quint32, quint8, quint8, AuId, QString, quint8, AuId, QString, quint8,
 					quint8, QString, QString, QString)),
 			SIGNAL(GovSetPoliticalStance(quint32, quint32, quint8, quint8, AuId, QString, quint8, AuId, QString, quint8,
@@ -5776,6 +5779,14 @@ void DtChatChannel::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 			quint8 stance;
 			block >> stance;
 			m_I->GovSetDefaultPoliticalStance(stance);
+		}
+		break;
+
+	case DtChatChannelPacket::PV_SetZoneBuildPolicy:
+		{
+			quint8 policy;
+			block >> policy;
+			m_I->GovSetZoneBuildPolicy(policy);
 		}
 		break;
 

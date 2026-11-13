@@ -2474,7 +2474,7 @@ bool DaLegacyCity::RoadCrossesSeaSurface(const DaWorldLL& world, double startAlt
 		|| (startAltitudeMSL > 0 && endAltitudeMSL < 0));
 }
 
-int DaLegacyCity::PrepareRoadPlacement(const DaWorldLL& world, AuLegacyCity::Development& road, QString& message)
+int DaLegacyCity::PrepareRoadPlacement(const DaWorldLL& world, AuLegacyCity::Development& road, QString& message, quint32 builder)
 {
 	message.clear();
 	const auto fail = [&message](int status, const QString& reason) -> int { message = reason; return status; };
@@ -2499,6 +2499,8 @@ int DaLegacyCity::PrepareRoadPlacement(const DaWorldLL& world, AuLegacyCity::Dev
 	if(!world.LLOfLoc(start, placement.Project(AuPoint(0, -halfLength, 0)))
 		|| !world.LLOfLoc(end, placement.Project(AuPoint(0, halfLength, 0))))
 		return fail(3, QObject::tr("Location Not In Terrain Or Too Far Away"));
+	if(builder && (ZoneConstructionBlocked(world, start, builder) || ZoneConstructionBlocked(world, end, builder)))
+		return fail(19, QObject::tr("Blocked by Foreign City in Resource Zone"));
 	road.roadStartAltitudeMSL = world.SurfaceAltitudeMSL(start);
 	road.roadEndAltitudeMSL = road.roadSlab ? road.roadStartAltitudeMSL : world.SurfaceAltitudeMSL(end);
 	if(world.IsForbiddenZone(road.location, middleAltitude, halfWidth)
@@ -2536,6 +2538,30 @@ int DaLegacyCity::PrepareRoadPlacement(const DaWorldLL& world, AuLegacyCity::Dev
 	return 0;
 }
 
+bool DaLegacyCity::ZoneConstructionBlocked(const DaWorldLL& world, const AuGlobeLLF& location, quint32 builder)
+{
+	if(!g_Au.IsLegacyGeneration()) return false;
+	const int zone = world.ResourceZone(location.Longitude());
+	DaAtomList cities; world.ListNormalSubatoms(cities);
+	for(const auto* atom : cities)
+		if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+		{
+			if(city->IsDead()) continue;
+			const auto state = city->Snapshot();
+			for(const auto& dev : state.developments)
+				if(!dev.demolished && dev.industryId == 1 && world.ResourceZone(dev.location.Longitude()) == zone)
+				{
+					if(state.allegianceEmpire != state.controllingEmpire) return true;
+					const DgData& gd = g_Au.LockDataForRead();
+					const bool permitted = gd.EmpireZoneBuildPermit(state.controllingEmpire, builder);
+					g_Au.UnlockData();
+					if(!permitted) return true;
+					break;
+				}
+		}
+	return false;
+}
+
 bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 process, quint32 designId,
 	quint16 material, const AuGlobeLLF& location, double heading, quint8 levels, QString& error,
 	double roadLength, double roadWidth, bool roadSlab, double biodomeRadius,
@@ -2557,6 +2583,8 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 		|| roadLength < 1 || roadLength > 1000 || roadWidth < 1 || roadWidth > 100
 		|| !std::isfinite(biodomeRadius) || biodomeRadius<1 || biodomeRadius>1000)
 	{ error = QStringLiteral("Invalid original construction recipe, material, location or level count."); return false; }
+	if(ZoneConstructionBlocked(*world, location, person.EmpireId()))
+	{ error = QObject::tr("Blocked by Foreign City in Resource Zone"); return false; }
 	if(industry != 1 && industry != 2 && industry != 10 && industry != 114 && industry != 129)
 	{
 		if(!designId) designId = AuLegacyBd::Catalog::BuiltIn().DefaultForIndustry(industry);
@@ -2581,7 +2609,7 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 		: industry==129 ? biodomeRadius*FeetPerMeter() : recipe->buildRadius * FeetPerMeter();
 	if(industry == 2)
 	{
-		if(PrepareRoadPlacement(*world, dev, error)) return false;
+		if(PrepareRoadPlacement(*world, dev, error, person.EmpireId())) return false;
 	}
 	else if(world->IsForbiddenZone(location,dev.altitudeMSL,radius) || dev.altitudeMSL>world->AtmosphereHeightMSL())
 	{ error=QStringLiteral("This site is outside the world's permitted construction terrain."); return false; }

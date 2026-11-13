@@ -48,6 +48,7 @@ const char* PlacementProblem(int status, QString& message)
 	case 12: message = QObject::tr("Road Slab Needed Next to Location"); return ":data/bldNoSlab.png";
 	case 13: message = QObject::tr("Road or Building Needed Next to Location"); return ":data/bldNoDev.png";
 	case 14: message = QObject::tr("Completed Road Needed Next to Location"); return ":data/bldNoRoad.png";
+	case 19: message = QObject::tr("Blocked by Foreign City in Resource Zone"); return ":data/bldForeignCity.png";
 	case 29: message = QObject::tr("Location In Forbidden Zone"); return ":data/bldForbiddenZone.png";
 	case 30: message = QObject::tr("Too Big"); return ":data/bldEdgeOfTerrain.png";
 	case 33: message = QObject::tr("Water Too Shallow at Location"); return ":data/bldTooShallow.png";
@@ -347,15 +348,30 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 			if(!roadSwap && m_HasStart && m_StartWorld == world->Id().GetID())
 			{
 				AuLegacyCityProtocol::Request request;
-				m_SiteStatus = PrepareRoadRequest(*world, point, QGuiApplication::keyboardModifiers() & Qt::ShiftModifier,
+				m_SiteStatus = PrepareRoadRequest(*world, person->EmpireId(), point, QGuiApplication::keyboardModifiers() & Qt::ShiftModifier,
 					request, m_SiteMessage);
 			}
 		}
 		else m_SiteStatus = 3;
 		if(m_SiteStatus) PlacementProblem(m_SiteStatus, m_SiteMessage);
 	}
+	if(person && m_Request.action == AuLegacyCityProtocol::Build
+		&& (m_Request.industryId == 2 || m_Request.industryId == 129))
+	{
+		if(m_Request.industryId == 129) { m_SiteStatus = 0; m_SiteMessage.clear(); }
+		AuPoint point;
+		if(const auto* world = FindPlacementLocation(person, pixel, point))
+		{
+			if(m_Request.industryId == 2 && m_HasStart) ConstrainRoad(*world, point, QGuiApplication::keyboardModifiers() & Qt::ShiftModifier);
+			AuGlobeLLF location;
+			if(world->LLOfLoc(location, point) && DaLegacyCity::ZoneConstructionBlocked(*world, location, person->EmpireId()))
+			{
+				m_SiteStatus = 19; PlacementProblem(m_SiteStatus, m_SiteMessage);
+			}
+		}
+	}
 	if(person && g_Au.IsLegacyGeneration() && m_Request.action == AuLegacyCityProtocol::Build
-		&& m_Request.industryId != 129 && m_SiteStatus)
+		&& m_SiteStatus)
 	{
 		QString reason;
 		m_pWnd->setCursor(QCursor(QPixmap(PlacementProblem(m_SiteStatus, reason)))); return;
@@ -585,7 +601,7 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 	m_MaximumLevels = maximum; m_SiteMaterial = site.materialId;
 	m_SiteDesignId = site.designId;
 	m_SiteCenter = center; m_SiteFacing = site.facingRadians;
-	m_SiteStatus = m_SiteBlocked ? 10 : !extensionDevelopment ? TerrainStatus(world, site, *recipe, rocks, trees, water) : 0;
+	m_SiteStatus = DaLegacyCity::ZoneConstructionBlocked(world, site.location, person.EmpireId()) ? 19 : m_SiteBlocked ? 10 : !extensionDevelopment ? TerrainStatus(world, site, *recipe, rocks, trees, water) : 0;
 	if(!m_SiteStatus && !maximum) m_SiteStatus = 4;
 	if(!m_SiteStatus && !adjacent) m_SiteStatus = recipe->terrain == 3 ? 12
 		: recipe->terrain == 13 || recipe->terrain == 14 || recipe->terrain == 9 || recipe->terrain == 10 ? 13 : 14;
@@ -726,7 +742,7 @@ void DdPlanLegacyCity::ConstrainRoad(const DaWorldLL& world, AuPoint& point, boo
 		point = world.LocOfLL(location, world.SurfaceAltitudeMSL(location));
 }
 
-int DdPlanLegacyCity::PrepareRoadRequest(const DaWorldLL& world, AuPoint point, bool constrain,
+int DdPlanLegacyCity::PrepareRoadRequest(const DaWorldLL& world, quint32 builder, AuPoint point, bool constrain,
 	AuLegacyCityProtocol::Request& request, QString& message)
 {
 	m_ConflictWorld = world.Id().GetID(); m_ConflictingPerimeters.clear();
@@ -751,7 +767,7 @@ int DdPlanLegacyCity::PrepareRoadRequest(const DaWorldLL& world, AuPoint point, 
 	road.facingRadians = request.headingDegrees * DEG2RAD;
 	road.roadLengthMeters = request.roadLengthMeters; road.roadWidthMeters = request.roadWidthMeters;
 	road.roadSlab = request.roadSlab;
-	const int status = DaLegacyCity::PrepareRoadPlacement(world, road, message);
+	const int status = DaLegacyCity::PrepareRoadPlacement(world, road, message, builder);
 	if(status) return status;
 	AuMatrix4x4 placement;
 	world.BuildingConstructionTransform(world.LocOfLL(road.location, road.altitudeMSL), road.facingRadians, nullptr, AuPoint(), placement);
@@ -803,6 +819,18 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 			if(submit) m_Interface->Submit(request);
 			return;
 		}
+		if(request.action == AuLegacyCityProtocol::Build && (request.industryId == 2 || request.industryId == 129))
+		{
+			AuPoint checkedPoint = point;
+			if(request.industryId == 2 && m_HasStart) ConstrainRoad(*world, checkedPoint, event->modifiers() & Qt::ShiftModifier);
+			AuGlobeLLF location;
+			if(world->LLOfLoc(location, checkedPoint) && DaLegacyCity::ZoneConstructionBlocked(*world, location, person->EmpireId()))
+			{
+				QString reason; PlacementProblem(19, reason);
+				m_Interface->ReportPlacementMessage(reason);
+				m_pWnd->UnlockSceneAtom(); return;
+			}
+		}
 		if(request.action == AuLegacyCityProtocol::Build && request.industryId != 2 && request.industryId != 129)
 		{
 			UpdateSite(*world, point, *person);
@@ -836,7 +864,7 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 				if(request.industryId == 2)
 				{
 					QString reason;
-					m_SiteStatus = PrepareRoadRequest(*world, point, event->modifiers() & Qt::ShiftModifier, request, reason);
+					m_SiteStatus = PrepareRoadRequest(*world, person->EmpireId(), point, event->modifiers() & Qt::ShiftModifier, request, reason);
 					if(m_SiteStatus)
 					{
 						m_SiteMessage = reason; m_Interface->ReportPlacementMessage(reason);

@@ -2493,6 +2493,26 @@ void AuAtomInterface::GovSetDefaultPoliticalStance(quint8 stance)
 		emit GovSetDefaultPoliticalStance(empireId, stance);
 }
 
+void AuAtomInterface::GovSetZoneBuildPolicy(quint8 policy)
+{
+	if(!g_Au.IsLegacyGeneration() || policy > 15)
+		return;
+
+	bool hasAuthority = false;
+	quint32 empireId = 0;
+	DaPerson* person = LockAvatar();
+	if(person)
+	{
+		empireId = person->EmpireId();
+		const DgData& gd = g_Au.LockDataForRead();
+		hasAuthority = gd.EmpireCitizenCanSetPoliticalStance(empireId, person->Id());
+		g_Au.UnlockData();
+	}
+	UnlockAvatar();
+	if(hasAuthority)
+		emit GovSetZoneBuildPolicy(empireId, policy);
+}
+
 void AuAtomInterface::GovSetEmpireFlag(const QImage& imflag)
 {
 	bool hasAuthority = false;

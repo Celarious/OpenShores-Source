@@ -156,6 +156,7 @@ public:
 		P_ItDesignDeactivated,
 		P_GovSetJoinPass,	// Sent by sub to boss with empire and passCrypt
 		P_LegacyWealthLevy,	// Legacy executive order; upward authorization then downward broadcast.
+		P_GovSetZoneBuildPolicy,
 	};
 
 public:
@@ -564,6 +565,7 @@ signals:
 	void GovSetCommerce(quint32 empire, QByteArray commerce);
 	void GovSetContrailColor(quint32 empire, quint8 hue, quint8 sat);
 	void GovSetDefaultPoliticalStance(quint32 empire, quint8 stance);
+	void GovSetZoneBuildPolicy(quint32 empire, quint8 policy);
 	void GovSetJoinPassword(quint32 empire, QByteArray passCrypt);
 
 	void GovSetTax(quint32 empire, quint8 income, quint8 sales, quint8 subsidy);

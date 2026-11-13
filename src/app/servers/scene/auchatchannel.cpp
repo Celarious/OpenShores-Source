@@ -100,6 +100,8 @@ void AuChatChannel::incomingConnection(qintptr socketDescriptor)
 			auSceneServerApp, SLOT(GovSetContrailColorUp(quint32, quint8, quint8)));
 	connect(tserver, SIGNAL(GovSetDefaultPoliticalStance(quint32, quint8)),
 			auSceneServerApp, SLOT(GovSetDefaultPoliticalStanceUp(quint32, quint8)));
+	connect(tserver, SIGNAL(GovSetZoneBuildPolicy(quint32, quint8)),
+			auSceneServerApp, SLOT(GovSetZoneBuildPolicyUp(quint32, quint8)));
 
 	connect(tserver, SIGNAL(GovSetPoliticalStance(quint32, quint32, quint8, quint8, AuId, QString, quint8, AuId, QString,
 					quint8, quint8, QString, QString, QString)),

@@ -602,6 +602,8 @@ public:
 	// Saturation value is clamped to the range 64-191.
 	void SetEmpireContrailColor(quint32 empireId, quint8 hue, quint8 sat);
 
+	void SetEmpireZoneBuildPolicy(quint32 empireId, quint8 policy);
+	bool EmpireZoneBuildPermit(quint32 owner, quint32 builder) const;
 	void SetEmpireDefaultPoliticalStance(quint32 empireId, POLITICAL_STANCE stance);
 	void SetEmpireFlag(quint32 empireId, const QImage& flag);
 

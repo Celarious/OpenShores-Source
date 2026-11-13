@@ -6413,6 +6413,21 @@ void AuSceneServerApp::GovSetDefaultPoliticalStanceUp(quint32 empire,
 	m_tClientChannel->SendPacket(ba);
 }
 
+void AuSceneServerApp::GovSetZoneBuildPolicyUp(quint32 empire,
+		quint8 policy)
+{
+	if(!m_tClientChannel)
+		return;
+	// Sub servers send this message up to their boss.
+	QByteArray ba;
+	QDataStream out(&ba, QIODevice::WriteOnly);
+	out.setVersion(QDataStream::Qt_4_1);
+	out << (quint8)DtServerChannel::P_GovSetZoneBuildPolicy;
+	out << empire;
+	out << policy;
+	m_tClientChannel->SendPacket(ba);
+}
+
 void AuSceneServerApp::GovSetContrailColorUp(quint32 empire, quint8 hue, quint8 sat)
 {
 	if(!m_tClientChannel)

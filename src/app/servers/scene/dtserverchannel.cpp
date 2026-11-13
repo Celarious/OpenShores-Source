@@ -1569,6 +1569,31 @@ void DtServerChannel::ReadPacket(const QByteArray& ba, QTcpSocket& /*tcpSocket*/
 		}
 		break;
 
+	case P_GovSetZoneBuildPolicy:
+		{
+			quint32 empire;
+			quint8 policy;
+			block >> empire;
+			block >> policy;
+			if(g_Au.IsSceneMaster())
+			{
+				// Master changes the empire and notifies the subs.
+				if(g_Au.IsLegacyGeneration() && policy <= 15)
+				{
+					DgData& gd = g_Au.LockDataForWrite();
+					gd.SetEmpireZoneBuildPolicy(empire, policy);
+					g_Au.UnlockData();
+					emit ChangeEmpireInDb(empire);	// Trigger db store which notifies the subordinates when done.
+				}
+			}
+			else
+			{
+				// Manager propagates the message up to the master.
+				emit GovSetZoneBuildPolicy(empire, policy);
+			}
+		}
+		break;
+
 	case P_GovSetContrailColor:
 		{
 			quint32 empire;

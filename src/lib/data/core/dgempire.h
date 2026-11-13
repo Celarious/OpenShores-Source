@@ -648,6 +648,7 @@ public:
 	QColor								m_ThemeColors[AuScFace::THEME_Count];
 	AuWarCriteria						m_WarCriteria;			// Key=AuDocument::DocumentType, value=new incident count for war
 private:
+	quint8 m_ZoneBuildPolicy = 0; // Legacy: friend, neutral, enemy, vassal permission bits.
 	AuKnownPatents						m_Patents;				// Patents known to the empire.
 
 public:	// Constructors
@@ -1495,6 +1496,14 @@ public:	// Methods
 		while(m_Commerce.count() <= cid)
 			m_Commerce.append(EXPOL_ToFriend);
 		m_Commerce[cid] = com;	// Set the commodity commerce value.
+	}
+
+	quint8 ZoneBuildPolicy() const { return m_ZoneBuildPolicy; }
+	void SetZoneBuildPolicy(quint8 policy) { m_ZoneBuildPolicy = policy & 15; }
+	bool ZoneBuildPermit(POLITICAL_STANCE stance) const
+	{
+		return stance == POL_Empire || (stance >= POL_Friend && stance <= POL_Vassal
+			&& (m_ZoneBuildPolicy & (1 << (stance == POL_Vassal ? 3 : int(stance)))));
 	}
 
 	void SetDefaultPoliticalStance(POLITICAL_STANCE stance)
