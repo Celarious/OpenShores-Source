@@ -63,10 +63,11 @@ void AuModel::run()
 	if(!pFrame)
 		return;
 	AuView* pView = pFrame->View();
-	if(!pView)
+	// A new avatar's first scene sync can arrive before the GUI creates its view.
+	while(!pView && Alive())
 	{
-		qDebug() << "warning: AuModel::run no view, exiting";
-		return;
+		msleep(d_SyncInterval);
+		pView = pFrame->View();
 	}
 
 	AuElapsedTimer elapseTimer;
