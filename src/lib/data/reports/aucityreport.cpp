@@ -395,14 +395,14 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 				}
 				if(isolatedDespair) suicide(result.emigrants);
 				else if(occupied)
-					html += leaving == 1 ? QObject::tr("Martial law of occupier prevented one homeless citizen from emigrating.<br>")
-						: QObject::tr("Martial law of occupier prevented %1 homeless citizens from emigrating.<br>").arg(leaving);
+					html += leaving == 1 ? QObject::tr("Martial law of occupier prevented one homeless citizen from emigrating.<br><br>")
+						: QObject::tr("Martial law of occupier prevented %1 homeless citizens from emigrating.<br><br>").arg(leaving);
 				else if(leaving == population)
-					html += result.emigrants == 1 ? QObject::tr("One homeless citizen emigrated; the last citizen departed.<br>")
-						: QObject::tr("%1 homeless citizens emigrated; the last citizens departed.<br>").arg(leaving);
+					html += result.emigrants == 1 ? QObject::tr("One homeless citizen emigrated; the last citizen departed.<br><br>")
+						: QObject::tr("%1 homeless citizens emigrated; the last citizens departed.<br><br>").arg(leaving);
 				else
-					html += leaving == 1 ? QObject::tr("One homeless citizen emigrated.<br>")
-						: QObject::tr("%1 homeless citizens emigrated.<br>").arg(leaving);
+					html += leaving == 1 ? QObject::tr("One homeless citizen emigrated.<br><br>")
+						: QObject::tr("%1 homeless citizens emigrated.<br><br>").arg(leaving);
 			}
 		}
 		else
