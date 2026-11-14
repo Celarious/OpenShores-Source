@@ -126,6 +126,9 @@ void DaLegacyCity::ApplyWealthLevy(const AuLegacyCity::WealthLevyOrder& order)
 			controlChanged = ApplyCitySurrender(candidate, accounting.accounts, order.empire, surrenderedTo);
 		}
 		candidate.loyalPopulation = result.loyalPopulation;
+		// A newly established pirate allegiance must not start ready to flip again.
+		if(result.revolution && !context.occupied && pirateEmpire)
+			candidate.loyalPopulation = quint32(candidate.population);
 		const double withdrawn = accounting.accounts.citizens * double(context.fraction);
 		if(withdrawn >= 1) accounting.accounts.Debit(CitizenExpense::Withdrawn, withdrawn);
 		if(!EncodeAccounting(accounting, candidate.accounting, error)) return;
@@ -171,7 +174,8 @@ bool DaLegacyCity::Revolt(const QString& reason)
 		AccountingState accounting; QString error;
 		if(!DecodeAccounting(candidate.accounting, accounting, error)) return false;
 		const quint32 oldEmpire = candidate.controllingEmpire;
-		if(candidate.allegianceEmpire == oldEmpire)
+		const bool newAllegiance = candidate.allegianceEmpire == oldEmpire;
+		if(newAllegiance)
 		{
 			const DgData& gd = g_Au.LockDataForRead();
 			candidate.allegianceEmpire = gd.SelectLegacyPirateEmpire();
@@ -179,6 +183,8 @@ bool DaLegacyCity::Revolt(const QString& reason)
 		}
 		const quint32 newEmpire = candidate.allegianceEmpire;
 		const bool captured = ApplyCitySurrender(candidate, accounting.accounts, oldEmpire, newEmpire);
+		if(newAllegiance && newEmpire && newEmpire != oldEmpire)
+			candidate.loyalPopulation = quint32(candidate.population);
 		candidate.lastVisit = QDateTime::currentMSecsSinceEpoch();
 		if(!EncodeAccounting(accounting, candidate.accounting, error)) return false;
 		QWriteLocker lock(&m_CityLock);
