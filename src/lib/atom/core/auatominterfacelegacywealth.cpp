@@ -16,7 +16,16 @@ void AuAtomInterface::GovLegacyWealthLevy(QByteArray request)
 		order.empire = person->EmpireId(); order.issuer = person->Id(); order.issuerName = person->Name();
 		const DgData& gd = g_Au.LockDataForRead();
 		authorized = order.empire && gd.EmpireCitizenCanSetTax(order.empire, order.issuer);
+		
+		AuId capital;
+		const bool hasCapital = gd.EmpireCapital(order.empire, capital) && !capital.IsNull();
 		g_Au.UnlockData();
+
+		if(authorized && !hasCapital)
+		{
+			person->Thought(tr("Designate an empire capital before levying wealth."));
+			authorized = false;
+		}
 	}
 	UnlockAvatar();
 	if(authorized) emit LegacyWealthLevy(AuLegacyCity::EncodeWealthLevy(order));
