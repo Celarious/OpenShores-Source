@@ -5924,8 +5924,13 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 				if(draw.vao.VAO()) draw.vao.DeleteGL();
 				draw.texture = 0;
 				QImage image;
-				const DgData& gd = g_Au.LockDataForRead(); gd.EmpireFlag(flag.empire, image); g_Au.UnlockData();
-				if(image.isNull()) continue; // Retry when the empire image arrives.
+				const DgData& gd = g_Au.LockDataForRead();
+				const bool empireKnown = gd.EmpireFlag(flag.empire, image);
+				g_Au.UnlockData();
+				if(!empireKnown) continue; // Retry when the empire record arrives.
+				// Pirate and other flagless empires still need visible capture cloth.
+				if(image.isNull()) image.load(":data/BogusEmpireFlag.png");
+				if(image.isNull()) continue;
 				draw.empire = flag.empire;
 				draw.texture = ari.re->CreateTextureFromBitmap(Id().GetID(),
 					QStringLiteral("Flag:%1").arg(flag.empire), image, GL_LINEAR, GL_LINEAR, false, 1);
