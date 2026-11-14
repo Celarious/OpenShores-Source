@@ -328,6 +328,8 @@ public:
 		RENDERPASS pass, DaAtomList& sc, DaAtomList& scFog, DaAtomList& scGlobe,
 		DaAtomList& scGlobeFog, DaAtomList& scRing, DaAtomList& scRingFog) override;
 private:
+	QString MailLocationHeader(const AuTime& when) const;
+	void SendPoliticalReport(const AuIdList& recipients, const QString& subject, const QString& body) const;
 	bool MailReport(const AuCityReport& report, const AuCityReport& previous, const AuId& toId,
 		const QString& extraHtml = QString(), const QString& subject = QString()) const;
 	void RenderAirportNavBeacon(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,

@@ -339,16 +339,7 @@ void DaLegacyCity::PostCivicJobs(const AuCityReport& report)
 		const quint32 player = data.PlayerId(), confirmation = data.ConfirmationNumber();
 		g_Au.UnlockData();
 		if(pirate || governors.isEmpty()) return;
-		// City-report mail must start with the same date/location envelope as
-		// ReportCapitol: AuMail::MessageReceived parses these lines for its tree.
-		QString body = g_Au.EncodeUTCString(report.m_WhenCompiled) + QStringLiteral("<br><br><b>")
-			+ report.m_Name + QStringLiteral("</b><div style=\"margin-left: 10px;\">");
-		body += report.m_PlanetName + QStringLiteral(", ") + report.m_PlanetDesc + QStringLiteral("<br>");
-		body += report.m_SystemName + QLatin1Char(' ') + report.m_SystemDesc + QStringLiteral("<br>");
-		body += report.m_SectorName + QLatin1Char(' ') + report.m_SectorDesc + QStringLiteral("<br>");
-		body += QStringLiteral("%1<br>").arg(GalaxyName(GALAXY(report.m_Galaxy)));
-		body += tr("%1, Resource Zone %2").arg(report.m_LL.ToString()).arg(report.m_Zone + 1)
-			+ QStringLiteral("<br></div><br>");
+		QString body = MailLocationHeader(report.m_WhenCompiled);
 		body += tr("<p>Population: %1. Morale: %2.</p>").arg(state.population).arg(state.satisfaction);
 		for(int index = 0; index < state.flags.size(); ++index)
 		{

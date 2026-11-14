@@ -28,6 +28,13 @@ AuLegacyWealthLevyDialog::AuLegacyWealthLevyDialog(QWidget* parent) : AuDialog(p
 	description->setWordWrap(true);
 	auto* percent = new QSpinBox(this); percent->setRange(1, 100); percent->setAlignment(Qt::AlignRight);
 	percent->setToolTip(tr("Enter the percentage of tax to levy on private wealth."));
+	auto* warning = new QLabel(tr("% WARNING! REVOLT WILL OCCUR!"));
+	warning->setStyleSheet("color: red;");
+	warning->setWordWrap(false);
+	connect(percent, static_cast<void(QSpinBox::*)(int)>(&QSpinBox::valueChanged), this, [warning](int percentage) {
+		warning->setVisible(percentage >= 50);
+	});
+	warning->setVisible(percent->value() >= 50);
 	auto* statement = new QLineEdit(this); statement->setMaxLength(200); statement->setMinimumWidth(400);
 	statement->setToolTip(tr("Public Statement: explain to the citizens why this executive order was necessary."));
 	auto* suggest = new QPushButton(tr("Suggest Public Statement"), this);
@@ -251,6 +258,7 @@ AuLegacyWealthLevyDialog::AuLegacyWealthLevyDialog(QWidget* parent) : AuDialog(p
 	layout->addWidget(suggest, 1, 0);
 	layout->addWidget(statement, 1, 1, 1, 2);
 	layout->addWidget(percent, 2, 1); layout->addWidget(new QLabel(QStringLiteral("%"), this), 2, 2);
+	layout->addWidget(warning, 2, 2);
 	layout->addWidget(avatars, 3, 1, 1, 2); layout->addWidget(government, 4, 1, 1, 2);
 	layout->addWidget(privateShips, 5, 1, 1, 2); layout->addWidget(subsidized, 6, 1, 1, 2);
 	layout->addWidget(levy, 7, 1, 1, 2); layout->setRowStretch(8, 1);
