@@ -221,10 +221,10 @@ QString LegacyMoraleHtml(const AuCityReport& report, const AuLegacyCity::Populat
 		}
 	}
 	if(population.satisfaction < report.m_SatOrig)
-		html += QObject::tr("Morale decreased by %1 to %2.<br>").arg(report.m_SatOrig - population.satisfaction).arg(population.satisfaction);
+		html += QObject::tr("<span style=\"color:red;\">Morale decreased by <b>%1</b> to <b>%2</b>.</span><br>").arg(report.m_SatOrig - population.satisfaction).arg(population.satisfaction);
 	else if(population.satisfaction > report.m_SatOrig)
-		html += QObject::tr("Morale increased by %1 to %2.<br>").arg(population.satisfaction - report.m_SatOrig).arg(population.satisfaction);
-	else html += QObject::tr("Morale remained steady at %1.<br>").arg(population.satisfaction);
+		html += QObject::tr("<span style=\"color:green;\">Morale increased by <b>%1</b> to <b>%2</b>.</span><br>").arg(population.satisfaction - report.m_SatOrig).arg(population.satisfaction);
+	else html += QObject::tr("Morale remained steady at <b>%1</b>.<br>").arg(population.satisfaction);
 	return html + QStringLiteral("</div>");
 }
 
@@ -345,20 +345,20 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 	if(report.m_AirConsumed >= 0)
 	{
 		if(report.m_LegacyCrisisDeaths)
-			html += QObject::tr("%1 citizens died from food poisoning or epidemic.<br>").arg(report.m_LegacyCrisisDeaths);
+			html += QObject::tr("<span style=\"color:red;\"><b>%1</b> citizens died from food poisoning or epidemic.</span><br><br>").arg(report.m_LegacyCrisisDeaths);
 		population = std::max(0, population - int(report.m_LegacyCrisisDeaths));
 		if(result.suffocated)
-			html += result.suffocated == 1 ? QObject::tr("One citizen suffocated to death.<br>")
-				: QObject::tr("%1 citizens suffocated to death.<br>").arg(result.suffocated);
+			html += result.suffocated == 1 ? QObject::tr("<span style=\"color:red;\"><b>One</b> citizen suffocated to death.</span><br><br>")
+				: QObject::tr("<span style=\"color:red;\"><b>%1</b> citizens suffocated to death.</span><br><br>").arg(result.suffocated);
 		if(result.starved)
-			html += result.starved == 1 ? QObject::tr("One citizen starved to death.<br>")
-				: QObject::tr("%1 citizens starved to death.<br>").arg(result.starved);
+			html += result.starved == 1 ? QObject::tr("<span style=\"color:red;\"><b>One</b> citizen starved to death.</span><br><br>")
+				: QObject::tr("<span style=\"color:red;\"><b>%1</b> citizens starved to death.</span><br><br>").arg(result.starved);
 		population = std::max(0, population - result.suffocated - result.starved);
 		const bool noRoute = report.m_IsIsolated && !report.HasAirport();
 		int migration = result.satisfaction;
 		auto suicide = [&html](int count) {
-			if(count == 1) html += QObject::tr("One citizen committed suicide due to isolation and despair.<br>");
-			else if(count) html += QObject::tr("%1 citizens committed suicide due to isolation and despair.<br>").arg(count);
+			if(count == 1) html += QObject::tr("<span style=\"color:red;\"><b>One</b> citizen committed suicide due to isolation and despair.</span><br><br>");
+			else if(count) html += QObject::tr("<span style=\"color:red;\"><b>%1</b> citizens committed suicide due to isolation and despair.</span><br><br>").arg(count);
 		};
 		if(population > int(homes))
 		{
@@ -395,14 +395,14 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 				}
 				if(isolatedDespair) suicide(result.emigrants);
 				else if(occupied)
-					html += leaving == 1 ? QObject::tr("Martial law of occupier prevented one homeless citizen from emigrating.<br><br>")
-						: QObject::tr("Martial law of occupier prevented %1 homeless citizens from emigrating.<br><br>").arg(leaving);
+					html += leaving == 1 ? QObject::tr("Martial law of occupier prevented <b>one</b> homeless citizen from emigrating.<br><br>")
+						: QObject::tr("Martial law of occupier prevented <b>%1</b> homeless citizens from emigrating.<br><br>").arg(leaving);
 				else if(leaving == population)
-					html += result.emigrants == 1 ? QObject::tr("One homeless citizen emigrated; the last citizen departed.<br><br>")
-						: QObject::tr("%1 homeless citizens emigrated; the last citizens departed.<br><br>").arg(leaving);
+					html += result.emigrants == 1 ? QObject::tr("<span style=\"color:red;\"><b>One</b> homeless citizen emigrated; the last citizen departed.</span><br><br>")
+						: QObject::tr("<span style=\"color:red;\"><b>%1</b> homeless citizens emigrated; the last citizens departed.</span><br><br>").arg(leaving);
 				else
-					html += leaving == 1 ? QObject::tr("One homeless citizen emigrated.<br><br>")
-						: QObject::tr("%1 homeless citizens emigrated.<br><br>").arg(leaving);
+					html += leaving == 1 ? QObject::tr("<span style=\"color:red;\"><b>One</b> homeless citizen emigrated.</span><br><br>")
+						: QObject::tr("<span style=\"color:red;\"><b>%1</b> homeless citizens emigrated.</span><br><br>").arg(leaving);
 			}
 		}
 		else
@@ -411,8 +411,8 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 			if(potentialBirths == 2 && result.hospitalShortage > 0)
 			{
 				html += QObject::tr("Infant mortality rate increased by insufficient hospitals.<br>");
-				html += result.births == 0 ? QObject::tr("Two babies were born but none of them survived.<br>")
-					: QObject::tr("Two babies were born but only one of them survived.<br>");
+				html += result.births == 0 ? QObject::tr("<span style=\"color:red;\">Two babies were born but none of them survived.</span><br>")
+					: QObject::tr("<span style=\"color:red;\">Two babies were born but only one of them survived.</span><br>");
 			}
 			else if(result.births)
 				html += result.births == 1 ? QObject::tr("A baby was born.<br>") : QObject::tr("Two babies were born.<br>");
@@ -495,34 +495,34 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 			{
 				if(result.immigrants == 0)
 					html += migration == 1 ? QObject::tr("Lack of a home prevented one person from immigrating.<br><br>")
-						: QObject::tr("Lack of homes prevented %1 people from immigrating.<br><br>").arg(migration);
+						: QObject::tr("Lack of homes prevented <b>%1</b> people from immigrating.<br><br>").arg(migration);
 				else if(result.immigrants < migration)
-					html += result.immigrants == 1 ? QObject::tr("Immigration potential is %1 people but only one person arrived due to lack of homes.<br><br>").arg(migration)
-						: QObject::tr("Immigration potential is %1 people but only %2 people arrived due to lack of homes.<br><br>").arg(migration).arg(result.immigrants);
-				else html += result.immigrants == 1 ? QObject::tr("One person immigrated to this city.<br><br>")
-					: QObject::tr("%1 people immigrated to this city.<br><br>").arg(result.immigrants);
+					html += result.immigrants == 1 ? QObject::tr("Immigration potential is <b>%1</b> people but only one person arrived due to lack of homes.<br><br>").arg(migration)
+						: QObject::tr("Immigration potential is <b>%1</b> people but only <b>%2</b> people arrived due to lack of homes.<br><br>").arg(migration).arg(result.immigrants);
+				else html += result.immigrants == 1 ? QObject::tr("<span style=\"color:green;\"><b>One</b> person immigrated to this city.</span><br><br>")
+					: QObject::tr("<span style=\"color:green;\"><b>%1</b> people immigrated to this city.</span><br><br>").arg(result.immigrants);
 			}
 			else if(!blocked && migration < 0)
 			{
 				const int potential = -migration;
 				if(occupied)
-					html += potential == 1 ? QObject::tr("Martial law of occupier prevented one citizen from emigrating.<br>")
-						: QObject::tr("Martial law of occupier prevented %1 citizens from emigrating.<br>").arg(potential);
+					html += potential == 1 ? QObject::tr("Martial law of occupier prevented <b>one</b> citizen from emigrating.<br>")
+						: QObject::tr("Martial law of occupier prevented <b>%1</b> citizens from emigrating.<br>").arg(potential);
 				else if(!population)
-					html += potential == 1 ? QObject::tr("Emigration potential is one citizen but nobody is here.<br>")
-						: QObject::tr("Emigration potential is %1 citizens but nobody is here.<br>").arg(potential);
-				else if(potential == 1) html += QObject::tr("One citizen emigrated from this city.<br>");
-				else if(result.emigrants == 1) html += QObject::tr("Emigration potential is %1 citizens; the last citizen departed.<br>").arg(potential);
-				else if(result.emigrants == population) html += QObject::tr("Emigration potential is %1 citizens; the last citizens departed.<br>").arg(potential);
-				else html += QObject::tr("Emigration potential is %1 citizens; %2 citizens departed.<br>").arg(potential).arg(result.emigrants);
+					html += potential == 1 ? QObject::tr("Emigration potential is <b>one</b> citizen but nobody is here.<br>")
+						: QObject::tr("Emigration potential is <b>%1</b> citizens but nobody is here.<br>").arg(potential);
+				else if(potential == 1) html += QObject::tr("<span style=\"color:red;\"><b>One</b> citizen emigrated from this city.</span><br>");
+				else if(result.emigrants == 1) html += QObject::tr("<span style=\"color:red;\">Emigration potential is <b>%1</b> citizens; the last citizen departed.</span><br>").arg(potential);
+				else if(result.emigrants == population) html += QObject::tr("<span style=\"color:red;\">Emigration potential is <b>%1</b> citizens; the last citizens departed.</span><br>").arg(potential);
+				else html += QObject::tr("<span style=\"color:red;\">Emigration potential is <b>%1</b> citizens; <b>%2</b> citizens departed.</span><br>").arg(potential).arg(result.emigrants);
 			}
 		}
 
 		if(quint32(population) < report.m_PopOrig)
-			html += QObject::tr("Population decreased by %1 to %2.<br><br>").arg(report.m_PopOrig - population).arg(population);
+			html += QObject::tr("<span style=\"color:red;\">Population decreased by <b>%1</b> to <b>%2</b>.</span><br><br>").arg(report.m_PopOrig - population).arg(population);
 		else if(quint32(population) > report.m_PopOrig)
-			html += QObject::tr("Population increased by %1 to %2.<br><br>").arg(population - report.m_PopOrig).arg(population);
-		else html += QObject::tr("Population remained steady at %1.<br><br>").arg(population);
+			html += QObject::tr("<span style=\"color:green;\">Population increased by <b>%1</b> to <b>%2</b>.</span><br><br>").arg(population - report.m_PopOrig).arg(population);
+		else html += QObject::tr("Population remained steady at <b>%1</b>.<br><br>").arg(population);
 	}
 	else html += QObject::tr("Population %1.<br><br>").arg(population);
 
@@ -543,12 +543,12 @@ QString LegacyPopulationHtml(const AuCityReport& report, quint32 homes)
 					const int populationLimit = population / 7;
 					if(report.m_TroopsDrafted)
 					{
-						html += report.m_TroopsDrafted == 1 ? QObject::tr("One citizen was drafted into military service.<br>")
-							: QObject::tr("%1 citizens were drafted into military service.<br><br>").arg(report.m_TroopsDrafted);
+						html += report.m_TroopsDrafted == 1 ? QObject::tr("<b>One</b> citizen was drafted into military service.<br>")
+							: QObject::tr("<b>%1</b> citizens were drafted into military service.<br><br>").arg(report.m_TroopsDrafted);
 						population = std::max(0, population - report.m_TroopsDrafted);
 					}
-					html += QObject::tr("Garrison %1 troops. Required contingent %2 troops.<br>").arg(report.m_TroopsAtCity).arg(contingent);
-					if(populationLimit < contingent) html += QObject::tr("Population limits garrison to %1 troops.<br>").arg(populationLimit);
+					html += QObject::tr("Garrison <b>%1</b> troops. Required contingent <b>%2</b> troops.<br>").arg(report.m_TroopsAtCity).arg(contingent);
+					if(populationLimit < contingent) html += QObject::tr("Population limits garrison to <b>%1</b> troops.<br>").arg(populationLimit);
 					const int buildings = report.BuildingLevels(IID_BaseWeapon) + report.BuildingLevels(IID_BaseShield) + report.BuildingLevels(IID_BaseGuardTower);
 					if(buildings > bases * 2) html += QObject::tr("Military building levels: %1. %2 military flags support %3 levels; excess levels cannot be manned.<br>")
 						.arg(buildings).arg(bases).arg(bases * 2);
