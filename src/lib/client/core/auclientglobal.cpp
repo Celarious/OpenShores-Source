@@ -373,6 +373,7 @@ AuClientGlobal::AuClientGlobal(const QString& appName, const QString& settingsAp
 
 	m_ViewButtonsHidden = Settings().readIntListEntry("Settings/ViewButtonsHidden");
 
+	m_OldSidebar = Settings().readBoolEntry("Settings/OldSidebar", false);
 	m_ViewActionButtons = Settings().readBoolEntry("Settings/ViewActionButtons", true);
 
 	m_ViewButtonSize = Settings().readNumEntry("Settings/ViewButtonSize", 0);

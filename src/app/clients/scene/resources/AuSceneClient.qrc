@@ -1,5 +1,6 @@
 <!DOCTYPE RCC><RCC version="1.0">
 <qresource>
+	<file>data/SceneClient.png</file>
 	<file>data/HSSSmallCapsule.png</file>
 	<file>data/SoHIcon.ico</file>
 	<file>data/SoHLogo128.png</file>

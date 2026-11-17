@@ -197,12 +197,14 @@
 #include <QFileDialog>
 #include <QKeyEvent>
 #include <QMenu>
+#include <QMainWindow>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QTimer>
 #include <QtMath>
 #include <QToolTip>
+#include <QToolBar>
 #include <QWheelEvent>
 
 // Switches useful for testing.
@@ -1330,13 +1332,13 @@ QString AuViewButton::Tip(const QString& tipBase) const
 	return tipBase.arg(QString("(%1)").arg(keycommand));
 }
 
-bool AuViewButton::IsHidden(SCENE_CONTEXT sceneContext, bool hasEmpire) const
+bool AuViewButton::IsHidden(SCENE_CONTEXT sceneContext, bool hasEmpire, bool includeUserSettings) const
 {
 	if(m_Id == VB_GovernPatents && g_Au.IsLegacyGeneration())
 		return true;
 	if(g_Au.IsLegacyGeneration() && (m_Id == VB_SpacecraftDesignExchange || m_Id == VB_BdDesignExchange))
 		return true;
-	if(g_AuClient.ViewButtonHidden(m_Id))
+	if(includeUserSettings && g_AuClient.ViewButtonHidden(m_Id))
 		return true;
 
 	switch(m_Id)
@@ -1947,6 +1949,7 @@ AuDesignerView::AuDesignerView(QWidget* parent) : QOpenGLWidget(parent), m_Scene
 
 AuDesignerView::~AuDesignerView()
 {
+	delete m_OldSidebar.data();
 	if(auApp->Sound()) auApp->Sound()->SetMuted(false);
 	//qDebug() << "AuDesignerView::~AuView";
 	m_SceneRendered = false;	// Keeps ProcessControls and UpdateTarget from doing anything if they called by the model or
@@ -2162,6 +2165,16 @@ void AuDesignerView::initializeGL()
 
 void AuDesignerView::InitializeSceneInterface(bool legacyDesigner)
 {
+	m_LegacySceneInterface = legacyDesigner;
+	if(!m_SceneInterfaceInitialized)
+	{
+		m_SceneInterfaceInitialized = true;
+		// Update native widgets outside GL painting, including scene/context changes.
+		QTimer* sidebarTimer = new QTimer(this);
+		connect(sidebarTimer, &QTimer::timeout, this, &AuDesignerView::UpdateOldSidebar);
+		sidebarTimer->start(200);
+	}
+	QTimer::singleShot(0, this, &AuDesignerView::UpdateOldSidebar);
 	m_RenderInfo->InitializeGL();
 
 	m_RenderInfo->re->glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &m_GLTextureUnits);
@@ -2178,6 +2191,7 @@ void AuDesignerView::InitializeSceneInterface(bool legacyDesigner)
 
 void AuDesignerView::ShowViewButtonTip()
 {
+	if(g_AuClient.OldSidebar()) return;
 	if(m_ViewButtonAt != AuViewButton::VB_Invalid && m_ViewButtonEntered.isValid())
 	{
 		if(m_ViewButtonEntered.elapsed() > 1000)
@@ -2234,6 +2248,7 @@ bool AuDesignerView::SceneInterfaceMouseRelease(const QPoint& position)
 
 int AuDesignerView::SceneInterfaceWidth()
 {
+	if(g_AuClient.OldSidebar()) return 0;
 	if(g_AuClient.ViewButtonTransparency() >= 100) return 0;
 	PositionViewButtons();
 	if(!m_ViewButtonColumns) return 0;
@@ -9440,6 +9455,168 @@ void AuDesignerView::ShowItemManipulator(const DaItem& item)
 	m_ItemManipulator->show();
 }
 
+namespace
+{
+	enum OldSidebarButton
+	{
+		OldSidebarStory = AuViewButton::VB_COUNT,
+		OldSidebarLabor,
+		OldSidebarSpawnTie
+	};
+}
+
+void AuDesignerView::CreateOldSidebar()
+{
+	QMainWindow* owner = nullptr;
+	for(QWidget* widget = parentWidget(); widget && !owner; widget = widget->parentWidget())
+		owner = qobject_cast<QMainWindow*>(widget);
+	if(!owner) return;
+
+	QToolBar* bar = new QToolBar(tr("Old sidebar"), owner);
+	m_OldSidebar = bar;
+	bar->setObjectName("OldSidebar");
+	bar->hide();
+	bar->setEnabled(false);
+	bar->setIconSize(QSize(16, 16));
+	bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+	bar->setMovable(false);
+	bar->setFloatable(false);
+	bar->setAllowedAreas(Qt::LeftToolBarArea);
+	bar->setContextMenuPolicy(Qt::PreventContextMenu);
+	bar->toggleViewAction()->setVisible(false);
+	owner->addToolBar(Qt::LeftToolBarArea, bar);
+
+	// 2011 EXE AuButtonBar constructor, 00414730: original order and icons.
+	// Keep the current action dispatch and its gameplay checks.
+	const struct Button
+	{
+		int id;
+		const char* icon;
+		const char* name;
+		const char* tip;
+	} buttons[] = {
+		{AuViewButton::VB_HazeronHome, "SceneClient.png", QT_TR_NOOP("www.Hazeron.com"), QT_TR_NOOP("Open the Shores of Hazeron website.")},
+		{AuViewButton::VB_HideWindows, "ToggleAll.png", QT_TR_NOOP("Show or Hide All Windows"), QT_TR_NOOP("Show or hide the game windows.")},
+		{AuViewButton::VB_Mail, "ToggleMail.png", QT_TR_NOOP("Mail"), QT_TR_NOOP("Read and send mail.")},
+		{AuViewButton::VB_Comm, "Comm.png", QT_TR_NOOP("Comm"), QT_TR_NOOP("Communicate with players, spacecraft and cities.")},
+		{AuViewButton::VB_SpacecraftMission, "GovSpacecraft.png", QT_TR_NOOP("Spacecraft Mission"), QT_TR_NOOP("View and configure the spacecraft mission.")},
+		{AuViewButton::VB_UnitOrders, "CommRecruit.png", QT_TR_NOOP("Unit Orders"), QT_TR_NOOP("Give orders to your crew and troops.")},
+		{AuViewButton::VB_UnitOrders, "c_PowerArmor.png", QT_TR_NOOP("Unit Equipment"), QT_TR_NOOP("Manage unit equipment in the Unit Orders window.")},
+		{AuViewButton::VB_Gear, "Inventory.png", QT_TR_NOOP("Personal Equipment"), QT_TR_NOOP("Manage your personal inventory and equipment.")},
+		{AuViewButton::VB_Cargo, "c_Crate.png", QT_TR_NOOP("Cargo"), QT_TR_NOOP("View cargo and transfer items.")},
+		{AuViewButton::VB_SpacecraftDamage, "MsgDamageReport.png", QT_TR_NOOP("Damage Report"), QT_TR_NOOP("View spacecraft damage.")},
+		{AuViewButton::VB_LegacySpacecraftDesign, "Design.png", QT_TR_NOOP("Spacecraft Design"), QT_TR_NOOP("Show or hide the design tools in a design studio.")},
+		{AuViewButton::VB_Locator, "Locator.png", QT_TR_NOOP("Locator"), QT_TR_NOOP("View your location and environmental conditions.")},
+		{AuViewButton::VB_Bio, "GovSelf.png", QT_TR_NOOP("Bio"), QT_TR_NOOP("View information about your character.")},
+		{OldSidebarStory, "CommNarrator.png", QT_TR_NOOP("Story"), QT_TR_NOOP("View your active stories in Bio.")},
+		{OldSidebarLabor, "c_Hammer.png", QT_TR_NOOP("Labor"), QT_TR_NOOP("Work local jobs and hand craft items.")},
+		{AuViewButton::VB_ConstructionBd, "bp_ClearLand.png", QT_TR_NOOP("Construction"), QT_TR_NOOP("Plan roads and buildings and found cities.")},
+		{AuViewButton::VB_Government, "CommGovernment.png", QT_TR_NOOP("Governance"), QT_TR_NOOP("View and change government policies.")},
+		{-1, nullptr, nullptr, nullptr}, // Expanding spacer and divider.
+		{AuViewButton::VB_Agent, nullptr, QT_TR_NOOP("Agent"), QT_TR_NOOP("Open the staff tools.")},
+		{-3, nullptr, nullptr, nullptr}, // Second expanding spacer, after optional staff divider.
+		{AuViewButton::VB_Recall, "SpawnRecall.png", QT_TR_NOOP("Spawn Recall"), QT_TR_NOOP("Recall your character home.")},
+		{OldSidebarSpawnTie, "SpawnTie.png", QT_TR_NOOP("Spawn Tie"), QT_TR_NOOP("Set your home at your current city location.")},
+		{-2, nullptr, nullptr, nullptr},
+		{AuViewButton::VB_Help, "CommHelp.png", QT_TR_NOOP("Call For Help"), QT_TR_NOOP("Request assistance from game staff.")},
+		{AuViewButton::VB_Settings, "Settings.png", QT_TR_NOOP("Settings"), QT_TR_NOOP("Change program settings.")},
+		{-2, nullptr, nullptr, nullptr},
+		{AuViewButton::VB_Exit, "ExitGame.png", QT_TR_NOOP("Exit Game"), QT_TR_NOOP("Log out and exit the game.")}
+	};
+	for(const Button& button : buttons)
+	{
+		if(button.id < 0)
+		{
+			if(button.id != -2)
+			{
+				QWidget* spacer = new QWidget(bar);
+				spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+				bar->addWidget(spacer);
+			}
+			if(button.id != -3) bar->addSeparator();
+			continue;
+		}
+		// The standalone legacy editor has no avatar or game windows.
+		if(m_LegacySceneInterface && button.id != AuViewButton::VB_HazeronHome
+			&& button.id != AuViewButton::VB_HideWindows && button.id != AuViewButton::VB_LegacySpacecraftDesign
+			&& button.id != AuViewButton::VB_Settings && button.id != AuViewButton::VB_Exit)
+			continue;
+		const QString image = button.icon ? QString(":data/%1").arg(button.icon)
+			: AuViewButton::Image(static_cast<AuViewButton::VIEWBUTTON>(button.id));
+		QIcon icon(image);
+		if(icon.isNull() && button.id == AuViewButton::VB_HazeronHome)
+			icon = QIcon(auApp->Icon32());
+		QAction* action = bar->addAction(icon, tr(button.name));
+		action->setData(button.id);
+		action->setToolTip(QString("<b>%1</b><br>%2").arg(tr(button.name), tr(button.tip)));
+		connect(action, &QAction::triggered, this, [this, button]() { OldSidebarClicked(button.id); });
+		if(button.id == AuViewButton::VB_Agent)
+			bar->addSeparator()->setData(button.id);
+	}
+	if(m_LegacySceneInterface)
+	{
+		QAction* exitDesigner = bar->addAction(QIcon(AuViewButton::Image(AuViewButton::VB_LegacyDesignerExit)), tr("Exit Designer"));
+		exitDesigner->setData(AuViewButton::VB_LegacyDesignerExit);
+		connect(exitDesigner, &QAction::triggered, this, [this]() { OldSidebarClicked(AuViewButton::VB_LegacyDesignerExit); });
+	}
+}
+
+void AuDesignerView::UpdateOldSidebar()
+{
+	if(!m_SceneInterfaceInitialized) return;
+	const bool enabled = g_AuClient.OldSidebar();
+	if(enabled)
+	{
+		// Cancel a pending fading-button click and remove its tooltip immediately.
+		const bool hadTooltip = m_ViewButtonEntered.isValid();
+		m_ViewButtonAt = m_ViewButtonNear = m_ViewButtonPressed = AuViewButton::VB_Invalid;
+		m_ViewButtonEntered = AuElapsedTimer();
+		m_ViewButtonColumns = 0;
+		if(hadTooltip) QToolTip::hideText();
+		if(!m_OldSidebar && isVisible()) CreateOldSidebar();
+	}
+	if(!m_OldSidebar) return;
+	const bool visible = enabled && isVisible() && m_RenderInfo->m_ShowHUD && !m_InputSuspended.load();
+	m_OldSidebar->setVisible(visible);
+	m_OldSidebar->setEnabled(visible && !IsSceneLoading());
+	if(!visible) return;
+	const bool hasEmpire = SceneAtomEmpire() != 0;
+	for(QAction* action : m_OldSidebar->actions())
+	{
+		if(!action->data().isValid()) continue;
+		const int id = action->data().toInt();
+		bool available;
+		if(id == OldSidebarSpawnTie || id == OldSidebarLabor)
+			available = !m_LegacySceneInterface && SceneContext() == SCENE_Universe;
+		else if(id == OldSidebarStory)
+			available = !m_LegacySceneInterface && !AuViewButton(AuViewButton::VB_Bio).IsHidden(SceneContext(), hasEmpire, false);
+		else if(m_LegacySceneInterface)
+			available = true;
+		else
+			available = !AuViewButton(static_cast<AuViewButton::VIEWBUTTON>(id)).IsHidden(SceneContext(), hasEmpire, false);
+		// Staff tools were the one conditional button in the original constructor.
+		if(id == AuViewButton::VB_Agent) action->setVisible(available);
+		action->setEnabled(available);
+	}
+}
+
+void AuDesignerView::OldSidebarClicked(int button)
+{
+	if(!g_AuClient.OldSidebar() || !m_OldSidebar || !m_OldSidebar->isVisible()
+		|| !m_OldSidebar->isEnabled() || IsSceneLoading()) return;
+	AuDesignerFrame* frame = auDesignerApp->DesignerFrame();
+	switch(button)
+	{
+	case OldSidebarSpawnTie: SpawnTie(); break;
+	case OldSidebarStory: frame->ToggleStoriesUi(); break;
+	case OldSidebarLabor:
+		if(g_Au.IsLegacyGeneration()) frame->ToggleBuildingUi();
+		else frame->ToggleHandCraftUi();
+		break;
+	default: ViewButtonClicked(static_cast<AuViewButton::VIEWBUTTON>(button)); break;
+	}
+}
+
 void AuDesignerView::CreateViewButtons(bool legacyDesigner)
 {
 	const DgData& gd = g_Au.LockDataForRead();
@@ -9701,6 +9878,11 @@ double AuDesignerView::ViewButtonSubRadius() const
 
 void AuDesignerView::RenderViewButtons()
 {
+	if(g_AuClient.OldSidebar())
+	{
+		m_ViewButtonAt = m_ViewButtonNear = m_ViewButtonPressed = AuViewButton::VB_Invalid;
+		return;
+	}
 	if(!m_RenderInfo->m_ShowHUD)
 	{
 		m_ViewButtonAt = AuViewButton::VB_Invalid;
@@ -10686,6 +10868,7 @@ void AuDesignerView::ViewButtonClicked(AuViewButton::VIEWBUTTON button)
 
 bool AuDesignerView::ViewButtonIsEnabled(AuViewButton::VIEWBUTTON vb) const
 {
+	if(g_AuClient.OldSidebar()) return false;
 	for(QList<AuViewButton>::const_iterator bi = m_ViewButtons.cbegin(); bi != m_ViewButtons.cend(); bi++)
 		if((*bi).m_Id == vb)
 			return (*bi).m_Enabled;
@@ -10694,6 +10877,7 @@ bool AuDesignerView::ViewButtonIsEnabled(AuViewButton::VIEWBUTTON vb) const
 
 AuViewButton::VIEWBUTTON AuDesignerView::ViewButtonAt(const QPoint& mousePos) const
 {
+	if(g_AuClient.OldSidebar()) return AuViewButton::VB_Invalid;
 	if(g_AuClient.ViewButtonTransparency() >= 100)
 		return AuViewButton::VB_Invalid;	// All view buttons are invisible.
 
@@ -10749,6 +10933,7 @@ AuViewButton::VIEWBUTTON AuDesignerView::ViewButtonAt(const QPoint& mousePos) co
 
 AuViewButton::VIEWBUTTON AuDesignerView::ViewButtonNear(const QPoint& mousePos) const
 {
+	if(g_AuClient.OldSidebar()) return AuViewButton::VB_Invalid;
 	if(g_AuClient.ViewButtonTransparency() >= 100)
 		return AuViewButton::VB_Invalid;	// All view buttons are invisible.
 
@@ -10826,6 +11011,11 @@ AuViewButton::VIEWBUTTON AuDesignerView::ViewButtonNear(const QPoint& mousePos) 
 
 void AuDesignerView::PositionViewButtons()
 {
+	if(g_AuClient.OldSidebar())
+	{
+		m_ViewButtonColumns = 0;
+		return;
+	}
 	double gldAspect = AuGLEffects::WindowAspectRatio(rect());
 
 	// Calculate the position of the first main button at the top left of the screen.

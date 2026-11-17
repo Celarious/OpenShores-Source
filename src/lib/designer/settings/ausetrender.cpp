@@ -8,6 +8,7 @@
 //
 #include "auapp.h"
 #include "auclientglobal.h"
+#include "audesignerview.h"
 #include "aujoystick.h"
 #include "auframe.h"
 #include <daperson.h>
@@ -164,6 +165,13 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 			"Uncheck to use the modern tunnel animation. Wormhole travel keeps its own animation.<br>"
 			"Changes take effect immediately.</html>"));
 	connect(classicLoadingAnimation, SIGNAL(stateChanged(int)), SLOT(SetUseClassicLoadingAnimation(int)));
+
+	QCheckBox* oldSidebar = new QCheckBox(tr("Old sidebar"));
+	oldSidebar->setChecked(g_AuClient.OldSidebar());
+	oldSidebar->setToolTip(tr("<html>Use the traditional vertical sidebar with small icons.<br>"
+			"The fading on-screen buttons are hidden and disabled while this is checked.<br>"
+			"Changes take effect immediately.</html>"));
+	connect(oldSidebar, SIGNAL(stateChanged(int)), SLOT(SetOldSidebar(int)));
 
 	m_SkyBoxMipmap = new QCheckBox(tr("Mipmap Sky Box Texture"));
 	m_SkyBoxMipmap->setCheckState(g_Au.SkyBoxMipMap()?Qt::Checked:Qt::Unchecked);
@@ -639,6 +647,7 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	cklay->addWidget(ckdrawhelmethud);
 	cklay->addWidget(crosshairSmoothing);
 	cklay->addWidget(classicLoadingAnimation);
+	cklay->addWidget(oldSidebar);
 
 	QVBoxLayout* infolay = new QVBoxLayout;
 	if(queryVers)
@@ -738,6 +747,17 @@ void AuSetRender::SetCrosshairSmoothing(int value)
 void AuSetRender::SetDrawHelmetHUDAlways(int value)
 {
 	g_Au.SetDrawHelmetHUDAlways(value ? true : false);
+}
+
+void AuSetRender::SetOldSidebar(int value)
+{
+	g_AuClient.SetOldSidebar(value == Qt::Checked);
+	if(auApp->Frame())
+	{
+		const QList<AuDesignerView*> views = auApp->Frame()->findChildren<AuDesignerView*>();
+		for(AuDesignerView* view : views)
+			view->UpdateOldSidebar();
+	}
 }
 
 void AuSetRender::SetUseClassicLoadingAnimation(int value)

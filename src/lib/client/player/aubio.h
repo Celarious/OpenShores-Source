@@ -44,6 +44,7 @@ public:
 	virtual ~AuBioPages();
 	bool InitializeNextPage();
 	bool IsInitialized() const { return m_InitializePage >= 7; }
+	void ShowStories();
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|

@@ -151,6 +151,12 @@ bool AuBioPages::InitializeNextPage()
 	return IsInitialized();
 }
 
+void AuBioPages::ShowStories()
+{
+	if(m_JobsPage)
+		m_Tabs->setCurrentIndex(m_Pages->indexOf(m_JobsPage));
+}
+
 AuBioPages::~AuBioPages()
 {
 }

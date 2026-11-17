@@ -51,6 +51,7 @@ public:
 	bool SkyboxNeedsPreparation() const;
 	void PrepareSkybox();
 	void SetLoadingScreen(bool loading);
+	bool IsSceneLoading() const override;
 	void PrepareDesign();
 	void SetInterfaceVisible(bool visible);
 	void ControlsChanged();

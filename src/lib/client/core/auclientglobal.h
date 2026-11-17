@@ -362,6 +362,7 @@ private:
 	AuStarMapData						m_StarMap;				// Known empire for nav mission orders and star map widget.
 	bool								m_StoryDialog;			// True to use the story dialog window.
 	mutable QReadWriteLock				m_rwStarMap;			// Guards m_StarMap.
+	bool m_OldSidebar;
 	bool								m_ViewActionButtons;	// true to show/use view action buttons (right side black buttons)
 	int									m_ViewButtonSize;		// 0..100 pixels
 	int									m_ViewButtonStyle;		// 0=custom image
@@ -1165,6 +1166,13 @@ public:
 	{
 		m_ViewButtonsHidden = hiddenButtons;
 		Settings().writeEntry("Settings/ViewButtonsHidden", m_ViewButtonsHidden);
+	}
+
+	bool OldSidebar() const { return m_OldSidebar; }
+	void SetOldSidebar(bool enabled)
+	{
+		m_OldSidebar = enabled;
+		Settings().writeEntry("Settings/OldSidebar", enabled);
 	}
 
 	inline void SetViewActionButtons(bool visible)

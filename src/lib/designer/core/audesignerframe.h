@@ -825,6 +825,7 @@ public slots:
 	void ToggleCargoOrdnanceUi();
 	void ToggleCargoTransferUi();
 	void ToggleCharacterUi();
+	void ToggleStoriesUi();
 	void ToggleCommUi();
 	void ToggleConstructionUi();
 	void ToggleDesignPartsUi();

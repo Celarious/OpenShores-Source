@@ -1492,10 +1492,16 @@ void AuLegacyShipRender::SetInterfaceVisible(bool visible)
 void AuLegacyShipRender::SetLoadingScreen(bool loading)
 {
 	m_Impl->loadingScreen = loading;
+	UpdateOldSidebar();
 	m_Impl->StopMovement();
 	m_Impl->lastTick = m_Impl->animationClock.elapsed();
 	UpdateMouseCapture();
 	update();
+}
+
+bool AuLegacyShipRender::IsSceneLoading() const
+{
+	return m_Impl->loadingScreen;
 }
 
 void AuLegacyShipRender::PrepareDesign()

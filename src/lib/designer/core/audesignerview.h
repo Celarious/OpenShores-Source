@@ -19,6 +19,7 @@
 #include "dadesignbase.h"
 #include <QElapsedTimer>
 #include <QPoint>
+#include <QPointer>
 #include <atomic>
 
 class AuAtomRenderInfo;
@@ -41,6 +42,7 @@ class QFocusEvent;
 class QKeyEvent;
 class QMouseEvent;
 class QTimer;
+class QToolBar;
 class QWheelEvent;
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
@@ -277,7 +279,7 @@ public:
 
 	// True if this button is hidden right now because it is not available to the user.
 	// 'hasEmpire' is true if the scene atom has an empire, false if they are a free avatar.
-	bool IsHidden(SCENE_CONTEXT sceneContext, bool hasEmpire) const;
+	bool IsHidden(SCENE_CONTEXT sceneContext, bool hasEmpire, bool includeUserSettings = true) const;
 
 	inline bool IsSub() const
 	{
@@ -712,6 +714,10 @@ private:
 	QString								m_OverlayText;
 	AuElapsedTimer						m_OverlayTime;
 
+	QPointer<QToolBar> m_OldSidebar;
+	bool m_SceneInterfaceInitialized = false;
+	bool m_LegacySceneInterface = false;
+
 	AuGLVAO								m_ButtonVAO;			// Same VAO can be used for all the buttons, and the glow.
 	AuControlButton						m_ControlButtonAt;		// Control button that is under the cursor.
 	AuControlButton						m_ControlButtonPressed;	// Control button under the mouse when it was pressed.
@@ -857,7 +863,8 @@ private:
 public:
 	AuDesignerView(QWidget *parent=0);
 	~AuDesignerView();
-	bool IsSceneLoading() const;
+	virtual bool IsSceneLoading() const;
+	void UpdateOldSidebar();
 
 	// Animate scene atom device objects, e.g. console textures.
 	// Called from DtGL thread when threaded OpenGL is supported. A shared context is selected as current.
@@ -1898,6 +1905,8 @@ private:
 	void RenderTactical(DaPerson* sceneAtom, DaAtom* pEnvironment);
 
 	void CreateViewButtons(bool legacyDesigner = false);
+	void CreateOldSidebar();
+	void OldSidebarClicked(int button);
 
 	void RenderControlButtons();
 

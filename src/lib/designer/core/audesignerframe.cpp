@@ -1454,6 +1454,16 @@ void AuDesignerFrame::ToggleCharacterUi()
 	}
 }
 
+void AuDesignerFrame::ToggleStoriesUi()
+{
+	if(m_BioDock)
+	{
+		m_BioDock->m_Bio->ShowStories();
+		m_BioDock->show();
+		m_BioDock->raise();
+	}
+}
+
 void AuDesignerFrame::ToggleDesignPartsUi()
 {
 	if(m_LegacyDesigner)
