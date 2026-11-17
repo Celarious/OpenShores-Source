@@ -8991,7 +8991,7 @@ double DaWorldLL::TerrainAltitudeMSLPave(const AuGlobeLL& ll, bool& hideRocks, i
 		for(const DaAtom* atom : subs)
 			if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
 				terAltMSL = city->AdjustSiteTerrain(*this, terAltMSL, ll, levelSites,
-					hideRocks, hideGrass, hideShrubs, hideTrees, pavementType);
+					hideRocks, hideGrass, hideShrubs, hideTrees, pavementType, &farmShrub, &orchardTree);
 		return terAltMSL;
 	}
 	if(!BdHere() || pavementType != WORLDTEX_Count)

@@ -249,7 +249,7 @@ public:
 	// and flora queries use this path, independently of rendered room floors.
 	double AdjustSiteTerrain(const DaWorldLL& world, double altitudeMSL, const AuGlobeLL& ll,
 		int& levelSites, bool& hideRocks, int& hideGrass, bool& hideShrubs,
-		bool& hideTrees, WORLDTEX_TYPE& pavementType) const;
+		bool& hideTrees, WORLDTEX_TYPE& pavementType, COMMODITYID* farmShrub = nullptr, COMMODITYID* orchardTree = nullptr) const;
 	// Signed distance in feet from 'll' to the nearest edge of pavement that
 	// AdjustSiteTerrain paints, negative inside. False if no site paints pavement.
 	bool SitePavementEdgeDistance(const DaWorldLL& world, const AuGlobeLL& ll, float& dist) const;
@@ -330,6 +330,8 @@ public:
 		RENDERPASS pass, DaAtomList& sc, DaAtomList& scFog, DaAtomList& scGlobe,
 		DaAtomList& scGlobeFog, DaAtomList& scRing, DaAtomList& scRingFog) override;
 private:
+	using CropSelections = QHash<quint32, QPair<quint16, quint16>>;
+	CropSelections Crops() const;
 	QString MailLocationHeader(const AuTime& when) const;
 	void SendPoliticalReport(const AuIdList& recipients, const QString& subject, const QString& body) const;
 	bool MailReport(const AuCityReport& report, const AuCityReport& previous, const AuId& toId,

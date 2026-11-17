@@ -1098,6 +1098,9 @@ struct DaLegacyCity::Runtime
 	QHash<quint32, int> collisionProxyIndex;
 	AuPoint collisionMinimum, collisionMaximum;
 	AuFireParticles* fire = nullptr;
+	mutable QMutex cropLock;
+	QByteArray cropManufacturing;
+	CropSelections crops, renderedCrops;
 	AuSmokeParticles* smoke = nullptr;
 	~Runtime()
 	{
@@ -1236,7 +1239,8 @@ struct DaLegacyCity::Runtime
 	}
 	double AdjustTerrain(const DaWorldLL& world, double altitudeMSL, const AuGlobeLL& ll,
 		int& levelSites, bool& hideRocks, int& hideGrass, bool& hideShrubs,
-		bool& hideTrees, WORLDTEX_TYPE& pavementType) const;
+		bool& hideTrees, WORLDTEX_TYPE& pavementType, const CropSelections* crops = nullptr,
+		COMMODITYID* farmShrub = nullptr, COMMODITYID* orchardTree = nullptr) const;
 	bool PavementEdgeDistance(const DaWorldLL& world, const AuGlobeLL& ll, float& dist) const;
 
 	// The old world's development lookup excluded distant sites before
@@ -1373,6 +1377,9 @@ struct DaLegacyCity::Runtime
 				site.halfWidth = dev.industryId == 2 ? dev.roadWidthMeters * FeetPerMeter()/2+8 : site.radius;
 				site.halfLength = dev.industryId == 2 ? dev.roadLengthMeters * FeetPerMeter()/2 : site.radius;
 				site.radius = qMax(site.halfWidth,site.halfLength);
+				if(dev.industryId == 30 || dev.industryId == 32)
+					if(const auto* recipe = ConstructionRecipe(dev.industryId, dev.constructionProcessId))
+						site.radius = qMax(site.radius, float(recipe->buildRadius * FeetPerMeter()));
 				world.BuildingConstructionTransform(world.LocOfLL(dev.location, dev.altitudeMSL),
 					dev.facingRadians, nullptr, AuPoint(), site.placement);
 				site.inverse = site.placement.Inverse();
@@ -1957,6 +1964,7 @@ void DaLegacyCity::RefreshDevelopmentDecks(AuLegacyCity::Development& developmen
 AuLegacyCity::State DaLegacyCity::Snapshot() const { QReadLocker lock(&m_CityLock); return m_City; }
 QByteArray DaLegacyCity::TerrainCacheKey() const
 {
+	const auto crops = Crops();
 	QByteArray data;
 	QDataStream out(&data, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_4_1);
 	{
@@ -1965,11 +1973,14 @@ QByteArray DaLegacyCity::TerrainCacheKey() const
 		// Match SameTerrainSite, retaining development order because blends
 		// and pavement ownership depend on the order sites are sampled.
 		for(const auto& dev : m_City.developments)
+		{
 			out << dev.id << dev.industryId << dev.constructionProcessId << dev.materialId << dev.location
 				<< dev.designId << dev.minimumDeck << dev.maximumDeck << dev.completedLevels
 				<< dev.altitudeMSL << dev.facingRadians << dev.constructed << dev.demolished << dev.roadSlab << dev.IsDestroyed()
 				<< dev.components.isEmpty() << dev.roadLengthMeters << dev.roadWidthMeters
 				<< dev.roadStartAltitudeMSL << dev.roadEndAltitudeMSL << dev.biodomeRadiusMeters;
+			if(dev.industryId == 30 || dev.industryId == 32) out << crops.value(dev.id).first << crops.value(dev.id).second;
+		}
 	}
 	return QCryptographicHash::hash(data, QCryptographicHash::Sha256);
 }
@@ -2135,11 +2146,13 @@ bool DaLegacyCity::IsInScene(const DaPerson* sceneAtom, const AuPoint& cameraEnv
 
 double DaLegacyCity::AdjustSiteTerrain(const DaWorldLL& world, double altitudeMSL, const AuGlobeLL& ll,
 	int& levelSites, bool& hideRocks, int& hideGrass, bool& hideShrubs,
-	bool& hideTrees, WORLDTEX_TYPE& pavementType) const
+	bool& hideTrees, WORLDTEX_TYPE& pavementType, COMMODITYID* farmShrub, COMMODITYID* orchardTree) const
 {
 	if(!g_Au.IsLegacyGeneration() || IsDead()) return altitudeMSL;
+	const auto crops = farmShrub || orchardTree ? Crops() : CropSelections();
 	QMutexLocker lock(&m_Runtime->lock); m_Runtime->EnsureSites(*this, world);
-	return m_Runtime->AdjustTerrain(world,altitudeMSL,ll,levelSites,hideRocks,hideGrass,hideShrubs,hideTrees,pavementType);
+	return m_Runtime->AdjustTerrain(world,altitudeMSL,ll,levelSites,hideRocks,hideGrass,hideShrubs,hideTrees,pavementType,
+		&crops, farmShrub, orchardTree);
 }
 
 bool DaLegacyCity::SitePavementEdgeDistance(const DaWorldLL& world, const AuGlobeLL& ll, float& dist) const
@@ -2306,7 +2319,8 @@ bool DaLegacyCity::Runtime::PavementEdgeDistance(const DaWorldLL& world, const A
 
 double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altitudeMSL, const AuGlobeLL& ll,
 	int& levelSites, bool& hideRocks, int& hideGrass, bool& hideShrubs,
-	bool& hideTrees, WORLDTEX_TYPE& pavementType) const
+	bool& hideTrees, WORLDTEX_TYPE& pavementType, const CropSelections* crops,
+	COMMODITYID* farmShrub, COMMODITYID* orchardTree) const
 {
 	auto candidates = NearbySites(world, ll);
 	// DaCity::AdjustAltMSLForDevelopmentsBuildingsLocked (0x26f030/0x26f2c0)
@@ -2323,6 +2337,7 @@ double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altit
 		// altitude. This keeps its square boundary stable on slopes and globes.
 		const auto& dev = site.state;
 		if(dev.industryId != 2 && roadControlsTerrain) break;
+		if(dev.demolished) continue;
 		const AuPoint worldLocation = world.LocOfLL(ll, dev.altitudeMSL);
 		if(!SiteInRange(site, worldLocation)) continue;
 		if(dev.industryId == 2)
@@ -2366,6 +2381,41 @@ double DaLegacyCity::Runtime::AdjustTerrain(const DaWorldLL& world, double altit
 			continue;
 		}
 		const AuPoint p = site.inverse.Project(worldLocation);
+		if(dev.industryId == 30 && std::abs(p.x) < site.radius && std::abs(p.y) < site.radius) hideShrubs = hideTrees = true;
+		// DpBldSite::AdjustAltMSL 0x593590: the field follows natural terrain
+		// outside the small farmhouse pad and its ten-metre blend margin.
+		if((dev.industryId == 30 || dev.industryId == 32)
+			&& qMax(std::abs(p.x), std::abs(p.y)) > qMax(site.halfWidth, site.halfLength) + 32.8084)
+		{
+			if(std::abs(p.x) >= site.radius || std::abs(p.y) >= site.radius || pavementType != WORLDTEX_Count) continue;
+			hideRocks = true; hideShrubs = true; hideTrees = true;
+			hideGrass = 2; // Cultivated grass remains available for non-shrub products.
+			if(farmShrub) *farmShrub = CID_Invalid;
+			if(orchardTree) *orchardTree = CID_Invalid;
+			if(std::abs(p.x) < 15 && p.y > 0)
+			{ hideGrass = 1; pavementType = WORLDTEX_TYPE(6); continue; }
+			pavementType = WORLDTEX_TYPE(dev.industryId == 30 ? 12 : 11);
+			const bool underSea = world.Hydrographics() && dev.altitudeMSL <= -32;
+			if(dev.IsDestroyed() || !dev.completedLevels || (altitudeMSL <= 0 && !underSea))
+			{ hideGrass = 1; continue; }
+			const auto selection = crops ? crops->value(dev.id) : QPair<quint16, quint16>();
+			const quint16 commodity = p.x > 0 ? selection.first : selection.second;
+			const bool farm = dev.industryId == 30;
+			bool cultivated = false;
+			if(farm)
+				switch(commodity) { case 15: case 30: case 35: case 38: case 39: case 42: case 43: case 58: case 74: case 81: case 130: cultivated = true; }
+			else
+				switch(commodity) { case 30: case 35: case 42: case 58: case 74: case 86: cultivated = true; }
+			if(cultivated && std::sin(p.x / (farm ? 24.0 : 36.0) * 2 * PI) > 0)
+			{
+				const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+				const auto runtime = COMMODITYID(catalogue->RuntimeCommodityId(AuLegacyCity::CommodityId(commodity)));
+				if(farm && farmShrub) { *farmShrub = runtime; hideShrubs = false; }
+				if(!farm && orchardTree) { *orchardTree = runtime; hideTrees = false; }
+				hideGrass = 1;
+			}
+			continue;
+		}
 		// DpBuilding::AdjustAltMSL 0x597380/0x5976a0 keeps submerged parts
 		// of coastal wharves/shipyards, water treatment and hydroelectric sites
 		// ten, two and three meters below sea level, respectively.
@@ -2421,7 +2471,9 @@ void DaLegacyCity::UpdateSiteTerrain(AuAtomRenderInfo& ari, bool removed)
 {
 	auto* world = dynamic_cast<DaWorldLL*>(Parent());
 	if(!world) return;
+	const auto crops = Crops();
 	QMutexLocker lock(&m_Runtime->lock); m_Runtime->EnsureSites(*this, *world);
+	const bool cropsChanged = crops != m_Runtime->renderedCrops;
 	removed = removed || IsDead();
 	{
 		QReadLocker stateLock(&m_CityLock);
@@ -2440,13 +2492,17 @@ void DaLegacyCity::UpdateSiteTerrain(AuAtomRenderInfo& ari, bool removed)
 			world->InvalidateCityOverlaySprites();
 		}
 	}
-	if(!removed && m_Runtime->terrainDrawRevision == m_Runtime->terrainRevision) return;
+	if(!removed && !cropsChanged && m_Runtime->terrainDrawRevision == m_Runtime->terrainRevision) return;
 	// Invalidate old sites as well, so moved/removed developments restore their
 	// natural terrain and flora. Release the city lock before terrain work.
 	QVector<Runtime::Site> dirty;
 	QHash<quint32, const Runtime::Site*> previous, current;
 	for(const auto& site : m_Runtime->renderedSites) previous.insert(site.state.id, &site);
 	if(!removed) for(const auto& site : m_Runtime->sites) current.insert(site.state.id, &site);
+	if(cropsChanged)
+		for(const auto& site : m_Runtime->sites)
+			if((site.state.industryId == 30 || site.state.industryId == 32)
+				&& crops.value(site.state.id) != m_Runtime->renderedCrops.value(site.state.id)) dirty.append(site);
 	for(auto it = previous.cbegin(); it != previous.cend(); ++it)
 	{
 		const auto found = current.constFind(it.key());
@@ -2466,6 +2522,7 @@ void DaLegacyCity::UpdateSiteTerrain(AuAtomRenderInfo& ari, bool removed)
 	}
 	m_Runtime->renderedSites = removed ? QVector<Runtime::Site>() : m_Runtime->sites;
 	m_Runtime->terrainDrawRevision = removed ? 0 : m_Runtime->terrainRevision;
+	m_Runtime->renderedCrops = removed ? CropSelections() : crops;
 	lock.unlock();
 	// A worker started before construction/extension must not publish its old
 	// room mask after BuildingChanged requests a fresh distribution.
@@ -4583,9 +4640,35 @@ bool DaLegacyCity::TurretMatrices(const AuLegacyCity::Development& development, 
 	return true;
 }
 
+DaLegacyCity::CropSelections DaLegacyCity::Crops() const
+{
+	QReadLocker stateLock(&m_CityLock);
+	QMutexLocker lock(&m_Runtime->cropLock);
+	if(m_City.manufacturing.isEmpty() && !g_Au.IsSceneWorker()) return m_Runtime->crops;
+	if(m_Runtime->cropManufacturing == m_City.manufacturing) return m_Runtime->crops;
+	// Production decoding also restores its tool inventory, so require the
+	// complete, activated Legacy commodity descriptors before touching it.
+	const auto* catalogue = ReadyCityCatalogue();
+	AuLegacyCity::ProductionState production; QString error;
+	if(!catalogue || !AuLegacyCity::DecodeProductionState(*catalogue, m_City.manufacturing, production, error)) return {};
+	CropSelections crops;
+	for(const auto& process : production.processes)
+	{
+		const auto* recipe = catalogue->ManufacturingProcess(AuLegacyCity::ManufacturingProcessId(process.processId));
+		if(!recipe || (recipe->industry.value != 30 && recipe->industry.value != 32) || process.slot > 1) continue;
+		auto& selection = crops[process.developmentId];
+		(process.slot ? selection.second : selection.first) = recipe->commodity.value;
+	}
+	m_Runtime->cropManufacturing = m_City.manufacturing;
+	m_Runtime->crops = crops;
+	return crops;
+}
+
 void DaLegacyCity::CopyDefenseState(const DaLegacyCity& source)
 {
 	if(&source == this) return;
+	const auto crops = source.Crops();
+	{ QMutexLocker lock(&m_Runtime->cropLock); m_Runtime->crops = crops; }
 	QVector<Runtime::Shield> shields;
 	QHash<quint64, Runtime::TurretAim> aims;
 	{ QMutexLocker lock(&source.m_Runtime->defenseLock); shields = source.m_Runtime->shields; aims = source.m_Runtime->turretAims; }
@@ -4594,21 +4677,25 @@ void DaLegacyCity::CopyDefenseState(const DaLegacyCity& source)
 
 void DaLegacyCity::WriteDefenseState(QDataStream& out) const
 {
+	const auto crops = Crops();
 	QMutexLocker lock(&m_Runtime->defenseLock);
-	out << quint8(3) << quint16(m_Runtime->shields.size());
+	out << quint8(4) << quint16(m_Runtime->shields.size());
 	for(const auto& shield : m_Runtime->shields)
 		out << shield.development << quint16(shield.module) << shield.technology << shield.center << shield.charge << shield.maximum << shield.enabled;
 	if(m_Runtime->turretAims.size() > AuLegacyCity::MaximumDevelopments) { out.setStatus(QDataStream::WriteFailed); return; }
 	out << quint16(m_Runtime->turretAims.size());
 	for(auto aim = m_Runtime->turretAims.cbegin(); aim != m_Runtime->turretAims.cend(); ++aim)
 		out << aim.key() << aim->yaw << aim->pitch << aim->shot;
+	out << quint16(crops.size());
+	for(auto crop = crops.cbegin(); crop != crops.cend(); ++crop)
+		out << crop.key() << crop->first << crop->second;
 }
 
 bool DaLegacyCity::ReadDefenseState(QDataStream& in)
 {
 	quint8 version = 0; quint16 count = 0;
 	in >> version >> count;
-	if((version < 1 || version > 3) || count > AuLegacyCity::MaximumDevelopments) return false;
+	if((version < 1 || version > 4) || count > AuLegacyCity::MaximumDevelopments) return false;
 	QVector<Runtime::Shield> shields;
 	QSet<quint32> seen;
 	for(int index = 0; index < count; ++index)
@@ -4637,8 +4724,26 @@ bool DaLegacyCity::ReadDefenseState(QDataStream& in)
 			aims.insert(key, aim);
 		}
 	}
+	CropSelections crops;
+	if(version >= 4)
+	{
+		in >> count;
+		if(count > AuLegacyCity::MaximumDevelopments) return false;
+		const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+		for(int index = 0; index < count; ++index)
+		{
+			quint32 id = 0; quint16 first = 0, second = 0;
+			in >> id >> first >> second;
+			if(!id || crops.contains(id) || !catalogue
+				|| (first && !catalogue->Commodity(AuLegacyCity::CommodityId(first)))
+				|| (second && !catalogue->Commodity(AuLegacyCity::CommodityId(second)))) return false;
+			crops.insert(id, qMakePair(first, second));
+		}
+	}
+	if(in.status() != QDataStream::Ok) return false;
+	{ QMutexLocker lock(&m_Runtime->cropLock); m_Runtime->crops = crops; }
 	QMutexLocker lock(&m_Runtime->defenseLock); m_Runtime->shields = shields; m_Runtime->turretAims = aims;
-	return in.status() == QDataStream::Ok;
+	return true;
 }
 
 bool DaLegacyCity::ShieldStation(const DaCreature& who, bool& enabled, float& charge, float& maximum) const
