@@ -26,6 +26,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QFrame>
+#include <QTabWidget>
 
 AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 {
@@ -44,9 +45,10 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 					"</html>").arg(GLFuncName));
 	connect(queryVers, SIGNAL(clicked()), SLOT(QueryOpenGLVersions()));
 	queryVers->setEnabled(glContextOk);
+	queryVers->setMaximumWidth(250);
 
 	m_OpenGLInfo = new QLabel(tr("Fragment shaders require 16 texture units."));
-	m_OpenGLInfo->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+	m_OpenGLInfo->setAlignment(Qt::AlignLeft|Qt::AlignVCenter);
 
 	QPushButton* resetDefault = new QPushButton(tr("Default"));
 	resetDefault->setToolTip(tr("<html><b>Default Configuration</b><br>"
@@ -78,6 +80,7 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	int cur = cbdrawme->findData(g_Au.DrawBodyModel());
 	cbdrawme->setCurrentIndex(cur);
 	connect(cbdrawme, SIGNAL(currentIndexChanged(int)), SLOT(SetDrawBody(int)));
+	cbdrawme->setMaximumWidth(250);
 
 	ckdrawgun = new QCheckBox(tr("Draw Current Item Model"));
 	ckdrawgun->setCheckState(g_Au.DrawGun()?Qt::Checked:Qt::Unchecked);
@@ -490,6 +493,8 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	else
 		m_RatingCombo = 0;
 
+	m_RatingCombo->setMaximumWidth(250);
+
 	/*
 	// Tree/shrub generation.
 	QGroupBox* plantGroup = new QGroupBox(tr("Plant Model Generator"));
@@ -643,7 +648,6 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	cklay->addWidget(ckdrawneb);
 	cklay->addWidget(ckdrawspecks);
 	cklay->addWidget(ckdrawprecip);
-	cklay->addWidget(frustumCulling);
 	cklay->addWidget(ckdrawhelmethud);
 	cklay->addWidget(crosshairSmoothing);
 	cklay->addWidget(classicLoadingAnimation);
@@ -655,26 +659,44 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	infolay->addWidget(m_OpenGLInfo);
 	infolay->addWidget(m_SkyBoxMipmap);
 	infolay->addWidget(ckbumpmapseas);
+	infolay->addWidget(frustumCulling);
 	infolay->addStretch();
 
-	QGridLayout* lay = new QGridLayout;
-	int row=0;
-	lay->addLayout(cklay, row,0, 1,1);
-	lay->addLayout(infolay, row,1, 1,1);
-	row++;
 	QFrame* sliderFrame = new QFrame(this);
 	sliderFrame->setObjectName("sceneSliderFrame");
-	sliderFrame->setStyleSheet(
+	/* sliderFrame->setStyleSheet(
 		"QFrame#sceneSliderFrame {"
-		"  border: 1px solid orange;"
+		"  border: 1px solid red;"
 		"}"
-	);
+	); */
 
 	int sliderPadding = 4; // Set padding value here in px
 	sliderlay->setContentsMargins(sliderPadding, sliderPadding, sliderPadding, sliderPadding);
 	sliderFrame->setLayout(sliderlay);
-	lay->addWidget(sliderFrame, row,0, 1,2);
-	row++;
+
+	QTabWidget* sceneTabs = new QTabWidget(this);
+	sceneTabs->setStyleSheet(
+		"QTabBar::tab:top:selected {"
+		"  margin-left: 0px;"
+		"  margin-right: 0px;"
+		"}"
+	);
+
+	QWidget* generalPage = new QWidget;
+	cklay->addStretch();
+	generalPage->setLayout(cklay);
+	sceneTabs->addTab(generalPage, tr("General"));
+
+	QWidget* graphicsPage = new QWidget;
+	QVBoxLayout* graphicsLayout = new QVBoxLayout(graphicsPage);
+	graphicsLayout->addWidget(sliderFrame);
+	graphicsLayout->addStretch();
+	sceneTabs->addTab(graphicsPage, tr("Graphics"));
+
+	QWidget* advancedPage = new QWidget;
+	advancedPage->setLayout(infolay);
+	sceneTabs->addTab(advancedPage, tr("Advanced"));
+
 	/*
 	lay->setRowStretch(row, 1);
 	row++;
@@ -683,10 +705,11 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	lay->setRowStretch(row, 1);
 	row++;
 	*/
-	lay->setRowStretch(row, 4);
-	lay->setMargin(2);
-	lay->setSpacing(2);
-	setLayout(lay);
+
+	QVBoxLayout* outerLayout = new QVBoxLayout;
+	outerLayout->setContentsMargins(2, 2, 2, 2);
+	outerLayout->addWidget(sceneTabs);
+	setLayout(outerLayout);
 }
 
 AuSetRender::~AuSetRender()
