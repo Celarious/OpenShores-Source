@@ -15,6 +15,7 @@
 #include "aueffect.h"
 #include "augleffects.h"
 #include "auglobal.h"
+#include "aulegacyinventory.h"
 #include "auhitnotify.h"
 #include "aunoise.h"
 #include "auscdesign.h"
@@ -10156,6 +10157,26 @@ void DaPerson::MoveGear(const AuGearPos& srcPos, AuGearSlot::SLOTTYPE destSlotTy
 	m_GearLock.unlock();
 }
 
+void DaPerson::MoveLegacyGear(const AuGearPos& source, quint8 bodyPosition,
+		const AuGearPos& containerPosition, const QPoint& cell)
+{
+	if(!g_Au.IsLegacyGeneration() || bodyPosition > IP_NumInventoryPos || bodyPosition == IP_EquipOr)
+		return;
+	const bool isPatient = IsPatientStationPose();
+	m_GearLock.lockForWrite();
+	AuLegacyInventory::Normalize(m_Gear);
+	const AuItem* item = m_Gear.ItemAt(source);
+	if(!item || (isPatient && bodyPosition <= IP_ClothingUpperTorso
+		&& (item->IsWornOnBody() || item->IsWornOnHead())))
+	{
+		m_GearLock.unlock();
+		return;
+	}
+	if(AuLegacyInventory::MoveItem(m_Gear, source, (INVENTORYPOS)bodyPosition, containerPosition, cell))
+		UpdateGearWeight();
+	m_GearLock.unlock();
+}
+
 void DaPerson::MoveGear(const AuGearPos& srcPos, const AuGearPos& destPos)
 {
 	m_GearLock.lockForWrite();
@@ -11500,6 +11521,12 @@ DaPerson* DaPerson::LoadSubatoms(AuEther& ether, QSqlDatabase& db, const AuId& p
 				in.setVersion(QDataStream::Qt_4_1);
 				in >> pnu->m_Gear;
 				in >> pnu->m_ArenaExitInv;
+				if(g_Au.IsLegacyGeneration() && in.status() != QDataStream::Ok)
+				{
+					qWarning() << "DaPerson::LoadSubatoms refusing invalid Legacy inventory for" << pnu->Id();
+					delete pnu;
+					continue;
+				}
 				quint8 ver = 0;
 				in >> ver;
 				if(ver >= 0x01)
@@ -11530,6 +11557,12 @@ DaPerson* DaPerson::LoadSubatoms(AuEther& ether, QSqlDatabase& db, const AuId& p
 				QDataStream in(ba);
 				in.setVersion(QDataStream::Qt_4_1);
 				pnu->m_SeaChest << in;
+				if(g_Au.IsLegacyGeneration() && in.status() != QDataStream::Ok)
+				{
+					qWarning() << "DaPerson::LoadSubatoms refusing invalid Legacy sea chest for" << pnu->Id();
+					delete pnu;
+					continue;
+				}
 			}
 
 			pnu->m_RewardsOwed = qa.value(qv++).toDouble();

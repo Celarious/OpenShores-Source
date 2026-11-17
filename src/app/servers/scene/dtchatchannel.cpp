@@ -4490,6 +4490,15 @@ void DtChatChannel::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 				// Collect bounty on a gear item.
 				m_I->CollectBounty(fromPos);
 			}
+			else if(doWhat == 4 && g_Au.IsLegacyGeneration())
+			{
+				quint8 bodyPosition = IP_NumInventoryPos;
+				AuGearPos containerPosition;
+				QPoint cell;
+				block >> bodyPosition >> containerPosition >> cell;
+				if(block.status() == QDataStream::Ok && bodyPosition <= IP_NumInventoryPos && bodyPosition != IP_EquipOr)
+					m_I->MoveLegacyGear(fromPos, bodyPosition, containerPosition, cell);
+			}
 		}
 		break;
 	case DtChatChannelPacket::PI_SendFunds:

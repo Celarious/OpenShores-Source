@@ -6,6 +6,7 @@
 
 #include "dasentient.h"
 #include "aulegacyfinancetransfer.h"
+#include "aulegacyinventory.h"
 //
 #include "aubank.h"
 #include "aubddesign.h"
@@ -24734,6 +24735,19 @@ bool DaSentient::AddGearItemAt(AuGear& gear, AuGearSlot::SLOTTYPE slotType, cons
 	if(!slotMaxItems)
 		return false;
 
+	if(g_Au.IsLegacyGeneration())
+	{
+		// Validate the same replacement before dropping or deleting any existing gear.
+		AuGear candidate(gear);
+		while(candidate.ItemsInSlot(slotType, 0) >= slotMaxItems)
+			candidate.Erase(candidate.ItemSlotPos(slotType));
+		const quint8 which = candidate.NextWhich(slotType);
+		candidate.Insert(slotType, which, cItem);
+		const AuGear::const_iterator placed = candidate.FindPos(AuGearPos(slotType, which));
+		if(placed == candidate.cend() || placed->LegacyPosition() == IP_NumInventoryPos)
+			return false;
+	}
+
 	// Drop current item to free up a slot of that type.
 	quint8 curItems = gear.ItemsInSlot(slotType, 0);	// The number of items in the destination slot type.
 	while(curItems >= slotMaxItems)
@@ -26412,6 +26426,13 @@ bool DaSentient::AddGearItem(const AuItem& cItem)
 // Returns false if unable to add the item.
 bool DaSentient::AddGearItemNoLock(AuGear& gear, const AuItem& cItem)
 {
+	if(g_Au.IsLegacyGeneration())
+	{
+		const bool added = AuLegacyInventory::AddItem(gear, cItem);
+		if(added)
+			UpdateGearWeight();
+		return added;
+	}
 	//qDebug("DaCitizen::AddGearItem");
 	// Some items are too big to carry.
 	if(!cItem.CanBeCarried())

@@ -19,6 +19,7 @@
 #include "autransportertarget.h"
 #include "deconstructionprocess.h"
 #include <QObject>
+#include <QPoint>
 
 class AuArenaReady;
 class AuCityReport;
@@ -678,6 +679,8 @@ public:	// Methods
 	void MoveGearItemToItem(const AuGearPos& fromPos, const AuGearPos& toPos);
 
 	void MoveGearItemToSlot(const AuGearPos& fromPos, quint8 toSlotType);
+
+	void MoveLegacyGear(const AuGearPos& source, quint8 bodyPosition, const AuGearPos& containerPosition, const QPoint& cell);
 
 	void MoveItemRight(const AuId& itemId, double amount, bool relativeToItem);
 	void MoveItemLeft(const AuId& itemId, double amount, bool relativeToItem);

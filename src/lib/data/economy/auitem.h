@@ -20,6 +20,7 @@
 #include "dbindustry.h"
 #include "deflora.h"
 #include <QDataStream>
+#include <QPoint>
 
 #include <typeinfo>						// for std::bad_cast
 using namespace std;
@@ -2595,6 +2596,9 @@ public:
 
 class AuItemContent : public map<AuItemContentId, AuItem*>
 {
+private:
+	map<AuItemContentId, QPoint> m_LegacyPositions;
+
 public:	// Constructors
 	AuItemContent()
 	{
@@ -2608,6 +2612,8 @@ public:	// Constructors
 	}
 
 public:	// Operators
+	AUDATA_DLL const AuItemContent& operator=(const AuItemContent& c);
+
 	AUDATA_DLL void operator>>(QDataStream& out) const;
 
 	AUDATA_DLL void operator<<(QDataStream& in);
@@ -2626,6 +2632,23 @@ public:	// Methods
 			if((*ii).second)
 				delete (*ii).second;
 		clear();
+		m_LegacyPositions.clear();
+	}
+
+	inline QPoint LegacyPosition(const AuItemContentId& id) const
+	{
+		map<AuItemContentId, QPoint>::const_iterator found = m_LegacyPositions.find(id);
+		return found == m_LegacyPositions.end() ? QPoint(-1, -1) : found->second;
+	}
+
+	inline void SetLegacyPosition(const AuItemContentId& id, const QPoint& position)
+	{
+		if(!id.IsValid())
+			return;
+		if(position.x() < 0 || position.y() < 0)
+			m_LegacyPositions.erase(id);
+		else
+			m_LegacyPositions[id] = position;
 	}
 
 	// Returns the number of pack units of items contained in this list.
@@ -2845,6 +2868,7 @@ public:	// Methods
 	// Delete the item as it is erased.
 	inline iterator Erase(iterator pos)
 	{
+		m_LegacyPositions.erase((*pos).first);
 		delete (*pos).second;
 		return erase(pos);
 	}

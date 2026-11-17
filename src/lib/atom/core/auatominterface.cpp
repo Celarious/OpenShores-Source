@@ -172,6 +172,17 @@ void AuAtomInterface::MoveGearItemToSlot(const AuGearPos& fromPos, quint8 toSlot
 	UnlockAvatar();
 }
 
+void AuAtomInterface::MoveLegacyGear(const AuGearPos& source, quint8 bodyPosition,
+		const AuGearPos& containerPosition, const QPoint& cell)
+{
+	if(!g_Au.IsLegacyGeneration())
+		return;
+	DaPerson* person = LockAvatar();
+	if(person)
+		person->MoveLegacyGear(source, bodyPosition, containerPosition, cell);
+	UnlockAvatar();
+}
+
 void AuAtomInterface::UseGearItem(const AuGearPos& pos)
 {
 	DaPerson* person = LockAvatar();

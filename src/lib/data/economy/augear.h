@@ -37,6 +37,7 @@ private:	// Properties
 	AuItem*								m_Item;				// Gear slots only exist while they contain an item.
 	quint8								m_Slot;				// SLOTTYPE
 	quint8								m_Which;			// Id of slot when more than one of the same type exist. Limit 15.
+	qint8								m_LegacyPosition;	// Original body position; -1 for an item awaiting placement.
 
 public:	// Constructors
 	AuGearSlot(SLOTTYPE slot, quint8 which, const AuItem& item);
@@ -48,6 +49,8 @@ public:	// Constructors
 	~AuGearSlot();
 
 public:	// Operators
+	const AuGearSlot& operator=(const AuGearSlot& c);
+
 	void operator>>(QDataStream& out) const;
 
 	void operator<<(QDataStream& in);
@@ -285,6 +288,17 @@ public:	// Methods
 	inline quint8 Which() const
 	{
 		return m_Which;
+	}
+
+	inline INVENTORYPOS LegacyPosition() const
+	{
+		return m_LegacyPosition >= IP_ArmorArms && m_LegacyPosition <= IP_WristRight
+			? (INVENTORYPOS)m_LegacyPosition : IP_NumInventoryPos;
+	}
+
+	inline void SetLegacyPosition(INVENTORYPOS position)
+	{
+		m_LegacyPosition = position >= IP_ArmorArms && position <= IP_WristRight ? position : -1;
 	}
 };
 
@@ -976,12 +990,7 @@ public:	// Methods
 	// Returns CID of helmet that is worn on the body, hat if no helmet is worn, CID_Invalid if neither is worn.
 	COMMODITYID HelmetOrHatWorn() const;
 
-	inline void Insert(AuGearSlot::SLOTTYPE slotType, quint8 which, const AuItem& item)
-	{
-		if(slotType == AuGearSlot::Invalid)
-			return;
-		push_back(AuGearSlot(slotType, which, item));
-	}
+	void Insert(AuGearSlot::SLOTTYPE slotType, quint8 which, const AuItem& item);
 
 	inline bool IsPosValid(const AuGearPos& pos) const
 	{

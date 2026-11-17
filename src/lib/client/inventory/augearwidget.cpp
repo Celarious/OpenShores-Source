@@ -11,6 +11,7 @@
 #include "audnabase.h"
 #include "auflowerpotsettings.h"
 #include "auitemdesc.h"
+#include "aulegacyinventorywidget.h"
 #include "aulaborhandcraft.h"
 #include "auframe.h"
 #include "aupictureframesettings.h"
@@ -25,6 +26,9 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMenu>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QStyle>
 #include <QTimer>
 
 //static unsigned int s_ShowSpecies = 0;							// Last count of species listed as debug output.
@@ -861,7 +865,8 @@ AuGearWidget::AuGearWidget(QWidget* parent) : QWidget(parent)
 	buttonRow->setSpacing(2);
 	buttonRow->setMargin(0);
 
-	QHBoxLayout* slotButtonRow = new QHBoxLayout();
+	m_SlotButtons = new QWidget(this);
+	QHBoxLayout* slotButtonRow = new QHBoxLayout(m_SlotButtons);
 	slotButtonRow->addStretch();
 	slotButtonRow->addWidget(m_SlotHand);
 	slotButtonRow->addWidget(m_SlotBody);
@@ -876,11 +881,14 @@ AuGearWidget::AuGearWidget(QWidget* parent) : QWidget(parent)
 	slotButtonRow->setMargin(0);
 
 	QGridLayout* blay = new QGridLayout();
+	m_ButtonLayout = blay;
 	blay->addWidget(m_HandCraft, 0,0, 2,1);
 	blay->setColumnMinimumWidth(0, 50);
-	blay->addLayout(slotButtonRow, 0,1);
+	blay->addWidget(m_SlotButtons, 0,1);
 	blay->setRowMinimumHeight(0, 22);
-	blay->addLayout(buttonRow, 1,1);
+	m_ActionButtons = new QWidget(this);
+	m_ActionButtons->setLayout(buttonRow);
+	blay->addWidget(m_ActionButtons, 1,1);
 	blay->setRowMinimumHeight(1, 28);
 
 	QGridLayout* lay = new QGridLayout();
@@ -893,6 +901,22 @@ AuGearWidget::AuGearWidget(QWidget* parent) : QWidget(parent)
 	lay->addLayout(blay, row,0, 1,2);
 	row++;
 	lay->addWidget(m_GearTree, row,0, 1,2);
+	m_LegacyScroll = new QScrollArea(this);
+	m_LegacyScroll->setFrameShape(QFrame::NoFrame);
+	m_LegacyScroll->setWidgetResizable(true);
+	m_LegacyGrid = new AuLegacyInventoryWidget;
+	m_LegacyScroll->setWidget(m_LegacyGrid);
+	m_LegacyScroll->hide();
+	m_LegacyScroll->setEnabled(false);
+	connect(m_LegacyGrid, SIGNAL(SelectionChanged(AuGearPos)), SLOT(LegacySelectionChanged(AuGearPos)));
+	connect(m_LegacyGrid, SIGNAL(UseRequested()), SLOT(UseClicked()));
+	connect(m_LegacyGrid, SIGNAL(ContextRequested()), SLOT(GearTreeRightClicked()));
+	connect(m_LegacyScroll->verticalScrollBar(), SIGNAL(rangeChanged(int,int)), SLOT(UpdateInventoryLayout()));
+	connect(m_LegacyGrid, SIGNAL(DropRequested()), SLOT(DropClicked()));
+	connect(m_LegacyGrid, SIGNAL(MoveRequested(AuGearPos,quint8,AuGearPos,QPoint)),
+		auApp, SLOT(MoveLegacyGear(AuGearPos,quint8,AuGearPos,QPoint)));
+	lay->addWidget(m_LegacyScroll, row,0, 1,2);
+	lay->setRowStretch(row, 1);
 	lay->setMargin(2);
 	lay->setSpacing(2);
 	setLayout(lay);
@@ -972,7 +996,7 @@ void AuGearWidget::EnableControls()
 	}
 
 	// Not dragging an item.
-	m_HandCraft->setEnabled(true);
+	m_HandCraft->setEnabled(!g_Au.IsLegacyGeneration());
 
 	const AuItem* selItem = m_Gear.ItemAt(m_SelPos);
 	if(!selItem)
@@ -1282,6 +1306,18 @@ void AuGearWidget::UpdateContents()
 		return;
 	}
 
+	// Generation is negotiated at login and can change between connections.
+	// Apply both visibility and enabled state whenever the gear window refreshes.
+	const bool legacy = g_Au.IsLegacyGeneration();
+	m_GearTree->setVisible(!legacy);
+	m_GearTree->setEnabled(!legacy);
+	m_SlotButtons->setVisible(!legacy);
+	m_SlotButtons->setEnabled(!legacy);
+	m_LegacyScroll->setVisible(legacy);
+	m_LegacyScroll->setEnabled(legacy);
+	m_HandCraft->setVisible(!legacy);
+	m_HandCraft->setEnabled(!legacy);
+
 	/*
  	{
  		const DgData& gd = g_Au.LockDataForRead();
@@ -1394,6 +1430,9 @@ void AuGearWidget::UpdateContents()
 			m_Gear.Clear();
 			m_GearModel.clear();
 			m_GearId = person->Id();
+			m_SelPos = AuGearPos();
+			m_PressPos = AuGearPos();
+			m_LegacyGrid->SetGear(m_Gear, person->Gender() == Male);
 		}
 		const AuGear* gear = person->LockGearForRead();
 		if(gear && !gear->operator==(m_Gear))
@@ -1435,6 +1474,17 @@ void AuGearWidget::UpdateContents()
 			auApp->QueryEmpireAndSpecie(*gear);
 		}
 		person->UnlockGear();
+		if(legacy)
+			m_LegacyGrid->SetGear(m_Gear, person->Gender() == Male);
+	}
+	else
+	{
+		m_Gear.Clear();
+		m_GearModel.clear();
+		m_GearId = AuId();
+		m_SelPos = AuGearPos();
+		m_PressPos = AuGearPos();
+		m_LegacyGrid->SetGear(m_Gear, true);
 	}
 	view->UnlockSceneAtom();
 
@@ -1442,6 +1492,7 @@ void AuGearWidget::UpdateContents()
 		m_StorageMediaDlg->UpdateContent();
 
 	EnableControls();
+	UpdateInventoryLayout();
 }
 
 /*
@@ -1512,6 +1563,29 @@ void AuGearWidget::GearSelectionChanged(const QItemSelection& selected, const QI
 	EnableControls();
 }
 
+void AuGearWidget::LegacySelectionChanged(AuGearPos position)
+{
+	m_SelPos = position;
+	m_PressPos = AuGearPos();
+	EnableControls();
+	UpdateInventoryLayout();
+}
+
+void AuGearWidget::UpdateInventoryLayout()
+{
+	const bool legacy = g_Au.IsLegacyGeneration();
+	m_ButtonLayout->setColumnMinimumWidth(0, legacy ? 0 : 50);
+	m_ButtonLayout->setRowMinimumHeight(0, legacy ? 0 : 22);
+	m_ButtonLayout->setRowMinimumHeight(1, legacy ? 0 : 28);
+	m_ActionButtons->setVisible(!legacy);
+	m_ActionButtons->setEnabled(!legacy);
+	// Reserve scrollbar space only while there is actually content to scroll.
+	const QScrollBar* bar = m_LegacyScroll->verticalScrollBar();
+	const int scrollbarWidth = bar->maximum() > bar->minimum() ? style()->pixelMetric(QStyle::PM_ScrollBarExtent) : 0;
+	m_LegacyScroll->setMinimumSize(legacy ? QSize(202 + scrollbarWidth, 318)
+		: QSize(0, 0));
+}
+
 void AuGearWidget::GearTreeRightClicked()
 {
 	//qDebug() << "AuGearWidget::GearTreeRightClicked" << m_SelPos;
@@ -1523,101 +1597,108 @@ void AuGearWidget::GearTreeRightClicked()
 
 	// Build a menu of available options.
 	QMenu menu(this);
+	// EnableControls maintains the actions' explicit hidden/enabled states.
+	// Legacy keeps their toolbar parents hidden and the equipment bar disabled.
+	const auto canAct = [](AuIconButton* button) -> bool
+	{
+		return button && !button->isHidden() && (g_Au.IsLegacyGeneration()
+			? button->isEnabledTo(button->parentWidget()) : button->isEnabled());
+	};
 
-	if(m_Arm->isVisible() && m_Arm->isEnabled())
+	if(canAct(m_Arm))
 		menu.addAction(m_Arm->icon(), tr("Arm for Detonation and Drop %1").arg(itemName), this, SLOT(ArmClicked()));
 
-	if(m_Claim->isVisible() && m_Claim->isEnabled())
+	if(canAct(m_Claim))
 		menu.addAction(m_Claim->icon(), tr("Claim Ownership of %2 Using %1").arg(itemName).arg(selItem->PropertyName()),
 				this, SLOT(UseClicked()));
 
-	if(m_CollectBounty->isVisible() && m_CollectBounty->isEnabled())
+	if(canAct(m_CollectBounty))
 		menu.addAction(m_CollectBounty->icon(), tr("Collect Bounty on %1").arg(itemName), this, SLOT(CollectBountyClicked()));
 
-	if(m_Decontaminate->isVisible() && m_Decontaminate->isEnabled())
+	if(canAct(m_Decontaminate))
 		menu.addAction(m_Decontaminate->icon(), tr("Decontaminate Using %1").arg(itemName), this, SLOT(DecontaminateClicked()));
 
-	if(m_Drink->isVisible() && m_Drink->isEnabled())
+	if(canAct(m_Drink))
 		menu.addAction(m_Drink->icon(), tr("Drink %1").arg(itemName), this, SLOT(DrinkClicked()));
 
-	if(m_Eat->isVisible() && m_Eat->isEnabled())
+	if(canAct(m_Eat))
 		menu.addAction(m_Eat->icon(), tr("Eat %1").arg(itemName), this, SLOT(EatClicked()));
 
-	if(m_Extinguish->isVisible() && m_Extinguish->isEnabled())
+	if(canAct(m_Extinguish))
 		menu.addAction(m_Extinguish->icon(), tr("Extinguish Using %1").arg(itemName), this, SLOT(ExtinguishClicked()));
 
-	if(m_Fuse->isVisible() && m_Fuse->isEnabled())
+	if(canAct(m_Fuse))
 		menu.addAction(m_Fuse->icon(), tr("Initiate Fuse and Drop %1").arg(itemName), this, SLOT(FuseClicked()));
 
-	if(m_Heal->isVisible() && m_Heal->isEnabled())
+	if(canAct(m_Heal))
 		menu.addAction(m_Heal->icon(), tr("Heal Using %1").arg(itemName), this, SLOT(UseClicked()));
 
-	if(m_Light->isVisible() && m_Light->isEnabled())
+	if(canAct(m_Light))
 		menu.addAction(m_Light->icon(), tr("Switch %1 Light %2").arg(itemName).arg(itemState?tr("Off"):tr("On")), this,
 				SLOT(LightClicked()));
 
 	//if(m_Use->isVisible() && m_Use->isEnabled())
 		//menu.addAction(m_Use->icon(), tr("Use %1").arg(itemName), this, SLOT(UseClicked()));
 
-	if(m_NameSpecies && m_NameSpecies->isVisible() && m_NameSpecies->isEnabled())
+	if(canAct(m_NameSpecies))
 		menu.addAction(m_NameSpecies->icon(), tr("Name Species of %1 DNA...").arg(itemName), this, SLOT(NameSpeciesClicked()));
 
-	if(m_SetMessage->isVisible() && m_SetMessage->isEnabled())
+	if(canAct(m_SetMessage))
 		menu.addAction(m_SetMessage->icon(), tr("Set %1 Message...").arg(itemName), this, SLOT(SetMessageClicked()));
 
-	if(m_Settings->isVisible() && m_Settings->isEnabled())
+	if(canAct(m_Settings))
 		menu.addAction(m_Settings->icon(), tr("Configure %1...").arg(itemName), this, SLOT(SettingsClicked()));
 
-	if(m_Sound->isVisible() && m_Sound->isEnabled())
+	if(canAct(m_Sound))
 		menu.addAction(m_Sound->icon(), tr("Switch %1 Sound %2").arg(itemName).arg(itemState?tr("Off"):tr("On")), this,
 				SLOT(SoundClicked()));
 
-	if(m_StarmapLoc->isVisible() && m_StarmapLoc->isEnabled())
+	if(canAct(m_StarmapLoc))
 		menu.addAction(m_StarmapLoc->icon(), tr("Locate %1 on Star Map").arg(itemName), this, SLOT(StarmapLocClicked()));
 
-	if(m_StorageMedia->isVisible() && m_StorageMedia->isEnabled())
+	if(canAct(m_StorageMedia))
 		menu.addAction(m_StorageMedia->icon(), tr("Manage Contents of %1...").arg(itemName), this, SLOT(StorageMediaClicked()));
 
-	if(m_Visor->isVisible() && m_Visor->isEnabled())
+	if(canAct(m_Visor))
 		menu.addAction(m_Visor->icon(), tr("%2 %1 Visor").arg(itemName).arg(itemState?tr("Open"):tr("Close")), this,
 				SLOT(VisorClicked()));
 
-	if(m_Inscribe->isVisible() && m_Inscribe->isEnabled())
+	if(canAct(m_Inscribe))
 		menu.addAction(m_Inscribe->icon(), tr("Inscribe %1...").arg(itemName), this, SLOT(InscribeClicked()));
 
-	if(m_Inspect->isVisible() && m_Inspect->isEnabled())
+	if(canAct(m_Inspect))
 		menu.addAction(m_Inspect->icon(), tr("Inspect %1...").arg(itemName), this, SLOT(InspectClicked()));
 
-	if(m_Drop->isVisible() && m_Drop->isEnabled())
+	if(canAct(m_Drop))
 		menu.addAction(m_Drop->icon(), tr("Drop %1").arg(itemName), this, SLOT(DropClicked()));
 
 	menu.addSeparator();
 
-	if(m_SlotBody->isVisible() && m_SlotBody->isEnabled())
+	if(canAct(m_SlotBody))
 		menu.addAction(m_SlotBody->icon(), tr("Carry %1 on Body").arg(itemName), this, SLOT(SlotBodyClicked()));
 
-	if(m_SlotBodyWear->isVisible() && m_SlotBodyWear->isEnabled())
+	if(canAct(m_SlotBodyWear))
 		menu.addAction(m_SlotBodyWear->icon(), tr("Wear %1 on Body").arg(itemName), this, SLOT(SlotBodyWearClicked()));
 
-	if(m_SlotDigit->isVisible() && m_SlotDigit->isEnabled())
+	if(canAct(m_SlotDigit))
 		menu.addAction(m_SlotDigit->icon(), tr("Wear %1 on Digit").arg(itemName), this, SLOT(SlotDigitClicked()));
 
-	if(m_SlotFace->isVisible() && m_SlotFace->isEnabled())
+	if(canAct(m_SlotFace))
 		menu.addAction(m_SlotFace->icon(), tr("Wear %1 on Face").arg(itemName), this, SLOT(SlotFaceClicked()));
 
-	if(m_SlotHand->isVisible() && m_SlotHand->isEnabled())
+	if(canAct(m_SlotHand))
 		menu.addAction(m_SlotHand->icon(), tr("Carry %1 in Hand").arg(itemName), this, SLOT(SlotHandClicked()));
 
-	if(m_SlotHead->isVisible() && m_SlotHead->isEnabled())
+	if(canAct(m_SlotHead))
 		menu.addAction(m_SlotHead->icon(), tr("Wear %1 on Head").arg(itemName), this, SLOT(SlotHeadClicked()));
 
-	if(m_SlotLimb->isVisible() && m_SlotLimb->isEnabled())
+	if(canAct(m_SlotLimb))
 		menu.addAction(m_SlotLimb->icon(), tr("Wear %1 on Limb").arg(itemName), this, SLOT(SlotLimbClicked()));
 
-	if(m_SlotNeck->isVisible() && m_SlotNeck->isEnabled())
+	if(canAct(m_SlotNeck))
 		menu.addAction(m_SlotNeck->icon(), tr("Wear %1 on Neck").arg(itemName), this, SLOT(SlotNeckClicked()));
 
-	if(m_SlotWaist->isVisible() && m_SlotWaist->isEnabled())
+	if(canAct(m_SlotWaist))
 		menu.addAction(m_SlotWaist->icon(), tr("Carry %1 at Waist").arg(itemName), this, SLOT(SlotWaistClicked()));
 
 	// Show the menu.

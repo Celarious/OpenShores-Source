@@ -814,7 +814,7 @@ CREATE TABLE a_Person
  usesub                                 smallint default 0,     -- INVENTORYSUB of current fire/activate item
  mappos                                 bytea,                  -- Mappings for hot key selection of current item.
  worms                                  smallint default 0,     -- Wormholes discovered by this person.
- inv                                    bytea,                  -- DeInventoryItemArray
+ inv                                    bytea,                  -- AuGear, arena-exit AuGear and person state; Legacy layout is versioned inside the blobs.
  script                                 bytea,                  -- Story AuScript private to this avatar
  seaChest                               bytea,                  -- DeInventoryItemHash
  jobs                                   bytea,                  -- Open stories and other kinds of jobs.

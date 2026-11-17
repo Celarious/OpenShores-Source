@@ -4246,6 +4246,23 @@ void AuApp::MoveGearItemToSlot(AuGearPos fromPos, quint8 toSlotType)
 	}
 }
 
+void AuApp::MoveLegacyGear(AuGearPos source, quint8 bodyPosition, AuGearPos containerPosition, QPoint cell)
+{
+	if(!g_Au.IsLegacyGeneration())
+		return;
+	if(IsSingleUserMode())
+		m_I->MoveLegacyGear(source, bodyPosition, containerPosition, cell);
+	else
+	{
+		QByteArray ba;
+		QDataStream out(&ba, QIODevice::WriteOnly);
+		out.setVersion(QDataStream::Qt_4_1);
+		out << (quint8)DtChatChannelPacket::PI_GearItem;
+		out << source << (quint8)4 << bodyPosition << containerPosition << cell;
+		QueueChatPacket(ba);
+	}
+}
+
 void AuApp::UseGearItem(AuGearPos pos)
 {
 	if(IsSingleUserMode())

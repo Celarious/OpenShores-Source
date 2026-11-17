@@ -9,6 +9,7 @@
 #include "auglobal.h"
 #include "auitem.h"
 #include "auknownpatents.h"
+#include "aulegacyinventory.h"
 #include <QDebug>
 
 static int s_AuGearPosMetaType = AuGearPos::RegisterMetaType();
@@ -44,6 +45,7 @@ AuGearSlot::AuGearSlot(SLOTTYPE slot, quint8 which, const AuItem& item)
 	m_Item = item.Clone();
 	m_Slot = slot;
 	m_Which = which;
+	m_LegacyPosition = -1;
 }
 
 AuGearSlot::AuGearSlot()
@@ -51,6 +53,7 @@ AuGearSlot::AuGearSlot()
 	m_Item = 0;
 	m_Slot = Invalid;
 	m_Which = 0;
+	m_LegacyPosition = -1;
 }
 
 AuGearSlot::AuGearSlot(const AuGearSlot& c)
@@ -61,6 +64,20 @@ AuGearSlot::AuGearSlot(const AuGearSlot& c)
 		m_Item = 0;
 	m_Slot = c.m_Slot;
 	m_Which = c.m_Which;
+	m_LegacyPosition = c.m_LegacyPosition;
+}
+
+const AuGearSlot& AuGearSlot::operator=(const AuGearSlot& c)
+{
+	if(this == &c)
+		return *this;
+	AuItem* item = c.m_Item ? c.m_Item->Clone() : 0;
+	delete m_Item;
+	m_Item = item;
+	m_Slot = c.m_Slot;
+	m_Which = c.m_Which;
+	m_LegacyPosition = c.m_LegacyPosition;
+	return *this;
 }
 
 AuGearSlot::~AuGearSlot()
@@ -85,6 +102,7 @@ void AuGearSlot::operator>>(QDataStream& out) const
 
 void AuGearSlot::operator<<(QDataStream& in)
 {
+	m_LegacyPosition = -1;
 	quint8 whichSlot;
 	in >> whichSlot;
 
@@ -121,6 +139,8 @@ bool AuGearSlot::operator==(const AuGearSlot& gi) const
 	if(m_Slot != gi.m_Slot)
 		return false;
 	if(m_Which != gi.m_Which)
+		return false;
+	if(g_Au.IsLegacyGeneration() && m_LegacyPosition != gi.m_LegacyPosition)
 		return false;
 	if(!m_Item && !gi.m_Item)
 		return true;
@@ -219,6 +239,8 @@ AuGear::AuGear(const AuGear& c) : QList<AuGearSlot>(c)
 
 const AuGear& AuGear::operator=(const AuGear& c)
 {
+	if(this == &c)
+		return *this;
 	clear();
 	for(const_iterator gi = c.cbegin(); gi != c.cend(); gi++)
 		append(*gi);
@@ -227,26 +249,68 @@ const AuGear& AuGear::operator=(const AuGear& c)
 
 void AuGear::operator>>(QDataStream& out) const
 {
+	const bool legacy = g_Au.IsLegacyGeneration();
+	if(legacy)
+		out << (quint8)255 << (quint8)1;
 	out << (quint8)size();
 	for(const_iterator gi = cbegin(); gi != cend(); gi++)
+	{
 		out << *gi;
+		if(legacy)
+			out << (qint8)(*gi).LegacyPosition();
+	}
 }
 
 void AuGear::operator<<(QDataStream& in)
 {
 	clear();
-	quint8 c;
+	quint8 c = 0;
 	in >> c;
+	bool legacyLayout = false;
+	if(c == 255)
+	{
+		quint8 version = 0;
+		in >> version;
+		if(version != 1)
+		{
+			in.setStatus(QDataStream::ReadCorruptData);
+			return;
+		}
+		legacyLayout = true;
+		in >> c;
+	}
 	//qDebug() << "AuGear::operator<< count" << c << in.device()->bytesAvailable() << in.device()->atEnd() << in.device()->pos();
 	while(c--)
 	{
 		AuGearSlot gi;
 		in >> gi;
+		if(legacyLayout)
+		{
+			qint8 position = IP_NumInventoryPos;
+			in >> position;
+			gi.SetLegacyPosition((INVENTORYPOS)position);
+		}
+		if(in.status() != QDataStream::Ok)
+		{
+			clear();
+			return;
+		}
 		if(gi.HasItem())
 			append(gi);
 		else
 			qWarning() << "warning: AuGear::operator<< slot item invalid" << c << "size" << size() << in.device()->bytesAvailable();
 	}
+	if(g_Au.IsLegacyGeneration() && in.status() == QDataStream::Ok)
+		AuLegacyInventory::Normalize(*this);
+}
+
+void AuGear::Insert(AuGearSlot::SLOTTYPE slotType, quint8 which, const AuItem& item)
+{
+	if(slotType == AuGearSlot::Invalid)
+		return;
+	push_back(AuGearSlot(slotType, which, item));
+	if(g_Au.IsLegacyGeneration())
+		AuLegacyInventory::Normalize(*this);
 }
 
 bool AuGear::operator==(const AuGear& c) const
@@ -260,6 +324,12 @@ bool AuGear::operator==(const AuGear& c) const
 	for(const_iterator gi = cbegin(); gi != cend(); gi++)
 	{
 		iterator ci = cc.FindItemInSlot((*gi).Item(), (*gi).SlotType());	// The slot contains an item.
+		if(g_Au.IsLegacyGeneration())
+		{
+			ci = cc.FindPos(AuGearPos(*gi));
+			if(ci != cc.end() && !((*ci) == (*gi)))
+				return false;
+		}
 		if(ci == cc.end())
 		{
 			//qDebug() << "AuGear::operator== failed, item not found" << (*gi).Item().ListName() << "in" << (*gi).SlotTypeName();
@@ -733,6 +803,8 @@ quint8 AuGear::NextWhich(AuGearSlot::SLOTTYPE slotType) const
 
 bool AuGear::MoveItem(const AuGearPos& srcPos, AuGearSlot::SLOTTYPE destSlotType)
 {
+	if(g_Au.IsLegacyGeneration())
+		return AuLegacyInventory::MoveToType(*this, srcPos, destSlotType);
 	const AuItem* srcItem = ItemAt(srcPos);
 	if(!srcItem || !AuGearSlot::CanHoldItem(destSlotType, *srcItem))
 		return false;
@@ -792,6 +864,9 @@ bool AuGear::MoveItem(const AuGearPos& srcPos, AuGearSlot::SLOTTYPE destSlotType
 
 int AuGear::MoveItem(const AuGearPos& srcPos, const AuGearPos& destPos)
 {
+	if(g_Au.IsLegacyGeneration() && srcPos.IsGear() && destPos.IsGear()
+		&& AuLegacyInventory::IsAncestorPosition(srcPos, destPos))
+		return 0;
 	const AuItem* srcItem = ItemAt(srcPos);
 	AuItem* destItem = ItemAt(destPos);
 	if(!srcItem || !destItem)

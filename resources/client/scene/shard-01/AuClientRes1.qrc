@@ -359,4 +359,23 @@
 	<file>data/wt_Suffocate.png</file>
 	<file>data/AlertCapture.png</file>
 </qresource>
+<qresource prefix="/legacy/inventory">
+	<file alias="cs_InventoryBGMale.png">../../../runtime/legacy/inventory/cs_InventoryBGMale.png</file>
+	<file alias="cs_InventoryBGFemale.png">../../../runtime/legacy/inventory/cs_InventoryBGFemale.png</file>
+	<file alias="cs_InventoryBelt.png">../../../runtime/legacy/inventory/cs_InventoryBelt.png</file>
+	<file alias="cs_BoxHelmet.png">../../../runtime/legacy/inventory/cs_BoxHelmet.png</file>
+	<file alias="cs_BoxArmor.png">../../../runtime/legacy/inventory/cs_BoxArmor.png</file>
+	<file alias="cs_BoxClothing.png">../../../runtime/legacy/inventory/cs_BoxClothing.png</file>
+	<file alias="cs_BoxAnkle.png">../../../runtime/legacy/inventory/cs_BoxAnkle.png</file>
+	<file alias="cs_GridBack.png">../../../runtime/legacy/inventory/cs_GridBack.png</file>
+	<file alias="cs_GridHandLeft.png">../../../runtime/legacy/inventory/cs_GridHandLeft.png</file>
+	<file alias="cs_GridHandRightUp.png">../../../runtime/legacy/inventory/cs_GridHandRightUp.png</file>
+	<file alias="cs_GridHandRight.png">../../../runtime/legacy/inventory/cs_GridHandRight.png</file>
+	<file alias="cs_BoxNeck.png">../../../runtime/legacy/inventory/cs_BoxNeck.png</file>
+	<file alias="cs_BoxRing.png">../../../runtime/legacy/inventory/cs_BoxRing.png</file>
+	<file alias="cs_Grid3x3.png">../../../runtime/legacy/inventory/cs_Grid3x3.png</file>
+	<file alias="cs_Grid3x2.png">../../../runtime/legacy/inventory/cs_Grid3x2.png</file>
+	<file alias="cs_Grid2x3.png">../../../runtime/legacy/inventory/cs_Grid2x3.png</file>
+	<file alias="cs_BoxWrist.png">../../../runtime/legacy/inventory/cs_BoxWrist.png</file>
+</qresource>
 </RCC>

@@ -12,6 +12,7 @@
 #include "auglmodel.h"
 #include "auglobal.h"
 #include "auknownpatents.h"
+#include "aulegacyinventory.h"
 #include "auscdesign.h"
 #include "ausound.h"
 #include "auviewfrustum.h"
@@ -7498,15 +7499,28 @@ void AuItemHash::FixItems()
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
-AuItemContent::AuItemContent(const AuItemContent& c) : map<AuItemContentId, AuItem*>()
+AuItemContent::AuItemContent(const AuItemContent& c) : map<AuItemContentId, AuItem*>(), m_LegacyPositions(c.m_LegacyPositions)
 {
 	for(const_iterator ii = c.cbegin(); ii != c.cend(); ii++)
 		insert(pair<AuItemContentId, AuItem*>((*ii).first, (*ii).second->Clone()));
 }
 
+const AuItemContent& AuItemContent::operator=(const AuItemContent& c)
+{
+	if(this == &c)
+		return *this;
+	Clear();
+	for(const_iterator ii = c.cbegin(); ii != c.cend(); ii++)
+		insert(pair<AuItemContentId, AuItem*>((*ii).first, (*ii).second->Clone()));
+	m_LegacyPositions = c.m_LegacyPositions;
+	return *this;
+}
+
 bool AuItemContent::operator==(const AuItemContent& c) const
 {
 	if(size() != c.size())
+		return false;
+	if(g_Au.IsLegacyGeneration() && m_LegacyPositions != c.m_LegacyPositions)
 		return false;
 
 	for(const_iterator ii = cbegin(), ci = c.cbegin(); ii != cend() && ci != c.cend(); ii++, ci++)
@@ -7525,7 +7539,8 @@ void AuItemContent::operator>>(QDataStream& out) const
 	// Store the version.
 	// Second version is 241 since the original version didn't store a version value, just the count. 241 exceeds the maximum
 	// number of items in a crate, the largest container. That way we know it is our new version and not a count.
-	out << (quint8)241;
+	const bool legacy = g_Au.IsLegacyGeneration();
+	out << (quint8)(legacy ? 242 : 241);
 
 	// Store the count.
 	out << (quint8)size();
@@ -7536,6 +7551,8 @@ void AuItemContent::operator>>(QDataStream& out) const
 		out << (*ii).first;										// Store the item's id in this container.
 		out << (*ii).second->Type();							// Store the item's class type.
 		out << *(*ii).second;									// Store the item's data.
+		if(legacy)
+			out << LegacyPosition((*ii).first);
 	}
 }
 
@@ -7545,19 +7562,26 @@ void AuItemContent::operator<<(QDataStream& in)
 	Clear();
 
 	// Read the version. It did not exist in the first go so it could be the count.
-	quint8 version;
+	quint8 version = 0;
 	in >> version;
+	if(version > 242)
+	{
+		in.setStatus(QDataStream::ReadCorruptData);
+		return;
+	}
 
 	// Read the count for versions greater than 240, which is the maximum count of items in a crate.
 	// The version is the count for versions less than or equal 240, which is the maximum count of items in a crate.
-	quint8 cnt;
+	quint8 cnt = 0;
 	if(version >= 241)
 		in >> cnt;												// Second version (or later) sent a version and a count.
 	else
 		cnt = version;											// Original version is the count.
+	if(in.status() != QDataStream::Ok)
+		return;
 
 	AuItemContentId itemId;
-	quint8 itemType;
+	quint8 itemType = 0;
 	while(cnt--)
 	{
 		// Newer version sends the item id. Older version must generate a unique id for each item.
@@ -7571,6 +7595,16 @@ void AuItemContent::operator<<(QDataStream& in)
 		if(item)
 		{
 			in >> *item;										// Read the item's data.
+			QPoint position(-1, -1);
+			if(version == 242)
+				in >> position;
+			if(in.status() != QDataStream::Ok || !itemId.IsValid() || find(itemId) != end())
+			{
+				delete item;
+				Clear();
+				in.setStatus(QDataStream::ReadCorruptData);
+				return;
+			}
 
 			if(DbCommodity::IsObsolete(item->CommodityId()))
 			{
@@ -7587,6 +7621,13 @@ void AuItemContent::operator<<(QDataStream& in)
 			}
 
 			insert(pair<AuItemContentId, AuItem*>(itemId, item));	// Store the item into this container.
+			SetLegacyPosition(itemId, position);
+		}
+		else
+		{
+			Clear();
+			in.setStatus(QDataStream::ReadCorruptData);
+			return;
 		}
 	}
 }
@@ -7611,6 +7652,7 @@ void AuItemContent::Refresh(const AuItemContent& c, AuGLEffects* re, AuSound* al
 	Clear();
 	for(const_iterator ii = c.cbegin(); ii != c.cend(); ii++)
 		insert(pair<AuItemContentId, AuItem*>((*ii).first, (*ii).second->Clone()));
+	m_LegacyPositions = c.m_LegacyPositions;
 }
 
 void AuItemContent::ReplaceItem(const QList<AuItemContentId>& contentPath, AuItem* item)
@@ -8979,6 +9021,8 @@ void AuItemContainer::operator<<(QDataStream& in)
 	AuItem::operator<<(in);
 	in >> m_Capacity;
 	in >> m_Contents;
+	if(g_Au.IsLegacyGeneration() && in.status() == QDataStream::Ok)
+		AuLegacyInventory::NormalizeContainer(*this);
 }
 
 void AuItemContainer::Refresh(const AuItem* item, AuGLEffects* re, AuSound* al)
@@ -8995,6 +9039,8 @@ void AuItemContainer::Refresh(const AuItem* item, AuGLEffects* re, AuSound* al)
 
 bool AuItemContainer::FitItemIntoContainer(const AuItem& cItem)
 {
+	if(g_Au.IsLegacyGeneration())
+		AuLegacyInventory::NormalizeContainer(*this);
 	// Can't put an item inside an item of the same exact type.
 	if(CommodityId() == cItem.CommodityId())
 		return false;
@@ -9223,8 +9269,16 @@ bool AuItemContainer::FitItemIntoContainer(const AuItem& cItem)
 		}
 	}
 
-	// Store a clone of the item into my contents vector.
-	m_Contents.Insert(cItem.Clone());
+	// Spatial placement supplements the shared container restrictions above.
+	QPoint legacyCell(-1, -1);
+	if(g_Au.IsLegacyGeneration() && !AuLegacyInventory::FindSpace(*this, cItem, legacyCell))
+		return false;
+	const AuItemContentId id = m_Contents.UnusedId();
+	if(!id.IsValid())
+		return false;
+	m_Contents.insert(pair<AuItemContentId, AuItem*>(id, cItem.Clone()));
+	if(g_Au.IsLegacyGeneration())
+		m_Contents.SetLegacyPosition(id, legacyCell);
 	return true;
 }
 

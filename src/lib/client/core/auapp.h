@@ -22,6 +22,7 @@
 #include "deconstructionprocess.h"
 #include "dzspecies.h"
 #include <QApplication>
+#include <QPoint>
 #include <QUdpSocket>
 #include <memory>
 
@@ -1413,6 +1414,8 @@ public slots:
 	// Moves a gear item at 'fromPos' to a new empty top level slot of 'toSlotType'.
 	// 'toSlotType' is a AuGearSlot::SLOTTYPE.
 	void MoveGearItemToSlot(AuGearPos fromPos, quint8 toSlotType);
+
+	void MoveLegacyGear(AuGearPos source, quint8 bodyPosition, AuGearPos containerPosition, QPoint cell);
 
 	void NameSpecies(AuSpecies species, QString speciesName, AuId discoverer);
 

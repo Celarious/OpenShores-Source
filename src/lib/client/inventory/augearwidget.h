@@ -18,8 +18,11 @@
 class AuDNABase;
 class AuHandCraftDialog;
 class AuIconButton;
+class AuLegacyInventoryWidget;
 class AuStorageMedia;
 class QLineEdit;
+class QScrollArea;
+class QGridLayout;
 class QTimer;
 
 class AUCLIENT_DLL AuGearTree : public QTreeView
@@ -92,6 +95,11 @@ private:	// Properties
 	AuGear								m_Gear;					// My copy of the gear.
 	AuId								m_GearId;				// Avatar id whose gear we have in the model and tree.
 	AuGearModel							m_GearModel;
+	AuLegacyInventoryWidget*				m_LegacyGrid;
+	QScrollArea*							m_LegacyScroll;
+	QGridLayout* m_ButtonLayout;
+	QWidget* m_ActionButtons;
+	QWidget*							m_SlotButtons;
 	AuHandCraftDialog*					m_HandCraftDlg;
 	bool								m_HasBody;
 	bool								m_HasBodyWear;
@@ -195,6 +203,8 @@ protected slots:
 	void InscribeClicked();
 	void InspectClicked();
 	void LightClicked();
+	void LegacySelectionChanged(AuGearPos position);
+	void UpdateInventoryLayout();
 	void NameSpeciesClicked();
 	void SetMessageClicked();
 	void SettingsClicked();
@@ -254,6 +264,7 @@ public:
 	}
 
 	virtual void UpdateTitleShortcut();
+
 };
 
 #endif // AuGearWidget_H
