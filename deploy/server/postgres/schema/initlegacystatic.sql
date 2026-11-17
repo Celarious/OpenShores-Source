@@ -495,6 +495,10 @@ INSERT INTO b_Commodity_Legacy (id,name,iconPath,modelPath,combits,insertHeight,
 INSERT INTO b_Commodity_Legacy (id,name,iconPath,modelPath,combits,food,newcond,sizewid,sizeht,wt) VALUES (347,'Ice Cream',':data/c_IceCream.png',':data/mIceCreamBar.3ds',20483,20,2,1,1,1);
 INSERT INTO b_Commodity_Legacy (id,name,iconPath,modelPath,combits,insertHeight,upVectorX,upVectorZ,sizewid,sizeht,wt) VALUES (348,'Dairy Technology',':data/c_TechLevel.png',':data/mTechDisk.3dsN',1,0.0500000007,1.0,0.0,1,1,0.0500000007);
 INSERT INTO b_Commodity_Legacy (id,name,iconPath,modelPath,light,newcond,sizewid,sizeht,wt) VALUES (349,'Burning Barrel',':data/c_BurningBarrel.png',':data/mCrudeOil.3dsN',5,50,12,12,10);
+INSERT INTO b_Commodity_Legacy (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, newcond,health, wpn1Mode,wpn1Range,ammo1Type,ammo1Qty) VALUES (350,'Bow',':data/c_Bow.png',':data/mBow.3dsN',0.13,0,1,0,8192+256+1,2,8,2.5, 60,4, 5,300,10,1);
+INSERT INTO b_Commodity_Legacy (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, stackLimit, ammo1Type,wpn1Effect1,wpn1Damage1,wpn1DamageMod1,wpn1AP1) VALUES (351,'Arrows',':data/c_Arrows.png',':data/mArrows.3dsN',0.1,0,0,1,8192+1,1,3,.1, 100, 10,13,24,6,5);
+INSERT INTO b_Commodity_Legacy (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, newcond, wpn1Mode,wpn1Range,wpn1Effect1,wpn1Damage1,wpn1DamageMod1,wpn1AP1) VALUES (352,'Spear',':data/c_Spear.png',':data/mSpear.3dsN',0.17,0,0,1,8192+1,1,8,4, 80, 2,4,13,24,8,10);
+INSERT INTO b_Commodity_Legacy (id,name,iconPath,modelPath,insertHeight,upVectorX,upVectorY,upVectorZ,combits,sizewid,sizeht,wt, newcond,stackLimit, wpn1Mode,wpn1Range,wpn1Effect1,wpn1Damage1,wpn1DamageMod1,wpn1AP1) VALUES (353,'Javelin',':data/c_Javelin.png',':data/mJavelin.3dsN',0.09,0,0,1,8192+1,1,8,2.5, 60,10, 5,90,13,30,8,10);
 
 -- Industry capacities are stored in tens of units, as in modern b_Industry.
 -- emp is signed; negative values retain their original jobs/troops meaning.
@@ -4089,9 +4093,31 @@ INSERT INTO b_ManufacturingComponent_Legacy (id,idmp,idc,consumed,ide) VALUES (3
 INSERT INTO b_ManufacturingComponent_Legacy (id,idmp,idc,consumed,ide) VALUES (359,75,51,3,5);
 INSERT INTO b_ManufacturingComponent_Legacy (id,idmp,idc,consumed,ide) VALUES (360,75,86,2,5);
 
--- Explicit recovered IDs must not leave the serial sequences at their defaults.
+-- Explicit recovered IDs must not leave the serial sequences at their defaults. This MUST happen before any new additions!
 SELECT setval(pg_get_serial_sequence('b_manufacturingcomponent_legacy', 'id'),
               (SELECT MAX(id) FROM b_ManufacturingComponent_Legacy));
 SELECT setval(pg_get_serial_sequence('b_manufacturingprocess_legacy', 'sourceorder'),
               (SELECT MAX(sourceOrder) FROM b_ManufacturingProcess_Legacy));
+
+-- Oni's new handcraft weapons --
+INSERT INTO b_ManufacturingProcess_Legacy (id,name,idc,idi,qty,labor,craft) VALUES (555,'Bow',350,77,1,40,1);
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (555,116,0,5);
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (555,48,1,5); -- Lumber
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (555,79,1,5); -- Textiles
+INSERT INTO b_ManufacturingProcess_Legacy (id,name,idc,idi,qty,labor,craft) VALUES (556,'Arrows',351,77,10,15,1);
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (556,116,0,5);
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (556,48,1,5); -- Lumber
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (556,76,1,5); -- Stone
+INSERT INTO b_ManufacturingProcess_Legacy (id,name,idc,idi,qty,labor,craft) VALUES (557,'Spear',352,77,1,20,1);
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (557,116,0,5);
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (557,86,1,5); -- Log
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (557,76,1,5); -- Stone
+INSERT INTO b_ManufacturingProcess_Legacy (id,name,idc,idi,qty,labor,craft) VALUES (558,'Javelin',353,77,1,15,1);
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (558,116,0,5);
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (558,48,1,5); -- Lumber
+INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (558,76,1,5); -- Stone
+
+
+
+
 COMMIT;
