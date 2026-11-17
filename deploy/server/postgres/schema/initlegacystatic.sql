@@ -1,6 +1,4 @@
 -- Used for legacy commodities and recipes, separate from initstatic.sql for clarity.
--- Database: auUniverse. Run as aumaster, matching initstatic.sql.
--- Self-contained static definitions: this script does not read GD2016 or modern tables.
 -- Initial extraction source: GD2016 (2016-GD-0x3a), 212679 bytes.
 -- Source SHA-256: dac1d7b576a8405d55a85f9eb2723d757d0cce0ba7dc49aeb88f7be8e34f9106
 -- Field layout: src/lib/data/economy/legacy/aulegacycitycatalogue.cpp.
