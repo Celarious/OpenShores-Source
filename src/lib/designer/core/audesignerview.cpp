@@ -9461,7 +9461,8 @@ namespace
 	{
 		OldSidebarStory = AuViewButton::VB_COUNT,
 		OldSidebarLabor,
-		OldSidebarSpawnTie
+		OldSidebarSpawnTie,
+		OldSidebarDemolish
 	};
 }
 
@@ -9510,7 +9511,7 @@ void AuDesignerView::CreateOldSidebar()
 		{AuViewButton::VB_Bio, "GovSelf.png", QT_TR_NOOP("Bio"), QT_TR_NOOP("View information about your character.")},
 		{OldSidebarStory, "CommNarrator.png", QT_TR_NOOP("Story"), QT_TR_NOOP("View your active stories in Bio.")},
 		{OldSidebarLabor, "c_Hammer.png", QT_TR_NOOP("Labor"), QT_TR_NOOP("Work local jobs and hand craft items.")},
-		{AuViewButton::VB_ConstructionBd, "bp_ClearLand.png", QT_TR_NOOP("Construction"), QT_TR_NOOP("Plan roads and buildings and found cities.")},
+		{OldSidebarDemolish, "bp_ClearLand.png", QT_TR_NOOP("Demolish"), QT_TR_NOOP("Open Construction in demolish mode.")},
 		{AuViewButton::VB_Government, "CommGovernment.png", QT_TR_NOOP("Governance"), QT_TR_NOOP("View and change government policies.")},
 		{-1, nullptr, nullptr, nullptr}, // Expanding spacer and divider.
 		{AuViewButton::VB_Agent, nullptr, QT_TR_NOOP("Agent"), QT_TR_NOOP("Open the staff tools.")},
@@ -9586,7 +9587,7 @@ void AuDesignerView::UpdateOldSidebar()
 		if(!action->data().isValid()) continue;
 		const int id = action->data().toInt();
 		bool available;
-		if(id == OldSidebarSpawnTie || id == OldSidebarLabor)
+		if(id == OldSidebarSpawnTie || id == OldSidebarLabor || id == OldSidebarDemolish)
 			available = !m_LegacySceneInterface && SceneContext() == SCENE_Universe;
 		else if(id == OldSidebarStory)
 			available = !m_LegacySceneInterface && !AuViewButton(AuViewButton::VB_Bio).IsHidden(SceneContext(), hasEmpire, false);
@@ -9608,6 +9609,7 @@ void AuDesignerView::OldSidebarClicked(int button)
 	switch(button)
 	{
 	case OldSidebarSpawnTie: SpawnTie(); break;
+	case OldSidebarDemolish: frame->OpenDemolitionUi(); break;
 	case OldSidebarStory: frame->ToggleStoriesUi(); break;
 	case OldSidebarLabor:
 		if(g_Au.IsLegacyGeneration()) frame->ToggleBuildingUi();

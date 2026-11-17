@@ -36,6 +36,7 @@ public:
 	void SetCursorLevels(quint8 levels) { if(m_Planning) m_ActiveRequest.levels = levels; }
 	void SetCursorProductChoices(const QVector<quint16>& allowed, quint16 selected);
 	void PlanningStopped();
+	void StartClearing();
 	void ReportPlacementMessage(const QString& message);
 	QString PlacementMessage(float& alpha) const;
 

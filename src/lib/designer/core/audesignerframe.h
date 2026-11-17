@@ -828,6 +828,7 @@ public slots:
 	void ToggleStoriesUi();
 	void ToggleCommUi();
 	void ToggleConstructionUi();
+	void OpenDemolitionUi();
 	void ToggleDesignPartsUi();
 	void ToggleDesignTextureWrapUi();
 	void ToggleFullScreen();

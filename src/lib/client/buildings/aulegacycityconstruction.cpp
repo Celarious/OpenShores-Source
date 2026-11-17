@@ -254,11 +254,7 @@ AuLegacyCityConstruction::AuLegacyCityConstruction(QWidget* parent) : QWidget(pa
 	layout->addLayout(details, DetailRow, 0, 1, 2);
 
 	connect(m_Stop, &QToolButton::clicked, this, [this]() { PlanningStopped(); emit StopPlanning(); });
-	connect(m_Clear, &QToolButton::clicked, this, [this]() {
-		PlanningStopped();
-		m_Planning = true; m_ActiveRequest = AuLegacyCityProtocol::Request(); m_ActiveRequest.action = AuLegacyCityProtocol::ClearLand;
-		UpdatePlanningSettings();
-	});
+	connect(m_Clear, &QToolButton::clicked, this, &AuLegacyCityConstruction::StartClearing);
 	connect(m_Designs, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
 		g_Au.Settings().writeEntry(QStringLiteral("Legacy2016/BuildingConstruction/%1").arg(m_Industry), m_Designs->currentData().toUInt());
 		if(m_Planning && m_ActiveRequest.industryId == m_Industry)
@@ -493,6 +489,16 @@ void AuLegacyCityConstruction::StartPlanning()
 	if(m_Industry == 35)
 	{ ReportMessage(tr("The original Dairy blueprint has not been recovered.")); return; }
 	m_Planning = true; m_ActiveRequest = BuildRequest(); emit PlanConstruction(m_ActiveRequest);
+}
+
+void AuLegacyCityConstruction::StartClearing()
+{
+	if(!g_Au.IsLegacyGeneration() || auApp->IsSingleUserMode() || !auApp->IsSceneConnected()) return;
+	PlanningStopped();
+	m_Planning = true;
+	m_ActiveRequest = AuLegacyCityProtocol::Request();
+	m_ActiveRequest.action = AuLegacyCityProtocol::ClearLand;
+	UpdatePlanningSettings();
 }
 
 void AuLegacyCityConstruction::UpdatePlanningSettings()

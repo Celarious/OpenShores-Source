@@ -989,6 +989,25 @@ void AuDesignerFrame::ShowPeaceDimensionStandings()
 	QDesktopServices::openUrl(url);
 }
 
+void AuDesignerFrame::OpenDemolitionUi()
+{
+	if(!m_View || !m_DockWidgetsReady || m_View->IsSceneLoading()
+		|| m_View->SceneContext() != SCENE_Universe) return;
+	if(g_Au.IsLegacyGeneration())
+	{
+		if(!m_LegacyCityConstructionDock) return;
+		m_LegacyCityConstructionDock->show();
+		m_LegacyCityConstructionDock->raise();
+		m_LegacyCityConstructionDock->Content()->StartClearing();
+	}
+	else if(m_ConstructionDock)
+	{
+		m_ConstructionDock->show();
+		m_ConstructionDock->raise();
+		m_View->PlanClearDevelopments();
+	}
+}
+
 void AuDesignerFrame::ToggleConstructionUi()
 {
 	if(g_Au.IsLegacyGeneration())
