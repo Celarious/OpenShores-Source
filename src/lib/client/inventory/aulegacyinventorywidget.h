@@ -12,11 +12,13 @@ class AUCLIENT_DLL AuLegacyInventoryWidget : public QWidget
 public:
 	explicit AuLegacyInventoryWidget(QWidget* parent = 0);
 	void SetGear(const AuGear& gear, bool male);
+	QSize MinimumCanvasSize() const { return m_LogicalSize; }
 
 signals:
 	void SelectionChanged(AuGearPos position);
 	void UseRequested();
 	void ContextRequested();
+	void CanvasMinimumChanged();
 	void DropRequested();
 	void MoveRequested(AuGearPos source, quint8 bodyPosition, AuGearPos containerPosition, QPoint cell);
 
@@ -44,6 +46,7 @@ private:
 	QPoint m_DragOffset;
 	QList<Region> m_Regions;
 	QRect m_Grid;
+	QSize m_LogicalSize;
 	bool m_Male;
 	bool m_Dragging;
 

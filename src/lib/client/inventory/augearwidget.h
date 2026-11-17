@@ -265,6 +265,7 @@ public:
 
 	virtual void UpdateTitleShortcut();
 
+
 };
 
 #endif // AuGearWidget_H

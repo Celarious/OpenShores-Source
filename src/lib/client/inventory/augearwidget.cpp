@@ -27,8 +27,6 @@
 #include <QHeaderView>
 #include <QMenu>
 #include <QScrollArea>
-#include <QScrollBar>
-#include <QStyle>
 #include <QTimer>
 
 //static unsigned int s_ShowSpecies = 0;							// Last count of species listed as debug output.
@@ -904,6 +902,8 @@ AuGearWidget::AuGearWidget(QWidget* parent) : QWidget(parent)
 	m_LegacyScroll = new QScrollArea(this);
 	m_LegacyScroll->setFrameShape(QFrame::NoFrame);
 	m_LegacyScroll->setWidgetResizable(true);
+	m_LegacyScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	m_LegacyScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	m_LegacyGrid = new AuLegacyInventoryWidget;
 	m_LegacyScroll->setWidget(m_LegacyGrid);
 	m_LegacyScroll->hide();
@@ -911,7 +911,7 @@ AuGearWidget::AuGearWidget(QWidget* parent) : QWidget(parent)
 	connect(m_LegacyGrid, SIGNAL(SelectionChanged(AuGearPos)), SLOT(LegacySelectionChanged(AuGearPos)));
 	connect(m_LegacyGrid, SIGNAL(UseRequested()), SLOT(UseClicked()));
 	connect(m_LegacyGrid, SIGNAL(ContextRequested()), SLOT(GearTreeRightClicked()));
-	connect(m_LegacyScroll->verticalScrollBar(), SIGNAL(rangeChanged(int,int)), SLOT(UpdateInventoryLayout()));
+	connect(m_LegacyGrid, SIGNAL(CanvasMinimumChanged()), SLOT(UpdateInventoryLayout()));
 	connect(m_LegacyGrid, SIGNAL(DropRequested()), SLOT(DropClicked()));
 	connect(m_LegacyGrid, SIGNAL(MoveRequested(AuGearPos,quint8,AuGearPos,QPoint)),
 		auApp, SLOT(MoveLegacyGear(AuGearPos,quint8,AuGearPos,QPoint)));
@@ -1579,11 +1579,17 @@ void AuGearWidget::UpdateInventoryLayout()
 	m_ButtonLayout->setRowMinimumHeight(1, legacy ? 0 : 28);
 	m_ActionButtons->setVisible(!legacy);
 	m_ActionButtons->setEnabled(!legacy);
-	// Reserve scrollbar space only while there is actually content to scroll.
-	const QScrollBar* bar = m_LegacyScroll->verticalScrollBar();
-	const int scrollbarWidth = bar->maximum() > bar->minimum() ? style()->pixelMetric(QStyle::PM_ScrollBarExtent) : 0;
-	m_LegacyScroll->setMinimumSize(legacy ? QSize(202 + scrollbarWidth, 318)
-		: QSize(0, 0));
+	// The layout propagates this through the dock, including status/title bars.
+	// Reserve a complete crate layout without introducing scrollbars.
+	m_LegacyScroll->setMinimumSize(legacy ? m_LegacyGrid->MinimumCanvasSize() : QSize(0, 0));
+	AuGearDock* dock = qobject_cast<AuGearDock*>(parentWidget());
+	if(dock)
+	{
+		dock->setMinimumSize(0, 0);
+		dock->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+		if(legacy)
+			dock->setFixedSize(dock->minimumSizeHint());
+	}
 }
 
 void AuGearWidget::GearTreeRightClicked()

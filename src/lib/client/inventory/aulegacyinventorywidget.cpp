@@ -1,5 +1,6 @@
 #include "aulegacyinventorywidget.h"
 #include "aulegacyinventory.h"
+#include "auglobal.h"
 #include <QApplication>
 #include <QHelpEvent>
 #include <QFontMetrics>
@@ -147,7 +148,14 @@ void AuLegacyInventoryWidget::Rebuild()
 			m_Regions.append(region);
 		}
 	}
-	setMinimumSize(width, bottom);
+	// Reserve the largest historical container even with no pack selected.
+	QSize crate(12, 20);
+	if(g_Au.IsLegacyGeneration() && g_Au.IsCommodityAvailable(CID_Crate))
+		crate = g_Au.Commodity(CID_Crate).m_capacity;
+	m_LogicalSize = QSize(qMax(width, crate.width() * CellPixels + 8),
+		qMax(bottom, 318 + crate.height() * CellPixels + 6));
+	setMinimumSize(m_LogicalSize);
+	emit CanvasMinimumChanged();
 }
 
 AuGearPos AuLegacyInventoryWidget::ItemAt(const QPoint& point) const
@@ -238,19 +246,20 @@ void AuLegacyInventoryWidget::paintEvent(QPaintEvent*)
 void AuLegacyInventoryWidget::mousePressEvent(QMouseEvent* event)
 {
 	m_PressPoint = event->pos();
-	m_PressedItem = ItemAt(event->pos());
+	const QPoint point = event->pos();
+	m_PressedItem = ItemAt(point);
 	m_Dragging = false;
 	m_DragOffset = QPoint();
 	// Keep the open container stable until release so its cells remain targets
 	// while dragging a nested container.
 	m_Selection = m_PressedItem;
 	emit SelectionChanged(m_Selection);
-	if(m_Grid.contains(event->pos()) && m_PressedItem.IsValid())
+	if(m_Grid.contains(point) && m_PressedItem.IsValid())
 	{
 		for(int index = 0; index < m_Regions.size(); ++index)
 			if(m_Regions[index].position == m_PressedItem && !m_Regions[index].overflow)
 			{
-				QPoint offset = event->pos() - m_Regions[index].rectangle.topLeft();
+				QPoint offset = point - m_Regions[index].rectangle.topLeft();
 				m_DragOffset = QPoint(offset.x() / CellPixels, offset.y() / CellPixels);
 				break;
 			}
@@ -271,15 +280,16 @@ void AuLegacyInventoryWidget::mouseMoveEvent(QMouseEvent* event)
 void AuLegacyInventoryWidget::mouseReleaseEvent(QMouseEvent* event)
 {
 	unsetCursor();
+	const QPoint point = event->pos();
 	if(event->button() == Qt::LeftButton && m_Dragging)
 	{
 		if(!visibleRegion().contains(event->pos()))
 			emit DropRequested();
-		else if(m_Grid.contains(event->pos()))
+		else if(m_Grid.contains(point))
 		{
-			QPoint offset = event->pos() - m_Grid.topLeft();
+			QPoint offset = point - m_Grid.topLeft();
 			QPoint cell(offset.x() / CellPixels, offset.y() / CellPixels);
-			const AuGearPos target = ItemAt(event->pos());
+			const AuGearPos target = ItemAt(point);
 			if(!target.IsValid() || target == m_PressedItem)
 				cell -= m_DragOffset;
 			emit MoveRequested(m_PressedItem, IP_NumInventoryPos, m_Container,
@@ -287,7 +297,7 @@ void AuLegacyInventoryWidget::mouseReleaseEvent(QMouseEvent* event)
 		}
 		else
 			for(int index = 0; index < m_Regions.size(); ++index)
-				if(m_Regions[index].bodyPosition >= 0 && m_Regions[index].rectangle.contains(event->pos()))
+				if(m_Regions[index].bodyPosition >= 0 && m_Regions[index].rectangle.contains(point))
 				{
 					emit MoveRequested(m_PressedItem, quint8(m_Regions[index].bodyPosition), AuGearPos(), QPoint(-1, -1));
 					break;
@@ -295,7 +305,7 @@ void AuLegacyInventoryWidget::mouseReleaseEvent(QMouseEvent* event)
 	}
 	else
 	{
-		Select(ItemAt(event->pos()));
+		Select(ItemAt(point));
 		if(event->button() == Qt::RightButton)
 			emit ContextRequested();
 	}
