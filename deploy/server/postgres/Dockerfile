@@ -8,5 +8,6 @@ COPY deploy/server/postgres/schema/initstatic.sql /opt/openshores/sql/initstatic
 COPY deploy/server/postgres/schema/legacyspacecraft.sql /opt/openshores/sql/legacyspacecraft.sql
 COPY deploy/server/postgres/schema/gamegeneration.sql /opt/openshores/sql/gamegeneration.sql
 COPY deploy/server/postgres/schema/legacycities.sql /opt/openshores/sql/legacycities.sql
+COPY deploy/server/postgres/schema/initlegacystatic.sql /opt/openshores/sql/initlegacystatic.sql
 
 RUN chmod 0755 /docker-entrypoint-initdb.d/10-openshores.sh
