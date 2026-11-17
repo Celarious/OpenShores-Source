@@ -4,7 +4,7 @@
 -- Field layout: src/lib/data/economy/legacy/aulegacycitycatalogue.cpp.
 -- Independently checked against the AuData13.dll manual decompilation and
 -- Ghidra DbManufacturingProcess::Rx (0x180116fb0) for labor/default/TL packing.
--- Extraction verification reconstructed all four GD sections byte-for-byte,
+-- Extraction verification reconstructed all six exported GD sections byte-for-byte,
 -- including NULL strings, both weapon modes, and all 17 armor effect entries.
 -- Preserve historical IDs, names, asset paths, enum values and technology levels.
 -- Runtime aliases and model overrides belong to the later game integration.
@@ -13,7 +13,8 @@
 -- one ID-zero sentinel preserve all unique industry definitions: GD's 55
 -- byte-identical empty industry slots are represented by that single sentinel.
 -- Named industry IDs equal their original slot indices in the 130-slot table.
--- Construction and spacecraft-detail tables are outside this four-table export.
+-- Also includes all 82 construction processes and 476 construction components.
+-- Spacecraft-detail/room definitions are outside this six-table export.
 --
 -- Absorption is stored as percentages, like modern SQL, with half-percent
 -- precision: GD byte / 2 = SQL percentage; divide SQL by 100 for runtime fractions.
@@ -29,10 +30,12 @@
 -- sourceOrder preserves original recipe order, including default tie-breaking.
 --
 -- Like initstatic.sql, reapplying this file replaces its static definitions.
--- It only replaces the four *_Legacy tables. Game loading is wired separately.
+-- It only replaces the six *_Legacy tables. Game loading is wired separately.
 BEGIN;
 SET LOCAL standard_conforming_strings = on;
 
+DROP TABLE IF EXISTS b_ConstructionComponent_Legacy;
+DROP TABLE IF EXISTS b_ConstructionProcess_Legacy;
 DROP TABLE IF EXISTS b_ManufacturingComponent_Legacy;
 DROP TABLE IF EXISTS b_ManufacturingProcess_Legacy;
 DROP TABLE IF EXISTS b_Industry_Legacy;
@@ -4117,7 +4120,603 @@ INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (558,
 INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (558,48,1,5); -- Lumber
 INSERT INTO b_ManufacturingComponent_Legacy (idmp,idc,consumed,ide) VALUES (558,76,1,5); -- Stone
 
+-- Legacy construction processes and components.
+-- Complete GD2016 sections: 82 processes and 476 components, with historical IDs.
+-- Layout verified against DbConstructionProcess::Rx (AuData13 0x114d20),
+-- DbConstructionComponent::Rx (0x1146e0), and their original SQL Load methods.
+-- Construction rules and material/environment adjustments remain in C++.
+CREATE TABLE b_ConstructionProcess_Legacy
+(
+  id               integer primary key unique,
+  name             text,
+  idi              smallint,                     -- Historical industry ID.
+  sitePrep         smallint DEFAULT 0,            -- Original site-preparation value.
+  stackLimit       smallint DEFAULT 0,            -- Packed flags; not a literal level count.
+  idt              smallint DEFAULT 0,            -- Original terrain ID.
+  buildRadius      smallint DEFAULT 0,            -- Original build-radius value, unscaled.
+  sourceOrder      serial unique                 -- Preserve first-process-per-industry selection.
+);
+GRANT ALL ON b_ConstructionProcess_Legacy TO audog;
+GRANT ALL ON b_ConstructionProcess_Legacy_sourceOrder_seq TO audog;
 
+CREATE TABLE b_ConstructionComponent_Legacy
+(
+  id               serial primary key unique,
+  idcp             integer,                      -- Historical construction process ID.
+  idc              integer,                      -- Historical commodity ID.
+  consumed         smallint DEFAULT 0,            -- Original quantity; zero can denote a reusable tool.
+  ide              smallint,                     -- Original component effect (CE_ value).
+  lvl              smallint DEFAULT 0             -- Original level byte, retained even where unused.
+);
+GRANT ALL ON b_ConstructionComponent_Legacy TO audog;
+GRANT ALL ON b_ConstructionComponent_Legacy_id_seq TO audog;
 
+-- Original section SHA-256: 4d8f0ad41fe2f2ebb3a51a3ce8a4ea2f0b44693eb67193691882bbc635ef106c
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (1,'Town Square',1,16,0,1,15,1);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (2,'Dirt',2,0,0,2,5,2);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (3,'Asphalt',2,15,0,2,8,3);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (4,'Concrete',2,15,0,2,8,4);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (5,'Graded Area',2,0,0,2,5,5);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (6,'Park',114,0,0,14,23,6);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (7,'Pressurized',2,15,0,2,10,7);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (8,'House',20,3,3,2,13,8);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (9,'Condominium',21,15,31,2,20,9);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (10,'Apartment',22,15,31,2,20,10);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (11,'Farm',30,3,1,2,50,11);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (12,'Logging Camp',31,1,34,7,50,12);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (13,'Wharf',34,7,0,4,20,13);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (14,'Bakery',40,15,7,2,20,14);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (15,'Brewery',41,15,7,2,20,15);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (16,'Distillery',42,15,7,2,20,16);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (17,'Grist Mill',43,15,7,2,20,17);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (18,'Lumber Mill',44,15,7,2,20,18);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (19,'Meat Processing Plant',45,15,7,2,20,19);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (20,'Sugar Mill',46,15,7,2,20,20);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (21,'Textile Mill',47,15,7,2,20,21);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (22,'Winery',48,15,7,2,20,22);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (23,'Mine',50,38,32,8,25,23);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (24,'Well',51,37,1,2,25,24);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (25,'Coal Power Plant',60,15,3,2,30,25);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (26,'Gasoline Power Plant',61,15,3,2,30,26);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (27,'Hydroelectric Power Plant',62,39,3,4,30,27);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (28,'Hydrogen Power Plant',63,15,3,2,30,28);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (29,'Natural Gas Power Plant',64,15,3,2,30,29);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (30,'Nuclear Power Plant',65,15,3,2,30,30);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (31,'Solar Power Plant',66,5,3,2,30,31);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (32,'Wind Power Plant',67,5,3,2,30,32);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (33,'Aircraft Factory',70,15,0,3,24,33);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (34,'Armorer',71,15,7,2,20,34);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (35,'Carpenter',72,15,7,2,20,35);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (36,'Clothing Factory',73,15,7,2,20,36);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (37,'Computer Factory',74,15,7,2,20,37);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (38,'Electronics Factory',75,15,7,2,20,38);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (39,'Explosives Factory',76,15,7,2,20,39);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (40,'Weapon Smith',77,15,7,2,20,40);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (41,'Jeweler',78,15,7,2,20,41);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (42,'Machine Shop',79,15,7,2,20,42);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (43,'Munitions Factory',80,15,7,2,20,43);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (44,'Pharmaceutical Lab',81,15,7,2,20,44);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (45,'Plastics Factory',82,15,7,2,20,45);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (46,'Refinery',83,15,7,2,20,46);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (47,'Rocket Motor Factory',84,15,7,2,20,47);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (48,'Ship Yard',85,7,0,5,24,48);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (49,'Smelter',86,15,7,2,20,49);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (50,'Spacecraft Factory',87,15,0,3,24,50);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (51,'Vehicle Factory',88,15,0,3,24,51);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (52,'Treatment Plant',89,7,3,11,20,52);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (53,'Bank',100,15,31,2,20,53);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (54,'Broker',101,15,31,2,20,54);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (55,'Casino',102,15,31,2,20,55);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (56,'Design Studio',3,15,15,2,20,56);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (57,'Grocery',103,15,31,2,20,57);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (58,'Retail Store',104,15,31,2,20,58);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (59,'Cantina',105,15,31,2,20,59);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (60,'Airport Repair Shop',110,15,1,3,20,60);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (61,'Airport Terminal',111,15,0,3,20,61);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (62,'Arena',112,7,0,2,27,62);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (63,'Zoo',113,3,0,13,40,63);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (64,'Church',120,15,31,2,20,64);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (65,'Hospital',121,15,31,2,20,65);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (66,'Fire Station',122,15,3,2,20,66);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (67,'Capitol',123,15,31,2,20,67);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (68,'Police Station',124,15,3,2,20,68);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (69,'University',125,15,7,2,20,69);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (70,'Military Flag',10,12,0,2,10,70);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (71,'Military Weapon System',11,15,0,2,35,71);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (72,'Military Shield Generator',12,15,0,2,35,72);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (73,'Orchard',32,7,1,2,50,73);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (74,'Irrigated Area',2,0,0,16,5,74);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (75,'Warehouse',4,7,0,2,22,75);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (76,'Hangar',126,15,0,3,23,76);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (77,'Observatory',127,15,0,2,20,77);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (78,'Military Guard Tower',128,15,0,11,8,78);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (79,'Biodome',129,0,0,15,0,79);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (80,'Defoliated Area',2,0,0,16,5,80);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (81,'Cleared Area',2,0,0,16,5,81);
+INSERT INTO b_ConstructionProcess_Legacy (id,name,idi,sitePrep,stackLimit,idt,buildRadius,sourceOrder) VALUES (82,'Dairy',35,15,7,2,20,82);
+
+-- Original section SHA-256: 1589822ac9f3d86287f97c7c701c8551a34773e1bedcaac2a816f729bb72f280
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (1,1,1,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (2,1,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (3,1,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (4,1,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (5,2,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (6,2,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (7,2,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (8,2,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (9,3,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (10,3,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (11,3,23,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (12,3,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (13,3,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (14,4,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (15,4,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (16,4,76,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (17,4,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (18,4,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (19,5,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (20,5,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (21,5,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (22,5,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (23,6,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (24,6,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (25,6,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (26,6,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (27,7,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (28,7,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (29,7,27,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (30,7,51,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (31,7,63,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (32,7,76,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (33,7,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (34,7,114,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (35,7,124,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (36,7,127,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (37,8,48,10,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (38,8,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (39,8,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (40,8,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (41,8,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (42,9,48,20,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (43,9,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (44,9,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (45,9,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (46,9,79,4,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (47,9,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (48,10,48,20,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (49,10,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (50,10,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (51,10,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (52,10,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (53,11,48,30,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (54,11,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (55,11,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (56,11,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (57,11,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (58,12,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (59,12,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (60,12,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (61,12,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (62,13,48,85,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (63,13,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (64,13,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (65,13,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (66,13,70,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (67,13,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (68,14,48,25,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (69,14,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (70,14,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (71,14,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (72,14,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (73,15,48,50,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (74,15,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (75,15,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (76,15,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (77,15,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (78,16,48,50,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (79,16,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (80,16,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (81,16,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (82,16,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (83,17,48,60,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (84,17,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (85,17,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (86,17,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (87,17,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (88,18,48,60,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (89,18,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (90,18,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (91,18,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (92,18,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (93,19,48,60,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (94,19,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (95,19,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (96,19,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (97,19,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (98,20,48,60,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (99,20,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (100,20,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (101,20,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (102,20,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (103,21,48,60,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (104,21,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (105,21,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (106,21,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (107,21,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (108,22,48,60,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (109,22,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (110,22,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (111,22,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (112,22,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (113,23,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (114,23,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (115,23,25,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (116,23,54,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (117,23,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (118,23,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (119,24,48,10,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (120,24,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (121,24,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (122,24,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (123,24,114,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (124,25,48,125,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (125,25,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (126,25,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (127,25,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (128,25,50,18,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (129,25,51,20,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (130,25,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (131,25,129,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (132,26,48,120,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (133,26,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (134,26,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (135,26,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (136,26,50,20,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (137,26,51,20,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (138,26,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (139,26,129,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (140,27,48,140,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (141,27,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (142,27,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (143,27,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (144,27,50,20,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (145,27,51,40,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (146,27,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (147,27,129,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (148,28,48,135,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (149,28,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (150,28,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (151,28,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (152,28,50,15,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (153,28,51,45,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (154,28,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (155,28,123,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (156,29,48,115,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (157,29,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (158,29,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (159,29,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (160,29,50,12,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (161,29,51,35,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (162,29,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (163,29,123,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (164,30,48,150,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (165,30,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (166,30,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (167,30,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (168,30,27,2,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (169,30,50,10,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (170,30,51,54,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (171,30,63,10,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (172,30,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (173,30,123,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (174,30,129,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (175,31,48,90,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (176,31,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (177,31,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (178,31,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (179,31,27,2,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (180,31,51,16,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (181,31,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (182,31,127,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (183,32,48,75,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (184,32,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (185,32,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (186,32,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (187,32,50,15,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (188,32,51,10,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (189,32,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (190,32,129,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (191,33,48,130,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (192,33,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (193,33,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (194,33,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (195,33,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (196,34,48,60,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (197,34,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (198,34,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (199,34,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (200,34,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (201,35,48,25,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (202,35,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (203,35,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (204,35,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (205,35,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (206,36,48,60,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (207,36,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (208,36,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (209,36,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (210,36,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (211,37,48,130,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (212,37,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (213,37,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (214,37,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (215,37,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (216,38,48,130,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (217,38,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (218,38,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (219,38,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (220,38,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (221,39,48,130,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (222,39,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (223,39,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (224,39,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (225,39,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (226,40,48,60,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (227,40,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (228,40,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (229,40,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (230,40,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (231,41,48,15,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (232,41,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (233,41,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (234,41,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (235,41,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (236,42,48,100,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (237,42,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (238,42,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (239,42,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (240,42,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (241,43,48,130,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (242,43,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (243,43,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (244,43,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (245,43,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (246,44,48,60,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (247,44,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (248,44,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (249,44,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (250,44,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (251,45,48,130,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (252,45,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (253,45,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (254,45,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (255,45,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (256,46,48,85,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (257,46,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (258,46,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (259,46,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (260,46,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (261,47,48,130,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (262,47,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (263,47,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (264,47,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (265,47,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (266,48,48,180,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (267,48,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (268,48,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (269,48,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (270,48,70,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (271,48,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (272,49,48,90,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (273,49,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (274,49,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (275,49,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (276,49,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (277,50,48,130,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (278,50,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (279,50,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (280,50,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (281,50,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (282,51,48,130,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (283,51,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (284,51,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (285,51,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (286,51,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (287,52,48,50,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (288,52,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (289,52,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (290,52,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (291,52,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (292,53,48,30,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (293,53,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (294,53,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (295,53,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (296,53,51,3,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (297,53,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (298,54,48,40,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (299,54,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (300,54,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (301,54,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (302,54,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (303,55,48,40,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (304,55,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (305,55,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (306,55,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (307,55,27,4,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (308,55,50,12,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (309,55,51,12,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (310,55,63,40,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (311,55,79,50,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (312,55,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (313,55,99,2,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (314,55,127,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (315,56,48,30,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (316,56,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (317,56,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (318,56,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (319,56,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (320,57,48,15,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (321,57,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (322,57,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (323,57,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (324,57,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (325,58,48,20,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (326,58,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (327,58,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (328,58,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (329,58,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (330,59,48,15,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (331,59,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (332,59,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (333,59,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (334,59,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (335,60,48,35,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (336,60,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (337,60,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (338,60,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (339,60,27,4,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (340,60,50,10,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (341,60,51,15,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (342,60,63,4,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (343,60,79,2,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (344,60,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (345,60,127,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (346,60,129,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (347,61,48,75,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (348,61,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (349,61,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (350,61,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (351,61,27,6,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (352,61,50,10,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (353,61,51,25,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (354,61,63,12,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (355,61,79,24,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (356,61,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (357,61,127,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (358,62,48,50,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (359,62,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (360,62,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (361,62,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (362,62,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (363,63,48,50,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (364,63,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (365,63,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (366,63,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (367,63,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (368,64,48,12,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (369,64,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (370,64,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (371,64,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (372,64,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (373,65,48,40,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (374,65,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (375,65,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (376,65,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (377,65,79,10,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (378,65,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (379,66,48,25,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (380,66,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (381,66,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (382,66,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (383,66,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (384,67,48,40,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (385,67,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (386,67,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (387,67,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (388,67,51,10,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (389,67,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (390,68,48,20,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (391,68,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (392,68,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (393,68,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (394,68,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (395,69,48,30,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (396,69,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (397,69,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (398,69,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (399,69,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (400,70,1,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (401,70,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (402,70,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (403,70,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (404,71,48,220,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (405,71,2,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (406,71,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (407,71,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (408,71,50,10,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (409,71,51,45,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (410,71,79,12,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (411,71,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (412,71,129,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (413,72,48,200,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (414,72,2,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (415,72,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (416,72,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (417,72,27,10,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (418,72,50,12,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (419,72,51,40,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (420,72,79,12,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (421,72,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (422,72,129,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (423,73,48,30,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (424,73,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (425,73,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (426,73,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (427,73,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (428,74,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (429,74,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (430,74,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (431,74,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (432,75,48,20,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (433,75,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (434,75,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (435,75,4,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (436,75,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (437,76,48,100,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (438,76,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (439,76,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (440,76,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (441,76,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (442,77,48,35,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (443,77,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (444,77,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (445,77,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (446,77,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (447,78,48,100,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (448,78,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (449,78,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (450,78,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (451,78,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (452,78,102,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (453,79,48,20,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (454,79,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (455,79,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (456,79,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (457,79,27,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (458,79,51,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (459,79,63,1,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (460,79,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (461,79,114,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (462,79,124,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (463,79,127,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (464,80,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (465,80,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (466,80,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (467,80,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (468,81,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (469,81,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (470,81,82,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (471,81,114,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (472,82,48,25,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (473,82,2,0,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (474,82,3,1,2,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (475,82,4,0,5,0);
+INSERT INTO b_ConstructionComponent_Legacy (id,idcp,idc,consumed,ide,lvl) VALUES (476,82,82,0,2,0);
+
+-- Align sequences before any future construction additions.
+SELECT setval(pg_get_serial_sequence('b_constructioncomponent_legacy', 'id'),
+              (SELECT MAX(id) FROM b_ConstructionComponent_Legacy));
+SELECT setval(pg_get_serial_sequence('b_constructionprocess_legacy', 'sourceorder'),
+              (SELECT MAX(sourceOrder) FROM b_ConstructionProcess_Legacy));
 
 COMMIT;
