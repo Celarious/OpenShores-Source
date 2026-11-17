@@ -256,7 +256,7 @@ void AuGlobal::Init(MODE mode, const QString& appName, const QString& company, D
 	m_DrawFramedPictures = m_Settings.readBoolEntry("/Settings/DrawFramedPictures", true);
 	m_DrawGun = m_Settings.readBoolEntry("/Settings/DrawGun", true);
 	m_DrawHelmetHUDAlways = m_Settings.readBoolEntry("/Settings/DrawHelmetHUDAlways", true);
-	m_DrawMiniMe = m_Settings.readBoolEntry("/Settings/DrawMiniMe", true);
+	m_DrawMiniMe = m_Settings.readBoolEntry("/Settings/DrawMiniMe", false);
 	m_DrawNebulaCloud = m_Settings.readBoolEntry("/Settings/DrawNebulaCloud", true);
 	m_DrawSpecks = m_Settings.readBoolEntry("/Settings/DrawSpecks", true);
 	m_DrawSkyBox = m_Settings.readBoolEntry("/Settings/DrawSkyBox", true);
