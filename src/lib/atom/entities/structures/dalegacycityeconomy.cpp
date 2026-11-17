@@ -325,7 +325,7 @@ TaxRates CityTaxes(quint32 empire, bool bank)
 bool HasBank(const State& state)
 {
 	for(const auto& dev : state.developments)
-		if(dev.industryId == 100 && dev.completedLevels && !dev.demolished) return true;
+		if(dev.industryId == 100 && dev.completedLevels && !dev.demolished && !dev.IsDestroyed()) return true;
 	return false;
 }
 
@@ -350,6 +350,7 @@ bool Motivated(float motivation)
 
 bool WorkerAvailable(const AuLegacyCityCatalogue& catalogue, const Development& development, quint32 enabled)
 {
+	if(development.IsDestroyed()) return false;
 	const auto jobs = DevelopmentJobs(catalogue, development, enabled);
 	return development.employees && jobs && (development.employees == jobs
 		|| g_Au.Dice().Roll(1, jobs) <= qint32(development.employees));
@@ -687,7 +688,7 @@ void DaLegacyCity::ImportCityGoods(const QVector<CityConnection>& connections)
 			QWriteLocker lock(&m_CityLock);
 			quint32 levels = 0;
 			for(const auto& dev : m_City.developments)
-				if(!dev.demolished && dev.industryId == industry) levels += dev.completedLevels;
+				if(!dev.demolished && !dev.IsDestroyed() && dev.industryId == industry) levels += dev.completedLevels;
 			const auto base = IndustryImportPercentage(industry, levels);
 			if(!base || !exporter->m_CityLock.tryLockForWrite()) continue;
 			UnlockWrite exporterLock{&exporter->m_CityLock};
@@ -766,10 +767,10 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 		// DaCity::Tock 0x2d3100 requires an observatory and powered radar.
 		// Original radar is built into airport111 and military systems11/12.
 		const bool observatory = std::any_of(before.developments.cbegin(), before.developments.cend(),
-			[](const Development& dev) { return dev.industryId == 127 && dev.completedLevels && !dev.demolished; });
+			[](const Development& dev) { return dev.industryId == 127 && dev.completedLevels && !dev.demolished && !dev.IsDestroyed(); });
 		const bool radar = std::any_of(before.developments.cbegin(), before.developments.cend(),
 			[](const Development& dev) { return (dev.industryId == 111 || dev.industryId == 11 || dev.industryId == 12)
-				&& dev.completedLevels && !dev.demolished; });
+				&& dev.completedLevels && !dev.demolished && !dev.IsDestroyed(); });
 		auto* system = FindParentSolarSystem();
 		if(observatory && radar && system && (!system->IsScannedBy(before.controllingEmpire)
 			|| !system->IsExploredBy(before.controllingEmpire)) && StationsPowered())
@@ -1047,7 +1048,7 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 			if(consumed < demand) powerImports.Import(state, inventory, connections, demand - consumed,
 				CityStorage(*catalogue, state.developments, zone).electricity);
 		}
-		const bool canOperate = hadPower || needsEnclosure || !environment.dark;
+		const bool canOperate = !dev.IsDestroyed() && (hadPower || needsEnclosure || !environment.dark);
 		// TickDevelopment 0x2d2ef0 finishes the site's existing production
 		// before OperatedByCitizens applies construction and starts new work.
 		for(auto& process : production.processes)

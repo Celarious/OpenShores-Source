@@ -5,6 +5,8 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "ausmokeparticles.h"
+#include "augleffects.h"
+#include "auglobal.h"
 //
 
 AuSmokeParticles::AuSmokeParticles() : AuParticleSystem()
@@ -14,6 +16,45 @@ AuSmokeParticles::AuSmokeParticles() : AuParticleSystem()
 AuSmokeParticles::~AuSmokeParticles()
 {
 
+}
+
+void AuSmokeParticles::RenderEffect(AuSmokeParticles*& particles, const AuMatrix4x4& projection,
+	const AuMatrix4x4& model, AuGLEffects& re, float size, const AuPoint& velocity, float scale)
+{
+	if(g_Au.m_DebugSwitches & 0x40000000) return;
+	static GLuint texture = 0;
+	if(!texture) texture = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, "SmokeT", ":data/smoketransparent.png");
+	if(!particles)
+	{
+		particles = new AuSmokeParticles();
+		particles->SetMaxParticles(1000);
+		particles->SetLifeCycle(7.5f);
+		particles->SetVelocityVar(size / 2.f);
+		particles->SetNumToRelease(1);
+		particles->SetReleaseInterval(.25f);
+		QColor color; color.setRgbF(.5, .5, .5);
+		particles->SetColor(color);
+		particles->SetSize(size * 100);
+		particles->SetTextureID(texture);
+		particles->SetPosition(AuPoint(0, 0, 0));
+		particles->Init(re);
+	}
+	particles->SetReleaseInterval(velocity.IsZero() ? .25f : .05f);
+	particles->SetVelocity(velocity);
+	auto& shader = re.GLSL().SpriteSizeShader();
+	shader.Select();
+	shader.SetProjectionModelView(projection * model);
+	shader.SetTexture(texture);
+	shader.SetColor(particles->GetColor());
+	shader.SetSize(particles->GetSize() * 10 * c_UnitScale * scale);
+	re.glEnable(GL_DEPTH_TEST);
+	re.glDepthMask(GL_FALSE);
+	re.glEnable(GL_BLEND);
+	re.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	if(particles->Update()) particles->Render(projection, model, re, scale);
+	re.glDepthMask(GL_TRUE);
+	re.glDisable(GL_BLEND);
+	shader.Deselect();
 }
 
 bool AuSmokeParticles::HasParticleExpired(const auParticle* pParticle)

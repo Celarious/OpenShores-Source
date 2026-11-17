@@ -14,6 +14,8 @@ class AUGLOBAL_DLL AuSmokeParticles : public AuParticleSystem
 public:
 	AuSmokeParticles();
 	virtual ~AuSmokeParticles();
+	static void RenderEffect(AuSmokeParticles*& particles, const AuMatrix4x4& projection,
+		const AuMatrix4x4& model, AuGLEffects& re, float size, const AuPoint& velocity, float scale = 1.f);
 
 	// Overrides
 	virtual void MoveParticle(auParticle* pParticle);

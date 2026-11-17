@@ -86,7 +86,9 @@ public:
 	// A finished building establishes the settlement; flags and landscaping do not.
 	bool HasCompletedBuilding() const;
 	// Surface-map query: ordinary buildings, then roads, then enclosing domes.
-	bool DevelopmentAt(const AuGlobeLL& location, AuLegacyCity::Development& result) const;
+	bool DevelopmentAt(const AuGlobeLL& location, AuLegacyCity::Development& result, bool includeLandscapers = false) const;
+	QString TargetDesc(const AuPoint& spottedLocation, quint32 spotterEmpire, AuId& targetId,
+		POLITICAL_STANCE& stanceToTarget) const override;
 	void RegisterEmpireVisit(quint32 empireId, qint64 now);
 	bool IsOccupied() const;
 	void InfluenceFlagTakeover(const DaCreature& actor);
@@ -336,6 +338,7 @@ private:
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom) const;
 	void RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom, bool beforeTerrain);
+	void RenderBuildingFires(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, AuModelMatrixHash& matrices);
 	friend class AuLegacyCity::PowerImportBatch;
 	DaLegacyCity(const DaLegacyCity& city);
 	mutable QReadWriteLock m_CityLock;
@@ -366,6 +369,7 @@ private:
 	void Store(QSqlDatabase& db, bool insert) const;
 	bool OperateConstruction(DaPerson* person, quint32 developmentId, bool fetch, bool labor, QString& error, bool* accepted = nullptr);
 	void TockEconomy(qint64 previous, qint64 now);
+	void TockBuildings(qint64 now);
 	void TockHospitalPatients();
 	bool FireDefenseWeapon(DaCreature& gunner, const DefensePost& post, const AuId& target, int powerSetting);
 	bool TurretMatrices(const AuLegacyCity::Development& development, quint16 stationId, float yaw, float pitch,

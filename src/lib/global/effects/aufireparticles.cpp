@@ -5,6 +5,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "aufireparticles.h"
+#include "augleffects.h"
 //
 #include "auglobal.h"
 
@@ -16,6 +17,42 @@ AuFireParticles::AuFireParticles(float radius) : AuParticleSystem()
 AuFireParticles::~AuFireParticles()
 {
 
+}
+
+void AuFireParticles::RenderEffect(AuFireParticles*& particles, const AuMatrix4x4& projection,
+	const AuMatrix4x4& model, AuGLEffects& re, float size, float scale)
+{
+	static GLuint texture = 0;
+	if(!texture) texture = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, "tBCM", ":data/particle.bmp");
+	if(!particles)
+	{
+		particles = new AuFireParticles(size);
+		particles->SetMaxParticles(1000);
+		particles->SetLifeCycle(1.5f);
+		particles->SetVelocityVar(size * .7f);
+		particles->SetNumToRelease(20);
+		particles->SetReleaseInterval(.05f);
+		QColor color; color.setRgbF(1, .25, .15);
+		particles->SetColor(color);
+		particles->SetSize(size);
+		particles->SetTextureID(texture);
+		particles->SetPosition(AuPoint(0, 0, 0));
+		particles->Init(re);
+	}
+	auto& shader = re.GLSL().SpriteSizeShader();
+	shader.Select();
+	shader.SetProjectionModelView(projection * model);
+	shader.SetTexture(texture);
+	shader.SetColor(particles->GetColor());
+	shader.SetSize(particles->GetSize() * 100 * c_UnitScale * scale);
+	re.glEnable(GL_DEPTH_TEST);
+	re.glDepthMask(GL_FALSE);
+	re.glEnable(GL_BLEND);
+	re.glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+	if(particles->Update()) particles->Render(projection, model, re, scale);
+	re.glDepthMask(GL_TRUE);
+	re.glDisable(GL_BLEND);
+	shader.Deselect();
 }
 
 bool AuFireParticles::HasParticleExpired(const auParticle* pParticle)

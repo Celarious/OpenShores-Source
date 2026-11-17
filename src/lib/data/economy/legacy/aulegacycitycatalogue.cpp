@@ -445,6 +445,14 @@ bool AuLegacyCityCatalogue::Read(const QByteArray& source, AuLegacyCityCatalogue
 	accepted.m_sourceBytes = source;
 	accepted.m_sourceSha256 = hash;
 	if(!accepted.Validate(error) || !accepted.CalculateBaseCosts(error)) return false;
+	// DbIndustryArray::CalcHitPointValues, AuData13 0x115e20. The
+	// first construction process for the industry supplies its hit-point base.
+	for(auto& industry : accepted.m_industries)
+		if(const auto* process = accepted.ConstructionProcessForIndustry(industry.id))
+			for(const auto& component : accepted.m_constructionComponents)
+				if(component.process == process->id && component.commodity.value == 48
+					&& component.effect == 5 && component.quantity)
+				{ industry.buildingHitBase = component.quantity; break; }
 	accepted.BuildCrosswalk();
 	if(accepted.m_runtimeDescriptors.size() != 349
 		|| accepted.m_fromRuntime.size() != 349 || accepted.m_toRuntime.size() != 349)

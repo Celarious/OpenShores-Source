@@ -155,7 +155,13 @@ AuCityReport DaLegacyCity::GatherCityReport(const State& state, const Population
 	report.m_IsOnRingworld = facts.onRingworld;
 	report.m_HasBreathableAtmo = !facts.context.needsEnclosure;
 	report.m_IsHabitablePlanet = facts.context.indigenousWorld;
-	report.m_HasDestroyedBuildings = facts.context.destroyedBuildings ? 1 : 0;
+	report.m_HasDestroyedBuildings = 0;
+	for(const Development& development : state.developments)
+		if(!development.demolished)
+		{
+			if(development.IsSmoldering()) report.m_HasDestroyedBuildings |= 1;
+			if(development.onFire) report.m_HasDestroyedBuildings |= 2;
+		}
 	report.m_MaxPop = quint32(std::max(0, facts.context.environmentCapacity));
 	report.m_ZonePop = quint32(std::max(0, facts.context.environmentPopulation));
 	report.m_LastVisit = facts.context.reportExemptFromVisitPenalty ? 0
@@ -284,7 +290,7 @@ bool DaLegacyCity::CompleteCityReport(AuCityReport& report, const State& state,
 	report.m_LegacyIndustryTechnology.clear();
 	for(const auto& development : state.developments)
 	{
-		if(development.demolished || !development.completedLevels) continue;
+		if(development.demolished || development.IsDestroyed() || !development.completedLevels) continue;
 		const auto runtime = INDUSTRYID(catalogue->RuntimeIndustryId(IndustryId(development.industryId)));
 		// The 2016 industry record had levels and high/low quality, not the
 		// later active-level counter. The shared old-format reader likewise

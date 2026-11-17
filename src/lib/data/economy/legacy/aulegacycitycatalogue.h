@@ -86,6 +86,7 @@ struct IndustryRecord
 	qint8 employees = 0;
 	quint8 storageTens = 0;
 	quint8 capacitorTens = 0;
+	quint8 buildingHitBase = 0; // Derived from the original lumber construction requirement.
 	RecordSource source;
 	quint16 StorageUnits() const { return quint16(storageTens) * 10; }
 	quint16 CapacitorUnits() const { return quint16(capacitorTens) * 10; }

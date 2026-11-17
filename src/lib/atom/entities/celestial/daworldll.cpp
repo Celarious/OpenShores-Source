@@ -5165,6 +5165,24 @@ QString DaWorldLL::TargetDesc(const AuPoint& spottedLocation, quint32 spotterEmp
 	if(!LLOfLoc(spotLL, spottedLocation))
 		return "";
 
+	// Roads and ruined Legacy plots are terrain hits, while standing walls
+	// hit their city atom. Route both to the same recovered description.
+	if(g_Au.IsLegacyGeneration())
+	{
+		DaAtomList atoms; ListNormalSubatoms(atoms);
+		for(const auto* atom : atoms)
+			if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
+			{
+				AuLegacyCity::Development development;
+				if(city->DevelopmentAt(spotLL, development, true))
+				{
+					// Keep a terrain hit's targeting frame/identity unchanged.
+					AuId cityId;
+					return city->TargetDesc(city->Transform().UnProject(spottedLocation), spotterEmpire, cityId, stanceToTarget);
+				}
+			}
+	}
+
 	// Describe resources present at the target location.
 	AuTerrainInfo terQ;
 	QueryTerrainAtLoc(terQ, spottedLocation);

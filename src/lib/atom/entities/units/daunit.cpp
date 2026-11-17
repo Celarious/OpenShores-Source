@@ -35,7 +35,6 @@
 // Light flicker will be identical between burning units because this is a static. Will anyone notice?
 static GLuint							s_TexAcid = 0;
 static GLuint							s_TexDisease = 0;
-static GLuint							s_TexFire = 0;
 static GLuint							s_TexPoison = 0;
 static GLuint							s_TexSmoke = 0;
 static GLuint							s_TexStun = 0;
@@ -1258,96 +1257,12 @@ void DaUnit::DeleteDeviceObjects(AuAtomRenderInfo& ari)
 
 void DaUnit::RenderFire(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, float size)
 {
-	if(!s_TexFire)
-		s_TexFire = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, "tBCM", ":data/particle.bmp");
-
-	if(!m_PSFire)
-	{
-		m_PSFire = new AuFireParticles(size);
-		m_PSFire->SetMaxParticles(1000);
-		m_PSFire->SetLifeCycle(1.5f);
-		m_PSFire->SetVelocityVar(size * .7f);
-		m_PSFire->SetNumToRelease(20);
-		m_PSFire->SetReleaseInterval(0.05f);
-		QColor colFire;
-		colFire.setRgbF(1, .25, .15);
-		m_PSFire->SetColor(colFire);
-		m_PSFire->SetSize(size);
-		m_PSFire->SetTextureID(s_TexFire);
-		m_PSFire->SetPosition(AuPoint(0.0f, 0.0f, 0.0f));
-		m_PSFire->Init(re);
-	}
-
-	re.GLSL().SpriteSizeShader().Select();
-	re.GLSL().SpriteSizeShader().SetProjectionModelView(projection * model);
-	re.GLSL().SpriteSizeShader().SetTexture(s_TexFire);
-	re.GLSL().SpriteSizeShader().SetColor(m_PSFire->GetColor());
-	re.GLSL().SpriteSizeShader().SetSize(m_PSFire->GetSize()*100 *c_UnitScale * MiniScale());
-
-	// Render the model of this atom.
-	re.glEnable(GL_DEPTH_TEST);
-	re.glDepthMask(GL_FALSE);	// This way the particles do not have to be sorted
-	re.glEnable(GL_BLEND);
-	re.glBlendFunc(GL_SRC_ALPHA, GL_ONE);	// An additive blend
-	if(m_PSFire->Update())
-		m_PSFire->Render(projection, model, re, MiniScale());
-	re.glDepthMask(GL_TRUE);
-	re.glDisable(GL_BLEND);
-
-	re.GLSL().SpriteSizeShader().Deselect();
+	AuFireParticles::RenderEffect(m_PSFire, projection, model, re, size, MiniScale());
 }
 
 void DaUnit::RenderSmoke(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, float size)
 {
-	if(g_Au.m_DebugSwitches & 0x40000000)
-		return;
-	if(!s_TexSmoke)
-		s_TexSmoke = re.CreateTextureFromBitmap(STATIC_TEXTURE_ID, "SmokeT", ":data/smoketransparent.png");
-
-	if(!m_PSSmoke)
-	{
-		m_PSSmoke = new AuSmokeParticles();
-		m_PSSmoke->SetMaxParticles(1000);
-		m_PSSmoke->SetLifeCycle(7.5f);
-		m_PSSmoke->SetVelocityVar(size / 2.f);
-		m_PSSmoke->SetNumToRelease(1);
-		m_PSSmoke->SetReleaseInterval(0.25f);
-		QColor colSmoke;
-		colSmoke.setRgbF(.5, .5, .5);
-		m_PSSmoke->SetColor(colSmoke);
-		m_PSSmoke->SetSize(size*100);
-		m_PSSmoke->SetTextureID(s_TexSmoke);
-		m_PSSmoke->SetPosition(AuPoint(0.0f, 0.0f, 0.0f));
-		m_PSSmoke->Init(re);
-	}
-	if(Vector().IsZero())
-	{
-		m_PSSmoke->SetReleaseInterval(0.25f);
-		m_PSSmoke->SetVelocity(AuPoint(0,0));
-	}
-	else
-	{
-		m_PSSmoke->SetReleaseInterval(0.05f);
-		m_PSSmoke->SetVelocity(-Vector());
-	}
-
-	re.GLSL().SpriteSizeShader().Select();
-	re.GLSL().SpriteSizeShader().SetProjectionModelView(projection * model);
-	re.GLSL().SpriteSizeShader().SetTexture(s_TexSmoke);
-	re.GLSL().SpriteSizeShader().SetColor(m_PSSmoke->GetColor());
-	re.GLSL().SpriteSizeShader().SetSize(m_PSSmoke->GetSize()*10 *c_UnitScale * MiniScale());
-
-	// Render the model of this atom.
-	re.glEnable(GL_DEPTH_TEST);
-	re.glDepthMask(GL_FALSE);	// This way the particles do not have to be sorted
-	re.glEnable(GL_BLEND);
-	re.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	if(m_PSSmoke->Update())
-		m_PSSmoke->Render(projection, model, re, MiniScale());
-	re.glDepthMask(GL_TRUE);
-	re.glDisable(GL_BLEND);
-
-	re.GLSL().SpriteSizeShader().Deselect();
+	AuSmokeParticles::RenderEffect(m_PSSmoke, projection, model, re, size, -Vector(), MiniScale());
 }
 
 void DaUnit::RenderAcid(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, float size)

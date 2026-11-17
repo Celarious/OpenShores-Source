@@ -327,7 +327,7 @@ quint8 TechnologyOfProduct(quint8 producingIndustry, quint8 buildingTechnology,
 	quint8 highest = 0;
 	bool exists = false;
 	for(const auto& development : developments)
-		if(development.industryId == industry && !development.demolished && development.completedLevels)
+		if(development.industryId == industry && !development.demolished && !development.IsDestroyed() && development.completedLevels)
 		{ highest = qMax(highest, development.technology); exists = true; }
 	return exists ? qMin(buildingTechnology, highest) : 0;
 }
@@ -529,7 +529,7 @@ void UpgradeBuildingsFromInventory(const AuLegacyCityCatalogue& catalogue, State
 	for(const int index : sites)
 	{
 		const auto& development = city.developments[index];
-		if(development.demolished || !development.completedLevels || development.technology == 31) continue;
+		if(development.demolished || development.IsDestroyed() || !development.completedLevels || development.technology == 31) continue;
 		const auto commodity = IndustryTechnologyCommodity(development.industryId);
 		if(!commodity) continue;
 		const auto runtime = COMMODITYID(catalogue.RuntimeCommodityId(CommodityId(commodity)));

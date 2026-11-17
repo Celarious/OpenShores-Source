@@ -17,6 +17,9 @@ private:
 public:
 	AuFireParticles(float radius);
 	virtual ~AuFireParticles();
+	// Shared unit/building effect. The caller owns and deletes particles.
+	static void RenderEffect(AuFireParticles*& particles, const AuMatrix4x4& projection,
+		const AuMatrix4x4& model, AuGLEffects& re, float size, float scale = 1.f);
 
 	// Overrides
 	virtual void MoveParticle(auParticle* pParticle);

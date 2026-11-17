@@ -7,6 +7,30 @@
 
 namespace AuLegacyCity
 {
+quint16 Development::HitsTotal() const
+{
+	if(industryId == 2 || !completedLevels) return 0;
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	const auto* industry = catalogue ? catalogue->Industry(IndustryId(industryId)) : nullptr;
+	if(!industry) return 0;
+	// DbIndustry::BuildingHitsPerLevel 0x115d10; DpBuilding's TL uplift
+	// 0x59ac50 and logarithmic level scaling 0xea6d0.
+	int multiplier = 0;
+	switch(materialId)
+	{
+	case 48: multiplier = 10; break; // Lumber
+	case 86: multiplier = 12; break; // Logs
+	case 76: multiplier = 14; break; // Stone
+	case 51: multiplier = 17; break; // Metal
+	case 146: multiplier = 20; break; // Magmium
+	case 145: multiplier = 24; break; // Vulcium
+	default: return 0;
+	}
+	const int base = industry->buildingHitBase * multiplier;
+	const int perLevel = base + technology * base * 5 / 100;
+	return quint16(int((std::log2(float(completedLevels)) + 1.f) * perLevel));
+}
+
 namespace
 {
 bool Bytes(QDataStream& in, QByteArray& bytes, quint32 maximum)
@@ -119,6 +143,7 @@ bool EncodeState(const State& state, QByteArray& output, QString& error)
 		for(const auto& component : dev.components)
 			out << component.commodityId << component.effect << component.quality << component.quantity << component.applied;
 		out << dev.technology << dev.employees << dev.selectedManufacturingRecipe << dev.manufacturingCitizenEnabled;
+		out << dev.damage << dev.onFire;
 	}
 	out << quint32(state.flags.size());
 	for(const Flag& flag : state.flags) out << flag.empire << flag.location << flag.level << flag.capturedAt;
@@ -190,6 +215,13 @@ bool DecodeState(const QByteArray& bytes, State& output, QString& error)
 			in >> dev.technology >> dev.employees >> dev.selectedManufacturingRecipe >> citizenEnabled;
 			if(citizenEnabled > 1) { error = QStringLiteral("Invalid pending legacy manufacturing worker flag."); return false; }
 			dev.manufacturingCitizenEnabled = citizenEnabled != 0;
+		}
+		if(version >= 6)
+		{
+			quint8 burning = 0;
+			in >> dev.damage >> burning;
+			if(burning > 1) { error = QStringLiteral("Invalid legacy building fire flag."); return false; }
+			dev.onFire = burning != 0;
 		}
 		state.developments.append(dev);
 	}

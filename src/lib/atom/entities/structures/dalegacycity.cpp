@@ -25,6 +25,10 @@
 #include "aulegacycityproduction.h"
 #include "aulegacycitypopulation.h"
 #include "aulegacycityinfrastructure.h"
+#include "aulegacycitylifecycle.h"
+#include "aueventlog.h"
+#include "aufireparticles.h"
+#include "ausmokeparticles.h"
 #include "aulegacyfinancetransfer.h"
 #include "audice.h"
 #include "augear.h"
@@ -50,6 +54,7 @@
 #include "dadesigner.h"
 #include "dgdata.h"
 #include "daworldll.h"
+#include "dasector.h"
 #include "daworldringsection.h"
 #include "daworldsphere.h"
 #include "dpconsoleempty.h"
@@ -82,6 +87,58 @@
 namespace
 {
 constexpr qint64 TurretAimInterpolationMs = 200;
+constexpr float LegacyBuildingFireRadiusFeet = 8.f;
+
+// DpBuilding::FireProbability/FireTest (0xf0710/0xf08e0) and
+// DaCity::DamageBuilding (0x287de0). Damage is net of armor and shields.
+bool DamageLegacyBuilding(AuLegacyCity::Development& building, const AuCombatWeapon& weapon,
+	AuCombatResult& result)
+{
+	const quint16 total = building.HitsTotal();
+	const quint64 damage = quint64(result.m_Damage1) + result.m_Damage2;
+	if(!total || building.damage >= total || !damage) return false;
+	building.damage = quint16(qMin(quint64(total), quint64(building.damage) + (damage + 24) / 25));
+	if(building.damage >= total)
+	{
+		building.onFire = false;
+		result.m_IsDestroyed = true;
+		return true;
+	}
+	const auto ignite = [&](WEAPONEFFECT effect, quint32 hits) {
+		if(!hits || building.onFire) return;
+		int chance = 0;
+		if(effect == WE_Electric || effect == WE_Heat)
+		{
+			int base = 0, increase = 0;
+			switch(building.materialId)
+			{
+			case 86: base = 16; increase = 84; break;
+			case 48: base = 8; increase = 72; break;
+			case 76: base = 4; increase = 76; break;
+			case 51: base = 2; increase = 68; break;
+			case 146: base = 1; increase = 59; break;
+			case 145: increase = 50; break;
+			}
+			chance = base + building.damage * increase / total;
+		}
+		chance += int(qMin(quint32(1000), hits / 20));
+		if(building.industryId == 1 || (building.industryId >= 10 && building.industryId <= 12)
+			|| building.industryId == 128) chance /= 10;
+		if(chance && g_Au.Dice().Roll(1, 100) <= chance) building.onFire = true;
+	};
+	ignite(weapon.m_w1.m_Effect, result.m_Damage1);
+	ignite(weapon.m_w2.m_Effect, result.m_Damage2);
+	return true;
+}
+
+void LogBuildingDestruction(AuLegacyCity::State& state, const AuLegacyCity::Development& building, qint64 now)
+{
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	const auto* industry = catalogue ? catalogue->Industry(AuLegacyCity::IndustryId(building.industryId)) : nullptr;
+	AuLegacyCity::AppendCityEvent(state, AuEventLogEntry::BuildingDestroyed,
+		(industry ? industry->name : QString::number(building.industryId))
+			+ QStringLiteral("|") + building.location.ToString(), now);
+}
 
 // Unwrap each footprint before drawing it. The viewport clips the duplicate
 // at the opposite map edge, keeping cities crossing 180 E/W continuous.
@@ -585,6 +642,7 @@ bool SameTerrainSite(const AuLegacyCity::Development& p, const AuLegacyCity::Dev
 		&& p.completedLevels == q.completedLevels
 		&& p.altitudeMSL == q.altitudeMSL && p.facingRadians == q.facingRadians
 		&& p.constructed == q.constructed && p.demolished == q.demolished && p.roadSlab == q.roadSlab
+		&& p.IsDestroyed() == q.IsDestroyed()
 		&& p.components.isEmpty() == q.components.isEmpty()
 		&& p.roadLengthMeters == q.roadLengthMeters && p.roadWidthMeters == q.roadWidthMeters
 		&& p.roadStartAltitudeMSL == q.roadStartAltitudeMSL && p.roadEndAltitudeMSL == q.roadEndAltitudeMSL
@@ -1039,8 +1097,12 @@ struct DaLegacyCity::Runtime
 	QVector<CollisionProxy> collisionProxies;
 	QHash<quint32, int> collisionProxyIndex;
 	AuPoint collisionMinimum, collisionMaximum;
+	AuFireParticles* fire = nullptr;
+	AuSmokeParticles* smoke = nullptr;
 	~Runtime()
 	{
+		delete fire;
+		delete smoke;
 		if(job) job->cancelled.store(true, std::memory_order_release);
 		if(minePostJob) minePostJob->cancelled.store(true, std::memory_order_release);
 		if(job || !buildings.isEmpty())
@@ -1061,7 +1123,7 @@ struct DaLegacyCity::Runtime
 		collisionProxies.clear(); collisionProxyIndex.clear();
 		for(const auto& dev : collisionBoundsState)
 		{
-			if(dev.demolished) continue;
+			if(dev.demolished || dev.IsDestroyed()) continue;
 			CollisionProxy proxy; proxy.state = dev;
 			world.BuildingConstructionTransform(world.LocOfLL(dev.location, dev.altitudeMSL),
 				dev.facingRadians, nullptr, AuPoint(), proxy.placement);
@@ -1484,7 +1546,7 @@ struct DaLegacyCity::Runtime
 	{
 		using namespace AuLegacyBd::Geometry;
 		const auto eligible = [&](const AuLegacyCity::Development& site) {
-			if(!site.constructed || site.demolished) return false;
+			if(!site.constructed || site.demolished || site.IsDestroyed()) return false;
 			return site.industryId == 2 ? site.constructionProcessId == 7 && site.components.isEmpty()
 				: pressure && site.industryId != 129 && !AuLegacyCity::InsideBiodome(world, site.location, domes);
 		};
@@ -1594,7 +1656,7 @@ struct DaLegacyCity::Runtime
 			Building building;
 			building.state = dev;
 			building.enclosureKey = enclosureKey;
-			if(design && dev.constructed && !dev.demolished) building.stations = BuildingStations(*design, dev);
+			if(design && dev.constructed && !dev.demolished && !dev.IsDestroyed()) building.stations = BuildingStations(*design, dev);
 			AuLegacyBd::Geometry::Options options;
 			options.minimumDeck = dev.minimumDeck; options.maximumDeck = dev.maximumDeck;
 			options.materialCommodity = dev.materialId; options.constructed = dev.constructed;
@@ -1617,7 +1679,7 @@ struct DaLegacyCity::Runtime
 					return RoadFixtureGround(altitude-dev.altitudeMSL, altitude-dev.altitudeMSL-10);
 				};
 			}
-			building.mesh = design ? AuLegacyBd::Geometry::Build(*design, options)
+			building.mesh = dev.IsDestroyed() ? AuLegacyBd::Geometry::Mesh() : design ? AuLegacyBd::Geometry::Build(*design, options)
 				: AuLegacyBd::Geometry::BuildProcedural(dev,roadFixtureHeight);
 			if(world && dev.industryId==129)
 			{
@@ -1666,7 +1728,9 @@ struct DaLegacyCity::Runtime
 					}
 				}
 			}
-			if(dev.demolished) building.mesh = AuLegacyBd::Geometry::Mesh();
+			// ConstructedDecks 0x59cb20 returns false for a destroyed site;
+			// RenderExterior 0x5b2110 consequently emits no triangles in 2016.
+			if(dev.demolished || dev.IsDestroyed()) building.mesh = AuLegacyBd::Geometry::Mesh();
 			if(dev.industryId == 2)
 			{
 				building.mesh.minimum.setX(qMin(building.mesh.minimum.x(),float(-dev.roadWidthMeters*FeetPerMeter()/2)));
@@ -1674,7 +1738,7 @@ struct DaLegacyCity::Runtime
 				building.mesh.maximum.setX(qMax(building.mesh.maximum.x(),float(dev.roadWidthMeters*FeetPerMeter()/2)));
 				building.mesh.maximum.setY(qMax(building.mesh.maximum.y(),float(dev.roadLengthMeters*FeetPerMeter()/2)));
 			}
-			if(design && dev.constructed)
+			if(design && dev.constructed && !dev.IsDestroyed())
 				if(const auto* catalogue = AuLegacyCityCatalogue::BuiltIn())
 				{
 					AuLegacyBd::Paths::Options pathOptions;
@@ -1683,7 +1747,7 @@ struct DaLegacyCity::Runtime
 					QString error;
 					if(!building.paths.Build(*design, pathOptions, error)) building.mesh.warnings.append(error);
 				}
-			if(prepareRender && world) AppendEnclosure(building, developments, *world, pressure, domes);
+			if(prepareRender && world && !dev.IsDestroyed()) AppendEnclosure(building, developments, *world, pressure, domes);
 			AuLegacyShip::Rendering::Mesh collisionMesh;
 			for(const auto& batch : building.mesh.batches)
 			{
@@ -1903,7 +1967,7 @@ QByteArray DaLegacyCity::TerrainCacheKey() const
 		for(const auto& dev : m_City.developments)
 			out << dev.id << dev.industryId << dev.constructionProcessId << dev.materialId << dev.location
 				<< dev.designId << dev.minimumDeck << dev.maximumDeck << dev.completedLevels
-				<< dev.altitudeMSL << dev.facingRadians << dev.constructed << dev.demolished << dev.roadSlab
+				<< dev.altitudeMSL << dev.facingRadians << dev.constructed << dev.demolished << dev.roadSlab << dev.IsDestroyed()
 				<< dev.components.isEmpty() << dev.roadLengthMeters << dev.roadWidthMeters
 				<< dev.roadStartAltitudeMSL << dev.roadEndAltitudeMSL << dev.biodomeRadiusMeters;
 	}
@@ -2002,7 +2066,7 @@ AuPoint DaLegacyCity::SpawnLocation(const AuGlobeLLF* home) const
 		for(const auto& building : m_Runtime->buildings)
 		{
 			const auto& dev = building.state;
-			if(dev.demolished || !dev.completedLevels || dev.location.Longitude() != home->Longitude()
+			if(dev.demolished || dev.IsDestroyed() || !dev.completedLevels || dev.location.Longitude() != home->Longitude()
 				|| dev.location.Latitude() != home->Latitude()) continue;
 			atHome = true;
 			AuMatrix4x4 placement;
@@ -2987,7 +3051,7 @@ AuLegacyCity::CitizenConstructionFacts DaLegacyCity::GatherCitizenConstructionFa
 	facts.processId = development.constructionProcessId;
 	facts.now = now;
 	auto* world = dynamic_cast<DaWorldLL*>(Parent());
-	if(!world || development.demolished || development.components.isEmpty() || development.halted
+	if(!world || development.demolished || development.IsDestroyed() || development.components.isEmpty() || development.halted
 		|| (!materialsOnly && !development.citizenWorker))
 	{ facts.blocked = true; return facts; }
 	facts.blocked = !materialsOnly && ConstructionThreat(*world, Id(), development, state.controllingEmpire) != 0;
@@ -3416,6 +3480,7 @@ void DaLegacyCity::Tock(const AuTime& last, const AuTime& now, const AuScripts& 
 	// boundaries still reach the six-minute broker/service import schedule.
 	const AuTime previousEconomy = m_LastEconomyTock.IsNull() ? last : m_LastEconomyTock;
 	m_LastEconomyTock = now;
+	TockBuildings(now.MSecsSinceEpoch());
 	TockLifecycle(previousEconomy.MSecsSinceEpoch(), now.MSecsSinceEpoch());
 	if(IsDead()) return;
 	if(!previousEconomy.IsNull()
@@ -4194,7 +4259,7 @@ bool DaLegacyCity::CanEnterConsole(const DaPerson& who, quint16& stationId, AuSt
 	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
 	for(const auto& building : m_Runtime->buildings)
 	{
-		if(!building.state.constructed || building.state.demolished) continue;
+		if(!building.state.constructed || building.state.demolished || building.state.IsDestroyed()) continue;
 		AuMatrix4x4 placement;
 		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
 			building.state.facingRadians, nullptr, AuPoint(), placement);
@@ -4253,7 +4318,7 @@ bool DaLegacyCity::Station(const DaCreature& who, AuStation& station, AuLegacyCi
 	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
 	for(const auto& building : m_Runtime->buildings)
 	{
-		if(!building.state.constructed || building.state.demolished) continue;
+		if(!building.state.constructed || building.state.demolished || building.state.IsDestroyed()) continue;
 		AuMatrix4x4 placement;
 		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
 			building.state.facingRadians, nullptr, AuPoint(), placement);
@@ -4332,6 +4397,7 @@ int DaLegacyCity::BeamUp(DaPerson& person, int countRequested)
 		for(const auto& building : m_Runtime->buildings)
 		{
 			const auto& development = building.state;
+			if(development.IsDestroyed()) continue;
 			if(development.industryId != 111 || !development.constructed || development.demolished) continue;
 			const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
 			if(!design) continue;
@@ -4378,7 +4444,8 @@ bool DaLegacyCity::ManBuildingStation(DaNpc& troop, const AuLegacyCity::Developm
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
-	if(!world || !design || !stationId || troop.EmpireId() != EmpireId()) return false;
+	if(!world || !design || !stationId || troop.EmpireId() != EmpireId()
+		|| development.demolished || development.IsDestroyed()) return false;
 	DaAtomList occupants; world->ListNormalSubatoms(occupants);
 	for(const auto* atom : occupants)
 		if(const auto* creature = dynamic_cast<const DaCreature*>(atom))
@@ -4451,7 +4518,8 @@ void DaLegacyCity::TockStationOperators()
 			[&entry](const AuLegacyCity::Development& value) { return value.id == entry->first; });
 		const bool cancelled = !npc || npc->IsDead() || npc->CurrentHitPoints() <= 0 || npc->EmpireId() != EmpireId()
 			|| npc->Order() != ORDER_Stay || npc->OrderTarget() != Id()
-			|| development == state.developments.cend() || development->demolished || !development->constructed;
+			|| development == state.developments.cend() || development->demolished || !development->constructed
+			|| development->IsDestroyed();
 		if(cancelled || ManBuildingStation(*npc, *development, entry->second))
 		{
 			QMutexLocker lock(&m_Runtime->lock);
@@ -4794,6 +4862,20 @@ void DaLegacyCity::CombatArmorEffectiveness(WEAPONMODE mode, WEAPONEFFECT effect
 	DaAtom::CombatArmorEffectiveness(mode, effect, hitShield, weapon, hit, baseAbsorb, baseBlock, auxAbsorb, auxBlock);
 	if(!g_Au.IsLegacyGeneration() || !AuLegacyItemTechnologyActive()) return;
 	const AuPoint location = Transform().Project(hit);
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	AuGlobeLL ll; AuLegacyCity::Development building;
+	if(world && catalogue && world->LLOfLoc(ll, location) && DevelopmentAt(ll, building)
+		&& building.industryId != 2 && !building.IsDestroyed())
+		if(const auto* material = catalogue->Commodity(AuLegacyCity::CommodityId(building.materialId)))
+		{
+			// DpBuilding::CombatArmorEffectiveness, AuAtom13 0x59bdd0.
+			const DbCommodity& armor = material->descriptor;
+			baseAbsorb = armor.ArmorModeAbsorb(mode) + armor.ArmorEffectAbsorb(effect);
+			baseBlock = (armor.ArmorModeBlock(mode) + armor.ArmorEffectBlock(effect)) * (1.f + .05f * building.technology);
+			if(building.industryId == 1 || (building.industryId >= 10 && building.industryId <= 12)
+				|| building.industryId == 128) baseBlock *= 10;
+		}
 	QMutexLocker lock(&m_Runtime->defenseLock);
 	const double radius = 500 * FeetPerMeter();
 	for(const auto& shield : m_Runtime->shields)
@@ -4832,6 +4914,102 @@ void DaLegacyCity::CombatApplyDamage(const AuCombatAttacker& attacker, const AuC
 				break;
 			}
 	}
+	auto* world = dynamic_cast<DaWorldLL*>(Parent());
+	AuGlobeLL ll;
+	AuLegacyCity::Development selected;
+	if(world && world->LLOfLoc(ll, location) && DevelopmentAt(ll, selected)
+		&& selected.industryId != 2 && selected.industryId != 129)
+	{
+		const qint64 now = AuTime::CurrentMSecsSinceEpoch();
+		bool destroyed = false;
+		{
+			QWriteLocker lock(&m_CityLock);
+			for(auto& building : m_City.developments)
+				if(building.id == selected.id && !building.demolished && !building.IsDestroyed())
+				{
+					if(!DamageLegacyBuilding(building, weapon, result)) break;
+					destroyed = building.IsDestroyed();
+					if(destroyed) LogBuildingDestruction(m_City, building, now);
+					if(!attacker.m_Id.IsNull())
+					{
+						if(!m_City.lastAttack || now - m_City.lastAttack >= 60000)
+							AuLegacyCity::AppendCityEvent(m_City, AuEventLogEntry::BuildingAttacked, attacker.m_Name, now);
+						m_City.lastAttack = now;
+					}
+					m_City.lastEmployment = 0;
+					++m_CityRevision; changed = true;
+					break;
+				}
+		}
+		if(destroyed) PublishDevelopmentRemoval(selected);
+	}
+	if(changed) SetModified(NOTIFY_Scene);
+}
+
+void DaLegacyCity::TockBuildings(qint64 now)
+{
+	QVector<AuLegacyCity::Development> destroyed;
+	bool changed = false;
+	{
+		QWriteLocker lock(&m_CityLock);
+		if(std::none_of(m_City.developments.cbegin(), m_City.developments.cend(), [](const AuLegacyCity::Development& building) {
+			return !building.demolished && (building.damage || building.onFire);
+		})) return;
+		int firefighters = 1, population = m_City.population;
+		QVector<int> buildings;
+		for(int index = 0; index < m_City.developments.size(); ++index)
+		{
+			const auto& building = m_City.developments[index];
+			if(building.demolished || building.industryId == 2) continue;
+			buildings.append(index);
+			if(building.industryId == 122 && !building.IsDestroyed()) firefighters += building.completedLevels;
+		}
+		// Original Tock alternates LL traversal every half minute, sharing a
+		// limited firefighting/population budget between the burning buildings.
+		std::sort(buildings.begin(), buildings.end(), [this](int a, int b) {
+			return m_City.developments[a].location < m_City.developments[b].location;
+		});
+		if(now % 60000 > 30000) std::reverse(buildings.begin(), buildings.end());
+		const bool underAttack = m_City.lastAttack && now - m_City.lastAttack <= 771428;
+		for(int index : buildings)
+		{
+			auto& building = m_City.developments[index];
+			if(building.onFire)
+			{
+				const int chance = qMin(4, qMin(firefighters, population));
+				if(chance > 0)
+				{
+					if(g_Au.Dice().Roll(1, 100) <= chance)
+					{ building.onFire = false; m_City.lastEmployment = 0; changed = true; }
+					firefighters -= chance; population -= chance;
+				}
+				if(building.onFire)
+				{
+					AuCombatWeapon fire(WM_Contact);
+					AuCombatResult result;
+					result.m_Damage1 = g_Au.Dice().Roll(1, 10) * 25;
+					if(DamageLegacyBuilding(building, fire, result))
+					{
+						changed = true;
+						if(building.IsDestroyed())
+						{
+							LogBuildingDestruction(m_City, building, now);
+							destroyed.append(building); m_City.lastEmployment = 0;
+						}
+					}
+				}
+			}
+			// TickDevelopment/RepairDamage 0x2d2ef0/0xfa8d0: one damage
+			// unit repaired by employed citizens, never while burning/attacked.
+			if(building.damage && !building.onFire && building.employees && !underAttack)
+			{
+				if(building.IsDestroyed()) m_City.lastEmployment = 0;
+				--building.damage; changed = true;
+			}
+		}
+		if(changed) ++m_CityRevision;
+	}
+	for(const auto& building : destroyed) PublishDevelopmentRemoval(building);
 	if(changed) SetModified(NOTIFY_Scene);
 }
 
@@ -4904,7 +5082,7 @@ QVector<DaLegacyCity::DefensePost> DaLegacyCity::DefensePosts() const
 	const auto state = Snapshot();
 	for(const auto& development : state.developments)
 	{
-		if(development.demolished || !development.completedLevels
+		if(development.demolished || development.IsDestroyed() || !development.completedLevels
 			|| (development.industryId != 11 && development.industryId != 12 && development.industryId != 128)) continue;
 		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
 		if(!design) continue;
@@ -5186,7 +5364,7 @@ bool DaLegacyCity::HospitalPatient(const DaCreature& patient, quint32& developme
 	QMutexLocker lock(&m_Runtime->lock); m_Runtime->Ensure(*this);
 	for(const auto& building : m_Runtime->buildings)
 	{
-		if(building.state.industryId != 121 || !building.state.constructed || building.state.demolished) continue;
+		if(building.state.industryId != 121 || !building.state.constructed || building.state.demolished || building.state.IsDestroyed()) continue;
 		AuMatrix4x4 placement;
 		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
 			building.state.facingRadians, nullptr, AuPoint(), placement);
@@ -5245,7 +5423,67 @@ bool DaLegacyCity::Route(quint32 development, const AuPoint& from, const AuPoint
 	return false;
 }
 
-bool DaLegacyCity::DevelopmentAt(const AuGlobeLL& location, AuLegacyCity::Development& result) const
+QString DaLegacyCity::TargetDesc(const AuPoint& spottedLocation, quint32 spotterEmpire, AuId& targetId,
+	POLITICAL_STANCE& stanceToTarget) const
+{
+	// DaCity::TargetDesc, AuAtom13 0x2d13d0. Both spotting key variants
+	// already use this virtual description through the normal scene target.
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	AuGlobeLL ll; AuLegacyCity::Development development;
+	if(!g_Au.IsLegacyGeneration() || !world || !catalogue
+		|| !world->LLOfLoc(ll, Transform().Project(spottedLocation)) || !DevelopmentAt(ll, development, true))
+		return DaAtom::TargetDesc(spottedLocation, spotterEmpire, targetId, stanceToTarget);
+	const auto state = Snapshot();
+	quint32 empire = state.controllingEmpire;
+	const auto* industry = catalogue->Industry(AuLegacyCity::IndustryId(development.industryId));
+	QString description = industry ? industry->name : tr("Building");
+	if(development.industryId == 2)
+	{
+		// Original road descriptions distinguish slabs and landscaping, rather
+		// than reporting every road as its selected pavement recipe.
+		switch(development.constructionProcessId)
+		{
+		case 5: description = tr("Graded Area"); break;
+		case 74: description = tr("Irrigated Area"); break;
+		case 80: description = tr("Defoliated Area"); break;
+		case 81: description = tr("Cleared Area"); break;
+		default: description = development.roadSlab ? tr("Road Slab") : tr("Road"); break;
+		}
+	}
+	else
+	{
+		if(development.industryId == 1 || development.industryId == 10)
+			for(int index = 0; index < state.flags.size(); ++index)
+				if(state.flags[index].location == development.location)
+				{
+					empire = state.flags[index].empire;
+					if(development.industryId == 10)
+						description += QStringLiteral(" ") + QChar(ushort('A' + qMax(1, index) - 1));
+					break;
+				}
+		if(development.technology) description += tr(" TL%1").arg(int(development.technology) + 1);
+		const quint32 total = quint32(development.HitsTotal()) * 25;
+		const quint32 current = total - qMin(total, quint32(development.damage) * 25);
+		if(total)
+		{
+			if(current < total || development.onFire) description += tr(" %L1/%L2hp").arg(current).arg(total);
+			else description += tr(" %L1hp").arg(total);
+			if(development.onFire) description += tr(" BURNING!");
+		}
+	}
+	QString owner;
+	const auto& data = g_Au.LockDataForRead(); data.EmpireName(empire, owner); g_Au.UnlockData();
+	if(!owner.isEmpty()) description.prepend(owner + QStringLiteral(" "));
+	targetId = Id();
+	stanceToTarget = PoliticalStance(spotterEmpire, empire);
+	description += tr(" in %1 at %2 %3").arg(state.name, ll.ToString(), world->Name());
+	if(const auto* sector = FindParentSector())
+		description += tr(", %1 %2, %3").arg(sector->Name(), sector->Description(), GalaxyName(Galaxy()));
+	return description;
+}
+
+bool DaLegacyCity::DevelopmentAt(const AuGlobeLL& location, AuLegacyCity::Development& result, bool includeLandscapers) const
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
@@ -5257,7 +5495,7 @@ bool DaLegacyCity::DevelopmentAt(const AuGlobeLL& location, AuLegacyCity::Develo
 		for(const auto& development : state.developments)
 		{
 			const int category = development.industryId == 129 ? 2 : development.industryId == 2 ? 1 : 0;
-			if(category != pass || development.demolished || development.IsLandscaper()) continue;
+			if(category != pass || development.demolished || (!includeLandscapers && development.IsLandscaper())) continue;
 			AuMatrix4x4 placement;
 			world->BuildingConstructionTransform(world->LocOfLL(development.location, development.altitudeMSL),
 				development.facingRadians, nullptr, AuPoint(), placement);
@@ -5555,6 +5793,37 @@ void DaLegacyCity::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtom
 		RenderCity(projection, ari, matrices, sceneAtom, false);
 		RenderAirportNavBeacon(projection, ari, matrices, sceneAtom);
 		RenderDefenseShields(projection, ari, matrices, sceneAtom);
+		RenderBuildingFires(projection, ari, matrices);
+	}
+}
+
+void DaLegacyCity::RenderBuildingFires(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
+	AuModelMatrixHash& matrices)
+{
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	const auto model = matrices.constFind(Id());
+	if(!g_Au.IsLegacyGeneration() || !ari.re || !world || model == matrices.cend()) return;
+	const AuMatrix4x4 worldModel = model->Matrix() * Transform().Inverse();
+	const auto state = Snapshot();
+	for(const auto& building : state.developments)
+	{
+		if(building.demolished || (!building.onFire && !building.IsSmoldering())) continue;
+		AuMatrix4x4 placement;
+		world->BuildingConstructionTransform(world->LocOfLL(building.location, building.altitudeMSL),
+			building.facingRadians, nullptr, AuPoint(), placement);
+		AuMatrix4x4 fireModel = worldModel * placement;
+		// Center the flames on the site and keep their radius modest. This
+		// user-requested adjustment replaces the original large roof-edge fire.
+		const float size = LegacyBuildingFireRadiusFeet;
+		const bool destroyed = building.IsDestroyed();
+		const double height = destroyed ? 0 : building.maximumDeck < 2 ? .5 : (building.maximumDeck - 1) * AuLegacyBd::DeckHeight;
+		fireModel.Translate(0, 0, height);
+		if(ari.re->FrustumCulling() && !AuViewFrustum(projection * fireModel).IntersectsSphere(AuPoint(), size * 3)) continue;
+		if(building.onFire) AuFireParticles::RenderEffect(m_Runtime->fire, projection, fireModel, *ari.re, size);
+		AuMatrix4x4 smokeModel = worldModel * placement;
+		smokeModel.Translate(0, 0, height);
+		AuSmokeParticles::RenderEffect(m_Runtime->smoke, projection, smokeModel, *ari.re,
+			building.IsDestroyed() ? 8.311461f : 12.467192f, AuPoint());
 	}
 }
 

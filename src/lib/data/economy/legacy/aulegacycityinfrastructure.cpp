@@ -30,7 +30,7 @@ StorageCapacities DevelopmentStorage(const AuLegacyCityCatalogue& catalogue,
 	const Development& development, quint8 buildingTechnology, quint8 orbitZone)
 {
 	StorageCapacities capacity;
-	if(development.demolished || development.industryId == 2) return capacity;
+	if(development.demolished || development.IsDestroyed() || development.industryId == 2) return capacity;
 	const auto* industry = catalogue.Industry(IndustryId(development.industryId));
 	if(!industry) return capacity;
 	// DpDevelopment::Storage 0x651890; original zones are 0..4.
@@ -70,7 +70,7 @@ quint32 BuildingPowerDemand(const Development& development, bool isDark)
 {
 	// DpBuilding::PowerConsumption 0xf9bc0 uses the current top level,
 	// including the level being constructed; daylight still consumes one.
-	if(development.demolished || development.industryId == 2) return 0;
+	if(development.demolished || development.IsDestroyed() || development.industryId == 2) return 0;
 	return isDark ? development.completedLevels + (development.components.isEmpty() ? 0U : 1U) : 1U;
 }
 
@@ -134,13 +134,20 @@ EmploymentTotals EmployCitizens(const AuLegacyCityCatalogue& catalogue,
 	// upward independently, so map traversal direction affects shortages.
 	EmploymentTotals totals;
 	totals.unemployed = population;
+	const auto conditionOf = [&conditions](const Development& development) {
+		auto condition = conditions.value(development.id);
+		condition.damaged |= development.damage != 0;
+		condition.destroyed |= development.IsDestroyed();
+		condition.burning |= development.onFire;
+		return condition;
+	};
 	QVector<int> buildings, roads;
 	QVector<quint32> jobs(developments.size());
 	for(int index = 0; index < developments.size(); ++index)
 	{
 		auto& development = developments[index];
 		if(development.demolished) continue;
-		const auto condition = conditions.value(development.id);
+		const auto condition = conditionOf(development);
 		const auto enabled = enabledProcessCounts.value(development.id);
 		if(development.industryId == 2) roads.append(index); else buildings.append(index);
 		if(condition.damaged && development.industryId != 2) ++totals.repairJobs;
@@ -158,7 +165,7 @@ EmploymentTotals EmployCitizens(const AuLegacyCityCatalogue& catalogue,
 	for(const int index : buildings)
 	{
 		developments[index].employees = 0;
-		const auto condition = conditions.value(developments[index].id);
+		const auto condition = conditionOf(developments[index]);
 		if(totals.unemployed && condition.damaged && !condition.burning)
 		{ ++developments[index].employees; --totals.unemployed; }
 	}
@@ -187,7 +194,7 @@ EmploymentTotals EmployCitizens(const AuLegacyCityCatalogue& catalogue,
 			const auto industry = developments[index].industryId;
 			const bool matches = category == 0 ? industry >= 60 && industry <= 67
 				: category == 1 ? industry == 83 : foodProducer(industry);
-			if(matches && !conditions.value(developments[index].id).destroyed) assign(index);
+			if(matches && !conditionOf(developments[index]).destroyed) assign(index);
 		}
 	};
 	if(airProductionNeeded) { pass(0); pass(1); pass(2); }
@@ -198,7 +205,7 @@ EmploymentTotals EmployCitizens(const AuLegacyCityCatalogue& catalogue,
 		const auto industry = developments[index].industryId;
 		if(!foodProducer(industry) && !(industry >= 60 && industry <= 67)
 			&& !(airProductionNeeded && industry == 83)
-			&& !conditions.value(developments[index].id).destroyed) assign(index);
+			&& !conditionOf(developments[index]).destroyed) assign(index);
 	}
 	if(!reverse) for(const int index : roads) assign(index);
 	return totals;

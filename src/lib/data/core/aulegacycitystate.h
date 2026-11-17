@@ -9,7 +9,7 @@
 
 namespace AuLegacyCity
 {
-constexpr quint8 StateVersion = 5;
+constexpr quint8 StateVersion = 6;
 inline bool SupportedStateVersion(quint32 version) { return version >= 1 && version <= StateVersion; }
 constexpr int MaximumStateBytes = 8 * 1024 * 1024;
 constexpr int MaximumDevelopments = 32768;
@@ -55,6 +55,12 @@ struct Development
 	double roadStartAltitudeMSL = 0, roadEndAltitudeMSL = 0;
 	float biodomeRadiusMeters = 100;
 	bool demolished = false;
+	// DpBuilding stores structural damage in units of 25 combat hit points.
+	quint16 damage = 0;
+	bool onFire = false;
+	AUDATA_DLL quint16 HitsTotal() const;
+	bool IsDestroyed() const { return damage && damage >= HitsTotal(); }
+	bool IsSmoldering() const { const auto total = damage ? HitsTotal() : 0; return total && damage >= (total >> 1); }
 	// Original FIND_SkipLandscapers excludes grades and vegetation work.
 	bool IsLandscaper() const
 	{

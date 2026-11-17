@@ -108,6 +108,8 @@ PopulationRuntimeFacts GatherPopulationFacts(DaLegacyCity& city, DaWorldLL& worl
 	// km. PopulationMax already preserves old radius*100 as modern radius*10.
 	const int zone = world.ResourceZone(location);
 	c.environmentPopulation = state.population;
+	for(const Development& development : state.developments)
+		if(!development.demolished && (development.IsSmoldering() || development.onFire)) c.destroyedBuildings = true;
 	DaAtomList atoms;
 	world.ListNormalSubatoms(atoms);
 	for(DaAtom* atom : atoms)
@@ -210,7 +212,7 @@ bool ApplyCityPopulation(State& state, AuItemHash& inventory, AccountingState& a
 	c.daysSinceCityVisit = facts.daysSinceCityVisit;
 	c.levels.fill(0);
 	for(const Development& development : state.developments)
-		if(!development.demolished) c.levels[development.industryId] += development.completedLevels;
+		if(!development.demolished && !development.IsDestroyed()) c.levels[development.industryId] += development.completedLevels;
 	c.population = state.population;
 	c.satisfaction = state.satisfaction;
 	c.unemployed = int(accounting.unemployed);

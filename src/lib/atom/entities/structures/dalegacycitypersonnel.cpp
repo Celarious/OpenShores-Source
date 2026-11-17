@@ -51,7 +51,7 @@ std::array<quint32, 256> Levels(const AuLegacyCity::State& state)
 {
 	std::array<quint32, 256> levels = {};
 	for(const auto& development : state.developments)
-		if(!development.demolished) levels[development.industryId] += development.completedLevels;
+		if(!development.demolished && !development.IsDestroyed()) levels[development.industryId] += development.completedLevels;
 	return levels;
 }
 
