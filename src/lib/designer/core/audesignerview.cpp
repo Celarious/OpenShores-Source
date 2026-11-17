@@ -1870,8 +1870,10 @@ AuDesignerView::AuDesignerView(QWidget* parent) : QOpenGLWidget(parent), m_Scene
 	m_texWaitStarsOld = 0;
 	m_WaitSpaceAngle = 0;
 	m_WaitBeamAngle = 0;
+	m_WaitBeamSpeed = 0;
 	m_WaitSeed = (quint32)g_Au.Dice().Roll(1, 0x7fffffff, 0);
 	m_WaitStepAt = -1;
+	m_WaitSpawnAt = 0;
 
 	m_RenderPaused = false;
 
@@ -3777,12 +3779,14 @@ int AuDesignerView::WaitRandom(int n)
 	return (int)(m_WaitSeed / 4294967296.0 * n);
 }
 
-bool AuDesignerView::MoveWaitParticle(WaitParticle& star) const
+bool AuDesignerView::MoveWaitParticle(WaitParticle& star, float steps) const
 {
-	const float out = ((float)(star.frame / 3) + 1.f) / 25.f + 1.f;
+	float out = ((float)(star.frame / 3) + 1.f) / 25.f + 1.f;
+	if(steps != 1.f)
+		out = powf(out, steps);
 	star.x *= out;
 	star.y *= out;
-	const float spin = (float)(10 - star.frame);
+	const float spin = (float)(10 - star.frame) * steps;
 	if(star.frame & 1)
 	{
 		star.angle += spin;
@@ -3798,21 +3802,24 @@ bool AuDesignerView::MoveWaitParticle(WaitParticle& star) const
 	return fabs(star.x) <= 1 && fabs(star.y) <= 1;
 }
 
-void AuDesignerView::StepServerHandoffWait(bool first)
+void AuDesignerView::StepServerHandoffWait(float elapsedMs, bool spawn)
 {
-	if(!first)
+	const float steps = elapsedMs / 33.f;
+	if(elapsedMs > 0)
 	{
 		QVector<WaitParticle>::iterator it = m_WaitParticles.begin();
 		while(it != m_WaitParticles.end())
 		{
-			if(MoveWaitParticle(*it) && MoveWaitParticle(*it))
+			if(MoveWaitParticle(*it, 2.f * steps))
 				it++;
 			else
 				it = m_WaitParticles.erase(it);
 		}
+		m_WaitSpaceAngle += .5f * steps;
+		m_WaitBeamAngle += m_WaitBeamSpeed * steps;
 	}
 
-	if(m_WaitParticles.count() < 1000)
+	if(spawn && m_WaitParticles.count() < 1000)
 	{
 		WaitParticle star;
 		int roll = 1 + WaitRandom(256);
@@ -3826,8 +3833,8 @@ void AuDesignerView::StepServerHandoffWait(bool first)
 		m_WaitParticles.append(star);
 	}
 
-	m_WaitSpaceAngle += .5f;
-	m_WaitBeamAngle += (float)(WaitRandom(7) - 3);
+	if(spawn)
+		m_WaitBeamSpeed = (float)(WaitRandom(7) - 3);
 }
 
 void AuDesignerView::RenderClassicLoadingScreen()
@@ -3851,22 +3858,28 @@ void AuDesignerView::ShowServerHandoffWait()
 	AuGLEffects& re = *m_RenderInfo->re;
 	AuGLSLTexture& shader = re.GLSL().TextureShader();
 
-	const qint64 step = 33;
+	const qint64 spawnInterval = 33000000; // One particle and beam speed change per 33 ms.
 	if(!m_WaitClock.isValid())
 		m_WaitClock.start();
-	const qint64 now = m_WaitClock.elapsed();
-	if(m_WaitStepAt < 0 || now - m_WaitStepAt > 1000)
+	const qint64 now = m_WaitClock.nsecsElapsed();
+	if(m_WaitStepAt < 0 || now - m_WaitStepAt > 1000000000)
 	{
-		StepServerHandoffWait(m_WaitStepAt < 0);
+		StepServerHandoffWait(0, true);
 		m_WaitStepAt = now;
+		m_WaitSpawnAt = now + spawnInterval;
 	}
 	else
 	{
-		while(now - m_WaitStepAt >= step)
+		// Split elapsed time at spawn events so particle density and random beam
+		// motion stay independent of how often the scene is rendered.
+		while(now >= m_WaitSpawnAt)
 		{
-			StepServerHandoffWait(false);
-			m_WaitStepAt += step;
+			StepServerHandoffWait((float)(m_WaitSpawnAt - m_WaitStepAt) / 1000000.f, true);
+			m_WaitStepAt = m_WaitSpawnAt;
+			m_WaitSpawnAt += spawnInterval;
 		}
+		StepServerHandoffWait((float)(now - m_WaitStepAt) / 1000000.f, false);
+		m_WaitStepAt = now;
 	}
 
 	re.glDisable(GL_DEPTH_TEST);

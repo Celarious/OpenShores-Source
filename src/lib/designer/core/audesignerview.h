@@ -839,9 +839,11 @@ private:
 	QVector<WaitParticle>				m_WaitParticles;
 	float								m_WaitSpaceAngle;
 	float								m_WaitBeamAngle;
+	float								m_WaitBeamSpeed;
 	quint32								m_WaitSeed;
 	QElapsedTimer						m_WaitClock;
 	qint64								m_WaitStepAt;
+	qint64								m_WaitSpawnAt;
 
 	float								m_BusyAngle;
 	bool								m_IsWarping;			// true for warp effect, otherwise wormhole effect for wait anim
@@ -1945,8 +1947,8 @@ private:
 	void ShowSpawnTieEffect();
 	void ShowServerHandoffWait();
 	int WaitRandom(int n);
-	void StepServerHandoffWait(bool first);
-	bool MoveWaitParticle(WaitParticle& star) const;
+	void StepServerHandoffWait(float elapsedMs, bool spawn);
+	bool MoveWaitParticle(WaitParticle& star, float steps = 1.f) const;
 	void ShowWarpIndicator();
 	void ShowWormholeIndicator();
 
