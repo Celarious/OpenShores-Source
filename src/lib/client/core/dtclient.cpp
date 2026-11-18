@@ -41,6 +41,115 @@
 #include "dgdata.h"
 #include "dtsspacket.h"
 #include <QDataStream>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
+
+namespace
+{
+bool LegacyCatalogueMatches(const AuGameGenerationIdentity& identity, const QByteArray& payload, QString& error)
+{
+	if(identity.catalogueVersion != AuLegacyGenerationCapability().catalogueVersion)
+	{
+		error = QStringLiteral("The server uses an unsupported Legacy catalogue format. Update client and server together.");
+		return false;
+	}
+	AuLegacyCityCatalogue received;
+	AuGameGenerationIdentity expected;
+	if(!AuLegacyCityCatalogue::Read(payload, received, error)
+		|| !AuLegacyGenerationIdentityForCatalogue(received, expected, error))
+	{
+		if(error.isEmpty()) error = QStringLiteral("The server returned an invalid Legacy catalogue.");
+		return false;
+	}
+	if(expected != identity)
+	{
+		error = QStringLiteral("The Legacy catalogue does not match its game generation identity.");
+		return false;
+	}
+	return true;
+}
+
+QString LegacyCatalogueCachePath(const AuGameGenerationIdentity& identity)
+{
+	// CacheGame() depends on the currently active generation. The catalogue is
+	// needed before switching generations, so use a stable content-keyed path.
+	return QDir(g_Au.CacheApp()).absoluteFilePath(QStringLiteral("LegacyCatalogues/%1.json")
+		.arg(QString::fromLatin1(identity.manifestHash.toHex())));
+}
+
+bool LoadCachedLegacyCatalogue(const AuGameGenerationIdentity& identity, QByteArray& payload)
+{
+	QString error;
+	const AuLegacyCityCatalogue* installed = AuLegacyCityCatalogue::BuiltIn();
+	if(g_Au.GenerationIdentity() == identity && installed)
+	{
+		payload = installed->SourceBytes();
+		if(LegacyCatalogueMatches(identity, payload, error)) return true;
+	}
+	QFile file(LegacyCatalogueCachePath(identity));
+	if(!file.open(QIODevice::ReadOnly) || file.size() <= 0
+		|| file.size() > AuLegacyCityCatalogue::MaximumSourceBytes)
+	{
+		payload.clear();
+		return false;
+	}
+	payload = file.read(AuLegacyCityCatalogue::MaximumSourceBytes + 1);
+	if(file.error() == QFile::NoError && file.atEnd()
+		&& payload.size() <= AuLegacyCityCatalogue::MaximumSourceBytes
+		&& LegacyCatalogueMatches(identity, payload, error)) return true;
+	payload.clear();
+	return false;
+}
+
+QString LegacyCatalogueHintPath(const QTcpSocket& socket)
+{
+	const QByteArray endpoint = socket.peerName().toUtf8() + '\n' + QByteArray::number(socket.peerPort());
+	const QByteArray key = QCryptographicHash::hash(endpoint, QCryptographicHash::Sha256).toHex();
+	return QDir(g_Au.CacheApp()).absoluteFilePath(QStringLiteral("LegacyCatalogues/server-%1.identity")
+		.arg(QString::fromLatin1(key)));
+}
+
+bool LoadLegacyCatalogueHint(const QString& path, AuGameGenerationIdentity& identity, QByteArray& payload)
+{
+	QFile file(path);
+	if(!file.open(QIODevice::ReadOnly) || file.size() <= 0 || file.size() > 512) return false;
+	const QByteArray bytes = file.read(513);
+	if(file.error() != QFile::NoError || !file.atEnd() || bytes.size() > 512) return false;
+	QDataStream in(bytes);
+	in.setVersion(QDataStream::Qt_4_1);
+	return AuReadGameGenerationIdentity(in, identity) && in.atEnd()
+		&& identity.generation == AuGameGeneration::Legacy && LoadCachedLegacyCatalogue(identity, payload);
+}
+
+void SaveCachedLegacyCatalogue(const AuGameGenerationIdentity& identity, const QByteArray& payload,
+	const QString& hintPath, bool savePayload)
+{
+	const QString path = LegacyCatalogueCachePath(identity);
+	if(!QDir().mkpath(QFileInfo(path).absolutePath()))
+	{
+		qWarning() << "Could not create the Legacy catalogue cache directory:" << path;
+		return;
+	}
+	if(savePayload || !QFile::exists(path))
+	{
+		QSaveFile file(path);
+		if(!file.open(QIODevice::WriteOnly) || file.write(payload) != payload.size() || !file.commit())
+		{
+			qWarning() << "Could not save the validated Legacy catalogue cache:" << path;
+			return;
+		}
+	}
+	QByteArray bytes;
+	QDataStream out(&bytes, QIODevice::WriteOnly);
+	out.setVersion(QDataStream::Qt_4_1);
+	AuWriteGameGenerationIdentity(out, identity);
+	QSaveFile hint(hintPath);
+	if(!hint.open(QIODevice::WriteOnly) || hint.write(bytes) != bytes.size() || !hint.commit())
+		qWarning() << "Could not save the Legacy catalogue server hint:" << hintPath;
+}
+}
 
 DtClient::DtClient(QObject* parent) : QThread(parent), m_semAlive(1)
 {
@@ -221,9 +330,16 @@ void DtClient::RxData(QTcpSocket& tcpSocket)
 
 void DtClient::SendGenerationCapability(QTcpSocket& tcpSocket)
 {
-	AuGameGenerationIdentity capability;
-	QString error;
-	AuPrepareLegacyGenerationIdentity(capability, error);
+	AuGameGenerationIdentity capability = AuLegacyGenerationCapability();
+	m_CachedLegacyIdentity = AuGameGenerationIdentity();
+	m_CachedLegacyCatalogue.clear();
+	m_LegacyCatalogueHintPath = LegacyCatalogueHintPath(tcpSocket);
+	const AuGameGenerationIdentity current = g_Au.GenerationIdentity();
+	if(current.generation == AuGameGeneration::Legacy && LoadCachedLegacyCatalogue(current, m_CachedLegacyCatalogue))
+		m_CachedLegacyIdentity = current;
+	else
+		LoadLegacyCatalogueHint(m_LegacyCatalogueHintPath, m_CachedLegacyIdentity, m_CachedLegacyCatalogue);
+	if(!m_CachedLegacyCatalogue.isEmpty()) capability = m_CachedLegacyIdentity;
 	QByteArray bytes;
 	QDataStream out(&bytes, QIODevice::WriteOnly);
 	out.setVersion(QDataStream::Qt_4_1);
@@ -234,14 +350,12 @@ void DtClient::SendGenerationCapability(QTcpSocket& tcpSocket)
 	m_LastComm.restart();
 }
 
-bool DtClient::AcceptGeneration(const AuGameGenerationIdentity& identity)
+bool DtClient::AcceptGeneration(const AuGameGenerationIdentity& identity, const QByteArray& cataloguePayload)
 {
 	QString error;
 	if(identity.generation == AuGameGeneration::Legacy)
 	{
-		AuGameGenerationIdentity local;
-		if(AuPrepareLegacyGenerationIdentity(local, error) && local != identity)
-			error = QStringLiteral("The client and server Legacy catalogues do not match.");
+		LegacyCatalogueMatches(identity, cataloguePayload, error);
 	}
 	if(!error.isEmpty())
 	{
@@ -249,7 +363,8 @@ bool DtClient::AcceptGeneration(const AuGameGenerationIdentity& identity)
 		Kill();
 		return false;
 	}
-	if(g_Au.GenerationIdentity() != identity)
+	const bool needsCatalogue = identity.generation == AuGameGeneration::Legacy && !AuLegacyCityCatalogue::BuiltIn();
+	if(g_Au.GenerationIdentity() != identity || needsCatalogue)
 	{
 		while(m_semGenerationViewsReset.tryAcquire()) {}
 		emit GenerationChanging();
@@ -266,6 +381,21 @@ bool DtClient::AcceptGeneration(const AuGameGenerationIdentity& identity)
 		m_SyncLastAtomIds.clear();
 		m_LegacyMissingShips.clear();
 		m_SceneRemovalPending = false;
+		// No old scene/UI objects may retain commodity descriptor references here.
+		g_Au.ResetLegacyCommodityDescriptors();
+		AuLegacyCityCatalogue::ResetBuiltIn();
+		if(identity.generation == AuGameGeneration::Legacy)
+		{
+			AuGameGenerationIdentity installed;
+			if(!AuLegacyCityCatalogue::InstallBuiltIn(cataloguePayload, error)
+				|| !AuPrepareLegacyGenerationIdentity(installed, error) || installed != identity)
+			{
+				emit GenerationRejected(error.isEmpty()
+					? QStringLiteral("The Legacy catalogue could not be activated.") : error);
+				Kill();
+				return false;
+			}
+		}
 	}
 	g_Au.SetGenerationIdentity(identity);
 	m_GenerationNegotiated = true;
@@ -349,13 +479,29 @@ bool DtClient::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 		case DtSceneServerPacket::PL_Generation:
 			{
 				AuGameGenerationIdentity identity;
-				if(!AuReadGameGenerationIdentity(block, identity) || !block.atEnd())
+				QByteArray cataloguePayload;
+				if(!AuReadGameGenerationIdentity(block, identity)
+					|| (identity.generation == AuGameGeneration::Legacy && !AuReadLegacyCataloguePayload(block, cataloguePayload))
+					|| block.status() != QDataStream::Ok || !block.atEnd())
 				{
 					emit GenerationRejected(QStringLiteral("The server returned an invalid game generation identity."));
 					Kill();
 					return false;
 				}
-				if(!AcceptGeneration(identity)) return false;
+				const bool receivedCatalogue = !cataloguePayload.isEmpty();
+				if(identity.generation == AuGameGeneration::Legacy && !receivedCatalogue)
+				{
+					if(identity == m_CachedLegacyIdentity) cataloguePayload = m_CachedLegacyCatalogue;
+					if(cataloguePayload.isEmpty() && !LoadCachedLegacyCatalogue(identity, cataloguePayload))
+					{
+						emit GenerationRejected(QStringLiteral("The server omitted the Legacy catalogue and no valid local copy is available."));
+						Kill();
+						return false;
+					}
+				}
+				if(!AcceptGeneration(identity, cataloguePayload)) return false;
+				if(identity.generation == AuGameGeneration::Legacy)
+					SaveCachedLegacyCatalogue(identity, cataloguePayload, m_LegacyCatalogueHintPath, receivedCatalogue);
 				DgData& data = g_Au.LockDataForWrite();
 				const bool needsData = data.LoadBasicGameData();
 				g_Au.UnlockData();
@@ -371,16 +517,30 @@ bool DtClient::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 				block >> motd;
 				block >> chatPort;				// 0 in replies from scene master and scene manager.
 				AuGameGenerationIdentity identity;
+				QByteArray cataloguePayload;
 				QString error;
 				if(!block.atEnd() && !AuReadGameGenerationIdentity(block, identity))
 					error = QStringLiteral("The server returned an invalid game generation identity.");
+				if(error.isEmpty() && identity.generation == AuGameGeneration::Legacy
+					&& !AuReadLegacyCataloguePayload(block, cataloguePayload))
+					error = QStringLiteral("The server returned an invalid Legacy catalogue payload.");
+				if(error.isEmpty() && (block.status() != QDataStream::Ok || !block.atEnd()))
+					error = QStringLiteral("The server returned invalid game generation data.");
+				const bool receivedCatalogue = !cataloguePayload.isEmpty();
+				if(error.isEmpty() && identity.generation == AuGameGeneration::Legacy && !receivedCatalogue
+					&& identity == m_CachedLegacyIdentity) cataloguePayload = m_CachedLegacyCatalogue;
+				if(error.isEmpty() && identity.generation == AuGameGeneration::Legacy && cataloguePayload.isEmpty()
+					&& !LoadCachedLegacyCatalogue(identity, cataloguePayload))
+					error = QStringLiteral("The server omitted the Legacy catalogue and no valid local copy is available.");
 				if(!error.isEmpty())
 				{
 					emit GenerationRejected(error);
 					Kill();
 					return false;
 				}
-				if(!AcceptGeneration(identity)) return false;
+				if(!AcceptGeneration(identity, cataloguePayload)) return false;
+				if(identity.generation == AuGameGeneration::Legacy)
+					SaveCachedLegacyCatalogue(identity, cataloguePayload, m_LegacyCatalogueHintPath, receivedCatalogue);
 				DgData& data = g_Au.LockDataForWrite();
 				const bool needsData = data.LoadBasicGameData();
 				g_Au.UnlockData();

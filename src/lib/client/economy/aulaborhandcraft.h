@@ -11,6 +11,7 @@
 #include "audialog.h"
 #include "audockwidget.h"
 #include "auelapsedtimer.h"
+#include <QByteArray>
 
 class DaPerson;
 class QGroupBox;
@@ -28,6 +29,9 @@ private:
 	QString								m_Category;
 	QList<int>							m_Plan;
 	AuElapsedTimer						m_FlagAfterEmpire;
+	int									m_PendingFlagRecipe;
+	bool								m_PendingFlagLegacy;
+	QByteArray m_PendingFlagManifest;
 
 	// Widgets
 	QLineEdit*							m_Search;
@@ -37,6 +41,8 @@ private:
 	QGroupBox*							m_NeedsBox;
 	QPushButton*						m_Make;
 	QLabel*								m_Note;
+
+	bool LegacyPlanReady(DaPerson* person, const QList<int>& plan) const;
 
 public:
 	AuHandCraftPanel(QWidget* parent=0);

@@ -80,11 +80,13 @@ bool FinishHandcraft(const AuLegacyCityCatalogue& catalogue, ProductionProcess& 
 {
 	if(!CanRunProduction(process)) return false;
 	// DeManufacturingProcess::RunHandCraft 0x44c70 finishes immediately and
-	// caps quantity to one, even for recipes that produce batches in factories.
+	// caps historical quantities to one, even for factory batch recipes. The
+	// added arrows retain their authored batch, matching the modern weapon recipe.
 	AuZoneResource resources;
 	process.completeAt = 1;
 	if(!FinishProduction(catalogue, process, resources, 1, output)) return false;
-	output.quantity = qMin(1U, output.quantity);
+	if(catalogue.RuntimeCommodityId(CommodityId(output.commodityId)) != CID_Arrows)
+		output.quantity = qMin(1U, output.quantity);
 	process.lastQuantity = qint32(output.quantity);
 	return true;
 }

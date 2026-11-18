@@ -1,5 +1,0 @@
-<RCC>
-    <qresource prefix="/legacy/cities">
-        <file alias="GD2016">../../../../../resources/runtime/legacy/cities/GD2016</file>
-    </qresource>
-</RCC>

@@ -96,8 +96,11 @@ signals:
 
 protected:
 	bool m_GenerationNegotiated = false;
+	AuGameGenerationIdentity m_CachedLegacyIdentity;
+	QByteArray m_CachedLegacyCatalogue;
+	QString m_LegacyCatalogueHintPath;
 	void SendGenerationCapability(QTcpSocket& tcpSocket);
-	bool AcceptGeneration(const AuGameGenerationIdentity& identity);
+	bool AcceptGeneration(const AuGameGenerationIdentity& identity, const QByteArray& cataloguePayload);
 	bool ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket);
 	void ReconcileAtomsInScene();
 	virtual void run();

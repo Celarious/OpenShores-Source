@@ -1,203 +1,75 @@
 #include "aulegacycitycatalogue.h"
 
 #include <QCryptographicHash>
-#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QMutex>
 #include <QMutexLocker>
-#include <QResource>
 #include <QSet>
 #include <QSharedPointer>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QVariant>
 #include <algorithm>
 #include <cmath>
-#include <cstring>
-
-// Q_INIT_RESOURCE must be outside a namespace. This reference also keeps the
-// resource object in the static AuData library from being discarded by linking.
-static void InitLegacyCityCatalogueResource()
-{
-	Q_INIT_RESOURCE(aulegacycitycatalogue);
-}
+#include <limits>
 
 namespace
 {
 using namespace AuLegacyCity;
 
-class Reader
+// Both SQL and the network/cache path use this decoder. Values are checked
+// before narrowing, so an edited database cannot wrap IDs or component counts.
+class RowReader
 {
 public:
-	Reader(const QByteArray& source, QString& error) : m_source(source), m_error(error) {}
-	int Offset() const { return m_offset; }
-	int Remaining() const { return m_source.size() - m_offset; }
-	const QByteArray& Source() const { return m_source; }
-
-	bool Fail(const QString& message)
+	RowReader(const QJsonObject& row, const QString& table, QString& error) :
+		m_row(row), m_table(table), m_error(error) {}
+	bool Fail(const QString& key) const
 	{
-		m_error = QStringLiteral("Legacy GD offset 0x%1: %2").arg(m_offset, 0, 16).arg(message);
+		m_error = QStringLiteral("Legacy catalogue %1 row %2: invalid or missing %3")
+			.arg(m_table).arg(m_row.value(QStringLiteral("id")).toDouble()).arg(key);
 		return false;
 	}
-
-	bool Need(quint32 bytes)
+	template<class T> bool Integer(const QString& key, T& value, qint64 minimum, qint64 maximum) const
 	{
-		return bytes <= quint32(Remaining()) || Fail(QStringLiteral("truncated record"));
-	}
-
-	bool U8(quint8& value)
-	{
-		if(!Need(1)) return false;
-		value = quint8(m_source.at(m_offset++));
+		const QJsonValue field = m_row.value(key.toLower());
+		const double number = field.toDouble();
+		if(!field.isDouble() || !std::isfinite(number) || std::floor(number) != number
+			|| number < double(minimum) || number > double(maximum)) return Fail(key);
+		value = static_cast<T>(qint64(number));
 		return true;
 	}
-
-	bool I8(qint8& value)
+	template<class T> bool Number(const QString& key, T& value, double minimum, double maximum) const
 	{
-		quint8 raw = 0;
-		if(!U8(raw)) return false;
-		value = qint8(raw >= 128 ? int(raw) - 256 : int(raw));
+		const QJsonValue field = m_row.value(key.toLower());
+		const double number = field.toDouble();
+		if(!field.isDouble() || !std::isfinite(number) || number < minimum || number > maximum) return Fail(key);
+		value = static_cast<T>(number);
 		return true;
 	}
-
-	bool U16(quint16& value)
+	bool String(const QString& key, QString& value) const
 	{
-		if(!Need(2)) return false;
-		value = quint16((quint16(quint8(m_source.at(m_offset))) << 8)
-			| quint8(m_source.at(m_offset + 1)));
-		m_offset += 2;
+		const QJsonValue field = m_row.value(key.toLower());
+		if(!field.isString() && !field.isNull()) return Fail(key);
+		value = field.isNull() ? QString() : field.toString();
+		return value.size() <= 32768 || Fail(key);
+	}
+	bool Boolean(const QString& key, bool& value) const
+	{
+		const QJsonValue field = m_row.value(key.toLower());
+		if(!field.isBool()) return Fail(key);
+		value = field.toBool();
 		return true;
 	}
-
-	bool I16(qint16& value)
-	{
-		quint16 raw = 0;
-		if(!U16(raw)) return false;
-		value = qint16(raw >= 32768 ? int(raw) - 65536 : int(raw));
-		return true;
-	}
-
-	bool U32(quint32& value)
-	{
-		if(!Need(4)) return false;
-		value = 0;
-		for(int index = 0; index < 4; ++index)
-			value = (value << 8) | quint8(m_source.at(m_offset++));
-		return true;
-	}
-
-	bool Float(float& value)
-	{
-		quint32 raw = 0;
-		if(!U32(raw)) return false;
-		static_assert(sizeof(value) == sizeof(raw), "GD requires an IEEE 32-bit float");
-		std::memcpy(&value, &raw, sizeof(value));
-		return std::isfinite(value) || Fail(QStringLiteral("non-finite float"));
-	}
-
-	bool Double(double& value)
-	{
-		if(!Need(8)) return false;
-		quint64 raw = 0;
-		for(int index = 0; index < 8; ++index)
-			raw = (raw << 8) | quint8(m_source.at(m_offset++));
-		static_assert(sizeof(value) == sizeof(raw), "GD requires an IEEE 64-bit double");
-		std::memcpy(&value, &raw, sizeof(value));
-		return std::isfinite(value) || Fail(QStringLiteral("non-finite double"));
-	}
-
-	bool String(QString& value)
-	{
-		quint32 bytes = 0;
-		if(!U32(bytes)) return false;
-		if(bytes == 0xffffffffU)
-		{
-			value = QString();
-			return true;
-		}
-		if(bytes > 65536 || (bytes & 1U))
-			return Fail(QStringLiteral("invalid or oversized UTF-16 string"));
-		if(!Need(bytes)) return false;
-		value = QStringLiteral("");
-		value.resize(int(bytes / 2));
-		for(int index = 0; index < value.size(); ++index)
-		{
-			quint16 unit = 0;
-			if(!U16(unit)) return false;
-			value[index] = QChar(unit);
-		}
-		return true;
-	}
-
 private:
-	const QByteArray& m_source;
+	QJsonObject m_row;
+	QString m_table;
 	QString& m_error;
-	int m_offset = 0;
 };
-
-template<class Record, class Decode>
-bool ReadTable(Reader& reader, QVector<Record>& records, QVector<TableSource>& tables,
-		const QString& name, quint32 expectedCount, bool wideCount, Decode decode)
-{
-	const int start = reader.Offset();
-	quint32 count = 0;
-	if(wideCount)
-	{
-		if(!reader.U32(count)) return false;
-	}
-	else
-	{
-		quint16 narrowCount = 0;
-		if(!reader.U16(narrowCount)) return false;
-		count = narrowCount;
-	}
-	// Exact versioned counts prevent malformed lengths from allocating memory.
-	if(count != expectedCount)
-		return reader.Fail(QStringLiteral("%1 has %2 records; expected %3")
-			.arg(name).arg(count).arg(expectedCount));
-	records.reserve(int(count));
-	for(quint32 index = 0; index < count; ++index)
-	{
-		Record record;
-		const int recordStart = reader.Offset();
-		if(!decode(reader, record)) return false;
-		record.source.offset = quint32(recordStart);
-		record.source.bytes = reader.Source().mid(recordStart, reader.Offset() - recordStart);
-		records.append(record);
-	}
-	TableSource table;
-	table.name = name;
-	table.offset = quint32(start);
-	table.bytes = quint32(reader.Offset() - start);
-	table.records = count;
-	table.sha256 = QCryptographicHash::hash(reader.Source().mid(start, int(table.bytes)),
-		QCryptographicHash::Sha256).toHex();
-	tables.append(table);
-	return true;
-}
-
-struct WeaponEffect
-{
-	quint8 effect = 0;
-	quint16 damage = 0;
-	quint8 modifier = 0;
-	quint16 radius = 0;
-	quint8 armorPiercing = 0;
-	quint16 strikeThrough = 0;
-};
-
-struct Weapon
-{
-	quint8 mode = 0;
-	quint16 range = 0;
-	std::array<WeaponEffect, 2> effects;
-};
-
-bool ReadWeapon(Reader& reader, Weapon& weapon)
-{
-	if(!reader.U8(weapon.mode) || !reader.U16(weapon.range)) return false;
-	for(WeaponEffect& effect : weapon.effects)
-		if(!reader.U8(effect.effect) || !reader.U16(effect.damage) || !reader.U8(effect.modifier)
-			|| !reader.U16(effect.radius) || !reader.U8(effect.armorPiercing)
-			|| !reader.U16(effect.strikeThrough)) return false;
-	return true;
-}
 
 class CommodityDescriptor : public DbCommodity
 {
@@ -209,7 +81,7 @@ public:
 void CommodityDescriptor::SetArmor(const CommodityRecord& record)
 {
 	// Energy and kinetic entries at 6 and 9 have no modern member. The original
-	// bytes remain in record.armorAbsorb/armorBlock and record.source.
+	// values remain in the catalogue arrays and the complete SQL-row payload.
 	std::array<float*, 17> absorb = {{&m_ArmorEffectAbsorbAcid,
 		&m_ArmorEffectAbsorbBludgeon, &m_ArmorEffectAbsorbCold,
 		&m_ArmorEffectAbsorbCrush, &m_ArmorEffectAbsorbDisease,
@@ -228,82 +100,95 @@ void CommodityDescriptor::SetArmor(const CommodityRecord& record)
 		&m_ArmorEffectBlockStun, &m_ArmorEffectBlockSuffocate}};
 	for(size_t index = 0; index < absorb.size(); ++index)
 	{
-		if(absorb[index]) *absorb[index] = float(record.armorAbsorb[index]) / 200.f;
+		if(absorb[index]) *absorb[index] = float(record.armorAbsorb[index]) / 100.f;
 		if(block[index]) *block[index] = float(record.armorBlock[index]);
 	}
-	m_ArmorModeAbsorbArea = record.modeAbsorb[0] / 200.f;
-	m_ArmorModeAbsorbContact = record.modeAbsorb[1] / 200.f;
-	m_ArmorModeAbsorbProjectile = record.modeAbsorb[2] / 200.f;
-	m_ArmorModeAbsorbPsionic = record.modeAbsorb[3] / 200.f;
+	m_ArmorModeAbsorbArea = record.modeAbsorb[0] / 100.f;
+	m_ArmorModeAbsorbContact = record.modeAbsorb[1] / 100.f;
+	m_ArmorModeAbsorbProjectile = record.modeAbsorb[2] / 100.f;
+	m_ArmorModeAbsorbPsionic = record.modeAbsorb[3] / 100.f;
 	m_ArmorModeBlockArea = record.modeBlock[0];
 	m_ArmorModeBlockContact = record.modeBlock[1];
 	m_ArmorModeBlockProjectile = record.modeBlock[2];
 	m_ArmorModeBlockPsionic = record.modeBlock[3];
 }
 
-bool ReadCommodity(Reader& reader, CommodityRecord& record)
+bool ReadCommodity(const RowReader& r, CommodityRecord& record)
 {
 	CommodityDescriptor descriptor;
-	quint8 ammoType1 = 0, ammoType2 = 0;
-	if(!reader.U16(record.id.value) || !reader.U8(descriptor.m_ammo1Qty)
-		|| !reader.U8(ammoType1) || !reader.U8(descriptor.m_ammo2Qty)
-		|| !reader.U8(ammoType2)) return false;
+	if(!r.Integer(QStringLiteral("id"), record.id.value, 0, 65535)) return false;
 	descriptor.m_id = COMMODITYID(record.id.value);
-	descriptor.m_ammo1Type = AMMOTYPE(ammoType1);
-	descriptor.m_ammo2Type = AMMOTYPE(ammoType2);
-	for(quint8& value : record.armorAbsorb) if(!reader.U8(value)) return false;
-	for(quint8& value : record.armorBlock) if(!reader.U8(value)) return false;
-	for(quint8& value : record.modeAbsorb) if(!reader.U8(value)) return false;
-	for(quint8& value : record.modeBlock) if(!reader.U8(value)) return false;
+	if(!r.Integer(QStringLiteral("ammo1Qty"), descriptor.m_ammo1Qty, 0, 255)
+		|| !r.Integer(QStringLiteral("ammo1Type"), descriptor.m_ammo1Type, 0, 255)
+		|| !r.Integer(QStringLiteral("ammo2Qty"), descriptor.m_ammo2Qty, 0, 255)
+		|| !r.Integer(QStringLiteral("ammo2Type"), descriptor.m_ammo2Type, 0, 255)) return false;
+	static const char* effects[] = {"Acid", "Bludgeon", "Cold", "Crush", "Disease", "Electric", "Energy", "Heat",
+		"Implant", "Kinetic", "Pierce", "Poison", "Radiation", "Slash", "Sonic", "Stun", "Suffocate"};
+	static const char* modes[] = {"Area", "Contact", "Projectile", "Psionic"};
+	for(size_t index = 0; index < record.armorAbsorb.size(); ++index)
+		if(!r.Number(QStringLiteral("armorEffectAbsorb") + QLatin1String(effects[index]), record.armorAbsorb[index], 0, 999.9)
+			|| !r.Number(QStringLiteral("armorEffectBlock") + QLatin1String(effects[index]), record.armorBlock[index], 0, 32767)) return false;
+	for(size_t index = 0; index < record.modeAbsorb.size(); ++index)
+		if(!r.Number(QStringLiteral("armorModeAbsorb") + QLatin1String(modes[index]), record.modeAbsorb[index], 0, 999.9)
+			|| !r.Number(QStringLiteral("armorModeBlock") + QLatin1String(modes[index]), record.modeBlock[index], 0, 32767)) return false;
 	descriptor.SetArmor(record);
-	quint8 armorSpecialty = 0, capacityWidth = 0, capacityHeight = 0;
-	if(!reader.U8(armorSpecialty) || !reader.U32(descriptor.m_bitsWear)
-		|| !reader.U8(capacityWidth) || !reader.U8(capacityHeight)
-		|| !reader.U32(descriptor.m_combits) || !reader.String(record.deprecatedDescription)
-		|| !reader.U8(descriptor.m_food) || !reader.I8(descriptor.m_health)
-		|| !reader.String(descriptor.m_iconPath) || !reader.String(descriptor.m_modelPath)
-		|| !reader.Float(descriptor.m_insertHeight)) return false;
-	descriptor.SetArmorSpecialty(armorSpecialty);
-	descriptor.m_capacity = QSize(capacityWidth, capacityHeight);
+	quint8 specialty = 0, capacityWidth = 0, capacityHeight = 0, width = 0, height = 0;
 	double upX = 0, upY = 0, upZ = 0;
-	quint8 width = 0, height = 0;
-	if(!reader.Double(upX) || !reader.Double(upY) || !reader.Double(upZ)
-		|| !reader.U8(descriptor.m_light) || !reader.String(descriptor.m_name)
-		|| !reader.U8(descriptor.m_newcond) || !reader.U8(width) || !reader.U8(height)
-		|| !reader.U8(descriptor.m_stackLimit)) return false;
-	descriptor.m_UpVector = AuPoint(upX, upY, upZ);
+	const double floatMaximum = std::numeric_limits<float>::max();
+	const double doubleMaximum = std::numeric_limits<double>::max();
+	if(!r.Integer(QStringLiteral("armorSpec"), specialty, 0, 255)
+		|| !r.Integer(QStringLiteral("bitsWear"), descriptor.m_bitsWear, 0, 4294967295LL)
+		|| !r.Integer(QStringLiteral("capwid"), capacityWidth, 0, 255)
+		|| !r.Integer(QStringLiteral("capht"), capacityHeight, 0, 255)
+		|| !r.Integer(QStringLiteral("combits"), descriptor.m_combits, 0, 4294967295LL)
+		|| !r.String(QStringLiteral("description"), record.deprecatedDescription)
+		|| !r.Integer(QStringLiteral("food"), descriptor.m_food, 0, 255)
+		|| !r.Integer(QStringLiteral("health"), descriptor.m_health, -128, 127)
+		|| !r.String(QStringLiteral("iconPath"), descriptor.m_iconPath)
+		|| !r.String(QStringLiteral("modelPath"), descriptor.m_modelPath)
+		|| !r.Number(QStringLiteral("insertHeight"), descriptor.m_insertHeight, -floatMaximum, floatMaximum)
+		|| !r.Number(QStringLiteral("upVectorX"), upX, -doubleMaximum, doubleMaximum)
+		|| !r.Number(QStringLiteral("upVectorY"), upY, -doubleMaximum, doubleMaximum)
+		|| !r.Number(QStringLiteral("upVectorZ"), upZ, -doubleMaximum, doubleMaximum)
+		|| !r.Integer(QStringLiteral("light"), descriptor.m_light, 0, 255)
+		|| !r.String(QStringLiteral("name"), descriptor.m_name)
+		|| !r.Integer(QStringLiteral("newcond"), descriptor.m_newcond, 0, 255)
+		|| !r.Integer(QStringLiteral("sizewid"), width, 0, 255)
+		|| !r.Integer(QStringLiteral("sizeht"), height, 0, 255)
+		|| !r.Integer(QStringLiteral("stackLimit"), descriptor.m_stackLimit, 0, 255)) return false;
+	descriptor.SetArmorSpecialty(specialty);
+	descriptor.m_capacity = QSize(capacityWidth, capacityHeight);
 	descriptor.m_size = QSize(width, height);
-	Weapon first, second;
-	if(!ReadWeapon(reader, first) || !ReadWeapon(reader, second)
-		|| !reader.Float(descriptor.m_wt)) return false;
-	descriptor.m_wpn1Mode = WEAPONMODE(first.mode);
-	descriptor.m_wpn1Range = first.range;
-	descriptor.m_wpn1Effect1 = WEAPONEFFECT(first.effects[0].effect);
-	descriptor.m_wpn1Damage1 = first.effects[0].damage;
-	descriptor.m_wpn1DamageMod1 = first.effects[0].modifier;
-	descriptor.m_wpn1Radius1 = first.effects[0].radius;
-	descriptor.m_wpn1AP1 = first.effects[0].armorPiercing;
-	descriptor.m_wpn1ST1 = first.effects[0].strikeThrough;
-	descriptor.m_wpn1Effect2 = WEAPONEFFECT(first.effects[1].effect);
-	descriptor.m_wpn1Damage2 = first.effects[1].damage;
-	descriptor.m_wpn1DamageMod2 = first.effects[1].modifier;
-	descriptor.m_wpn1Radius2 = first.effects[1].radius;
-	descriptor.m_wpn1AP2 = first.effects[1].armorPiercing;
-	descriptor.m_wpn1ST2 = first.effects[1].strikeThrough;
-	descriptor.m_wpn2Mode = WEAPONMODE(second.mode);
-	descriptor.m_wpn2Range = second.range;
-	descriptor.m_wpn2Effect1 = WEAPONEFFECT(second.effects[0].effect);
-	descriptor.m_wpn2Damage1 = second.effects[0].damage;
-	descriptor.m_wpn2DamageMod1 = second.effects[0].modifier;
-	descriptor.m_wpn2Radius1 = second.effects[0].radius;
-	descriptor.m_wpn2AP1 = second.effects[0].armorPiercing;
-	descriptor.m_wpn2ST1 = second.effects[0].strikeThrough;
-	descriptor.m_wpn2Effect2 = WEAPONEFFECT(second.effects[1].effect);
-	descriptor.m_wpn2Damage2 = second.effects[1].damage;
-	descriptor.m_wpn2DamageMod2 = second.effects[1].modifier;
-	descriptor.m_wpn2Radius2 = second.effects[1].radius;
-	descriptor.m_wpn2AP2 = second.effects[1].armorPiercing;
-	descriptor.m_wpn2ST2 = second.effects[1].strikeThrough;
+	descriptor.m_UpVector = AuPoint(upX, upY, upZ);
+	if(!r.Integer(QStringLiteral("wpn1Mode"), descriptor.m_wpn1Mode, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn1Range"), descriptor.m_wpn1Range, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn1Effect1"), descriptor.m_wpn1Effect1, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn1Damage1"), descriptor.m_wpn1Damage1, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn1DamageMod1"), descriptor.m_wpn1DamageMod1, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn1Radius1"), descriptor.m_wpn1Radius1, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn1AP1"), descriptor.m_wpn1AP1, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn1ST1"), descriptor.m_wpn1ST1, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn1Effect2"), descriptor.m_wpn1Effect2, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn1Damage2"), descriptor.m_wpn1Damage2, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn1DamageMod2"), descriptor.m_wpn1DamageMod2, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn1Radius2"), descriptor.m_wpn1Radius2, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn1AP2"), descriptor.m_wpn1AP2, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn1ST2"), descriptor.m_wpn1ST2, 0, 65535)) return false;
+	if(!r.Integer(QStringLiteral("wpn2Mode"), descriptor.m_wpn2Mode, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn2Range"), descriptor.m_wpn2Range, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn2Effect1"), descriptor.m_wpn2Effect1, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn2Damage1"), descriptor.m_wpn2Damage1, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn2DamageMod1"), descriptor.m_wpn2DamageMod1, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn2Radius1"), descriptor.m_wpn2Radius1, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn2AP1"), descriptor.m_wpn2AP1, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn2ST1"), descriptor.m_wpn2ST1, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn2Effect2"), descriptor.m_wpn2Effect2, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn2Damage2"), descriptor.m_wpn2Damage2, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn2DamageMod2"), descriptor.m_wpn2DamageMod2, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn2Radius2"), descriptor.m_wpn2Radius2, 0, 65535)
+		|| !r.Integer(QStringLiteral("wpn2AP2"), descriptor.m_wpn2AP2, 0, 255)
+		|| !r.Integer(QStringLiteral("wpn2ST2"), descriptor.m_wpn2ST2, 0, 65535)) return false;
+	if(!r.Number(QStringLiteral("wt"), descriptor.m_wt, 0, floatMaximum)) return false;
 	record.descriptor = descriptor;
 	return true;
 }
@@ -351,145 +236,203 @@ bool AuLegacyCity::CommodityRecord::IsTechnology() const
 
 QString AuLegacyCityCatalogue::DataVersion()
 {
-	return QStringLiteral("2016-GD-0x3a");
-}
-
-QByteArray AuLegacyCityCatalogue::ExpectedSourceSha256()
-{
-	return QByteArrayLiteral("dac1d7b576a8405d55a85f9eb2723d757d0cce0ba7dc49aeb88f7be8e34f9106");
+	return QStringLiteral("legacy-sql-v1");
 }
 
 bool AuLegacyCityCatalogue::Read(const QByteArray& source, AuLegacyCityCatalogue& output, QString& error)
 {
 	error.clear();
-	if(source.size() != ExpectedSourceBytes)
-	{
-		error = QStringLiteral("Legacy GD has %1 bytes; expected %2.").arg(source.size()).arg(ExpectedSourceBytes);
-		return false;
-	}
-	const QByteArray hash = QCryptographicHash::hash(source, QCryptographicHash::Sha256).toHex();
-	if(hash != ExpectedSourceSha256())
-	{
-		error = QStringLiteral("Legacy GD SHA-256 does not match the recovered 2016 catalogue.");
-		return false;
-	}
+	if(source.isEmpty() || source.size() > MaximumSourceBytes)
+	{ error = QStringLiteral("Legacy catalogue payload is empty or exceeds 16 MiB."); return false; }
+	QJsonParseError parseError;
+	const QJsonDocument document = QJsonDocument::fromJson(source, &parseError);
+	if(parseError.error != QJsonParseError::NoError || !document.isObject())
+	{ error = QStringLiteral("Invalid Legacy catalogue JSON: %1").arg(parseError.errorString()); return false; }
+	const QJsonObject object = document.object();
+	if(object.value(QStringLiteral("format")).toString() != DataVersion())
+	{ error = QStringLiteral("Unsupported Legacy catalogue payload version."); return false; }
 	AuLegacyCityCatalogue accepted;
-	Reader reader(source, error);
-	quint8 marker = 0, version = 0;
-	if(!reader.U8(marker) || !reader.U8(version)) return false;
-	if(marker != 0x18 || version != 0x3a)
-		return reader.Fail(QStringLiteral("unsupported GD version"));
-	if(!ReadTable(reader, accepted.m_details, accepted.m_tables, QStringLiteral("ship_details"), 143, false,
-		[](Reader& r, ShipDetailTypeRecord& record) {
-			if(!r.U8(record.id)) return false;
-			for(QString& name : record.names) if(!r.String(name)) return false;
-			return r.U8(record.bridge) && r.U16(record.crew) && r.I16(record.placement)
-				&& r.U8(record.minimumTechnology) && r.U16(record.mass);
-		})) return false;
-	if(!ReadTable(reader, accepted.m_rooms, accepted.m_tables, QStringLiteral("ship_rooms"), 25, false,
-		[](Reader& r, ShipRoomTypeRecord& record) {
-			if(!r.U32(record.id)) return false;
-			for(QString& name : record.names) if(!r.String(name)) return false;
-			return true;
-		})) return false;
-	if(!ReadTable(reader, accepted.m_commodities, accepted.m_tables, QStringLiteral("commodities"), 350, false,
-		ReadCommodity)) return false;
-	if(!ReadTable(reader, accepted.m_industries, accepted.m_tables, QStringLiteral("industries"), 130, false,
-		[](Reader& r, IndustryRecord& record) {
-			return r.U8(record.capacitorTens) && r.U8(record.id.value) && r.String(record.name)
-				&& r.U8(record.populationPerLevel) && r.I8(record.employees) && r.U8(record.storageTens);
-		})) return false;
-	if(!ReadTable(reader, accepted.m_processes, accepted.m_tables, QStringLiteral("manufacturing_processes"), 526, false,
-		[](Reader& r, ManufacturingProcessRecord& record) {
-			if(!r.U16(record.id.value) || !r.String(record.name) || !r.U16(record.commodity.value)
-				|| !r.U8(record.industry.value) || !r.U16(record.quantity) || !r.U16(record.serializedLabor)
-				|| !r.U8(record.craft) || !r.U8(record.minimumTechnology)) return false;
-			record.labor = record.serializedLabor & 0x7fffU;
-			record.isDefault = (record.serializedLabor & 0x8000U) != 0;
-			// GD has no nat field; apply the agreed exceptions to its true default.
-			switch(record.id.value)
+	const char* tableNames[] = {"commodities", "industries", "manufacturing_processes", "manufacturing_components",
+		"construction_processes", "construction_components"};
+	const int maximumCounts[] = {65536, 256, 65535, 65536, 255, 65536};
+	for(int table = 0; table < 6; ++table)
+	{
+		const QString name = QLatin1String(tableNames[table]);
+		const QJsonValue field = object.value(name);
+		if(!field.isArray() || field.toArray().isEmpty() || field.toArray().size() > maximumCounts[table])
+		{ error = QStringLiteral("Legacy catalogue %1 has an invalid record count.").arg(name); return false; }
+		const QJsonArray rows = field.toArray();
+		QSet<int> sourceOrders;
+		int previousOrder = 0;
+		for(const QJsonValue& value : rows)
+		{
+			if(!value.isObject())
+			{ error = QStringLiteral("Legacy catalogue %1 contains a non-record value.").arg(name); return false; }
+			const RowReader r(value.toObject(), name, error);
+			if(table == 2 || table == 4)
 			{
-			case 12:  // Fertilizer using Atmosphere
-			case 14:  // Fertilizer using Air
-			case 23:  // Hydrogen using Natural Gas
-			case 58:  // Water using Air and Hydrogen
-			case 92:  // Hydrogen using Water
-			case 127: // Air using Water
-			case 170: // Water using Environment
-			case 171: // Water using Ice
-				record.naturalResourceQuality = false;
-				break;
-			default:
+				int order = 0;
+				if(!r.Integer(QStringLiteral("sourceOrder"), order, 1, 2147483647)) return false;
+				if(order <= previousOrder || sourceOrders.contains(order)) return r.Fail(QStringLiteral("sourceOrder"));
+				previousOrder = order;
+				sourceOrders.insert(order);
+			}
+			switch(table)
+			{
+			case 0:
+			{
+				CommodityRecord record;
+				if(!ReadCommodity(r, record)) return false;
+				accepted.m_commodities.append(record);
 				break;
 			}
-			return true;
-		})) return false;
-	if(!ReadTable(reader, accepted.m_components, accepted.m_tables, QStringLiteral("manufacturing_components"), 2420, true,
-		[](Reader& r, ManufacturingComponentRecord& record) {
-			return r.U16(record.id) && r.U16(record.process.value) && r.U16(record.commodity.value)
-				&& r.U16(record.quantity) && r.U8(record.effect);
-		})) return false;
-	if(!ReadTable(reader, accepted.m_construction, accepted.m_tables, QStringLiteral("construction_processes"), 82, false,
-		[](Reader& r, ConstructionProcessRecord& record) {
-			return r.U8(record.id.value) && r.String(record.name) && r.U8(record.industry.value)
-				&& r.U8(record.sitePreparation) && r.U8(record.stackLimit) && r.U8(record.terrain)
-				&& r.U8(record.buildRadius);
-		})) return false;
-	if(!ReadTable(reader, accepted.m_constructionComponents, accepted.m_tables, QStringLiteral("construction_components"), 476, true,
-		[](Reader& r, ConstructionComponentRecord& record) {
-			return r.U16(record.id) && r.U8(record.process.value) && r.U16(record.commodity.value)
-				&& r.U8(record.quantity) && r.U8(record.effect) && r.U8(record.level);
-		})) return false;
-	if(reader.Remaining() != 0)
-		return reader.Fail(QStringLiteral("trailing data after construction components"));
-	accepted.m_sourceBytes = source;
-	accepted.m_sourceSha256 = hash;
-	if(!accepted.Validate(error) || !accepted.CalculateBaseCosts(error)) return false;
-	// DbIndustryArray::CalcHitPointValues, AuData13 0x115e20. The
-	// first construction process for the industry supplies its hit-point base.
-	for(auto& industry : accepted.m_industries)
-		if(const auto* process = accepted.ConstructionProcessForIndustry(industry.id))
-			for(const auto& component : accepted.m_constructionComponents)
-				if(component.process == process->id && component.commodity.value == 48
-					&& component.effect == 5 && component.quantity)
-				{ industry.buildingHitBase = component.quantity; break; }
-	accepted.BuildCrosswalk();
-	if(accepted.m_runtimeDescriptors.size() != 349
-		|| accepted.m_fromRuntime.size() != 349 || accepted.m_toRuntime.size() != 349)
-	{
-		error = QStringLiteral("Legacy commodity crosswalk is incomplete or contains a runtime collision.");
-		return false;
+			case 1:
+			{
+				IndustryRecord record;
+				if(!r.Integer(QStringLiteral("id"), record.id.value, 0, 255)
+					|| !r.String(QStringLiteral("name"), record.name)
+					|| !r.Integer(QStringLiteral("pop"), record.populationPerLevel, 0, 255)
+					|| !r.Integer(QStringLiteral("emp"), record.employees, -128, 127)
+					|| !r.Integer(QStringLiteral("storage"), record.storageTens, 0, 255)
+					|| !r.Integer(QStringLiteral("capacitor"), record.capacitorTens, 0, 255)) return false;
+				accepted.m_industries.append(record);
+				break;
+			}
+			case 2:
+			{
+				ManufacturingProcessRecord record;
+				if(!r.Integer(QStringLiteral("id"), record.id.value, 1, 65535)
+					|| !r.String(QStringLiteral("name"), record.name)
+					|| !r.Integer(QStringLiteral("idc"), record.commodity.value, 1, 65535)
+					|| !r.Integer(QStringLiteral("idi"), record.industry.value, 0, 255)
+					|| !r.Integer(QStringLiteral("qty"), record.quantity, 1, 65535)
+					|| !r.Integer(QStringLiteral("labor"), record.labor, 0, 65535)
+					|| !r.Integer(QStringLiteral("craft"), record.craft, 0, 2)
+					|| !r.Integer(QStringLiteral("techLevel"), record.minimumTechnology, 0, 31)
+					|| !r.Boolean(QStringLiteral("isdefault"), record.isDefault)
+					|| !r.Boolean(QStringLiteral("nat"), record.naturalResourceQuality)) return false;
+				record.naturalFlagSerialized = true;
+				accepted.m_processes.append(record);
+				break;
+			}
+			case 3:
+			{
+				ManufacturingComponentRecord record;
+				if(!r.Integer(QStringLiteral("id"), record.id, 1, 65535)
+					|| !r.Integer(QStringLiteral("idmp"), record.process.value, 1, 65535)
+					|| !r.Integer(QStringLiteral("idc"), record.commodity.value, 1, 65535)
+					|| !r.Integer(QStringLiteral("consumed"), record.quantity, 0, 65535)
+					|| !r.Integer(QStringLiteral("ide"), record.effect, 1, 6)) return false;
+				accepted.m_components.append(record);
+				break;
+			}
+			case 4:
+			{
+				ConstructionProcessRecord record;
+				if(!r.Integer(QStringLiteral("id"), record.id.value, 1, 255)
+					|| !r.String(QStringLiteral("name"), record.name)
+					|| !r.Integer(QStringLiteral("idi"), record.industry.value, 1, 255)
+					|| !r.Integer(QStringLiteral("sitePrep"), record.sitePreparation, 0, 255)
+					|| !r.Integer(QStringLiteral("stackLimit"), record.stackLimit, 0, 255)
+					|| !r.Integer(QStringLiteral("idt"), record.terrain, 0, 255)
+					|| !r.Integer(QStringLiteral("buildRadius"), record.buildRadius, 0, 255)) return false;
+				accepted.m_construction.append(record);
+				break;
+			}
+			case 5:
+			{
+				ConstructionComponentRecord record;
+				if(!r.Integer(QStringLiteral("id"), record.id, 1, 65535)
+					|| !r.Integer(QStringLiteral("idcp"), record.process.value, 1, 255)
+					|| !r.Integer(QStringLiteral("idc"), record.commodity.value, 1, 65535)
+					|| !r.Integer(QStringLiteral("consumed"), record.quantity, 0, 255)
+					|| !r.Integer(QStringLiteral("ide"), record.effect, 1, 6)
+					|| !r.Integer(QStringLiteral("lvl"), record.level, 0, 255)) return false;
+				accepted.m_constructionComponents.append(record);
+				break;
+			}
+			}
+		}
 	}
-	accepted.m_valid = true;
+	if(!accepted.Finalize(error)) return false;
+	accepted.m_sourceBytes = document.toJson(QJsonDocument::Compact);
+	accepted.m_sourceSha256 = QCryptographicHash::hash(accepted.m_sourceBytes, QCryptographicHash::Sha256).toHex();
 	output = accepted;
 	return true;
 }
 
 bool AuLegacyCityCatalogue::LoadBuiltIn(QString& error)
 {
+	if(BuiltIn()) { error.clear(); return true; }
+	QSqlDatabase database = QSqlDatabase::database(QStringLiteral("AuUniverse"), false);
+	if(!database.isOpen())
+	{ error = QStringLiteral("The AuUniverse database must be open before loading the Legacy catalogue."); return false; }
+	if(!database.transaction())
+	{ error = QStringLiteral("Cannot start Legacy catalogue database snapshot: %1").arg(database.lastError().text()); return false; }
+	QSqlQuery query(database);
+	if(!query.exec(QStringLiteral("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")))
+	{ error = query.lastError().text(); database.rollback(); return false; }
+	QJsonObject object;
+	object.insert(QStringLiteral("format"), DataVersion());
+	const char* tableNames[] = {"commodities", "industries", "manufacturing_processes", "manufacturing_components",
+		"construction_processes", "construction_components"};
+	const char* sqlTables[] = {"b_Commodity_Legacy", "b_Industry_Legacy", "b_ManufacturingProcess_Legacy",
+		"b_ManufacturingComponent_Legacy", "b_ConstructionProcess_Legacy", "b_ConstructionComponent_Legacy"};
+	int payloadBytes = 0;
+	for(int table = 0; table < 6; ++table)
+	{
+		const QString order = table == 2 || table == 4 ? QStringLiteral("sourceOrder, id") : QStringLiteral("id");
+		// PostgreSQL JSON preserves booleans, numeric precision, and SQL NULLs.
+		const QString sql = QStringLiteral("SELECT row_to_json(record)::text FROM (SELECT * FROM %1 ORDER BY %2) record")
+			.arg(QLatin1String(sqlTables[table]), order);
+		query.setForwardOnly(true);
+		if(!query.exec(sql))
+		{
+			error = QStringLiteral("Cannot load %1: %2").arg(QLatin1String(sqlTables[table]), query.lastError().text());
+			database.rollback(); return false;
+		}
+		QJsonArray rows;
+		while(query.next())
+		{
+			const QByteArray row = query.value(0).toByteArray();
+			payloadBytes += row.size();
+			if(payloadBytes > MaximumSourceBytes || rows.size() >= 65536)
+			{ error = QStringLiteral("Legacy catalogue database exceeds supported payload limits."); database.rollback(); return false; }
+			QJsonParseError parseError;
+			const QJsonDocument record = QJsonDocument::fromJson(row, &parseError);
+			if(parseError.error != QJsonParseError::NoError || !record.isObject())
+			{ error = QStringLiteral("Cannot decode a Legacy catalogue database row."); database.rollback(); return false; }
+			rows.append(record.object());
+		}
+		if(query.lastError().isValid())
+		{ error = query.lastError().text(); database.rollback(); return false; }
+		object.insert(QLatin1String(tableNames[table]), rows);
+	}
+	query.finish();
+	if(!database.commit())
+	{ error = QStringLiteral("Cannot complete Legacy catalogue database snapshot: %1").arg(database.lastError().text()); database.rollback(); return false; }
+	return InstallBuiltIn(QJsonDocument(object).toJson(QJsonDocument::Compact), error);
+}
+
+bool AuLegacyCityCatalogue::InstallBuiltIn(const QByteArray& source, QString& error)
+{
+	QSharedPointer<AuLegacyCityCatalogue> accepted(new AuLegacyCityCatalogue);
+	if(!Read(source, *accepted, error)) return false;
 	QMutexLocker lock(&CatalogueMutex());
 	if(BuiltInCatalogue())
 	{
-		error.clear();
+		if(BuiltInCatalogue()->SourceSha256() != accepted->SourceSha256())
+		{ error = QStringLiteral("Cannot replace a Legacy catalogue while it is in use. Reconnect after clearing the scene."); return false; }
 		return true;
 	}
-	InitLegacyCityCatalogueResource();
-	QFile file(QStringLiteral(":/legacy/cities/GD2016"));
-	if(!file.open(QIODevice::ReadOnly))
-	{
-		error = QStringLiteral("The packaged legacy city catalogue is unavailable: %1").arg(file.errorString());
-		return false;
-	}
-	const QByteArray bytes = file.read(ExpectedSourceBytes + 1);
-	if(file.error() != QFile::NoError || !file.atEnd())
-	{
-		error = QStringLiteral("The packaged legacy city catalogue could not be read completely.");
-		return false;
-	}
-	QSharedPointer<AuLegacyCityCatalogue> accepted(new AuLegacyCityCatalogue);
-	if(!Read(bytes, *accepted, error)) return false;
 	BuiltInCatalogue() = accepted;
 	return true;
+}
+
+void AuLegacyCityCatalogue::ResetBuiltIn()
+{
+	QMutexLocker lock(&CatalogueMutex());
+	BuiltInCatalogue().clear();
 }
 
 const AuLegacyCityCatalogue* AuLegacyCityCatalogue::BuiltIn()
@@ -498,9 +441,24 @@ const AuLegacyCityCatalogue* AuLegacyCityCatalogue::BuiltIn()
 	return BuiltInCatalogue().data();
 }
 
+bool AuLegacyCityCatalogue::Finalize(QString& error)
+{
+	if(!Validate(error) || !CalculateBaseCosts(error)) return false;
+	// The first construction recipe supplies the industry's hit-point base.
+	for(auto& industry : m_industries)
+		if(const auto* process = ConstructionProcessForIndustry(industry.id))
+			for(const auto& component : m_constructionComponents)
+				if(component.process == process->id && component.commodity.value == 48
+					&& component.effect == 5 && component.quantity)
+				{ industry.buildingHitBase = component.quantity; break; }
+	if(!BuildCrosswalk(error)) return false;
+	m_valid = true;
+	return true;
+}
+
 bool AuLegacyCityCatalogue::Validate(QString& error)
 {
-	auto fail = [&error](const QString& message) { error = QStringLiteral("Legacy GD: ") + message; return false; };
+	auto fail = [&error](const QString& message) { error = QStringLiteral("Legacy catalogue: ") + message; return false; };
 	QSet<quint8> detailIds;
 	for(const ShipDetailTypeRecord& record : m_details)
 	{
@@ -513,13 +471,16 @@ bool AuLegacyCityCatalogue::Validate(QString& error)
 		if(roomIds.contains(record.id)) return fail(QStringLiteral("duplicate ship room type"));
 		roomIds.insert(record.id);
 	}
+	int previousCommodityId = -1;
 	for(int index = 0; index < m_commodities.size(); ++index)
 	{
 		const CommodityRecord& record = m_commodities[index];
-		if(record.id.value != index) return fail(QStringLiteral("commodity table is not contiguous"));
-		if(index != 0 && record.descriptor.m_name.isEmpty()) return fail(QStringLiteral("unnamed commodity"));
-		if(index != 0) m_commodityIndex.insert(record.id.value, index);
+		if(record.id.value <= previousCommodityId) return fail(QStringLiteral("commodity IDs are duplicated or unordered"));
+		previousCommodityId = record.id.value;
+		if(record.id.value && record.descriptor.m_name.isEmpty()) return fail(QStringLiteral("unnamed commodity"));
+		if(record.id.value) m_commodityIndex.insert(record.id.value, index);
 	}
+	if(m_commodityIndex.isEmpty()) return fail(QStringLiteral("no named commodities"));
 	for(int index = 0; index < m_industries.size(); ++index)
 	{
 		const IndustryRecord& record = m_industries[index];
@@ -528,7 +489,7 @@ bool AuLegacyCityCatalogue::Validate(QString& error)
 			return fail(QStringLiteral("invalid or duplicate industry"));
 		m_industryIndex.insert(record.id.value, index);
 	}
-	if(m_industryIndex.size() != 75) return fail(QStringLiteral("named industry count changed"));
+	if(m_industryIndex.isEmpty()) return fail(QStringLiteral("no named industries"));
 	for(int index = 0; index < m_processes.size(); ++index)
 	{
 		const ManufacturingProcessRecord& record = m_processes[index];
@@ -568,13 +529,15 @@ bool AuLegacyCityCatalogue::CalculateBaseCosts(QString& error)
 {
 	// Metadata calculation from 2016 DbManufacturingProcess::Cost and
 	// DgData::CalcCommodityBaseCosts. This does not run production or simulation.
-	QVector<float> costs(m_commodities.size(), -1.f);
+	QVector<float> costs(int(m_commodities.last().id.value) + 1, -1.f);
 	costs[0] = 0.f;
-	for(int pass = 0; pass < costs.size(); ++pass)
+	for(int pass = 0; pass < m_commodities.size(); ++pass)
 	{
 		int pending = 0;
-		for(int id = 1; id < costs.size(); ++id)
+		for(const CommodityRecord& record : m_commodities)
 		{
+			const int id = record.id.value;
+			if(!id) continue;
 			if(costs[id] >= 0) continue;
 			if(id == 87 || id == 88 || id == 89 || id == 94 || id == 147 || id == 148 || id == 149 || id == 150)
 				costs[id] = 10.f;
@@ -610,37 +573,64 @@ bool AuLegacyCityCatalogue::CalculateBaseCosts(QString& error)
 		}
 		if(!pending)
 		{
-			for(int id = 0; id < costs.size(); ++id) m_commodities[id].descriptor.SetBaseCost(costs[id]);
+			for(CommodityRecord& record : m_commodities) record.descriptor.SetBaseCost(costs[record.id.value]);
 			return true;
 		}
 	}
-	error = QStringLiteral("Legacy GD manufacturing costs contain an unresolved dependency.");
+	error = QStringLiteral("Legacy catalogue manufacturing costs contain an unresolved dependency.");
 	return false;
 }
 
-void AuLegacyCityCatalogue::BuildCrosswalk()
+bool AuLegacyCityCatalogue::BuildCrosswalk(QString& error)
 {
-	quint16 nextAlias = RuntimeAliasFirst;
 	for(const CommodityRecord& record : m_commodities)
 	{
 		quint16 id = record.id.value;
 		if(!id) continue;
 		quint16 runtime = id;
-		if(IsRuntimeAlias(id)) runtime = nextAlias++;
+		if(IsRuntimeAlias(id))
+		{
+			// The alias position belongs to the historical ID, not to the current
+			// row count. Removing a commodity must never renumber saved items.
+			runtime = RuntimeAliasFirst;
+			for(quint16 historical = 1; historical < id; ++historical)
+				if(IsRuntimeAlias(historical)) ++runtime;
+			if(runtime > RuntimeAliasLast)
+			{ error = QStringLiteral("Legacy runtime alias range is exhausted."); return false; }
+		}
 		else if(id == 2) runtime = 161;
 		else if(id == 113) runtime = 354;
 		else if(id == 287) runtime = 651;
 		else if(id == 288) runtime = 650;
+		else if(id == 350) runtime = CID_Bow;
+		else if(id == 351) runtime = CID_Arrows;
+		else if(id == 352) runtime = CID_Spear;
+		else if(id == 353) runtime = CID_Javelin;
+		if(!IsRuntimeAlias(id) && runtime >= RuntimeAliasFirst && runtime <= RuntimeAliasLast)
+		{
+			error = QStringLiteral("Legacy commodity %1 uses runtime ID %2 reserved for historical aliases. Assign an explicit unused runtime mapping.")
+				.arg(id).arg(runtime);
+			return false;
+		}
+		if(m_fromRuntime.contains(runtime))
+		{
+			error = QStringLiteral("Legacy commodities %1 and %2 both map to runtime ID %3. Assign an explicit unused runtime mapping.")
+				.arg(m_fromRuntime.value(runtime)).arg(id).arg(runtime);
+			return false;
+		}
 		m_toRuntime.insert(id, runtime);
 		m_fromRuntime.insert(runtime, id);
 		DbCommodity descriptor(record.descriptor);
 		descriptor.m_id = COMMODITYID(runtime);
-		if(id == 103) { descriptor.m_modelPath = QStringLiteral(":data/mTank.3ds"); } // Our new Tank model
-		if(id == 54) { descriptor.m_modelPath = QStringLiteral(":data/mMineMachinery.3ds"); } // Ikkir's Mine Machinery model
+		if(id == 103 && descriptor.m_modelPath == QLatin1String(":data/mTank.3dsX"))
+			descriptor.m_modelPath = QStringLiteral(":data/mTank.3ds"); // Our new Tank model.
+		if(id == 54 && descriptor.m_modelPath == QLatin1String(":data/mMineMachinery.3dsX"))
+			descriptor.m_modelPath = QStringLiteral(":data/mMineMachinery.3ds"); // Ikkir's model.
 		m_runtimeDescriptors.insert(runtime, descriptor);
 		m_runtimeIds.append(runtime);
 	}
 	std::sort(m_runtimeIds.begin(), m_runtimeIds.end());
+	return true;
 }
 
 const AuLegacyCity::CommodityRecord* AuLegacyCityCatalogue::Commodity(AuLegacyCity::CommodityId id) const

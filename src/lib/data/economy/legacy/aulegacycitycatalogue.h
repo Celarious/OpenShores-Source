@@ -9,7 +9,7 @@
 #include <QVector>
 #include <array>
 
-// These are historical GD identifiers, never modern manufacturing or industry
+// These are Legacy catalogue identifiers, never modern manufacturing or industry
 // identifiers. Conversion to a runtime commodity is explicit at the boundary.
 namespace AuLegacyCity
 {
@@ -69,10 +69,11 @@ struct CommodityRecord
 	// descriptor retains the historical ID here; RuntimeCommodityDescriptors
 	// contains separate copies with canonical runtime IDs.
 	DbCommodity descriptor;
-	std::array<quint8, 17> armorAbsorb = {};
-	std::array<quint8, 17> armorBlock = {};
-	std::array<quint8, 4> modeAbsorb = {};
-	std::array<quint8, 4> modeBlock = {};
+	// Absorption uses SQL percentages, including historical Energy/Kinetic entries.
+	std::array<float, 17> armorAbsorb = {};
+	std::array<float, 17> armorBlock = {};
+	std::array<float, 4> modeAbsorb = {};
+	std::array<float, 4> modeBlock = {};
 	QString deprecatedDescription;
 	RecordSource source;
 	bool IsTechnology() const;
@@ -105,8 +106,7 @@ struct ManufacturingProcessRecord
 	quint8 craft = 0;
 	quint8 minimumTechnology = 0;
 	bool isDefault = false;
-	// GD omits m_nat. Keep the true default; the loader applies the eight
-	// user-approved recovery exceptions by historical process ID.
+	// The SQL nat value is authoritative, including the recovered exceptions.
 	bool naturalResourceQuality = true;
 	bool naturalFlagSerialized = false;
 	RecordSource source;
@@ -165,20 +165,23 @@ struct TableSource
 };
 }
 
-// A validated immutable catalogue. Read publishes only after complete parsing,
-// source-integrity checks, unique-ID checks, and reference validation succeed.
-// The built-in singleton owns its data for the entire process lifetime.
+// A validated immutable catalogue. SQL and client payloads pass the same range,
+// unique-ID, reference, cost, and runtime-identity validation before publication.
+// Reset is permitted only after scene/UI consumers have released their pointers.
 class AUDATA_DLL AuLegacyCityCatalogue
 {
 public:
 	static constexpr quint16 RuntimeAliasFirst = 664;
 	static constexpr quint16 RuntimeAliasLast = 741;
-	static constexpr int ExpectedSourceBytes = 212679;
+	static constexpr int MaximumSourceBytes = 16 * 1024 * 1024;
 
 	static QString DataVersion();
-	static QByteArray ExpectedSourceSha256();
+	// Source bytes are a versioned SQL-row payload, never the historical GD cache.
 	static bool Read(const QByteArray& source, AuLegacyCityCatalogue& output, QString& error);
 	static bool LoadBuiltIn(QString& error);
+	static bool InstallBuiltIn(const QByteArray& source, QString& error);
+	// Only after existing scene/UI consumers have released catalogue pointers.
+	static void ResetBuiltIn();
 	static const AuLegacyCityCatalogue* BuiltIn();
 
 	bool IsValid() const { return m_valid; }
@@ -231,8 +234,9 @@ public:
 
 private:
 	bool Validate(QString& error);
+	bool Finalize(QString& error);
 	bool CalculateBaseCosts(QString& error);
-	void BuildCrosswalk();
+	bool BuildCrosswalk(QString& error);
 	bool m_valid = false;
 	QByteArray m_sourceBytes;
 	QByteArray m_sourceSha256;

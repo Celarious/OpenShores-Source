@@ -1021,9 +1021,9 @@ void AuGlobal::ServerTimeUpdated(const AuTime& serverUTC)
 bool AuGlobal::InstallLegacyCommodityDescriptors(const QHash<quint16, DbCommodity>& descriptors, QString& error)
 {
 	QMutexLocker lock(&m_LegacyCommodityInstallLock);
-	if(descriptors.size() != 349)
+	if(descriptors.isEmpty())
 	{
-		error = QStringLiteral("Legacy commodity metadata must contain all 349 named commodities.");
+		error = QStringLiteral("Legacy commodity metadata is empty.");
 		return false;
 	}
 	for(auto it = descriptors.cbegin(); it != descriptors.cend(); ++it)
@@ -1034,6 +1034,11 @@ bool AuGlobal::InstallLegacyCommodityDescriptors(const QHash<quint16, DbCommodit
 		}
 	if(m_LegacyCommodityDescriptorsReady.load(std::memory_order_acquire))
 	{
+		if(m_LegacyCommodityDescriptors.size() != descriptors.size())
+		{
+			error = QStringLiteral("Cannot replace published legacy commodity metadata before clearing the previous scene.");
+			return false;
+		}
 		for(auto it = descriptors.cbegin(); it != descriptors.cend(); ++it)
 			if(!m_LegacyCommodityDescriptors.contains(it.key())
 				|| m_LegacyCommodityDescriptors.value(it.key()).m_name != it.value().m_name)
@@ -1046,6 +1051,15 @@ bool AuGlobal::InstallLegacyCommodityDescriptors(const QHash<quint16, DbCommodit
 	m_LegacyCommodityDescriptors = descriptors;
 	m_LegacyCommodityDescriptorsReady.store(true, std::memory_order_release);
 	return true;
+}
+
+void AuGlobal::ResetLegacyCommodityDescriptors()
+{
+	// The client generation-change handshake has already stopped readers and
+	// discarded views, scene atoms, and their cached descriptor references.
+	QMutexLocker lock(&m_LegacyCommodityInstallLock);
+	m_LegacyCommodityDescriptorsReady.store(false, std::memory_order_release);
+	m_LegacyCommodityDescriptors.clear();
 }
 
 QList<COMMODITYID> AuGlobal::ActiveCommodityIds() const

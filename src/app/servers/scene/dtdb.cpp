@@ -861,8 +861,12 @@ bool DtDb::InitGameGeneration(QSqlDatabase& db)
 			|| !query.next() || !query.value(0).toBool())
 			return fail(QStringLiteral("Install legacycities.sql before initializing a Legacy universe."));
 	}
-	if(marked && identity != stored)
-		return fail(QStringLiteral("The persisted generation catalogue version or manifest does not match this server's packaged assets."));
+	const bool refreshLegacyCatalogue = marked && identity != stored
+		&& selected == AuGameGeneration::Legacy
+		&& (stored.catalogueVersion == QStringLiteral("2016-GD-0x3a-buildings-1")
+			|| stored.catalogueVersion == identity.catalogueVersion);
+	if(marked && identity != stored && (!refreshLegacyCatalogue || !g_Au.IsSceneMaster()))
+		return fail(QStringLiteral("The persisted generation catalogue does not match this server. Start the scene master with the updated Legacy SQL tables before subordinate servers."));
 
 	const auto hasRows = [&](const QString& table, bool& rows) {
 		QSqlQuery exists(db);
@@ -976,6 +980,21 @@ bool DtDb::InitGameGeneration(QSqlDatabase& db)
 
 	if(selected == AuGameGeneration::Legacy && !DaLegacyCity::RegisterPublicDesigns(db, error))
 		return fail(error);
+	if(refreshLegacyCatalogue)
+	{
+		// IDs and saved-state compatibility have been validated above. SQL data
+		// edits change the fingerprint, not the universe's game generation.
+		query.prepare("UPDATE g_GameGeneration SET catalogueVersion=?,manifestHash=? "
+			"WHERE singleton=1 AND generation=? AND catalogueVersion=? AND manifestHash=?");
+		query.addBindValue(identity.catalogueVersion);
+		query.addBindValue(identity.manifestHash);
+		query.addBindValue(AuGameGenerationName(stored.generation));
+		query.addBindValue(stored.catalogueVersion);
+		query.addBindValue(stored.manifestHash);
+		if(!query.exec() || query.numRowsAffected() != 1)
+			return fail(QStringLiteral("Could not refresh the Legacy SQL catalogue identity; another server may have changed it. %1")
+				.arg(query.lastError().text()));
+	}
 	if(!marked)
 	{
 		query.prepare("INSERT INTO g_GameGeneration (singleton,generation,catalogueVersion,manifestHash) "

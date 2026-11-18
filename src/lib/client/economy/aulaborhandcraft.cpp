@@ -16,6 +16,8 @@
 #include "demanufacturingprocess.h"
 #include "dgdata.h"
 #include "aulegacycitycatalogue.h"
+#include "aulegacycityhandcraft.h"
+#include "aulegacyhandcraft.h"
 #include <QCheckBox>
 #include <QComboBox>
 #include <QGridLayout>
@@ -62,6 +64,7 @@ namespace
 	{
 		QVector<AuCraftNeed>	needs;
 		bool					needsPower;
+		int					outputQty;
 	};
 
 	struct AuCraftEntry
@@ -71,6 +74,7 @@ namespace
 		int			craft;
 		QString		name;
 		QString		category;
+		bool		canSupply;
 	};
 
 	struct AuCraftRow
@@ -175,16 +179,50 @@ namespace
 	}
 
 	QHash<int, AuCraftRecipe> s_CraftRecipes;
+	QByteArray s_CraftCatalogueHash;
+	bool s_CraftLegacy = false;
 
-	const AuCraftRecipe& CraftRecipe(int mpid)
+	AuCraftRecipe CraftRecipe(int mpid)
 	{
 		QHash<int, AuCraftRecipe>::const_iterator ri = s_CraftRecipes.constFind(mpid);
 		if(ri != s_CraftRecipes.constEnd())
 			return *ri;
+		if(g_Au.IsLegacyGeneration())
+		{
+			AuCraftRecipe recipe;
+			recipe.needsPower = false;
+			recipe.outputQty = 1;
+			const AuLegacyCityCatalogue* catalogue = AuLegacyCityCatalogue::BuiltIn();
+			if(!catalogue) return recipe;
+			const AuLegacyCity::ManufacturingProcessRecord* process = catalogue->ManufacturingProcess(
+					AuLegacyCity::ManufacturingProcessId(quint16(mpid)));
+			if(!process) return recipe;
+			if(catalogue->RuntimeCommodityId(process->commodity) == CID_Arrows)
+				recipe.outputQty = qMax(1, int(process->quantity));
+			for(const AuLegacyCity::ManufacturingComponentRecord& component : catalogue->ComponentsForProcess(process->id))
+			{
+				if(component.effect != 5) continue;
+				if(component.commodity.value == 3) { recipe.needsPower = true; continue; }
+				AuCraftNeed need;
+				need.cid = catalogue->RuntimeCommodityId(component.commodity);
+				need.qty = qMax(1, int(component.quantity));
+				need.kept = component.quantity == 0;
+				recipe.needs.append(need);
+			}
+			return *s_CraftRecipes.insert(mpid, recipe);
+		}
 		AuCraftRecipe recipe;
 		recipe.needsPower = false;
+		recipe.outputQty = 1;
 		DeManufacturingProcess mp;
 		mp.SetHandCraftingProcessId(mpid);
+		if(mp.CommodityId() == CID_Arrows)
+		{
+			const DgData& gd = g_Au.LockDataForRead();
+			for(const DbManufacturingProcess& process : gd.m_bManufacturingProcessArray)
+				if(process.m_id == mpid) { recipe.outputQty = qMax(1, int(process.m_produces)); break; }
+			g_Au.UnlockData();
+		}
 		for(DeProcessComponentArray::const_iterator pci = mp.Components().cbegin(); pci != mp.Components().cend(); pci++)
 		{
 			if(!(*pci).IsRequired())
@@ -261,7 +299,7 @@ namespace
 				for(int ir=0; ir<recipes.count(); ir++)
 				{
 					const AuCraftEntry& sub = recipes[ir];
-					if(sub.cid != need.cid || sub.mpid == mpid)
+					if(sub.cid != need.cid || sub.mpid == mpid || !sub.canSupply)
 						continue;
 					const AuCraftRecipe& subRecipe = CraftRecipe(sub.mpid);
 					options << NeedsText(sub.mpid);
@@ -269,7 +307,8 @@ namespace
 						continue;
 					QHash<int,int> trial = stock;
 					QList<int> subPlan;
-					for(int made=0; made<shortBy; made++)
+					const int batches = (shortBy + subRecipe.outputQty - 1) / subRecipe.outputQty;
+					for(int made=0; made<batches; made++)
 					{
 						bool can = true;
 						for(int is=0; is<subRecipe.needs.count() && can; is++)
@@ -280,10 +319,10 @@ namespace
 						for(int is=0; is<subRecipe.needs.count(); is++)
 							if(!subRecipe.needs[is].kept)
 								trial[subRecipe.needs[is].cid] -= subRecipe.needs[is].qty;
-						trial[need.cid] += 1;
+						trial[need.cid] += subRecipe.outputQty;
 						subPlan << sub.mpid;
 					}
-					if(subPlan.count() == shortBy)
+					if(subPlan.count() == batches)
 					{
 						stock = trial;
 						plan << subPlan;
@@ -316,6 +355,8 @@ namespace
 AuHandCraftPanel::AuHandCraftPanel(QWidget* parent) : QWidget(parent)
 {
 	m_MPID = 0;
+	m_PendingFlagRecipe = 0;
+	m_PendingFlagLegacy = false;
 
 	m_Search = new QLineEdit(this);
 	m_Search->setPlaceholderText(tr("Search recipes"));
@@ -389,77 +430,138 @@ AuHandCraftPanel::~AuHandCraftPanel()
 
 void AuHandCraftPanel::UpdateContents(DaPerson* person)
 {
+	if(!person)
+	{
+		m_Plan.clear();
+		m_PendingFlagRecipe = 0;
+		m_FlagAfterEmpire = AuElapsedTimer();
+		m_Make->setEnabled(false);
+		return;
+	}
 	if(m_FlagAfterEmpire.isValid() && person)
 	{
-		if(person->EmpireId())
+		if(m_PendingFlagLegacy != g_Au.IsLegacyGeneration()
+			|| m_PendingFlagManifest != g_Au.GenerationIdentity().manifestHash
+			|| m_FlagAfterEmpire.elapsed() > 60000)
 		{
+			m_PendingFlagRecipe = 0;
 			m_FlagAfterEmpire = AuElapsedTimer();
-			emit Go(MPID_Flag);
 		}
-		else if(m_FlagAfterEmpire.elapsed() > 60000)
-			m_FlagAfterEmpire = AuElapsedTimer();
-	}
-	if(g_Au.IsLegacyGeneration()) { UpdateLegacyContents(person); return; }
-
-	// Must not allow handcraft at a building under construction when the building is required.
-	bool inBd = false;			// true if in a bd that is not under construction and not destroyed.
-	bool hasPower = false;
-	AuKnownPatents patents;
-	DaWorldLL* llworld = person->FindParentWorldInEnv();
-	if(llworld)
-	{
-		if(!person->BdId().IsNull())
+		else if(person->EmpireId())
 		{
-			DaBd* bd = llworld->FindBd(person->BdId());
-			if(bd && !bd->IsUnderConstruction() && !bd->IsDestroyed())
+			const int recipe = m_PendingFlagRecipe;
+			m_PendingFlagRecipe = 0;
+			m_FlagAfterEmpire = AuElapsedTimer();
+			if(recipe) emit Go(recipe);
+		}
+	}
+	const bool legacyGeneration = g_Au.IsLegacyGeneration();
+	const AuLegacyCityCatalogue* activeCatalogue = AuLegacyCityCatalogue::BuiltIn();
+	const QByteArray catalogueHash = activeCatalogue ? activeCatalogue->SourceSha256() : QByteArray();
+	if(s_CraftLegacy != legacyGeneration || s_CraftCatalogueHash != catalogueHash)
+	{
+		s_CraftRecipes.clear();
+		s_CraftLegacy = legacyGeneration;
+		s_CraftCatalogueHash = catalogueHash;
+	}
+	bool hasPower = false;
+	QVector<AuCraftEntry> recipes;
+	if(legacyGeneration)
+	{
+		const AuLegacyCityCatalogue* catalogue = AuLegacyCityCatalogue::BuiltIn();
+		if(!catalogue || !g_Au.HasLegacyCommodity(CID_Flag))
+		{
+			m_Plan.clear();
+			m_Make->setEnabled(false);
+			return;
+		}
+		const AuLegacyCity::HandcraftContext context = AuLegacyCity::QueryHandcraftContext(*person);
+		hasPower = context.hasPower;
+		bool industryRequired = false;
+		for(const AuLegacyCity::ManufacturingProcessRecord& recipe : catalogue->ManufacturingProcesses())
+		{
+			if(!AuLegacyCity::HandcraftAllowed(recipe, context)) continue;
+			const AuLegacyCity::CommodityRecord* commodity = catalogue->Commodity(recipe.commodity);
+			if(!commodity) continue;
+			AuCraftEntry entry;
+			entry.mpid = recipe.id.value;
+			entry.cid = catalogue->RuntimeCommodityId(recipe.commodity);
+			entry.craft = recipe.craft;
+			entry.name = recipe.name + (recipe.craft == 2 ? QStringLiteral(" *") : QString());
+			entry.category = CraftCategory(entry.cid, entry.craft);
+			// Account credits, dropped fires and spawned units cannot supply a gear ingredient.
+			entry.canSupply = !commodity->IsTechnology() && !AuLegacyCity::IsProductionUnit(recipe.commodity.value)
+				&& recipe.commodity.value != 157 && recipe.commodity.value != 342 && recipe.commodity.value != 349;
+			const quint8 technology = context.atIndustry && context.industry == recipe.industry.value ? context.technology : 0;
+			if(recipe.minimumTechnology > technology) entry.canSupply = false;
+			recipes.append(entry);
+			industryRequired = industryRequired || recipe.craft == 2;
+		}
+		const AuLegacyCity::IndustryRecord* industry = catalogue->Industry(AuLegacyCity::IndustryId(context.industry));
+		m_Note->setText(industryRequired && industry ? tr("<small>* %1</small>").arg(industry->name.toHtmlEscaped()) : QString());
+	}
+	else
+	{
+
+		// Must not allow handcraft at a building under construction when the building is required.
+		bool inBd = false;			// true if in a bd that is not under construction and not destroyed.
+		AuKnownPatents patents;
+		DaWorldLL* llworld = person->FindParentWorldInEnv();
+		if(llworld)
+		{
+			if(!person->BdId().IsNull())
 			{
-				inBd = true;
-				hasPower = bd->HasPower();
-				bd->ListPatents(patents, bd->IndustryId());
+				DaBd* bd = llworld->FindBd(person->BdId());
+				if(bd && !bd->IsUnderConstruction() && !bd->IsDestroyed())
+				{
+					inBd = true;
+					hasPower = bd->HasPower();
+					bd->ListPatents(patents, bd->IndustryId());
+				}
 			}
 		}
-	}
 
-	// Add patents in the person's possession.
-	person->ListPatents(patents);
+		// Add patents in the person's possession.
+		person->ListPatents(patents);
 
-	INDUSTRYID iid = person->InIndustry();
-	QVector<AuCraftEntry> recipes;
-	{
-		const DgData& gd = g_Au.LockDataForRead();
-		for(DbManufacturingProcessArray::const_iterator mpi = gd.m_bManufacturingProcessArray.cbegin();
-				mpi < gd.m_bManufacturingProcessArray.cend(); mpi++)
+		INDUSTRYID iid = person->InIndustry();
 		{
-			// Do not list patented processes unless the patent is available.
-			if(!gd.m_bManufacturingComponentArray.HasNecessaryPatents((*mpi).m_id, patents))
-				continue;
-			// Skip processes that can never be handcrafted.
-			if((*mpi).m_craft == 0)
-				continue;
-			// Skip processes that depend on the scene atom's current industry.
-			if((*mpi).m_craft == 2 && !(inBd && (*mpi).m_idi == iid))
-				continue;
-			AuCraftEntry entry;
-			entry.mpid = (*mpi).m_id;
-			entry.cid = (*mpi).m_idc;
-			entry.craft = (*mpi).m_craft;
-			entry.name = (*mpi).m_name;
-			if((*mpi).m_craft == 2)
-				entry.name += " *";
-			entry.category = CraftCategory(entry.cid, entry.craft);
-			recipes.append(entry);
+			const DgData& gd = g_Au.LockDataForRead();
+			for(DbManufacturingProcessArray::const_iterator mpi = gd.m_bManufacturingProcessArray.cbegin();
+					mpi < gd.m_bManufacturingProcessArray.cend(); mpi++)
+			{
+				// Do not list patented processes unless the patent is available.
+				if(!gd.m_bManufacturingComponentArray.HasNecessaryPatents((*mpi).m_id, patents))
+					continue;
+				// Skip processes that can never be handcrafted.
+				if((*mpi).m_craft == 0)
+					continue;
+				// Skip processes that depend on the scene atom's current industry.
+				if((*mpi).m_craft == 2 && !(inBd && (*mpi).m_idi == iid))
+					continue;
+				AuCraftEntry entry;
+				entry.mpid = (*mpi).m_id;
+				entry.cid = (*mpi).m_idc;
+				entry.craft = (*mpi).m_craft;
+				entry.name = (*mpi).m_name;
+				if((*mpi).m_craft == 2)
+					entry.name += " *";
+				entry.category = CraftCategory(entry.cid, entry.craft);
+				entry.canSupply = true;
+				recipes.append(entry);
+			}
+			if(recipes.count() && iid != IID_None)
+			{
+				bool iidreq = false;
+				for(int ir=0; ir<recipes.count(); ir++)
+					if(recipes[ir].craft == 2)
+						iidreq = true;
+				m_Note->setText(iidreq ? tr("<small>* %1</small>").arg(gd.IndustryName(iid)) : QString());
+			}
+			else
+				m_Note->setText(QString());
+			g_Au.UnlockData();
 		}
-		if(recipes.count() && iid != IID_None)
-		{
-			bool iidreq = false;
-			for(int ir=0; ir<recipes.count(); ir++)
-				if(recipes[ir].craft == 2)
-					iidreq = true;
-			m_Note->setText(iidreq ? tr("<small>* %1</small>").arg(gd.IndustryName(iid)) : QString());
-		}
-		else
-			m_Note->setText(QString());
-		g_Au.UnlockData();
 	}
 	std::sort(recipes.begin(), recipes.end(), [](const AuCraftEntry& a, const AuCraftEntry& b)
 			{ return a.name.localeAwareCompare(b.name) < 0; });
@@ -511,7 +613,7 @@ void AuHandCraftPanel::UpdateContents(DaPerson* person)
 	m_Recipes->blockSignals(true);
 	bool rebuild = m_Recipes->count() != shown.count();
 	for(int is=0; is<shown.count() && !rebuild; is++)
-		if(m_Recipes->item(is)->data(Qt::UserRole).toInt() != shown[is].mpid)
+		if(m_Recipes->item(is)->data(Qt::UserRole).toInt() != shown[is].mpid || m_Recipes->item(is)->text() != shown[is].name)
 			rebuild = true;
 	if(rebuild)
 	{
@@ -545,6 +647,11 @@ void AuHandCraftPanel::UpdateContents(DaPerson* person)
 	QStringList missing;
 	QVector<AuCraftRow> rows;
 	bool ok = PlanCraft(m_MPID, gear, recipes, hasPower, m_Plan, missing, &rows);
+	if(ok && legacyGeneration && !LegacyPlanReady(person, m_Plan))
+	{
+		ok = false;
+		m_Plan.clear();
+	}
 	for(int ir=0; ir<rows.count(); ir++)
 	{
 		const AuCraftRow& row = rows[ir];
@@ -552,7 +659,8 @@ void AuHandCraftPanel::UpdateContents(DaPerson* person)
 		QString text = tr("%1 %2/%3").arg(name).arg(qMin(row.have, row.qty)).arg(row.qty);
 		if(row.kept)
 			text += " " + tr("(kept)");
-		new QListWidgetItem(QIcon(g_Au.CommodityBitmapName((COMMODITYID)row.cid)), text, m_Needs);
+		QListWidgetItem* item = new QListWidgetItem(QIcon(g_Au.CommodityBitmapName((COMMODITYID)row.cid)), text, m_Needs);
+		item->setToolTip(row.how);
 	}
 	if(rows.isEmpty())
 		new QListWidgetItem(tr("Nothing needed."), m_Needs);
@@ -581,6 +689,9 @@ void AuHandCraftPanel::GoPushed()
 			AuCreateEmpire dlg(pFrame);
 			if(pFrame->ExecDialog(dlg) != QDialog::Accepted)
 				return;
+			m_PendingFlagRecipe = plan.last();
+			m_PendingFlagLegacy = g_Au.IsLegacyGeneration();
+			m_PendingFlagManifest = g_Au.GenerationIdentity().manifestHash;
 			plan.removeLast();
 			m_FlagAfterEmpire.restart();
 		}

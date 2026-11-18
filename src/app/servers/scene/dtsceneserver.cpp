@@ -11,6 +11,7 @@
 #include "audbglobal.h"
 #include "aulogincomm.h"
 #include "aulegacysccollision.h"
+#include "aulegacycitycatalogue.h"
 #include "auplayeronlinestatus.h"
 #include "ausceneserverapp.h"
 #include "austarmapdata.h"
@@ -40,6 +41,14 @@
 
 namespace
 {
+bool LegacyCatalogueCapabilityMatches(const AuGameGenerationIdentity& capability)
+{
+	// The server supplies the authoritative SQL definitions during negotiation.
+	// Clients advertise the supported format, rather than a packaged GD hash.
+	return capability.generation == AuGameGeneration::Legacy
+		&& capability.catalogueVersion == g_Au.GenerationIdentity().catalogueVersion;
+}
+
 DaSc* LegacyShipAncestor(DaAtom* atom)
 {
 	for(; atom; atom = atom->Parent())
@@ -746,10 +755,10 @@ void DtSceneServer::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 			QByteArray replyBytes;
 			QDataStream reply(&replyBytes, QIODevice::WriteOnly);
 			reply.setVersion(QDataStream::Qt_4_1);
-			if(!valid || (g_Au.IsLegacyGeneration() && capability != g_Au.GenerationIdentity()))
+			if(!valid || (g_Au.IsLegacyGeneration() && !LegacyCatalogueCapabilityMatches(capability)))
 			{
 				reply << quint8(DtSceneServerPacket::PL_LoginFailure) << quint8(2)
-					<< QStringLiteral("This server requires matching game generation protocol and Legacy catalogue assets.");
+					<< QStringLiteral("This server requires a client supporting its Legacy SQL catalogue format.");
 				SendPacket(replyBytes);
 				Disconnect();
 				break;
@@ -757,6 +766,13 @@ void DtSceneServer::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 			m_GenerationNegotiated = true;
 			reply << quint8(DtSceneServerPacket::PL_Generation);
 			AuWriteGameGenerationIdentity(reply, g_Au.GenerationIdentity());
+			if(g_Au.IsLegacyGeneration())
+			{
+				const bool cached = capability == g_Au.GenerationIdentity();
+				reply << (cached ? QByteArray() : AuLegacyCityCatalogue::BuiltIn()->SourceBytes());
+				// This reply precedes login/scene data on the same TCP connection.
+				m_ClientHasLegacyCatalogue = true;
+			}
 			SendPacket(replyBytes);
 		}
 		break;
@@ -1256,13 +1272,13 @@ void DtSceneServer::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 			bool initLogin = status & 0x04;	// true if this is their first worker server login, so their ship can contact them.
 			AuGameGenerationIdentity capability;
 			const bool hasGenerationCapability = !block.atEnd() && AuReadGameGenerationIdentity(block, capability);
-			if(g_Au.IsLegacyGeneration() && (!hasGenerationCapability || capability != g_Au.GenerationIdentity()))
+			if(g_Au.IsLegacyGeneration() && (!hasGenerationCapability || !LegacyCatalogueCapabilityMatches(capability)))
 			{
 				QByteArray rejected;
 				QDataStream reply(&rejected, QIODevice::WriteOnly);
 				reply.setVersion(QDataStream::Qt_4_1);
 				reply << quint8(DtSceneServerPacket::PL_LoginFailure) << quint8(2)
-					<< QStringLiteral("This Legacy server requires matching Legacy city catalogues and generation protocol support. Update the client assets and program together.");
+					<< QStringLiteral("This Legacy server requires a client supporting its Legacy SQL catalogue format. Update the client program.");
 				SendPacket(rejected);
 				Disconnect();
 				break;
@@ -1405,7 +1421,16 @@ void DtSceneServer::ReadPacket(const QByteArray& ba, QTcpSocket& tcpSocket)
 				out << (quint8)DtSceneServerPacket::PL_Login;
 				out << motd;
 				out << g_Au.ChatPort();			// Tell the client what port to connect for chat.
-				if(hasGenerationCapability) AuWriteGameGenerationIdentity(out, g_Au.GenerationIdentity());
+				if(hasGenerationCapability)
+				{
+					AuWriteGameGenerationIdentity(out, g_Au.GenerationIdentity());
+					if(g_Au.IsLegacyGeneration())
+					{
+						const bool cached = m_ClientHasLegacyCatalogue || capability == g_Au.GenerationIdentity();
+						out << (cached ? QByteArray() : AuLegacyCityCatalogue::BuiltIn()->SourceBytes());
+						m_ClientHasLegacyCatalogue = true;
+					}
+				}
 				SendPacket(ba);
 				m_GenerationNegotiated = true;
 			}

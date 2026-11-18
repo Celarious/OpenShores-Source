@@ -480,14 +480,15 @@ public:
 	DbCommodityArray	m_CommodityArray;	// Commodities data gets loaded (in DgData) and then it never changes. No mutex needed.
 
 private:
-	// Published once before legacy inventories load. Never replace this map:
-	// Commodity() returns references which must remain valid across reconnects.
+	// Immutable while a scene is active. Commodity() returns references, so a
+	// client may reset this only after its views and old scene atoms are cleared.
 	QHash<quint16, DbCommodity> m_LegacyCommodityDescriptors;
 	QMutex m_LegacyCommodityInstallLock;
 	std::atomic<bool> m_LegacyCommodityDescriptorsReady { false };
 
 public:
 	bool InstallLegacyCommodityDescriptors(const QHash<quint16, DbCommodity>& descriptors, QString& error);
+	void ResetLegacyCommodityDescriptors();
 	bool HasLegacyCommodity(COMMODITYID cid) const
 	{
 		return m_LegacyCommodityDescriptorsReady.load(std::memory_order_acquire)
