@@ -786,6 +786,15 @@ protected:
 
 	QString GetProgramInfoLog() const;
 
+	// Legacy terrain has 18 pavement textures. Reserve the shadow-map units
+	// when binding, saving and restoring that palette; modern palettes stop below them.
+	inline static GLuint PavementTextureUnit(GLuint unit)
+	{
+		if(unit >= SUN_SHADOW_MAP_UNIT) unit++;
+		if(unit >= LIGHT_SHADOW_MAP_UNIT) unit++;
+		return unit;
+	}
+
 	inline static void SetUniformMatrix(AuOpenGLFunctions* glf, GLint uniform, const AuMatrix4x4& m)
 	{
 		// Must create a matrix of float values.
@@ -3734,9 +3743,8 @@ public:
 
 		for(int pave=0; pave<m_PavementCount; pave++)
 		{
-			m_GLf->glActiveTexture(texUnit);
+			m_GLf->glActiveTexture(GL_TEXTURE0 + PavementTextureUnit(8 + pave));
 			m_GLf->glBindTexture(GL_TEXTURE_2D, m_OldPavement[pave]);
-			texUnit++;
 		}
 
 		m_GLf->glActiveTexture(GL_TEXTURE0);
@@ -3866,15 +3874,12 @@ public:
 
 	inline void SetPavementPalette(const GLuint* texName) const
 	{
-		GLuint texUnit = 8;
-		GLuint texBase = GL_TEXTURE0 + texUnit;
 		for(int pave=0; pave<m_PavementCount; pave++)
 		{
+			const GLuint texUnit = PavementTextureUnit(8 + pave);
 			m_GLf->glUniform1i(m_texPavement[pave], texUnit);	// Configure uniform 'texTerrainHigh' for texture unit.
-			m_GLf->glActiveTexture(texBase);					// Select texture unit 0 as active.
+			m_GLf->glActiveTexture(GL_TEXTURE0 + texUnit);
 			m_GLf->glBindTexture(GL_TEXTURE_2D, texName[pave]);	// Bind the texture to the current texture unit.
-			texBase++;
-			texUnit++;
 		}
 	}
 
@@ -4035,9 +4040,8 @@ public:
 
 		for(int pave=0; pave<m_PavementCount; pave++)
 		{
-			m_GLf->glActiveTexture(texUnit);
+			m_GLf->glActiveTexture(GL_TEXTURE0 + PavementTextureUnit(9 + pave));
 			m_GLf->glBindTexture(GL_TEXTURE_2D, m_OldPavement[pave]);
-			texUnit++;
 		}
 
 		m_GLf->glActiveTexture(GL_TEXTURE0);
@@ -4176,15 +4180,12 @@ public:
 
 	inline void SetPavementPalette(const GLuint* texName) const
 	{
-		GLuint texUnit = 9;
-		GLuint texBase = GL_TEXTURE0 + texUnit;
 		for(int pave=0; pave<m_PavementCount; pave++)
 		{
+			const GLuint texUnit = PavementTextureUnit(9 + pave);
 			m_GLf->glUniform1i(m_texPavement[pave], texUnit);	// Configure uniform 'texTerrainHigh' for texture unit.
-			m_GLf->glActiveTexture(texBase);					// Select texture unit 0 as active.
+			m_GLf->glActiveTexture(GL_TEXTURE0 + texUnit);
 			m_GLf->glBindTexture(GL_TEXTURE_2D, texName[pave]);	// Bind the texture to the current texture unit.
-			texBase++;
-			texUnit++;
 		}
 	}
 
@@ -4353,9 +4354,8 @@ public:
 
 		for(int pave=0; pave<m_PavementCount; pave++)
 		{
-			m_GLf->glActiveTexture(texUnit);
+			m_GLf->glActiveTexture(GL_TEXTURE0 + PavementTextureUnit(9 + pave));
 			m_GLf->glBindTexture(GL_TEXTURE_2D, m_OldPavement[pave]);
-			texUnit++;
 		}
 
 		m_GLf->glActiveTexture(GL_TEXTURE0);
@@ -4499,15 +4499,12 @@ public:
 
 	inline void SetPavementPalette(const GLuint* texName) const
 	{
-		GLuint texUnit = 9;
-		GLuint texBase = GL_TEXTURE0 + texUnit;
 		for(int pave=0; pave<m_PavementCount; pave++)
 		{
+			const GLuint texUnit = PavementTextureUnit(9 + pave);
 			m_GLf->glUniform1i(m_texPavement[pave], texUnit);	// Configure uniform 'texTerrainHigh' for texture unit.
-			m_GLf->glActiveTexture(texBase);					// Select texture unit 0 as active.
+			m_GLf->glActiveTexture(GL_TEXTURE0 + texUnit);
 			m_GLf->glBindTexture(GL_TEXTURE_2D, texName[pave]);	// Bind the texture to the current texture unit.
-			texBase++;
-			texUnit++;
 		}
 	}
 

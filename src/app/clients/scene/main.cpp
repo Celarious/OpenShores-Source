@@ -84,7 +84,7 @@ int main(int argc, char** argv)
 			for(int i=1; i<argc; i++)
 				if(QString::fromLocal8Bit(argv[i]) == "-ini")
 					settingsFormat = QSettings::IniFormat;
-			QSettings displaySettings(settingsFormat, QSettings::UserScope, "OpenShores", "OpenShores");
+			QSettings displaySettings(settingsFormat, QSettings::UserScope, "Hazeron Freehold", "Shores of Hazeron");
 			AuGLSLShader::SetPerPixelLighting(displaySettings.value(AuGlobal::PerPixelLightingKey(), false).toBool());
 			AuGLSLShader::SetPerPixelSkinGloss(displaySettings.value(AuGlobal::PerPixelSkinGlossKey(), .4).toFloat());
 			AuGLSLShader::SetPerPixelClothGloss(displaySettings.value(AuGlobal::PerPixelClothGlossKey(), .1).toFloat());

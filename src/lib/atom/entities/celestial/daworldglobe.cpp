@@ -8121,7 +8121,7 @@ void DaWorldGlobe::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatrix4x
 				c.greenF() * (float)AuGLLight::AmbientLitCity(),
 				c.blueF() * (float)AuGLLight::AmbientLitCity());
 
-		ari.re->GLSL().TerrainLitFloraShader().SetShadowBodiesLocal(model);
+		terrainShader.SetShadowBodiesLocal(model);
 
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -8231,7 +8231,7 @@ void DaWorldGlobe::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatrix4x
 				c.greenF() * (float)AuGLLight::AmbientLitCity(),
 				c.blueF() * (float)AuGLLight::AmbientLitCity());
 
-		ari.re->GLSL().TerrainLitShader().SetShadowBodiesLocal(model);
+		terrainShader.SetShadowBodiesLocal(model);
 
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)

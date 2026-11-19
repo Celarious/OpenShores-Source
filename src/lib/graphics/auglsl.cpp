@@ -1773,7 +1773,7 @@ void AuGLSL::EnsureLegacyTerrainShaders()
 	Hashpack::ReadFiles(":glsl.har", s_GLSLProgramSrc);
 	LoadLegacySurfaceShaders();
 	LoadLegacyTerrainShaders();
-	const AuGLSLProgramOpt opt(m_MaxLights);
+	const AuGLSLProgramOpt opt(m_MaxLights, this);
 	m_LegacyTerrainLit->Build(*m_GLf, opt);
 	m_LegacyTerrainLitFlora->Build(*m_GLf, opt);
 	m_LegacyRingworldTerrainLitFlora->Build(*m_GLf, opt);
@@ -4649,9 +4649,8 @@ void AuGLSLTerrainLit::Select(const AuMatrix4x4& projection)
 
 	for(int pave=0; pave<m_PavementCount; pave++)
 	{
-		m_GLf->glActiveTexture(texUnit);
+		m_GLf->glActiveTexture(GL_TEXTURE0 + PavementTextureUnit(8 + pave));
 		m_GLf->glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_OldPavement[pave]);
-		texUnit++;
 	}
 }
 
@@ -4788,9 +4787,8 @@ void AuGLSLTerrainLitFlora::Select(const AuMatrix4x4& projection)
 
 	for(int pave=0; pave<m_PavementCount; pave++)
 	{
-		m_GLf->glActiveTexture(texUnit);
+		m_GLf->glActiveTexture(GL_TEXTURE0 + PavementTextureUnit(9 + pave));
 		m_GLf->glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_OldPavement[pave]);
-		texUnit++;
 	}
 }
 
@@ -4931,9 +4929,8 @@ void AuGLSLRingworldTerrainLitFlora::Select(const AuMatrix4x4& projection)
 
 	for(int pave=0; pave<m_PavementCount; pave++)
 	{
-		m_GLf->glActiveTexture(texUnit);
+		m_GLf->glActiveTexture(GL_TEXTURE0 + PavementTextureUnit(9 + pave));
 		m_GLf->glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_OldPavement[pave]);
-		texUnit++;
 	}
 }
 

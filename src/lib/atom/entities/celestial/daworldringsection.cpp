@@ -8773,7 +8773,7 @@ void DaWorldRingSection::RenderAtGlobe(const AuMatrix4x4& projection, const AuMa
 	terrainShader.SetCityAmbientLight(c.redF() * (float)AuGLLight::AmbientLitCity(),
 			c.greenF() * (float)AuGLLight::AmbientLitCity(), c.blueF() * (float)AuGLLight::AmbientLitCity());
 
-	ari.re->GLSL().RingworldTerrainLitFloraShader().SetShadowBodiesLocal(model);
+	terrainShader.SetShadowBodiesLocal(model);
 
 	// Suns
 	for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)

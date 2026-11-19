@@ -68,13 +68,16 @@ AuSettingsDialog::AuSettingsDialog(bool showF12, QWidget* parent) : AuDialog(par
 	connect(pageControls, SIGNAL(ControlsChanged()), SIGNAL(ControlsChanged()));	// Propagate the signal up.
 
 	// Designer
-	AuSetDesigner* pageDesigner = new AuSetDesigner(this);
-	m_Pages->insertWidget(m_Pages->count(), pageDesigner);
-	QIcon iconDesigner(":data/SoHDesignerIcon.png");
-	itab = m_Tabs->insertTab(m_Tabs->count(), iconDesigner, "Designer");
-	m_Tabs->setTabToolTip(itab, QString("<html><b>Designer</b><br>"
-			"Designer settings affect the designer."
-			"</html>"));
+	if(!g_Au.IsLegacyGeneration())
+	{
+		AuSetDesigner* pageDesigner = new AuSetDesigner(this);
+		m_Pages->insertWidget(m_Pages->count(), pageDesigner);
+		QIcon iconDesigner(":data/SoHDesignerIcon.png");
+		itab = m_Tabs->insertTab(m_Tabs->count(), iconDesigner, "Designer");
+		m_Tabs->setTabToolTip(itab, QString("<html><b>Designer</b><br>"
+				"Designer settings affect the designer."
+				"</html>"));
+	}
 
 	// Scene
 	m_PageScene = new AuSetRender(showF12, this);

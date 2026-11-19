@@ -8379,7 +8379,7 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 		terrainShader.SetCityAmbientLight(c.redF() * (float)AuGLLight::AmbientLitCity(),
 				c.greenF() * (float)AuGLLight::AmbientLitCity(), c.blueF() * (float)AuGLLight::AmbientLitCity());
 
-		ari.re->GLSL().TerrainLitFloraShader().SetShadowBodiesLocal(model);
+		terrainShader.SetShadowBodiesLocal(model);
 
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
@@ -8488,7 +8488,7 @@ void DaWorldGasGiant::RenderAtGlobe(const AuMatrix4x4& projection, const AuMatri
 		terrainShader.SetCityAmbientLight(c.redF() * (float)AuGLLight::AmbientLitCity(),
 				c.greenF() * (float)AuGLLight::AmbientLitCity(), c.blueF() * (float)AuGLLight::AmbientLitCity());
 
-		ari.re->GLSL().TerrainLitShader().SetShadowBodiesLocal(model);
+		terrainShader.SetShadowBodiesLocal(model);
 
 		// Suns
 		for(int sunIndex=0; sunIndex<MAX_SUNS; sunIndex++)
