@@ -2516,8 +2516,8 @@ void DaCreature::RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRe
 
 		// Disable suns when they are blocked at my location. Prepare to restore them.
 		QList<int> sunsDisabled;
-		if(sunsBlocked)
-			ari.re->DisableSuns(sunsDisabled);
+		AuGLSun sunsAsTheyWere[MAX_SUNS];
+		bool sunsDimmed = DimSuns(*ari.re, sunLevel, sunsDisabled, sunsAsTheyWere);
 
 		// Scene atom has an option to turn off rendering their body.
 		// Scene atom's body is not rendered when manning a turret so it doesn't get in the way.

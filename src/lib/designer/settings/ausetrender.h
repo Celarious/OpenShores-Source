@@ -64,20 +64,6 @@ private:
 	QSlider*							m_SkyBoxSizeSlider;
 	QLabel*								m_TreeViewRange;
 	QLabel*								m_WorldMapQuality;
-	QCheckBox*							m_PerPixelCheck;
-	QCheckBox*							m_ShadowsCheck;
-	QCheckBox*							m_ShadowMapsCheck;
-	QList<QWidget*>						m_GlossWidgets;
-	QList<QWidget*>						m_ShadowWidgets;
-	QList<QWidget*>						m_ShadowMapWidgets;
-	QLabel*								m_ShadowDistanceLabel;
-	QList<QCheckBox*>					m_ShadowCasterChecks;
-	QLabel*								m_ShadowBiasLabel;
-	QLabel*								m_ShadowCreatureDistanceLabel;
-	QLabel*								m_ShadowLightsLabel;
-	QLabel*								m_SkinGlossLabel;
-	QLabel*								m_ClothGlossLabel;
-	QLabel*								m_HairGlossLabel;
 
 	QCheckBox*							m_PerPixelCheck;
 	QCheckBox*							m_ShadowsCheck;
@@ -89,6 +75,7 @@ private:
 	QList<QCheckBox*>					m_ShadowCasterChecks;
 	QLabel*								m_ShadowBiasLabel;
 	QLabel*								m_ShadowCreatureDistanceLabel;
+	QLabel*								m_ShadowLightsLabel;
 	QLabel*								m_SkinGlossLabel;
 	QLabel*								m_ClothGlossLabel;
 	QLabel*								m_HairGlossLabel;

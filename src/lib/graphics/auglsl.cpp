@@ -1545,7 +1545,7 @@ void AuGLSL::ClearSunShadowMap()
 
 bool AuGLSL::BeginLightShadowMaps(int size, int lamps)
 {
-	if(!m_GLf || size < 16 || slots < 1)
+	if(!m_GLf || size < 16 || lamps < 1)
 		return false;
 	int layers = LIGHT_SHADOW_FACES*qMin(lamps, LIGHT_SHADOW_SLOTS);
 	if(m_LightShadowSize != size || m_LightShadowLayers != layers)

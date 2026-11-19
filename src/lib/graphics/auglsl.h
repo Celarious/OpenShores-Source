@@ -18890,12 +18890,12 @@ public:
 		Q_UNUSED(enabled);
 	}
 
-	virtual void SetModelView(const AuMatrix4x4& mv) const
+	virtual void SetModelViewUniform(const AuMatrix4x4& mv) const
 	{
 		SetUniformMatrix(m_GLf, m_mv, mv);
 	}
 
-	virtual void SetProjection(const AuMatrix4x4& p)
+	virtual void SetProjectionUniform(const AuMatrix4x4& p)
 	{
 		SetUniformMatrix(m_GLf, m_p, p);
 	}
@@ -19017,12 +19017,12 @@ public:
 		m_GLf->glActiveTexture(GL_TEXTURE0);
 	}
 
-	virtual void SetModelView(const AuMatrix4x4& mv) const
+	virtual void SetModelViewUniform(const AuMatrix4x4& mv) const
 	{
 		SetUniformMatrix(m_GLf, m_mvA, mv);
 	}
 
-	virtual void SetProjection(const AuMatrix4x4& p)
+	virtual void SetProjectionUniform(const AuMatrix4x4& p)
 	{
 		SetUniformMatrix(m_GLf, m_pA, p);
 	}
