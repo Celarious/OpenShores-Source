@@ -81,20 +81,6 @@ private:
 	QLabel*								m_ClothGlossLabel;
 	QLabel*								m_HairGlossLabel;
 
-	QCheckBox*							m_PerPixelCheck;
-	QCheckBox*							m_ShadowsCheck;
-	QCheckBox*							m_ShadowMapsCheck;
-	QList<QWidget*>						m_GlossWidgets;
-	QList<QWidget*>						m_ShadowWidgets;
-	QList<QWidget*>						m_ShadowMapWidgets;
-	QLabel*								m_ShadowDistanceLabel;
-	QList<QCheckBox*>					m_ShadowCasterChecks;
-	QLabel*								m_ShadowBiasLabel;
-	QLabel*								m_ShadowCreatureDistanceLabel;
-	QLabel*								m_SkinGlossLabel;
-	QLabel*								m_ClothGlossLabel;
-	QLabel*								m_HairGlossLabel;
-
 public:
 	AuSetRender(bool glContextOk, QWidget *parent=0);
 	~AuSetRender();

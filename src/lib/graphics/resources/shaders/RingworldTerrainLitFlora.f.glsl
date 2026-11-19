@@ -495,6 +495,8 @@ void main()
 
 #ifdef PER_PIXEL_LIGHTING
 	vec4 vertColor = vec4(computeLighting(light, vertLitP, normalize(vertLitN), vertLitCity, vertLitVegDensity), 1) * vertLitScale;
+	vec4 vertColorPaved = vec4(computeLighting(light, vertLitP, normalize(vertLitN), vertLitCity, 0.0), 1) * vertLitScale;
+	vec4 vertColorHardPaved = vec4(computeLighting(light, vertLitP, normalize(vertLitN), 1.0, 0.0), 1) * vertLitScale;
 #endif
 	// Modulate with vertColor for lighting effect. Pavement is not shaded by vegetation, and hard pavement is fully lit
 	// by the city.

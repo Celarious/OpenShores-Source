@@ -358,6 +358,10 @@ out vec4								fragColor;				// Outgoing fragment color.
 
 void main()
 {
+#ifdef PER_PIXEL_LIGHTING
+	vec4 vertColor = vec4(computeLighting(light, vertLitShininess, vertLitP, normalize(vertLitN)), 1) * vertLitScale;
+	vertColor.rgb = min(vertColor.rgb + glow, vec3(1.5, 1.5, 1.5));
+#endif
 	if(directTexture)
 	{
 		vec4 surface = texture(texPaletteLow, vertTexCoord);
@@ -426,10 +430,6 @@ void main()
 	// Combine the low res texture lookup with the high res texture lookup based on depth in the scene.
 	fragColor = mix(highColor, lowColor, smoothstep(.9, 1.01, gl_FragCoord.z));
 
-#ifdef PER_PIXEL_LIGHTING
-	vec4 vertColor = vec4(computeLighting(light, vertLitShininess, vertLitP, normalize(vertLitN)), 1) * vertLitScale;
-	vertColor.rgb = min(vertColor.rgb + glow, vec3(1.5, 1.5, 1.5));
-#endif
 	// Modulate with vertColor for lighting effect.
 	fragColor *= vertColor;
 

@@ -462,6 +462,7 @@ void main()
 
 #ifdef PER_PIXEL_LIGHTING
 	vec4 vertColor = vec4(computeLighting(light, vertLitP, normalize(vertLitN), vertLitCity), 1) * vertLitScale;
+	vec4 vertColorHardPaved = vec4(computeLighting(light, vertLitP, normalize(vertLitN), 1.0), 1) * vertLitScale;
 #endif
 	// Modulate with vertColor for lighting effect. Hard pavement is fully lit by the city.
 	fragColor *= mix(vertColor, paveHard ? vertColorHardPaved : vertColor, paveCover);

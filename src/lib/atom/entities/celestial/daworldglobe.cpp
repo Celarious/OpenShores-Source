@@ -25,6 +25,7 @@
 #include "ausphere.h"
 #include "auterraininfo.h"
 #include "auvillage.h"
+#include "auviewfrustum.h"
 #include "auzoneresource.h"
 #include "daanimal.h"
 #include "daarena.h"
@@ -7647,44 +7648,6 @@ public:
 GLuint AuFloraInstances::s_Buffer = 0;
 GLuint AuFloraInstances::s_Texture = 0;
 
-class AuViewFrustum
-{
-private:
-	double								m_Plane[5][4];
-
-public:
-	explicit AuViewFrustum(const AuMatrix4x4& projection)
-	{
-		const double* m = projection.GLMatrix();
-		double row[4][4];
-		for(int r=0; r<4; r++)
-			for(int c=0; c<4; c++)
-				row[r][c] = m[c*4 + r];
-		const int axis[5] = { 0, 0, 1, 1, 2 };
-		const double sign[5] = { 1, -1, 1, -1, 1 };
-		for(int p=0; p<5; p++)
-		{
-			double len = 0;
-			for(int c=0; c<4; c++)
-				m_Plane[p][c] = row[3][c] + sign[p] * row[axis[p]][c];
-			for(int c=0; c<3; c++)
-				len += m_Plane[p][c] * m_Plane[p][c];
-			len = sqrt(len);
-			if(len > 0)
-				for(int c=0; c<4; c++)
-					m_Plane[p][c] /= len;
-		}
-	}
-
-	inline bool Sees(const AuPoint& p, double radius) const
-	{
-		for(int k=0; k<5; k++)
-			if(m_Plane[k][0]*p.x + m_Plane[k][1]*p.y + m_Plane[k][2]*p.z + m_Plane[k][3] < -radius)
-				return false;
-		return true;
-	}
-};
-
 static const double s_GrassReach = 8, s_ShrubReach = 40, s_TreeReach = 140;
 
 static float FloraLodFt(bool tree)
@@ -8648,7 +8611,6 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 
 	const bool instancing = g_Au.NewFlora();
 	AuFloraInstances instances;
-	const AuViewFrustum frustum(projection);
 	double gfadeDist = g_Au.GrassViewRangeFt() * .8;				// Distance at which plants start to become transparent
 	double gfadeRange = g_Au.GrassViewRangeFt() - gfadeDist;
 	for(QMap<AuResKey, AuGlobeFlora>::const_iterator gi = m_Grass.cbegin(); gi != m_Grass.cend(); gi++)
@@ -8662,7 +8624,7 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 			AuPoint viewPt = model.Project((*gi).Location());
 			if(viewPt.z > 0)
 				continue;
-			if(instancing && !frustum.Sees(viewPt, s_GrassReach))
+			if(instancing && !frustum.IntersectsSphere(viewPt, s_GrassReach))
 				continue;	// Grass is behind viewer.
 		}
 
@@ -8821,7 +8783,7 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 			}
 			return slot;
 		};
-		if(instancing && !frustum.Sees(viewPt, s_ShrubReach))
+		if(instancing && !frustum.IntersectsSphere(viewPt, s_ShrubReach))
 			continue;
 		const float lightShare = instancing ? FloraLodBlend(sqrtf((float)viewPt.Length2()), FloraLodFt(false)) : 0.f;
 
@@ -8970,7 +8932,7 @@ void DaWorldGlobe::RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4&
 			}
 			return slot;
 		};
-		if(instancing && !frustum.Sees(viewPt, s_TreeReach))
+		if(instancing && !frustum.IntersectsSphere(viewPt, s_TreeReach))
 			continue;
 		const float lightShare = instancing ? FloraLodBlend(sqrtf((float)viewPt.Length2()), FloraLodFt(true)) : 0.f;
 

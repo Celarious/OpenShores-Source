@@ -1052,6 +1052,7 @@ AuGLSL::AuGLSL()
 
 void AuGLSL::CreatePrograms()
 {
+	m_LegacyTerrainReady = false;
 	m_Animal = new AuGLSLAnimal;
 	m_AnimalFog = new AuGLSLAnimalFog;
 	m_AnimalGlobe = new AuGLSLAnimalGlobe;
@@ -1300,6 +1301,9 @@ void AuGLSL::DestroyPrograms(bool deleteGLPrograms)
 		m_SpriteSizeColor->DeleteProgram();
 		m_TerrainLit->DeleteProgram();
 		m_TerrainLitFlora->DeleteProgram();
+		m_LegacyTerrainLit->DeleteProgram();
+		m_LegacyTerrainLitFlora->DeleteProgram();
+		m_LegacyRingworldTerrainLitFlora->DeleteProgram();
 		m_TexBar->DeleteProgram();
 		m_TexOffset->DeleteProgram();
 		m_Texture->DeleteProgram();
