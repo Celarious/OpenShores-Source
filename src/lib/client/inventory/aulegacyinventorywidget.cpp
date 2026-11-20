@@ -166,6 +166,16 @@ AuGearPos AuLegacyInventoryWidget::ItemAt(const QPoint& point) const
 	return AuGearPos();
 }
 
+QPoint AuLegacyInventoryWidget::ContainerDropCell(const QPoint& point) const
+{
+	const QPoint offset = point - m_Grid.topLeft();
+	QPoint cell(offset.x() / CellPixels, offset.y() / CellPixels);
+	const AuGearPos target = ItemAt(point);
+	if(!target.IsValid() || target == m_PressedItem)
+		cell -= m_DragOffset;
+	return cell;
+}
+
 void AuLegacyInventoryWidget::Select(const AuGearPos& position)
 {
 	m_Selection = position;
@@ -241,11 +251,31 @@ void AuLegacyInventoryWidget::paintEvent(QPaintEvent*)
 			}
 		}
 	}
+	if(m_Dragging && m_Grid.contains(m_DragPoint))
+	{
+		const AuItem* dragged = m_Gear.ItemAt(m_PressedItem);
+		if(dragged)
+		{
+			const QPoint cell = ContainerDropCell(m_DragPoint);
+			const QSize footprint = dragged->PackSize();
+			const QPoint origin = m_Grid.topLeft() + QPoint(cell.x() * CellPixels, cell.y() * CellPixels);
+			painter.save();
+			painter.setClipRect(m_Grid);
+			painter.setPen(QColor(0, 255, 255));
+			painter.setBrush(QColor(0, 255, 255, 48));
+			for(int y = 0; y < footprint.height(); ++y)
+				for(int x = 0; x < footprint.width(); ++x)
+					painter.drawRect(QRect(origin + QPoint(x * CellPixels, y * CellPixels),
+						QSize(CellPixels, CellPixels)).adjusted(0, 0, -1, -1));
+			painter.restore();
+		}
+	}
 }
 
 void AuLegacyInventoryWidget::mousePressEvent(QMouseEvent* event)
 {
 	m_PressPoint = event->pos();
+	m_DragPoint = event->pos();
 	const QPoint point = event->pos();
 	m_PressedItem = ItemAt(point);
 	m_Dragging = false;
@@ -269,12 +299,15 @@ void AuLegacyInventoryWidget::mousePressEvent(QMouseEvent* event)
 
 void AuLegacyInventoryWidget::mouseMoveEvent(QMouseEvent* event)
 {
+	m_DragPoint = event->pos();
 	if((event->buttons() & Qt::LeftButton) && m_PressedItem.IsValid()
 		&& (event->pos() - m_PressPoint).manhattanLength() >= QApplication::startDragDistance())
 	{
 		m_Dragging = true;
 		setCursor(Qt::ClosedHandCursor);
 	}
+	if(m_Dragging)
+		update();
 }
 
 void AuLegacyInventoryWidget::mouseReleaseEvent(QMouseEvent* event)
@@ -287,13 +320,8 @@ void AuLegacyInventoryWidget::mouseReleaseEvent(QMouseEvent* event)
 			emit DropRequested();
 		else if(m_Grid.contains(point))
 		{
-			QPoint offset = point - m_Grid.topLeft();
-			QPoint cell(offset.x() / CellPixels, offset.y() / CellPixels);
-			const AuGearPos target = ItemAt(point);
-			if(!target.IsValid() || target == m_PressedItem)
-				cell -= m_DragOffset;
 			emit MoveRequested(m_PressedItem, IP_NumInventoryPos, m_Container,
-				cell);
+				ContainerDropCell(point));
 		}
 		else
 			for(int index = 0; index < m_Regions.size(); ++index)
@@ -311,6 +339,7 @@ void AuLegacyInventoryWidget::mouseReleaseEvent(QMouseEvent* event)
 	}
 	m_Dragging = false;
 	m_PressedItem = AuGearPos();
+	update();
 }
 
 void AuLegacyInventoryWidget::mouseDoubleClickEvent(QMouseEvent* event)

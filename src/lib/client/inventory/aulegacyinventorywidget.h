@@ -43,6 +43,7 @@ private:
 	AuGearPos m_Container;
 	AuGearPos m_PressedItem;
 	QPoint m_PressPoint;
+	QPoint m_DragPoint;
 	QPoint m_DragOffset;
 	QList<Region> m_Regions;
 	QRect m_Grid;
@@ -53,6 +54,7 @@ private:
 	void Rebuild();
 	void Select(const AuGearPos& position);
 	AuGearPos ItemAt(const QPoint& point) const;
+	QPoint ContainerDropCell(const QPoint& point) const;
 	QRect BodyRectangle(int position) const;
 };
 
