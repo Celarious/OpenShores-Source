@@ -259,10 +259,14 @@ void AuLegacyInventoryWidget::paintEvent(QPaintEvent*)
 			const QPoint cell = ContainerDropCell(m_DragPoint);
 			const QSize footprint = dragged->PackSize();
 			const QPoint origin = m_Grid.topLeft() + QPoint(cell.x() * CellPixels, cell.y() * CellPixels);
+			const QRect previewRect = QRect(origin, QSize(footprint.width() * CellPixels, footprint.height() * CellPixels));
+			bool isBlocked = !m_Grid.contains(previewRect);
 			painter.save();
 			painter.setClipRect(m_Grid);
-			painter.setPen(QColor(0, 255, 255));
-			painter.setBrush(QColor(0, 255, 255, 48));
+			QColor rectColor = isBlocked ? QColor(Qt::red) : QColor(Qt::cyan);
+			painter.setPen(rectColor);
+			rectColor.setAlpha(48);
+			painter.setBrush(rectColor);
 			for(int y = 0; y < footprint.height(); ++y)
 				for(int x = 0; x < footprint.width(); ++x)
 					painter.drawRect(QRect(origin + QPoint(x * CellPixels, y * CellPixels),
