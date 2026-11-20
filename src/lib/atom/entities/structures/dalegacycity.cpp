@@ -5948,16 +5948,71 @@ bool DaLegacyCity::GraphicsReady() const
 		&& m_Runtime->drawRevision == m_Runtime->revision && m_Runtime->uploads.isEmpty();
 }
 
-void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
-	AuModelMatrixHash& matrices, const DaPerson* sceneAtom, bool beforeTerrain)
+unsigned int DaLegacyCity::SunShadowFamilies() const
 {
+	return 1u << SSF_Structures;
+}
+
+unsigned int DaLegacyCity::SunShadowVariants(int family) const
+{
+	Q_UNUSED(family);
+	return 1u << SSV_ModelAlpha;
+}
+
+void DaLegacyCity::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& matrices,
+	const DaPerson* sceneAtom, AuSunShadowPass& pass)
+{
+	Q_UNUSED(sceneAtom);
 	if(!ari.re || !g_Au.IsLegacyGeneration()) return;
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
-	const auto model = matrices.constFind(Id());
-	if(!world || model == matrices.cend()) return;
+	const auto cityModel = matrices.constFind(Id());
+	if(!world || cityModel == matrices.cend()) return;
+	const AuMatrix4x4 worldModel = cityModel->Matrix() * Transform().Inverse();
 	DaAtomList stationOccupants;
 	world->ListNormalSubatoms(stationOccupants);
 	QHash<quint64, AuMatrix4x4> turretModels;
+	RenderTurretMatrices(stationOccupants, turretModels);
+
+	QMutexLocker lock(&m_Runtime->lock);
+	// Reuse uploaded geometry. Shadow passes must not start model jobs or
+	// upload meshes while a depth shader is selected.
+	QHash<quint32, AuMatrix4x4> buildingModels;
+	for(const auto& building : m_Runtime->buildings)
+	{
+		AuMatrix4x4 placement;
+		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
+			building.state.facingRadians, nullptr, AuPoint(), placement);
+		buildingModels.insert(building.state.id, worldModel * placement);
+	}
+	const auto& shader = ari.re->GLSL().ModelDepthAlphaShader();
+	for(const auto& draw : m_Runtime->drawBatches)
+	{
+		// Entrance masks hide terrain; they are not physical surfaces.
+		if(draw.depthOnly || !draw.vao.VAO()) continue;
+		const auto found = buildingModels.constFind(draw.development);
+		if(found == buildingModels.cend()) continue;
+		AuMatrix4x4 model = *found;
+		const auto turret = turretModels.constFind((quint64(draw.development) << 32) | draw.turretId);
+		if(draw.turretId && turret != turretModels.cend()) model = worldModel * *turret;
+		AuPoint minimum, maximum;
+		if(draw.vao.GetBounds(minimum, maximum))
+		{
+			const AuPoint center = model.Project((minimum + maximum) * .5);
+			const double radius = minimum.Distance(maximum) * .5;
+			if(!pass.Asked(center.x, center.y, center.z, radius)
+				|| !pass.Reaches(center.x, center.y, center.z, radius)) continue;
+		}
+		shader.SetModelView(model);
+		// Ordinary openings are cut out. Window effects replace transparent
+		// atlas pixels with glass, independent of camera-proximity fading.
+		shader.SetTexture(draw.texture, draw.windowEffect ? 0.f : .91f);
+		draw.vao.SelectGL(); draw.vao.DrawGL(); draw.vao.DeselectGL();
+		pass.Drew();
+	}
+}
+
+void DaLegacyCity::RenderTurretMatrices(const DaAtomList& stationOccupants, QHash<quint64, AuMatrix4x4>& turretModels)
+{
 	QSet<quint64> playerTurrets;
 	for(const DaAtom* atom : stationOccupants)
 		if(const auto* gunner = dynamic_cast<const DaPerson*>(atom))
@@ -6004,6 +6059,19 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		if(development != developments.cend() && TurretMatrices(*development, quint16(angles.key()),
 			float(angles->x), float(angles->y), gun, muzzle, &key) && !playerTurrets.contains(key)) turretModels.insert(key, gun);
 	}
+}
+
+void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
+	AuModelMatrixHash& matrices, const DaPerson* sceneAtom, bool beforeTerrain)
+{
+	if(!ari.re || !g_Au.IsLegacyGeneration()) return;
+	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
+	const auto model = matrices.constFind(Id());
+	if(!world || model == matrices.cend()) return;
+	DaAtomList stationOccupants;
+	world->ListNormalSubatoms(stationOccupants);
+	QHash<quint64, AuMatrix4x4> turretModels;
+	RenderTurretMatrices(stationOccupants, turretModels);
 	UpdateSiteTerrain(ari);
 	if(!ari.IsViewTopDown() && world->AtomType() == ATOM_WorldGlobe)
 	{

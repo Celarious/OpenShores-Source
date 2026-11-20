@@ -219,6 +219,7 @@ enum AuSunShadowVariant
 	SSV_Model,
 	SSV_Sc,
 	SSV_Low,
+	SSV_ModelAlpha,
 	SSV_Count
 };
 

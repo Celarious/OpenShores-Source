@@ -1233,6 +1233,9 @@ static bool SelectSunShadowFamily(AuGLSL& glsl, int family, int variant, const A
 	case SSV_Model:
 		glsl.ModelDepthShader().Select(lightProjection);
 		return true;
+	case SSV_ModelAlpha:
+		glsl.ModelDepthAlphaShader().Select(lightProjection);
+		return true;
 	case SSV_Sc:
 		glsl.ScDepthShader().Select(lightProjection, re);
 		return true;
@@ -1269,6 +1272,9 @@ static void DeselectSunShadowFamily(AuGLSL& glsl, int family, int variant)
 		break;
 	case SSV_Model:
 		glsl.ModelDepthShader().Deselect();
+		break;
+	case SSV_ModelAlpha:
+		glsl.ModelDepthAlphaShader().Deselect();
 		break;
 	case SSV_Sc:
 		glsl.ScDepthShader().Deselect();

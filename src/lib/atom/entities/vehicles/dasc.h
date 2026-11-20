@@ -59,7 +59,8 @@ class AUATOM_DLL DaSc : public DaVessel
 	qint64 m_LegacyAlertSecond = -1;
 	bool CreateLegacyDeviceObjects(AuAtomRenderInfo& ari);
 	void CreateContrailDeviceObjects(AuAtomRenderInfo& ari);
-	void RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ari, const AuMatrix4x4& model, bool transparent);
+	void RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ari, const AuMatrix4x4& model,
+		bool transparent, AuSunShadowPass* shadowPass=0);
 
 public:
 	bool LegacyNpcOccluded(const AuBox& bounds, const AuPoint& eye) const;

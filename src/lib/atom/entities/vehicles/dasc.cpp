@@ -3570,7 +3570,8 @@ bool DaSc::LegacyNpcOccluded(const AuBox& bounds, const AuPoint& eye) const
 	return m_LegacyScModel->NpcOccluded(bounds, eye, closedDoors);
 }
 
-void DaSc::RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ari, const AuMatrix4x4& model, bool transparent)
+void DaSc::RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ari, const AuMatrix4x4& model,
+	bool transparent, AuSunShadowPass* shadowPass)
 {
 	if(!m_LegacyScModel || !m_LegacyScModel->Ready()) return;
 	GLboolean polygonOffsetEnabled;
@@ -3582,24 +3583,27 @@ void DaSc::RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ar
 	const bool powered = CapacitorLevel() > 0;
 	// AuAtom13:1803c9950 gates berth, life-support and surgery overlays with
 	// life-support allocation alone, even when the capacitor is empty.
-	const bool lifeSupportAllocated = GetPowerConsumption(SYS_LifeSupport) > 0;
-	const bool powerPlantWorking = PowerPlantWorking();
-	const bool maneuverWorking = GravityDriveWorking();
-	const bool maneuverHold = GravityDriveState() == GD_Hold;
-	const bool sensorWorking = SensorsWorking();
-	const bool shieldWorking = ShieldsWorkingAndUp();
-	const quint16 warpId = FTLWarpDrive();
-	const quint16 ftlId = warpId ? warpId : FTLWormholeDrive();
+	const bool lifeSupportAllocated = !shadowPass && GetPowerConsumption(SYS_LifeSupport) > 0;
+	const bool powerPlantWorking = !shadowPass && PowerPlantWorking();
+	const bool maneuverWorking = !shadowPass && GravityDriveWorking();
+	const bool maneuverHold = !shadowPass && GravityDriveState() == GD_Hold;
+	const bool sensorWorking = !shadowPass && SensorsWorking();
+	const bool shieldWorking = !shadowPass && ShieldsWorkingAndUp();
+	const quint16 warpId = shadowPass ? 0 : FTLWarpDrive();
+	const quint16 ftlId = shadowPass ? 0 : warpId ? warpId : FTLWormholeDrive();
 	const bool ftlOn = powered && ftlId && FTLDriveState(ftlId) == FTL_DRIVE_On;
 	const FTL_COMMIT ftlCommit = ftlId ? FTLDriveCommitState(ftlId) : FTL_COMMIT_Dormant;
 	const bool ftlHullHot = ftlOn && ftlCommit >= FTL_COMMIT_ChargedBegin && ftlCommit <= FTL_COMMIT_ChargedEnd;
 	QSet<quint16> firingBays;
 	// AuAtom13:1803c9950 lights a bay's units only during the first two
 	// seconds of its firing sequence, independently of the capacitor.
-	m_BayLock.lockForRead();
-	for(const auto& bay : m_BayFired)
-		if(bay.second.m_When.ElapsedSec() <= 2) firingBays.insert(bay.first);
-	m_BayLock.unlock();
+	if(!shadowPass)
+	{
+		m_BayLock.lockForRead();
+		for(const auto& bay : m_BayFired)
+			if(bay.second.m_When.ElapsedSec() <= 2) firingBays.insert(bay.first);
+		m_BayLock.unlock();
+	}
 	const qint64 frameTime = AuTime::CurrentMSecsSinceEpoch() / LegacyEffectFrameMSec;
 	const bool exteriorLightEnabled = m_MyExtLight >= 0 && ari.re->Light(m_MyExtLight).m_bEnabled;
 	QHash<quint16, AuMatrix4x4> turretModels;
@@ -3638,6 +3642,23 @@ void DaSc::RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ar
 		if(transparent && (draw.cutout || !draw.translucent)) continue;
 		if(!transparent && !draw.cutout && draw.opacity < .999f) continue;
 		const INTERIOR_LIGHT light = powered ? InteriorLight(draw.roomName) : INTLIGHT_Dark;
+		// The colour and depth passes share door frames, turret transforms,
+		// atlas insets and the cutout/opaque material rules.
+		// On and Dim use the illuminated atlas; Off and loss of capacitor
+		// charge use its original unlit counterpart, as in the offline renderer.
+		shader.SetSurfaceTexture(0, light == INTLIGHT_Dark ? draw.unlitTexture : draw.texture);
+		const float discardAlpha = !draw.cutout ? .01f
+			: light == INTLIGHT_Bright ? .2f : draw.interior ? .1f : 0.f;
+		shader.SetGlowDiscard(0, 0, 0, discardAlpha);
+		shader.SetLegacySurface(draw.cutout ? 1 : transparent ? 3 : 2,
+			draw.textureInset.x(), draw.textureInset.y(), draw.opacity);
+		shader.SetModelView(turretModels.value(draw.turretId, model));
+		if(shadowPass)
+		{
+			draw.vao.DrawSc(shader, effects, 0);
+			shadowPass->Drew();
+			continue;
+		}
 		if(draw.interior)
 		{
 			float ambientR, ambientG, ambientB;
@@ -3657,14 +3678,6 @@ void DaSc::RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ar
 				shader.SetSunEnabled(sunIndex, ari.re->Sun(sunIndex).m_Enabled && !m_SunsBlocked);
 			if(m_MyExtLight >= 0) shader.SetLightEnabled(m_MyExtLight, exteriorLightEnabled);
 		}
-		// As in the offline renderer, On and Dim use the illuminated atlas;
-		// Off and loss of capacitor charge use its original unlit counterpart.
-		shader.SetSurfaceTexture(0, light == INTLIGHT_Dark ? draw.unlitTexture : draw.texture);
-		const float discardAlpha = !draw.cutout ? .01f
-			: light == INTLIGHT_Bright ? .2f : draw.interior ? .1f : 0.f;
-		shader.SetGlowDiscard(0, 0, 0, discardAlpha);
-		shader.SetLegacySurface(draw.cutout ? 1 : transparent ? 3 : 2,
-			draw.textureInset.x(), draw.textureInset.y(), draw.opacity);
 		GLuint effectTexture = 0;
 		const bool effectActive = draw.effectFirstFrame == 20 ? powerPlantWorking
 			: draw.effectFirstFrame == 16 ? maneuverWorking
@@ -3686,7 +3699,6 @@ void DaSc::RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ar
 		// Each draw has one recovered effect atlas region; native vertex data
 		// still controls which surfaces receive the glowing overlay.
 		shader.SetEffectTexture(effectTexture, effectTexture ? 2 : 0);
-		shader.SetModelView(turretModels.value(draw.turretId, model));
 		const bool prioritizeHull = draw.hullSurface && !transparent;
 		if(prioritizeHull)
 		{
@@ -3706,6 +3718,7 @@ void DaSc::RenderLegacyTextures(const AuGLSLScBase& shader, AuAtomRenderInfo& ar
 	shader.SetEffectTexture(0, 0);
 	shader.SetLegacySurface(0);
 	shader.SetGlowDiscard(0, 0, 0, .01f);
+	if(shadowPass) return;
 	shader.SetAmbientLight(m_AmbientR, m_AmbientG, m_AmbientB);
 	shader.SetAmbientLightUp(m_AmbientUp);
 	for(int sunIndex = 0; sunIndex < MAX_SUNS; ++sunIndex)
@@ -18772,6 +18785,12 @@ void DaSc::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& rmod, 
 	const AuPoint& pv = rmod.ViewLoc(Id());
 	if(!sp.Asked(pv.x, pv.y, pv.z, reach))
 		return;
+	if(IsLegacyDebug())
+	{
+		if(!sp.Reaches(pv.x, pv.y, pv.z, reach)) return;
+		RenderLegacyTextures(ari.re->GLSL().ScDepthAlphaShader(), ari, rmod.Matrix(Id()), false, &sp);
+		return;
+	}
 	if(m_OpaqueVAOs.empty() && m_RoomOpaqueVAOs.empty())
 		return;
 	if(!sp.Reaches(pv.x, pv.y, pv.z, reach))

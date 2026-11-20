@@ -325,6 +325,10 @@ public:
 	void RenderPreTerrain(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom);
 	bool GraphicsReady() const;
+	unsigned int SunShadowFamilies() const override;
+	unsigned int SunShadowVariants(int family) const override;
+	void RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash& matrices, const DaPerson* sceneAtom,
+		AuSunShadowPass& pass) override;
 	void RenderEnvironmentObject(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom, AuRenderLastMap& last,
 		RENDERPASS pass, DaAtomList& sc, DaAtomList& scFog, DaAtomList& scGlobe,
@@ -340,6 +344,7 @@ private:
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom) const;
 	void RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& ari,
 		AuModelMatrixHash& matrices, const DaPerson* sceneAtom, bool beforeTerrain);
+	void RenderTurretMatrices(const DaAtomList& stationOccupants, QHash<quint64, AuMatrix4x4>& turretModels);
 	void RenderBuildingFires(const AuMatrix4x4& projection, AuAtomRenderInfo& ari, AuModelMatrixHash& matrices);
 	friend class AuLegacyCity::PowerImportBatch;
 	DaLegacyCity(const DaLegacyCity& city);

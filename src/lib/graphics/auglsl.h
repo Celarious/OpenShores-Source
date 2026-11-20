@@ -19052,6 +19052,7 @@ public:
 class AUGL_DLL AuGLSLScDepthAlpha : public AuGLSLScDepth
 {
 private:
+	GLint m_discardAlpha;
 	GLint								m_mvA;
 	GLint								m_pA;
 	GLint								m_OldTexture[SCTEXI_Count];
@@ -19060,6 +19061,7 @@ private:
 public:
 	AuGLSLScDepthAlpha()
 	{
+		m_discardAlpha = -1;
 		m_mvA = -1;
 		m_pA = -1;
 		for(int t=0; t<SCTEXI_Count; t++)
@@ -19093,6 +19095,7 @@ public:
 		Q_UNUSED(re);
 		AuGLSLProgram::Select();
 		SetUniformMatrix(m_GLf, m_pA, projection);
+		SetLegacySurface(0);
 
 		for(int t=0; t<SCTEXI_Count; t++)
 		{
@@ -19124,6 +19127,14 @@ public:
 		for(int t=0; t<SCTEXI_Count; t++)
 			SetSurfaceTexture(t, tex[t]);
 		m_GLf->glActiveTexture(GL_TEXTURE0);
+	}
+
+	virtual void SetGlowDiscard(float glowR, float glowG, float glowB, float discardAlpha) const
+	{
+		Q_UNUSED(glowR);
+		Q_UNUSED(glowG);
+		Q_UNUSED(glowB);
+		m_GLf->glUniform1f(m_discardAlpha, discardAlpha);
 	}
 };
 
@@ -19210,12 +19221,17 @@ public:
 class AUGL_DLL AuGLSLModelDepth : public AuGLSLProgram
 {
 private:
+	bool m_Textured;
+	GLint m_tex, m_alphaCutoff, m_OldTexture0;
 	GLint								m_mv;
 	GLint								m_p;
 
 public:
-	AuGLSLModelDepth()
+	AuGLSLModelDepth(bool textured=false)
 	{
+		m_Textured = textured;
+		m_tex = m_alphaCutoff = -1;
+		m_OldTexture0 = 0;
 		m_mv = -1;
 		m_p = -1;
 	}
@@ -19224,13 +19240,35 @@ public:
 
 	virtual QString Name() const
 	{
-		return QString("ModelDepth");
+		return QString(m_Textured ? "ModelDepthAlpha" : "ModelDepth");
 	}
 
 	inline void Select(const AuMatrix4x4& projection)
 	{
 		AuGLSLProgram::Select();
 		SetUniformMatrix(m_GLf, m_p, projection);
+		if(m_Textured)
+		{
+			m_GLf->glActiveTexture(GL_TEXTURE0);
+			m_GLf->glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_OldTexture0);
+		}
+	}
+
+	virtual void Deselect()
+	{
+		AuGLSLProgram::Deselect();
+		if(m_Textured)
+		{
+			m_GLf->glActiveTexture(GL_TEXTURE0);
+			m_GLf->glBindTexture(GL_TEXTURE_2D, m_OldTexture0);
+		}
+	}
+
+	inline void SetTexture(GLuint texture, float alphaCutoff) const
+	{
+		m_GLf->glActiveTexture(GL_TEXTURE0);
+		m_GLf->glBindTexture(GL_TEXTURE_2D, texture);
+		m_GLf->glUniform1f(m_alphaCutoff, alphaCutoff);
 	}
 
 	inline void SetModelView(const AuMatrix4x4& mv) const
@@ -23308,6 +23346,7 @@ private:
 	AuGLSLAnimalDepth*					m_AnimalDepth;
 	AuGLSLBodyDepth*					m_BodyDepth;
 	AuGLSLModelDepth*					m_ModelDepth;
+	AuGLSLModelDepth* m_ModelDepthAlpha;
 	AuGLSLGlobeDepth*					m_GlobeDepth;
 	AuGLSLFloraDepth*					m_FloraDepth;
 	AuGLSLScDepthAlpha*					m_ScDepthAlpha;
@@ -23424,6 +23463,11 @@ public:
 	inline AuGLSLModelDepth& ModelDepthShader()
 	{
 		return *m_ModelDepth;
+	}
+
+	inline AuGLSLModelDepth& ModelDepthAlphaShader()
+	{
+		return *m_ModelDepthAlpha;
 	}
 
 	inline AuGLSLGlobeDepth& GlobeDepthShader()

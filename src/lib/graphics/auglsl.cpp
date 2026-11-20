@@ -86,6 +86,7 @@ static void LoadLegacySurfaceShaders()
 	// update legacy surface modes, city textures and lighting without repacking glsl.har.
 	const char* names[] = {
 		"ModelTexColor.f.glsl", "ModelTexColor.v.glsl",
+		"ModelDepthAlpha.v.glsl", "ModelDepthAlpha.f.glsl", "ScDepthAlpha.f.glsl",
 		"Sc.f.glsl", "ScFog.f.glsl", "ScGlobe.f.glsl", "ScGlobeFog.f.glsl", "ScRingworld.f.glsl", "ScRingworldFog.f.glsl",
 		"Sc.v.glsl", "ScFog.v.glsl", "ScGlobe.v.glsl", "ScGlobeFog.v.glsl", "ScRingworld.v.glsl", "ScRingworldFog.v.glsl",
 		"H_SunLight.glsl", "H_SunLightGlobe.glsl", "H_SunLightRingworld.glsl"
@@ -1150,6 +1151,7 @@ void AuGLSL::CreatePrograms()
 	m_AnimalDepth = new AuGLSLAnimalDepth;
 	m_BodyDepth = new AuGLSLBodyDepth;
 	m_ModelDepth = new AuGLSLModelDepth;
+	m_ModelDepthAlpha = new AuGLSLModelDepth(true);
 	m_GlobeDepth = new AuGLSLGlobeDepth;
 	m_FloraDepth = new AuGLSLFloraDepth;
 	m_ScDepthAlpha = new AuGLSLScDepthAlpha;
@@ -1286,6 +1288,7 @@ void AuGLSL::DestroyPrograms(bool deleteGLPrograms)
 		m_AnimalDepth->DeleteProgram();
 		m_BodyDepth->DeleteProgram();
 		m_ModelDepth->DeleteProgram();
+		m_ModelDepthAlpha->DeleteProgram();
 		m_GlobeDepth->DeleteProgram();
 		m_FloraDepth->DeleteProgram();
 		m_ScDepthAlpha->DeleteProgram();
@@ -1415,6 +1418,7 @@ void AuGLSL::DestroyPrograms(bool deleteGLPrograms)
 	delete m_AnimalDepth;
 	delete m_BodyDepth;
 	delete m_ModelDepth;
+	delete m_ModelDepthAlpha;
 	delete m_GlobeDepth;
 	delete m_FloraDepth;
 	delete m_ScDepthAlpha;
@@ -1730,6 +1734,7 @@ void AuGLSL::Initialize(AuOpenGLFunctions& GLf, unsigned int maxLights)
 	m_AnimalDepth->Build(GLf, opt);
 	m_BodyDepth->Build(GLf, opt);
 	m_ModelDepth->Build(GLf, opt);
+	m_ModelDepthAlpha->Build(GLf, opt);
 	m_GlobeDepth->Build(GLf, opt);
 	m_FloraDepth->Build(GLf, opt);
 	m_ScDepthAlpha->Build(GLf, opt);
@@ -13776,13 +13781,14 @@ void AuGLSLModelDepth::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt
 	Q_ASSERT(!m_Program);
 	m_Program = m_GLf->glCreateProgram();
 
-	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "ModelDepth.v", opt.MaxLights());
+	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, m_Textured ? "ModelDepthAlpha.v" : "ModelDepth.v", opt.MaxLights());
 	m_GLf->glAttachShader(m_Program, vs.Id());
 
-	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, QString("ScDepth.f"), opt.MaxLights());
+	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, m_Textured ? "ModelDepthAlpha.f" : "ScDepth.f", opt.MaxLights());
 	m_GLf->glAttachShader(m_Program, fs.Id());
 
 	m_GLf->glBindAttribLocation(m_Program, 1, "position");
+	if(m_Textured) m_GLf->glBindAttribLocation(m_Program, 2, "texCoordShine");
 
 	m_GLf->glLinkProgram(m_Program);
 	GLint linked;
@@ -13811,6 +13817,12 @@ void AuGLSLModelDepth::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt
 
 	m_mv = GetUniformLoc("mv");
 	m_p = GetUniformLoc("p");
+	if(m_Textured)
+	{
+		m_tex = GetUniformLoc("tex");
+		m_alphaCutoff = GetUniformLoc("alphaCutoff");
+		m_GLf->glUniform1i(m_tex, 0);
+	}
 }
 
 void AuGLSLGlobeDepth::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
@@ -13906,6 +13918,7 @@ void AuGLSLScDepthAlpha::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& o
 
 	m_mvA = GetUniformLoc("mv");
 	m_pA = GetUniformLoc("p");
+	m_discardAlpha = GetUniformLoc("discardAlpha");
 	for(int t=0; t<SCTEXI_Count; t++)
 	{
 		m_texSurface[t] = GetUniformLoc(QString("texSurface[%1]").arg(t));

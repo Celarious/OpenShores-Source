@@ -12,6 +12,9 @@
 	<file alias="RingworldTerrainLitFlora.v.glsl">shaders/RingworldTerrainLitFlora.v.glsl</file>
 	<file alias="ModelTexColor.f.glsl">shaders/ModelTexColor.f.glsl</file>
 	<file alias="ModelTexColor.v.glsl">shaders/ModelTexColor.v.glsl</file>
+	<file alias="ModelDepthAlpha.v.glsl">shaders/ModelDepthAlpha.v.glsl</file>
+	<file alias="ModelDepthAlpha.f.glsl">shaders/ModelDepthAlpha.f.glsl</file>
+	<file alias="ScDepthAlpha.f.glsl">shaders/ScDepthAlpha.f.glsl</file>
 	<file alias="Sc.f.glsl">shaders/Sc.f.glsl</file>
 	<file alias="ScFog.f.glsl">shaders/ScFog.f.glsl</file>
 	<file alias="ScGlobe.f.glsl">shaders/ScGlobe.f.glsl</file>
