@@ -939,6 +939,7 @@ struct DaLegacyCity::Runtime
 		bool twoSided = false;
 		bool interior = false;
 		bool depthOnly = false;
+		bool castsShadow = true;
 		quint8 windowEffect = 0;
 		bool sealedBasement = false;
 		quint8 exteriorLens = 0; // 1: street light, 2: runway light.
@@ -1494,6 +1495,7 @@ struct DaLegacyCity::Runtime
 			prepared.draw.turretId = batch.turretId;
 			prepared.draw.twoSided = batch.twoSided; prepared.draw.interior = batch.interior;
 			prepared.draw.depthOnly = batch.depthOnly;
+			prepared.draw.castsShadow = batch.castsShadow;
 			prepared.draw.windowEffect = batch.textureSlot == 39 ? 3
 				: batch.exteriorGlass ? BuildingWindowEffect(building.state.industryId) : 0;
 			prepared.draw.sealedBasement = batch.sealedBasement;
@@ -5988,7 +5990,7 @@ void DaLegacyCity::RenderSunShadowDepth(AuAtomRenderInfo& ari, AuModelMatrixHash
 	for(const auto& draw : m_Runtime->drawBatches)
 	{
 		// Entrance masks hide terrain; they are not physical surfaces.
-		if(draw.depthOnly || !draw.vao.VAO()) continue;
+		if(draw.depthOnly || !draw.castsShadow || !draw.vao.VAO()) continue;
 		const auto found = buildingModels.constFind(draw.development);
 		if(found == buildingModels.cend()) continue;
 		AuMatrix4x4 model = *found;

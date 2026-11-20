@@ -88,6 +88,7 @@ struct Builder
 	int vertices = 0;
 	bool hasBounds = false;
 	bool noCollision = false;
+	bool castsShadow = true;
 	QString textureFile;
 	float shininess = 0;
 	void Warning(const QString& text)
@@ -113,8 +114,7 @@ struct Builder
 		if(sealedBasement)
 			for(const auto& boundary : glassRooms.value(deck))
 				if(boundary.containsPoint(QPointF(center.x(), center.y()), Qt::OddEvenFill)) { sealedBasement = false; break; }
-		const QString key = QStringLiteral("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10/%11/%12/%13/%14/%15")
-			.arg(slot).arg(deck).arg(interior).arg(doorId).arg(detailId).arg(twoSided).arg(stairs).arg(collisionOnly).arg(depthOnly).arg(equipment).arg(noCollision).arg(textureFile).arg(shininess).arg(sealedBasement).arg(exteriorGlass);
+		const QString key = QStringLiteral("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10/%11/%12/%13/%14/%15/%16").arg(slot).arg(deck).arg(interior).arg(doorId).arg(detailId).arg(twoSided).arg(stairs).arg(collisionOnly).arg(depthOnly).arg(equipment).arg(noCollision).arg(textureFile).arg(shininess).arg(sealedBasement).arg(exteriorGlass).arg(castsShadow);
 		int index = batchIndices.value(key, -1);
 		if(index < 0)
 		{
@@ -125,6 +125,7 @@ struct Builder
 			batch.stairs = stairs;
 			batch.collisionOnly = collisionOnly;
 			batch.noCollision = noCollision;
+			batch.castsShadow = castsShadow;
 			batch.textureFile = textureFile;
 			batch.shininess = shininess;
 			batch.depthOnly = depthOnly;
@@ -866,7 +867,9 @@ void StreetLight(Builder& out, const QPointF& location, int deck, float foundati
 	// Keep lamp triangles in separate batches so nearby solid geometry that
 	// shares their texture retains collision.
 	const bool previousNoCollision = out.noCollision;
+	const bool previousCastsShadow = out.castsShadow;
 	out.noCollision = true;
+	out.castsShadow = false;
 	const double base = deck * AuLegacyBd::DeckHeight;
 	const float twoPi = 6.2831855f;
 	const QVector3D center = Position(location, base);
@@ -894,6 +897,7 @@ void StreetLight(Builder& out, const QPointF& location, int deck, float foundati
 		out.Quad(37, deck, false, shaft[i - 1] + QVector3D(0, 0, 25), shaft[i] + QVector3D(0, 0, 25),
 			rim[i], rim[i - 1], {0, 0}, {1, 0}, {1, 1}, {0, 1});
 	}
+	out.castsShadow = previousCastsShadow;
 	out.noCollision = previousNoCollision;
 }
 

@@ -35,6 +35,7 @@ struct Batch
 	bool stairs = false;
 	bool collisionOnly = false;
 	bool noCollision = false; // Streetlights remain visible without blocking movement.
+	bool castsShadow = true;
 	bool enclosure = false; // City frame, not an authored building aiming surface.
 	bool depthOnly = false; // Original AuBuildingTri window effect 4: terrain mask.
 	bool exteriorGlass = false; // Exterior pane opacity is independent of the terrain render pass.
