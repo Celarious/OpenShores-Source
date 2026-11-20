@@ -4246,13 +4246,24 @@ void AuApp::MoveGearItemToSlot(AuGearPos fromPos, quint8 toSlotType)
 	}
 }
 
-void AuApp::MoveLegacyGear(AuGearPos source, quint8 bodyPosition, AuGearPos containerPosition, QPoint cell)
+bool AuApp::MoveLegacyGear(AuGearPos source, quint8 bodyPosition, AuGearPos containerPosition, QPoint cell)
 {
 	if(!g_Au.IsLegacyGeneration())
-		return;
-	if(IsSingleUserMode())
-		m_I->MoveLegacyGear(source, bodyPosition, containerPosition, cell);
-	else
+		return false;
+	// Apply the exact server move path locally; invalid moves are never sent.
+	AuGear predicted;
+	if(!m_I->MoveLegacyGear(source, bodyPosition, containerPosition, cell, &predicted))
+		return false;
+	// The inventory window reads the render-scene copy, not the main ether.
+	DaPerson* scenePerson = 0;
+	Frame()->View()->LockSceneAtom(&scenePerson);
+	if(scenePerson)
+	{
+		*scenePerson->LockGearForWrite() = predicted;
+		scenePerson->UnlockGear();
+	}
+	Frame()->View()->UnlockSceneAtom();
+	if(!IsSingleUserMode())
 	{
 		QByteArray ba;
 		QDataStream out(&ba, QIODevice::WriteOnly);
@@ -4261,6 +4272,7 @@ void AuApp::MoveLegacyGear(AuGearPos source, quint8 bodyPosition, AuGearPos cont
 		out << source << (quint8)4 << bodyPosition << containerPosition << cell;
 		QueueChatPacket(ba);
 	}
+	return true;
 }
 
 void AuApp::UseGearItem(AuGearPos pos)

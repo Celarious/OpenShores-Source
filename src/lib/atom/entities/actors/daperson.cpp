@@ -10187,11 +10187,11 @@ void DaPerson::MoveGear(const AuGearPos& srcPos, AuGearSlot::SLOTTYPE destSlotTy
 	m_GearLock.unlock();
 }
 
-void DaPerson::MoveLegacyGear(const AuGearPos& source, quint8 bodyPosition,
+bool DaPerson::MoveLegacyGear(const AuGearPos& source, quint8 bodyPosition,
 		const AuGearPos& containerPosition, const QPoint& cell)
 {
 	if(!g_Au.IsLegacyGeneration() || bodyPosition > IP_NumInventoryPos || bodyPosition == IP_EquipOr)
-		return;
+		return false;
 	const bool isPatient = IsPatientStationPose();
 	m_GearLock.lockForWrite();
 	AuLegacyInventory::Normalize(m_Gear);
@@ -10199,12 +10199,14 @@ void DaPerson::MoveLegacyGear(const AuGearPos& source, quint8 bodyPosition,
 	if(!item || (isPatient && bodyPosition <= IP_ClothingUpperTorso
 		&& (item->IsWornOnBody() || item->IsWornOnHead())))
 	{
+		UpdateGearWeight(); // Also replicate unchanged gear to correct rejected predictions.
 		m_GearLock.unlock();
-		return;
+		return false;
 	}
-	if(AuLegacyInventory::MoveItem(m_Gear, source, (INVENTORYPOS)bodyPosition, containerPosition, cell))
-		UpdateGearWeight();
+	const bool moved = AuLegacyInventory::MoveItem(m_Gear, source, (INVENTORYPOS)bodyPosition, containerPosition, cell);
+	UpdateGearWeight(); // A rejected move must still send authoritative gear back.
 	m_GearLock.unlock();
+	return moved;
 }
 
 void DaPerson::MoveGear(const AuGearPos& srcPos, const AuGearPos& destPos)

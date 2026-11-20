@@ -146,6 +146,13 @@ bool AuGearSlot::operator==(const AuGearSlot& gi) const
 		return true;
 	if(!m_Item || !gi.m_Item)
 		return false;
+	if(g_Au.IsLegacyGeneration())
+	{
+		const AuItemContent* contents = m_Item->Content();
+		const AuItemContent* other = gi.m_Item->Content();
+		if(bool(contents) != bool(other) || (contents && *contents != *other))
+			return false;
+	}
 	return *m_Item == *gi.m_Item;
 }
 

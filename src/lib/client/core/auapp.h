@@ -1415,7 +1415,7 @@ public slots:
 	// 'toSlotType' is a AuGearSlot::SLOTTYPE.
 	void MoveGearItemToSlot(AuGearPos fromPos, quint8 toSlotType);
 
-	void MoveLegacyGear(AuGearPos source, quint8 bodyPosition, AuGearPos containerPosition, QPoint cell);
+	bool MoveLegacyGear(AuGearPos source, quint8 bodyPosition, AuGearPos containerPosition, QPoint cell);
 
 	void NameSpecies(AuSpecies species, QString speciesName, AuId discoverer);
 

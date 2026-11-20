@@ -7540,6 +7540,13 @@ bool AuItemContent::operator==(const AuItemContent& c) const
 			return false;
 		if(*(*ii).second != *(*ci).second)
 			return false;
+		if(g_Au.IsLegacyGeneration())
+		{
+			const AuItemContent* contents = (*ii).second->Content();
+			const AuItemContent* other = (*ci).second->Content();
+			if(bool(contents) != bool(other) || (contents && *contents != *other))
+				return false;
+		}
 	}
 
 	return true;

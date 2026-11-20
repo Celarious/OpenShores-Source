@@ -2239,7 +2239,7 @@ public:
 	// Move an item to a slot that already contains an item.
 	void MoveGear(const AuGearPos& srcPos, const AuGearPos& destPos);
 
-	void MoveLegacyGear(const AuGearPos& source, quint8 bodyPosition, const AuGearPos& containerPosition, const QPoint& cell);
+	bool MoveLegacyGear(const AuGearPos& source, quint8 bodyPosition, const AuGearPos& containerPosition, const QPoint& cell);
 
 	// Returns true if the item at srcPos could be moved to the top level slot type. Does not check to see if there is room to
 	// move the item to that slot type, just that it is ok to store the item in the slot type.

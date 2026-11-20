@@ -914,7 +914,7 @@ AuGearWidget::AuGearWidget(QWidget* parent) : QWidget(parent)
 	connect(m_LegacyGrid, SIGNAL(CanvasMinimumChanged()), SLOT(UpdateInventoryLayout()));
 	connect(m_LegacyGrid, SIGNAL(DropRequested()), SLOT(DropClicked()));
 	connect(m_LegacyGrid, SIGNAL(MoveRequested(AuGearPos,quint8,AuGearPos,QPoint)),
-		auApp, SLOT(MoveLegacyGear(AuGearPos,quint8,AuGearPos,QPoint)));
+		SLOT(MoveLegacyItem(AuGearPos,quint8,AuGearPos,QPoint)));
 	lay->addWidget(m_LegacyScroll, row,0, 1,2);
 	lay->setRowStretch(row, 1);
 	lay->setMargin(2);
@@ -1569,6 +1569,12 @@ void AuGearWidget::LegacySelectionChanged(AuGearPos position)
 	m_PressPos = AuGearPos();
 	EnableControls();
 	UpdateInventoryLayout();
+}
+
+void AuGearWidget::MoveLegacyItem(AuGearPos source, quint8 body, AuGearPos container, QPoint cell)
+{
+	if(auApp->MoveLegacyGear(source, body, container, cell))
+		UpdateContents();
 }
 
 void AuGearWidget::UpdateInventoryLayout()

@@ -680,7 +680,8 @@ public:	// Methods
 
 	void MoveGearItemToSlot(const AuGearPos& fromPos, quint8 toSlotType);
 
-	void MoveLegacyGear(const AuGearPos& source, quint8 bodyPosition, const AuGearPos& containerPosition, const QPoint& cell);
+	bool MoveLegacyGear(const AuGearPos& source, quint8 bodyPosition, const AuGearPos& containerPosition, const QPoint& cell,
+		AuGear* result = 0);
 
 	void MoveItemRight(const AuId& itemId, double amount, bool relativeToItem);
 	void MoveItemLeft(const AuId& itemId, double amount, bool relativeToItem);

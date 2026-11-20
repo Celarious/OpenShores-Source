@@ -204,6 +204,7 @@ protected slots:
 	void InspectClicked();
 	void LightClicked();
 	void LegacySelectionChanged(AuGearPos position);
+	void MoveLegacyItem(AuGearPos source, quint8 body, AuGearPos container, QPoint cell);
 	void UpdateInventoryLayout();
 	void NameSpeciesClicked();
 	void SetMessageClicked();
