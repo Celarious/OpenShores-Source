@@ -683,20 +683,10 @@ void Roof(Builder& out, const AuLegacyShip::Room& room)
 	}
 	QVector3D p[4];
 	for(int i = 0; i < 4; ++i) p[i] = Position(boundary.at(i), base);
-	QPointF first = (boundary.at(0) + boundary.at(1)) / 2;
-	QPointF last = (boundary.at(2) + boundary.at(3)) / 2;
-	const double halfWidth = Length(boundary.at(1) - boundary.at(0)) / 2;
+	const RoofRidge ridge = RectangularRoofRidge(boundary, room.roomType == 23);
+	const QPointF first = ridge.first, last = ridge.last;
+	const double halfWidth = ridge.halfWidth;
 	const double rise = halfWidth / 3;
-	if(room.roomType == 23)
-	{
-		const double ridgeLength = Length(last - first);
-		if(ridgeLength <= halfWidth * 2) first = last = (first + last) / 2;
-		else
-		{
-			const QPointF along = Unit(last - first) * halfWidth;
-			first += along; last -= along;
-		}
-	}
 	const QVector3D r0 = Position(first, base + rise), r1 = Position(last, base + rise);
 	const float gableRepeat = room.roomType == 22 ? WallRepeat(13, halfWidth * 2) : 1;
 	const float gableTop = room.roomType == 22 ? float(rise / AuLegacyBd::DeckHeight) : 1;
@@ -927,6 +917,25 @@ int Mesh::TriangleCount() const
 	int count = 0; for(const Batch& batch : batches) count += batch.vertices.size() / 3; return count;
 }
 
+RoofRidge RectangularRoofRidge(const QPolygonF& boundary, bool hip)
+{
+	RoofRidge ridge;
+	ridge.first = (boundary.at(0) + boundary.at(1)) / 2;
+	ridge.last = (boundary.at(2) + boundary.at(3)) / 2;
+	ridge.halfWidth = Length(boundary.at(1) - boundary.at(0)) / 2;
+	if(hip)
+	{
+		const double length = Length(ridge.last - ridge.first);
+		if(length <= ridge.halfWidth * 2) ridge.first = ridge.last = (ridge.first + ridge.last) / 2;
+		else
+		{
+			const QPointF along = Unit(ridge.last - ridge.first) * ridge.halfWidth;
+			ridge.first += along; ridge.last -= along;
+		}
+	}
+	return ridge;
+}
+
 QString MaterialAtlas(quint16 commodity)
 {
 	static const char* names[] = {"Wood", "Lumber", "Stone", "Metal", "Magmium", "Vulcium"};
@@ -975,6 +984,14 @@ QRect TextureTile(int slot)
 	if(slot < 0 || slot >= 40) return QRect();
 	return QRect(tiles[slot][0] * 2, 8192 - (tiles[slot][1] + tiles[slot][3]) * 2,
 		tiles[slot][2] * 2, tiles[slot][3] * 2);
+}
+
+QImage MaterialTile(const QImage& atlas, int slot)
+{
+	QImage tile = atlas.copy(TextureTile(slot));
+	if(slot == 16) tile = tile.mirrored(true, false);
+	if(slot == 37 || slot == 38) tile = tile.convertToFormat(QImage::Format_RGB32);
+	return tile;
 }
 
 QVector2D TextureInset(int slot)

@@ -51,20 +51,22 @@
 #include <functional>
 
 // Keep the resource initializer in the global namespace for static linking.
-static void InitLegacyConstructionUiResource()
+static bool InitLegacyConstructionUiResource()
 {
 	Q_INIT_RESOURCE(aulegacycityconstructionui);
+	return true;
+}
+
+QString AuLegacyCityConstruction::IconPath(const QString& original)
+{
+	static const bool initialized = InitLegacyConstructionUiResource();
+	Q_UNUSED(initialized);
+	const QString legacy = QStringLiteral(":/legacy/cities/ui/%1").arg(original.section(QLatin1Char('/'), -1));
+	return QFile::exists(legacy) ? legacy : original;
 }
 
 namespace
 {
-QString ConstructionIcon(const QString& original)
-{
-	// Only differing/missing original artwork is preserved here. Shared art
-	// was compared against the 2016 resources and retains its existing alias.
-	const QString legacy = QStringLiteral(":/legacy/cities/ui/%1").arg(original.section(QLatin1Char('/'), -1));
-	return QFile::exists(legacy) ? legacy : original;
-}
 
 // AuBuildButton, 2016 executable 0x2b8fb0/0x2c6cc0. Its artwork contains
 // the caption: drawing an additional tool-button label truncates/duplicates it.
@@ -76,7 +78,7 @@ class LegacyBuildButton : public QPushButton
 public:
 	LegacyBuildButton(const char* icon, const QString& name, QWidget* parent,
 		const std::function<void()>& hover, const std::function<void()>& press)
-		: QPushButton(parent), m_Image(ConstructionIcon(icon)), m_Name(name), m_Hover(hover), m_Press(press)
+		: QPushButton(parent), m_Image(AuLegacyCityConstruction::IconPath(icon)), m_Name(name), m_Hover(hover), m_Press(press)
 	{
 		setFixedSize(AuLegacyCityConstructionLayout::BuildingButtonSize, AuLegacyCityConstructionLayout::BuildingButtonSize);
 		setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); setMouseTracking(true);
@@ -156,7 +158,6 @@ quint8 ConstructionEnvironment(bool& flammableMaterialsAllowed, quint8 industry)
 AuLegacyCityConstruction::AuLegacyCityConstruction(QWidget* parent) : QWidget(parent)
 {
 	using namespace AuLegacyCityConstructionLayout;
-	InitLegacyConstructionUiResource();
 	auto* layout = new QGridLayout(this); layout->setMargin(OuterMargin); layout->setSpacing(Spacing);
 	m_Categories = new QButtonGroup(this); m_Categories->setExclusive(true);
 	m_Materials = new QButtonGroup(this); m_Materials->setExclusive(false);
@@ -177,7 +178,7 @@ AuLegacyCityConstruction::AuLegacyCityConstruction(QWidget* parent) : QWidget(pa
 	}
 	for(const auto& category : Categories)
 	{
-		auto* button = new AuIconButton(QIcon(ConstructionIcon(category.icon)), this);
+		auto* button = new AuIconButton(QIcon(AuLegacyCityConstruction::IconPath(category.icon)), this);
 		button->setCheckable(true);
 		button->setFixedSize(CategoryButtonSize, CategoryButtonSize); button->setToolTip(tr(category.name));
 		button->setAccessibleName(tr(category.name)); m_Categories->addButton(button, category.page);
@@ -223,16 +224,15 @@ AuLegacyCityConstruction::AuLegacyCityConstruction(QWidget* parent) : QWidget(pa
 	auto* materialsHeading = new QLabel(tr("Construction Materials"), this); details->addWidget(materialsHeading, 2, 0, 1, 7);
 	materialsHeading->setToolTip(tr(AuLegacyCityConstructionTips::MaterialsHeading));
 	m_Recipe = new QLabel(this); m_Recipe->setMinimumSize(1, 16); details->addWidget(m_Recipe, 3, 0, 1, 7);
-	const quint16 materialIds[] = {86, 48, 76, 51, 146, 145};
 	const char* materialNames[] = {"Wood", "Lumber", "Stone", "Metal", "Magmium", "Vulcium"};
 	const char* materialTips[] = {"rough logs", "milled lumber", "stone", "metal", "magmium", "vulcium"};
 	for(int i = 0; i < 6; ++i)
 	{
-		auto* button = new AuIconButton(QIcon(ConstructionIcon(QStringLiteral(":data/c_%1.png").arg(QLatin1String(materialNames[i])))), this);
+		auto* button = new AuIconButton(QIcon(AuLegacyCityConstruction::IconPath(QStringLiteral(":data/c_%1.png").arg(QLatin1String(materialNames[i])))), this);
 		button->setAccessibleName(tr(materialNames[i]));
 		button->setToolTip(tr("Use %1 for new construction.\nThe existing material is used when adding to a building.").arg(QLatin1String(materialTips[i])));
-		m_Materials->addButton(button, materialIds[i]); details->addWidget(button, 4, i + 1);
-		const quint16 material = materialIds[i];
+		const quint16 material = AuLegacyBd::BuildingMaterials[i];
+		m_Materials->addButton(button, material); details->addWidget(button, 4, i + 1);
 		connect(button, &QToolButton::clicked, this, [this, material]() { SetCursorMaterial(material); });
 	}
 	m_Materials->button(m_Material)->setDown(true);
@@ -366,7 +366,7 @@ void AuLegacyCityConstruction::SelectProcess(quint8 processId)
 			if(product.industry.value == m_Industry)
 			{
 				const auto* commodity = catalogue->Commodity(product.commodity);
-				m_Products->addItem(commodity ? QIcon(ConstructionIcon(commodity->descriptor.BitmapName())) : QIcon(), product.name, uint(product.id.value));
+				m_Products->addItem(commodity ? QIcon(AuLegacyCityConstruction::IconPath(commodity->descriptor.BitmapName())) : QIcon(), product.name, uint(product.id.value));
 			}
 		const int selected = m_Products->findData(uint(defaultProcess.value)); if(selected >= 0) m_Products->setCurrentIndex(selected);
 	}
@@ -404,7 +404,7 @@ void AuLegacyCityConstruction::DescribeRecipe()
 	for(auto it = materials.cbegin(); it != materials.cend(); ++it)
 	{
 		const auto* commodity = catalogue->Commodity(AuLegacyCity::CommodityId(it.key())); if(!commodity) continue;
-		painter.drawPixmap(x, 0, 16, 16, QPixmap(ConstructionIcon(commodity->descriptor.BitmapName()))); x += 17;
+		painter.drawPixmap(x, 0, 16, 16, QPixmap(AuLegacyCityConstruction::IconPath(commodity->descriptor.BitmapName()))); x += 17;
 		descriptions.append(it.value() ? tr("%1 %2").arg(commodity->descriptor.m_name).arg(it.value()) : commodity->descriptor.m_name);
 	}
 	painter.end(); m_Recipe->setPixmap(QPixmap::fromImage(image)); m_Recipe->setToolTip(descriptions.join(QLatin1Char('\n')));
@@ -451,7 +451,7 @@ void AuLegacyCityConstruction::DescribeProducts()
 	for(quint16 id : products)
 	{
 		const auto* commodity = catalogue->Commodity(AuLegacyCity::CommodityId(id)); if(!commodity) continue;
-		painter.drawPixmap(x, y, 16, 16, QPixmap(ConstructionIcon(commodity->descriptor.BitmapName())));
+		painter.drawPixmap(x, y, 16, 16, QPixmap(AuLegacyCityConstruction::IconPath(commodity->descriptor.BitmapName())));
 		descriptions.append(commodity->descriptor.m_name); x += 17; if(x > 168) { x = 0; y += 17; }
 	}
 	painter.end(); m_ProductIcons->setPixmap(QPixmap::fromImage(image)); m_ProductIcons->setToolTip(descriptions.join(QLatin1Char('\n')));
@@ -750,8 +750,9 @@ bool AuLegacyCityLabor::InitializeNextPage()
 	m_Timer = new QTimer(this); m_Timer->setInterval(1000);
 	m_StudioRequestTimer = new QTimer(this); m_StudioRequestTimer->setSingleShot(true); m_StudioRequestTimer->setInterval(250);
 	connect(m_Studio, &AuLegacyCityDesignStudio::Enter, this,
-		[this](quint32 city, quint32 development, int index, const QString& password) {
-			AuLegacyCityProtocol::Request request; request.action = AuLegacyCityProtocol::EnterSpacecraftStudio;
+		[this](quint32 city, quint32 development, int index, const QString& password, bool building) {
+			AuLegacyCityProtocol::Request request;
+			request.action = building ? AuLegacyCityProtocol::EnterBuildingStudio : AuLegacyCityProtocol::EnterSpacecraftStudio;
 			request.cityId = city; request.developmentId = development; request.studioIndex = quint8(index);
 			request.studioPassword = password;
 			QueueStudioRequest(request);
@@ -772,7 +773,7 @@ bool AuLegacyCityLabor::InitializeNextPage()
 	});
 	m_Timeout = new QTimer(this); m_Timeout->setSingleShot(true); m_Timeout->setInterval(60000);
 	connect(m_Timeout, &QTimer::timeout, this, [this]() {
-		const bool studioEntry = m_PendingRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio;
+		const bool studioEntry = AuLegacyCityProtocol::IsStudioEntry(m_PendingRequest.action);
 		if(studioEntry) m_AbandonedStudioToken = m_PendingToken;
 		m_PendingToken = 0; m_Labor->StopWorking();
 		m_HasDeferredCitizenRequest = false;
@@ -808,10 +809,10 @@ void AuLegacyCityLabor::Refresh()
 void AuLegacyCityLabor::Submit(AuLegacyCityProtocol::Request request)
 {
 	if(m_PendingToken || !g_Au.IsLegacyGeneration() || auApp->IsSingleUserMode() || !auApp->IsSceneConnected()) return;
-	if(m_StudioRequestQueued && m_QueuedStudioRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio
-		&& request.action != AuLegacyCityProtocol::EnterSpacecraftStudio) return;
+	if(m_StudioRequestQueued && AuLegacyCityProtocol::IsStudioEntry(m_QueuedStudioRequest.action)
+		&& !AuLegacyCityProtocol::IsStudioEntry(request.action)) return;
 	m_PendingRequest = request;
-	const bool studioEntry = request.action == AuLegacyCityProtocol::EnterSpacecraftStudio;
+	const bool studioEntry = AuLegacyCityProtocol::IsStudioEntry(request.action);
 	if(studioEntry) emit auApp->LegacyStudioEntryStarted();
 	m_PendingToken = auApp->RequestLegacyCityTool(request);
 	if(m_PendingToken) m_Timeout->start();
@@ -825,8 +826,8 @@ void AuLegacyCityLabor::Submit(AuLegacyCityProtocol::Request request)
 
 void AuLegacyCityLabor::QueueStudioRequest(AuLegacyCityProtocol::Request request)
 {
-	if(m_StudioRequestQueued && m_QueuedStudioRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio) return;
-	if(m_PendingToken && m_PendingRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio) return;
+	if(m_StudioRequestQueued && AuLegacyCityProtocol::IsStudioEntry(m_QueuedStudioRequest.action)) return;
+	if(m_PendingToken && AuLegacyCityProtocol::IsStudioEntry(m_PendingRequest.action)) return;
 	// Offset from the occupied-site poll to respect the server's shared city
 	// request rate gate. A click takes priority over another status refresh.
 	m_QueuedStudioRequest = request; m_StudioRequestQueued = true; m_StudioRequestTimer->start();
@@ -853,7 +854,7 @@ void AuLegacyCityLabor::ReceiveReply(QByteArray payload)
 {
 	AuLegacyCityProtocol::Reply reply;
 	if(!AuLegacyCityProtocol::DecodeReply(payload, reply)) return;
-	if(reply.token == m_AbandonedStudioToken && reply.action == AuLegacyCityProtocol::EnterSpacecraftStudio)
+	if(reply.token == m_AbandonedStudioToken && AuLegacyCityProtocol::IsStudioEntry(reply.action))
 	{
 		m_AbandonedStudioToken = 0;
 		if(reply.accepted) auApp->DesignExit();
@@ -871,7 +872,7 @@ void AuLegacyCityLabor::ReceiveReply(QByteArray payload)
 			for(int index = 0; index < reply.studioCount; ++index)
 				m_Studio->SetOccupied(index, (reply.occupiedStudios & (1u << index)) != 0);
 		}
-		if(reply.action == AuLegacyCityProtocol::EnterSpacecraftStudio)
+		if(AuLegacyCityProtocol::IsStudioEntry(reply.action))
 		{
 			if(!reply.accepted && !reply.message.isEmpty()) ReportMessage(reply.message);
 			emit auApp->LegacyStudioEntryFinished(reply.accepted);
@@ -1001,7 +1002,7 @@ void AuLegacyCityLabor::UpdateControls()
 
 void AuLegacyCityLabor::ResetTransport()
 {
-	const bool studioEntry = m_PendingToken && m_PendingRequest.action == AuLegacyCityProtocol::EnterSpacecraftStudio;
+	const bool studioEntry = m_PendingToken && AuLegacyCityProtocol::IsStudioEntry(m_PendingRequest.action);
 	m_Labor->StopWorking(); m_PendingToken = 0; m_Timeout->stop(); m_Entries.clear(); m_Selected = -1;
 	m_StudioRequestTimer->stop(); m_StudioRequestQueued = m_StudioStateValid = false; m_AbandonedStudioToken = 0;
 	if(studioEntry) emit auApp->LegacyStudioEntryFinished(false);

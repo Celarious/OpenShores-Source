@@ -1,4 +1,6 @@
 #include "aulegacyshipdetails.h"
+#include "aulegacyshipsave.h"
+#include "aulegacybd.h"
 
 #include <QSet>
 #include <algorithm>
@@ -476,7 +478,7 @@ int SideTurretType(const QPolygonF& polygon, const QPointF& p)
 }
 enum class DetailResult { Valid, Invalid, Unavailable };
 DetailResult TestDetail(Detail& d, const QVector<Geometry>& rooms,
-	const QVector<Detail>& details, QString& error)
+	const QVector<Detail>& details, bool building, QString& error)
 {
 	const int t=d.detailType;
 	const QPointF point=DecodePoint(d.packedXY);
@@ -621,9 +623,18 @@ DetailResult TestDetail(Detail& d, const QVector<Geometry>& rooms,
 			below=1;
 			++count;
 		}
-		if(count==0) return DetailResult::Invalid;
+		if(count==0 || (building && placement.room == -5 &&
+			(d.deck < -1 || (d.deck < 1 && !below)))) return DetailResult::Invalid;
 	}
-	else if(count==0) return DetailResult::Invalid;
+	else
+	{
+		// DnDetail::IsValid (0x18015feae). Outdoor poles and troop stations
+		// can stand clear of rooms on the ground story.
+		if(count == 0 && !(building && d.deck == 0 && (placement.room == -8 || placement.room == -10)))
+			return DetailResult::Invalid;
+		if(building && d.deck < 0 && (t == 3 || t == 9 || t == 50 || t == 52 || (t >= 91 && t <= 97)))
+			return DetailResult::Invalid;
+	}
 	if((placement.room==-4||placement.room==-3)&&count!=2) return DetailResult::Invalid;
 	if((placement.room==-5||placement.room==-2)&&count!=1) return DetailResult::Invalid;
 	return DetailResult::Valid;
@@ -689,20 +700,21 @@ void InsertDetail(QVector<Detail>& details, const Detail& detail)
 enum class PlacementResult { Added, Unchanged, Rejected, Unavailable };
 
 PlacementResult PlaceOne(QVector<Detail>& details, const QVector<Geometry>& rooms,
-	quint32 designId, int deck, quint16 packed, int type, quint16 commodity,
+	const Design& design, int deck, quint16 packed, int type, quint16 commodity,
 	Detail& placed, int& removed, QString& error)
 {
 	Detail detail;
 	detail.deck = qint8(deck);
 	detail.detailType = quint8(type);
-	detail.designId = designId;
+	detail.designId = design.header.designId;
 	detail.packedXY = packed;
 	detail.commodityIdRaw = commodity;
 	detail.commodityIdNormalized = commodity == 0xf9 ? 0xf8 : commodity == 0xfb ? 0xfa : commodity;
 	const QPointF point = DecodePoint(packed);
 	QVector<Detail> candidate = details;
 	removed = 0;
-	if(type != 76 && type != 98 && type != 99)
+	const bool lightPole = design.building && type == 142;
+	if(type != 76 && type != 98 && type != 99 && !lightPole)
 	{
 		const QPolygonF stair = IsStairs(type) ? StairBoundary(detail) : QPolygonF();
 		for(int i = 0; i < candidate.size();)
@@ -747,7 +759,7 @@ PlacementResult PlaceOne(QVector<Detail>& details, const QVector<Geometry>& room
 			else ++i;
 		}
 	}
-	const DetailResult valid = TestDetail(detail, rooms, candidate, error);
+	const DetailResult valid = TestDetail(detail, rooms, candidate, design.building, error);
 	if(valid == DetailResult::Unavailable) return PlacementResult::Unavailable;
 	if(valid == DetailResult::Invalid)
 	{
@@ -755,10 +767,12 @@ PlacementResult PlaceOne(QVector<Detail>& details, const QVector<Geometry>& room
 			.arg(DetailName(type), DetailPlacementDescription(type));
 		return PlacementResult::Rejected;
 	}
-	if(type == 76)
+	// BuildingDesignAddLightPole (AuData13 0x18012c410) validates the
+	// new location before replacing the design's light pole and allocating its ID.
+	if(type == 76 || lightPole)
 	{
 		for(int i = candidate.size() - 1; i >= 0; --i)
-			if(candidate.at(i).detailType == 76) { candidate.removeAt(i); ++removed; }
+			if(candidate.at(i).detailType == type) { candidate.removeAt(i); ++removed; }
 	}
 	else if(type == 98)
 	{
@@ -1035,6 +1049,13 @@ int CanonicalDetailType(int type)
 
 int DetailRotationStep(int type) { return RotationStep(type); }
 
+QRectF BerthFootprint(int type)
+{
+	// Both 2016 RenderDesign passes anchor the berth at the center of its first cell.
+	const double half = CoordinateSpacing / 2;
+	return IsBerth(type) ? QRectF(-half, -half, 2 * CoordinateSpacing, CoordinateSpacing) : QRectF();
+}
+
 int RotateDetailType(int type, int steps)
 {
 	const int base = CanonicalDetailType(type);
@@ -1062,7 +1083,13 @@ DetailEditResult PlaceDetail(Design& design, int deck, const QPointF& cursor,
 	}
 	// IsValid(..., spacecraft=true) cannot accept outdoor-building placement.
 	// Check before the same-type shortcut, including imported pole records.
-	if(Placements[type].room == -8)
+	if(design.building && (!AuLegacyBd::BuildingDetailAllowed(design.buildingIndustry, type)
+		|| !AuLegacyBd::ValidDesignerPoint(design.buildingIndustry, deck, cursor)))
+	{
+		result.error = QStringLiteral("This equipment or position is unavailable for the selected industry.");
+		return result;
+	}
+	if(!design.building && Placements[type].room == -8)
 	{
 		result.error = DetailPlacementDescription(type);
 		return result;
@@ -1072,7 +1099,7 @@ DetailEditResult PlaceDetail(Design& design, int deck, const QPointF& cursor,
 	QVector<Detail> details = design.details;
 	Detail center;
 	int removed = 0;
-	const PlacementResult placed = PlaceOne(details, rooms, design.header.designId, deck,
+	const PlacementResult placed = PlaceOne(details, rooms, design, deck,
 		packed, type, commodity, center, removed, result.error);
 	if(placed == PlacementResult::Rejected || placed == PlacementResult::Unavailable) return result;
 	result.accepted = true;
@@ -1081,7 +1108,7 @@ DetailEditResult PlaceDetail(Design& design, int deck, const QPointF& cursor,
 	result.added = 1;
 	result.removed = removed;
 	// The original special marker tools do not use the equipment brush.
-	if(brushRadius && type != 76 && type != 98 && type != 99 && center.roomId)
+	if(brushRadius && type != 76 && type != 98 && type != 99 && type != 142 && center.roomId)
 	{
 		const Geometry* room = nullptr;
 		for(const Geometry& candidate : rooms)
@@ -1100,10 +1127,12 @@ DetailEditResult PlaceDetail(Design& design, int deck, const QPointF& cursor,
 					quint16 brushPoint = 0;
 					if(!SnapDetail(location, brushPoint)) continue;
 					const QPointF snapped = DecodePoint(brushPoint);
+					if(design.building && !AuLegacyBd::ValidDesignerPoint(design.buildingIndustry, deck, location))
+						continue;
 					if(!Inside(room->polygon, snapped) && !(boundaryAllowed && On(room->polygon, snapped))) continue;
 					Detail next;
 					QString error;
-					const PlacementResult applied = PlaceOne(details, rooms, design.header.designId,
+					const PlacementResult applied = PlaceOne(details, rooms, design,
 						deck, brushPoint, type, commodity, next, removed, error);
 					if(applied == PlacementResult::Unavailable)
 					{
@@ -1116,6 +1145,7 @@ DetailEditResult PlaceDetail(Design& design, int deck, const QPointF& cursor,
 		}
 	}
 	design.details = std::move(details);
+	if(result.removed) TrimMissingModuleSystems(design);
 	result.changed = true;
 	return result;
 }
@@ -1142,6 +1172,7 @@ DetailEditResult DeleteDetails(Design& design, int deck, const QPointF& cursor, 
 			if(SnapDetail(location, brushPoint) && DeleteOne(details, deck, brushPoint, type) >= 0) ++result.removed;
 		}
 	design.details = std::move(details);
+	if(type == 20 || type == 23 || type == 99) TrimMissingModuleSystems(design);
 	result.changed = true;
 	return result;
 }
@@ -1165,7 +1196,7 @@ bool ReconcileDetails(Design& candidate, QString& error)
 	for(int i=0;i<details.size();)
 	{
 		Detail corrected=details[i];
-		switch(TestDetail(corrected,rooms,details,error))
+		switch(TestDetail(corrected,rooms,details,candidate.building,error))
 		{
 		case DetailResult::Unavailable: return false;
 		case DetailResult::Invalid: details.removeAt(i); break;
@@ -1173,6 +1204,7 @@ bool ReconcileDetails(Design& candidate, QString& error)
 		}
 	}
 	candidate.details=std::move(details);
+	TrimMissingModuleSystems(candidate);
 	return true;
 }
 }

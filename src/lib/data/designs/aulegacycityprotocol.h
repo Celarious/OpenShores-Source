@@ -21,6 +21,7 @@ constexpr int MaximumSurfaceQuads = 12000;
 // Recovered online editors use the existing empty design environment for
 // avatar isolation. Keep the original marker name for serialized studio IDs.
 constexpr quint16 PrivateStudioIdBase = 0x8000;
+constexpr quint16 BuildingStudioIdFlag = 0x4000;
 constexpr float MinimumRoadLengthMeters = 1, MaximumRoadLengthMeters = 500;
 constexpr float MinimumBiodomeRadiusMeters = 47.74f, MaximumBiodomeRadiusMeters = 803.74f;
 // Keep the retired action's number reserved so stale clients cannot reinterpret
@@ -38,14 +39,16 @@ enum Action : quint8
 	// TEMPORARY ARCHITECT MANUFACTURING TEST: remove after testing; reserve 30 afterwards.
 	TestingFinishIndustryProcess = 30,
 	BuySpacecraft = 31,
-	SurfaceSnapshot = 32 // One-shot visual data; never a city subscription.
+	SurfaceSnapshot = 32, // One-shot visual data; never a city subscription.
+	EnterBuildingStudio = 33
 };
 inline bool IsEconomy(Action action) { return (action >= EconomyList && action <= RunIndustryProcess)
 	|| action == BuySpacecraft || action == TestingFinishIndustryProcess; } // TEMPORARY ARCHITECT MANUFACTURING TEST
 inline bool IsBank(Action action) { return action >= BankState && action <= BankClaimReward; }
-inline bool IsStudio(Action action) { return action >= StudioState && action <= EnterSpacecraftStudio; }
+inline bool IsStudioEntry(Action action) { return action == EnterSpacecraftStudio || action == EnterBuildingStudio; }
+inline bool IsStudio(Action action) { return action == StudioState || IsStudioEntry(action); }
 inline bool IsGameplay(Action action) { return (action >= ConstructionList && action <= EnterSpacecraftStudio)
-	|| action == BuySpacecraft || action == TestingFinishIndustryProcess; } // TEMPORARY ARCHITECT MANUFACTURING TEST
+	|| action == EnterBuildingStudio || action == BuySpacecraft || action == TestingFinishIndustryProcess; } // TEMPORARY ARCHITECT MANUFACTURING TEST
 struct Request
 {
 	Action action = List;

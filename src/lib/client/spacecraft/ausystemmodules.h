@@ -50,7 +50,7 @@ public:
 	AuSystemModules(bool isBuilding, int lowestDeck, quint16 cncModule, quint16 ftlDriveModule, quint16 hullModule,
 			quint16 lifeSupportModule, quint16 maneuverDriveModule, quint16 powerPlantModule, quint16 sensorModule,
 			quint16 shieldModule, const unordered_map<quint16, quint16>& bayModules,
-			const unordered_map<quint16, quint16>& transporterModules, QWidget* parent=0);
+			const unordered_map<quint16, quint16>& transporterModules, QWidget* parent=0, bool legacy=false);
 	virtual ~AuSystemModules();
 
 private slots:
@@ -65,8 +65,6 @@ private slots:
 	void ShieldModuleChanged(int);
 	void TransporterModuleChanged(int, int);
 
-private:
-	void ListModules(QComboBox* cb, SYSTEM system, COMMODITYID currentModuleCID, bool isBuilding);
 };
 
 #endif // AuSystemModules_H

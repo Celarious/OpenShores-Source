@@ -31,7 +31,8 @@ enum Action : quint8
 enum EditKind : quint8
 {
 	PaintCell = 0, EraseRoom = 1, PlaceDetail = 2, EraseDetails = 3,
-	EraseDeck = 4, MoveCopy = 5, Streamline = 6, MinTech = 7, Armor = 8
+	EraseDeck = 4, MoveCopy = 5, Streamline = 6, MinTech = 7, Armor = 8,
+	SystemModules = 9, BuildingMaterial = 10, BuildingRoof = 11, BuildingModule = 12, ChangeRoomType = 13
 };
 
 struct Command
@@ -39,12 +40,14 @@ struct Command
 	EditKind kind = PaintCell;
 	int deck = 0;
 	QPointF cursor;
+	QPointF roofAxis, roofEdge;
 	quint8 gridMask = 5, roomNumber = 0;
 	int roomType = 2;
 	quint8 detailType = 0;
 	quint16 commodity = 0;
 	int radius = 0;
 	AuLegacyShip::MoveCopyRequest move;
+	AuLegacyShip::ModuleChanges modules;
 	int value = 0;
 };
 

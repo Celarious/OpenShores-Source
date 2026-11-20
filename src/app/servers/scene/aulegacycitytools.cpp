@@ -272,8 +272,8 @@ void StudioRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityPro
 	for(auto* atom : atoms)
 		if(auto* studio = dynamic_cast<DaDesigner*>(atom))
 		{
-			const quint16 index = studio->StudioId() ^ PrivateStudioIdBase;
-			if(index < reply.studioCount && studio->FindPersonRecursive()
+			const quint16 index = studio->StudioId() & ~(PrivateStudioIdBase | BuildingStudioIdFlag);
+			if(studio->IsLegacyStudio() && index < reply.studioCount && studio->FindPersonRecursive()
 				&& ContainsSite(world, *selected, studio->Location()))
 			{
 				reply.occupiedStudios |= quint16(1u << index);
@@ -303,7 +303,10 @@ void StudioRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityPro
 	{
 		if(!g_AuDb.HasAtomIds())
 		{ reply.message = QObject::tr("The server is restocking atom IDs. Try again shortly."); return; }
-		std::unique_ptr<DaDesigner> studio(new DaDesigner(PrivateStudioIdBase | request.studioIndex));
+		// The first entrant selects the environment type. Other participants
+		// enter that existing environment using its shared studio password.
+		const quint16 mode = request.action == EnterBuildingStudio ? BuildingStudioIdFlag : 0;
+		std::unique_ptr<DaDesigner> studio(new DaDesigner(PrivateStudioIdBase | mode | request.studioIndex));
 		studio->Create();
 		if(studio->Id().IsNull())
 		{ reply.message = QObject::tr("The server could not allocate a studio ID."); return; }

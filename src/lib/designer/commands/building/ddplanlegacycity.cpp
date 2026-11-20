@@ -413,11 +413,10 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 void DdPlanLegacyCity::ChangeMaterial(int direction)
 {
 	if(m_Request.industryId == 2) return;
-	const quint16 materials[] = {86, 48, 76, 51, 146, 145};
 	for(int i = 0; i < 6; ++i)
-		if(materials[i] == m_Request.material)
+		if(AuLegacyBd::BuildingMaterials[i] == m_Request.material)
 		{
-			m_Request.material = materials[(i + direction + 6) % 6]; m_PreviewValid = false;
+			m_Request.material = AuLegacyBd::BuildingMaterials[(i + direction + 6) % 6]; m_PreviewValid = false;
 			ChangeLevels(0);
 			if(m_Interface) m_Interface->SetCursorMaterial(m_Request.material); return;
 		}

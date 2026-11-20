@@ -1,4 +1,5 @@
 #include "aulegacyshipsave.h"
+#include "aulegacybd.h"
 
 #include <QDataStream>
 #include <QMap>
@@ -142,7 +143,14 @@ struct SavedRoom
 
 QVector<quint16> AuLegacyShip::DefaultModuleSlots()
 {
-	return { 0xea, 0x103, 0xed, 0xee, 0xeb, 0xef, 0x107, 0xf0 };
+	static const QVector<quint16> defaults = { 0xea, 0x103, 0xed, 0xee, 0xeb, 0xef, 0x107, 0xf0 };
+	return defaults;
+}
+
+quint16 AuLegacyShip::ScalarModule(const Design& design, int slot)
+{
+	const quint16 value = design.header.scalarSlots.value(slot);
+	return value ? value : DefaultModuleSlots().value(slot);
 }
 
 void AuLegacyShip::SortDetails(QVector<Detail>& details)
@@ -154,18 +162,11 @@ void AuLegacyShip::SortDetails(QVector<Detail>& details)
 	});
 }
 
-bool AuLegacyShip::PrepareForSave(const Design& design, Design& output, QString& error)
+void AuLegacyShip::ModuleSystemKeys(const Design& design, QSet<quint16>& bays, QSet<quint16>& transporters)
 {
-	error.clear();
-	if(qint64(design.rooms.size()) + design.details.size() + design.header.firstPairs.size()
-		+ design.header.secondPairs.size() > MaximumRecords)
-	{
-		error = QStringLiteral("The design exceeds the legacy record safety limit.");
-		return false;
-	}
 	QMap<quint16, const Room*> roomsById;
-	QSet<quint16> bays;
-	QSet<quint16> transporters;
+	bays.clear();
+	transporters.clear();
 	for(const Room& room : design.rooms)
 	{
 		if(room.hasWorkingBoundary ? room.workingBoundary.isEmpty() : room.packedVertices.isEmpty())
@@ -186,6 +187,25 @@ bool AuLegacyShip::PrepareForSave(const Design& design, Design& output, QString&
 		else if(detail.detailType == 0x17 || detail.detailType == 0x63)
 			bays.insert(room->roomSubtype);
 	}
+}
+
+bool AuLegacyShip::PrepareForSave(const Design& design, Design& output, QString& error)
+{
+	error.clear();
+	if(design.building)
+	{
+		output = design;
+		SortDetails(output.details);
+		return true;
+	}
+	if(qint64(design.rooms.size()) + design.details.size() + design.header.firstPairs.size()
+		+ design.header.secondPairs.size() > MaximumRecords)
+	{
+		error = QStringLiteral("The design exceeds the legacy record safety limit.");
+		return false;
+	}
+	QSet<quint16> bays, transporters;
+	ModuleSystemKeys(design, bays, transporters);
 	Design prepared = design;
 	ModuleMap bayModules(design.header.firstPairs);
 	ModuleMap transporterModules(design.header.secondPairs);
@@ -201,14 +221,15 @@ bool AuLegacyShip::Write(const Design& design, QByteArray& output, QString& erro
 {
 	error.clear();
 	const Header& header = design.header;
-	if(header.version > 2 || header.state > 0x0f)
+	if(design.building ? (!header.designId || design.buildingIndustry > 130 || header.state > 7)
+		: (header.version > 2 || header.state > 0x0f))
 	{
 		error = QStringLiteral("Unsupported legacy format version or state.");
 		return false;
 	}
 	const QVector<quint16> moduleSlots = header.version == 0 && header.scalarSlots.isEmpty()
 		? DefaultModuleSlots() : header.scalarSlots;
-	if(moduleSlots.size() != 8)
+	if(!design.building && moduleSlots.size() != 8)
 	{
 		error = QStringLiteral("The legacy module header must contain exactly eight scalar slots.");
 		return false;
@@ -216,11 +237,13 @@ bool AuLegacyShip::Write(const Design& design, QByteArray& output, QString& erro
 	const QString name = header.name.isEmpty() && !fallbackName.isEmpty() ? fallbackName : header.name;
 	// Fixed header (including both QString lengths), module counts/slots,
 	// and room/detail counts. Use 64-bit arithmetic before any allocation.
-	qint64 byteCount = 56 + qint64(name.size()) * 2 + qint64(header.architectName.size()) * 2
-		+ qint64(header.firstPairs.size()) * 4 + qint64(header.secondPairs.size()) * 4
-		+ qint64(design.details.size()) * 17;
-	qint64 records = qint64(header.firstPairs.size()) + header.secondPairs.size() + design.details.size();
-	if(byteCount > MaximumFileBytes || records + design.rooms.size() > MaximumRecords)
+	const qint64 headerRecords = design.building ? design.publishedEmpires.size()
+		: qint64(header.firstPairs.size()) + header.secondPairs.size();
+	qint64 byteCount = (design.building ? 32 : 56) + qint64(name.size()) * 2
+		+ qint64(header.architectName.size()) * 2 + headerRecords * 4 + qint64(design.details.size()) * 17;
+	qint64 records = headerRecords + design.details.size();
+	const int maximumBytes = design.building ? AuLegacyBd::MaximumPayloadBytes + 2 : MaximumFileBytes;
+	if(byteCount > maximumBytes || records + design.rooms.size() > MaximumRecords)
 	{
 		error = QStringLiteral("The design exceeds the legacy file size or record safety limit.");
 		return false;
@@ -245,7 +268,7 @@ bool AuLegacyShip::Write(const Design& design, QByteArray& output, QString& erro
 			continue;
 		records += 1 + saved.vertices.size();
 		byteCount += 11 + qint64(saved.vertices.size()) * 2;
-		if(rooms.size() == 0xffff || records > MaximumRecords || byteCount > MaximumFileBytes)
+		if(rooms.size() == 0xffff || records > MaximumRecords || byteCount > maximumBytes)
 		{
 			error = QStringLiteral("The design exceeds the legacy room count, record or file size limit.");
 			return false;
@@ -258,17 +281,27 @@ bool AuLegacyShip::Write(const Design& design, QByteArray& output, QString& erro
 	QDataStream stream(&bytes, QIODevice::WriteOnly);
 	stream.setVersion(QDataStream::Qt_4_0);
 	stream.setByteOrder(QDataStream::BigEndian);
-	stream << header.designId << name << header.architectId << header.streamline << header.armor
-		<< quint8(0x20 | header.state) << header.architectName << header.minimumTechLevel
-		<< header.hullVolume << header.structure << header.techLevel;
-	stream << quint32(header.firstPairs.size());
-	for(const ModulePair& pair : header.firstPairs)
-		stream << pair.first << pair.secondNormalized;
-	for(quint16 slot : moduleSlots)
-		stream << slot;
-	stream << quint32(header.secondPairs.size());
-	for(const ModulePair& pair : header.secondPairs)
-		stream << pair.first << pair.secondNormalized;
+	if(design.building)
+	{
+		// DnBuilding::Tx, AuData13 0x18015b850. Unlike .ship, building files
+		// carry a two-byte envelope followed by the original building header.
+		stream << quint8(0x1a) << quint8(1) << header.designId << name << header.architectId
+			<< header.architectName << design.buildingIndustry << design.buildingModule
+			<< header.state << design.publishedEmpires;
+	}
+	else
+	{
+		stream << header.designId << name << header.architectId << header.streamline << header.armor
+			<< quint8(0x20 | header.state) << header.architectName << header.minimumTechLevel
+			<< header.hullVolume << header.structure << header.techLevel;
+		stream << quint32(header.firstPairs.size());
+		for(const ModulePair& pair : header.firstPairs)
+			stream << pair.first << pair.secondNormalized;
+		for(quint16 slot : moduleSlots) stream << slot;
+		stream << quint32(header.secondPairs.size());
+		for(const ModulePair& pair : header.secondPairs)
+			stream << pair.first << pair.secondNormalized;
+	}
 	stream << quint16(rooms.size());
 	for(const SavedRoom& saved : rooms)
 	{
@@ -284,7 +317,7 @@ bool AuLegacyShip::Write(const Design& design, QByteArray& output, QString& erro
 			<< detail.designId << detail.packedXY << detail.roomId << detail.commodityIdNormalized;
 	if(stream.status() != QDataStream::Ok || bytes.size() != byteCount)
 	{
-		error = QStringLiteral("Could not serialize the legacy spacecraft stream completely.");
+		error = QStringLiteral("Could not serialize the complete legacy design.");
 		return false;
 	}
 	output = std::move(bytes);

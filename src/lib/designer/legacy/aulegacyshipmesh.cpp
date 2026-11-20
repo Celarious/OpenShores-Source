@@ -1,5 +1,8 @@
 #include "aulegacyshipmesh.h"
+#include "aulegacybuildingpalette.h"
 #include "aulegacyshipgeometry.h"
+#include "aulegacybd.h"
+#include "aulegacyshipedit.h"
 #include "aulegacyshipequipment.h"
 #include "aulegacyshipvehicles.h"
 #include "aulegacyshipstairs.h"
@@ -1126,9 +1129,13 @@ Wireframe BuildWireframe(const Design& design, int activeDeck, bool gridVisible,
 		// Per-room plan labels belong to the designer's RenderDesign pass.
 		// The live client's deck/room names are location-description metadata.
 		if(!tactical && room.deck == activeDeck)
+		{
+			const auto* buildingRoom = design.building
+				? AuLegacyBuildingPalette::FindBuildingTool(AuLegacyBuildingPalette::BuildingRooms, room.roomType) : nullptr;
 			result.labels.append(WireframeLabel{Position(boundary.first(),floor),
-				QStringLiteral("%1 %2").arg(RoomTypeName(room.roomType))
+				QStringLiteral("%1 %2").arg(buildingRoom ? QString::fromLatin1(buildingRoom->name) : RoomTypeName(room.roomType))
 					.arg(int(room.roomSubtype)+1),color,false});
+		}
 		const bool roof = room.roomType >= 22 && room.roomType <= 24;
 		const double contourHeight = tactical ? 4.0 : AuLegacyShip::DeckHeight;
 		for(int i = 0; i < boundary.size(); ++i)
@@ -1249,23 +1256,19 @@ Wireframe BuildWireframe(const Design& design, int activeDeck, bool gridVisible,
 			case 231: tile = 41; break;
 			}
 		}
-		const bool berth = type == 2 || (type >= 25 && type <= 31) || (type >= 65 && type <= 72);
+		const QRectF berthBounds = BerthFootprint(type);
+		const bool berth = !berthBounds.isEmpty();
 		const bool table = type == 74 || type == 75;
 		const bool vehicle = type >= 57 && type <= 64;
-		const double size = berth ? CoordinateSpacing : iconSizes[type];
+		const double size = tactical && table ? 10.0 : iconSizes[type];
 		const QPointF center = DecodePoint(detail.packedXY);
 		const bool rotated = berth || table || vehicle || IsHatch(type);
 		const double angle = rotated ? DetailRotationStep(type) * .7853981633974483 : 0;
 		const double c = std::cos(angle), s = std::sin(angle);
-		const QRectF footprint = vehicle ? VehicleFootprint(detail.commodityIdNormalized) : QRectF();
-		// The tactical berth icon extends forward from its anchor, while tables
-		// use a ten-foot square. Keep the designer's existing footprints intact.
-		const double halfX = tactical && berth ? AuLegacyShip::CoordinateSpacing
-			: tactical && table ? 5.0 : footprint.isEmpty() ? size/2 : footprint.width()/2;
-		const double halfY = tactical && table ? 5.0 : footprint.isEmpty() ? size/2 : footprint.height()/2;
-		const double offsetX = tactical && berth ? AuLegacyShip::CoordinateSpacing/2 : 0;
-		const QPointF local[4] = {{offsetX-halfX,-halfY}, {offsetX-halfX,halfY},
-			{offsetX+halfX,halfY}, {offsetX+halfX,-halfY}};
+		QRectF footprint = vehicle ? VehicleFootprint(detail.commodityIdNormalized) : berthBounds;
+		if(footprint.isEmpty()) footprint = QRectF(-size/2, -size/2, size, size);
+		const QPointF local[4] = {footprint.topLeft(), footprint.bottomLeft(),
+			footprint.bottomRight(), footprint.topRight()};
 		const QVector2D uv[4] = {{tile/64.f,0}, {tile/64.f,1}, {(tile*16+15)/1024.f,1}, {(tile*16+15)/1024.f,0}};
 		const double iconHeight = detail.deck * AuLegacyShip::DeckHeight + (berth || table || vehicle ? .2 : .1);
 		QVector3D positions[4];
@@ -1287,7 +1290,54 @@ Wireframe BuildWireframe(const Design& design, int activeDeck, bool gridVisible,
 			for(int index : reverseIndices) result.sprites.append(WireframeSpriteVertex{positions[index], uv[index]});
 		}
 	}
-	if(gridVisible)
+	if(gridVisible && design.building)
+	{
+		// DaDesignPlane::RenderBuildingGrid (AuAtom13 1802ff240). The
+		// buildable surface changes with industry and, in mines, with depth.
+		const double site = AuLegacyBd::DesignerSiteRadius(design.buildingIndustry, activeDeck);
+		const double fullRadius = 40 * AuLegacyShip::GridSpacing;
+		const double radius = site > 0 ? site : fullRadius;
+		const int cells = int(radius / AuLegacyShip::CoordinateSpacing) / 2;
+		const bool halfGrid = design.buildingIndustry == 34 || design.buildingIndustry == 85;
+		const double top = halfGrid ? 0 : radius;
+		const double z = activeDeck * AuLegacyBd::DeckHeight;
+		const int highest = DesignMaximumDeck(design);
+		const QVector3D color = activeDeck > highest + 1 || activeDeck < DesignMinimumDeck(design) ? QVector3D(.6f,.1f,.1f)
+			: activeDeck == highest + 1 ? QVector3D(.2f,.2f,.2f) : activeDeck < 0 ? QVector3D(.4f,.2f,.1f)
+			: activeDeck == 0 ? QVector3D(.1f,.4f,.1f) : QVector3D(.2f,.2f,.4f);
+		for(int i = -2 * cells; i <= 2 * cells; ++i)
+		{
+			const double p = i * AuLegacyShip::GridSpacing;
+			const QVector4D tint(i % 10 ? color : color + QVector3D(.05f,.05f,.05f), 1);
+			const auto segment = [&](double x1, double y1, double x2, double y2) {
+				line(result.gridVertices, QVector3D(float(x1),float(y1),float(z)), QVector3D(float(x2),float(y2),float(z)), tint);
+			};
+			if((gridMask & 1) && p >= -radius && p <= top) segment(-radius,p,radius,p);
+			if((gridMask & 4) && std::abs(p) <= radius) segment(p,-radius,p,top);
+			// A diagonal crosses y=0 at x=p. Clip the endpoints to the
+			// (possibly half-depth) site rectangle.
+			for(int slope = -1; slope <= 1; slope += 2)
+			{
+				if(!(gridMask & (slope > 0 ? 2 : 8))) continue;
+				const double y1 = std::max(-radius, -radius - slope * p);
+				const double y2 = std::min(top, radius - slope * p);
+				if(y1 < y2) segment(p + slope * y1, y1, p + slope * y2, y2);
+			}
+		}
+		const QString name = AuLegacyBd::DesignerIndustry(design.buildingIndustry).name;
+		const QString level = activeDeck == 0 ? QStringLiteral("Ground Level") : activeDeck == -1 ? QStringLiteral("1 Story Below Grade")
+			: activeDeck < 0 ? QStringLiteral("%1 Stories Below Grade").arg(-activeDeck)
+			: QStringLiteral("%1 Stories Above Grade").arg(activeDeck + 1);
+		const bool water = halfGrid || design.buildingIndustry == 62;
+		const char* labels[3][3] = {{"Left Back", water ? "Back\nStreet" : "Back", "Right Back"},
+			{"Left", "", "Right"}, {"Left Front", water ? "Front\nWater" : "Front", "Right Front"}};
+		for(int y = -1; !name.isEmpty() && y <= 1; ++y)
+			for(int x = -1; x <= 1; ++x)
+				if(x || y)
+					result.labels.append(WireframeLabel(QVector3D(float(x*fullRadius),float(y*fullRadius),float(z+10)),
+						QStringLiteral("%1\n%2\n%3").arg(name, QLatin1String(labels[y+1][x+1]), level), QVector4D(.3f,.4f,.5f,1), true));
+	}
+	else if(gridVisible)
 	{
 		// DaDesignPlane::RenderSpacecraftGrid, 180301980. Its frame is the
 		// original 80-cell spacecraft volume; grid lines lie on the design plane.

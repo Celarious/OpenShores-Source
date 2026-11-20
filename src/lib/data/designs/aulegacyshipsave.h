@@ -2,11 +2,16 @@
 #define AuLegacyShipSave_H
 
 #include "aulegacyship.h"
+#include <QSet>
 
 namespace AuLegacyShip
 {
 // AuSpaceShipModules' 2016 constructor defaults (also used by version 0).
 QVector<quint16> DefaultModuleSlots();
+quint16 ScalarModule(const Design& design, int slot);
+
+void ModuleSystemKeys(const Design& design, QSet<quint16>& bays, QSet<quint16>& transporters);
+void TrimMissingModuleSystems(Design& design);
 
 // DnDetailArray::Add orders records by signed deck, room ID, then detail ID.
 void SortDetails(QVector<Detail>& details);

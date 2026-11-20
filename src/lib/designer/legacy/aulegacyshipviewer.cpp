@@ -1,7 +1,15 @@
 #include "aulegacyshipviewer.h"
+#include "aulegacybuildingpalette.h"
+#include "aulegacybd.h"
+#include "aulegacycityconstruction.h"
+#include "aulegacyshipcommoditydata.h"
+#include "auchooseindustry.h"
 #include "aulegacystudioprotocol.h"
 #include "aulegacyship.h"
 #include "aulegacyshipedit.h"
+#include "aulegacyshipmoduleoptions.h"
+#include "ausystemmodule.h"
+#include "ausystemmodules.h"
 #include "aulegacyshipdetails.h"
 #include "aulegacyshipequipment.h"
 #include "aulegacyshipgeometry.h"
@@ -14,6 +22,7 @@
 #include "auapp.h"
 #include "audialog.h"
 #include "audesignerframe.h"
+#include "auglobal.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -26,11 +35,13 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDockWidget>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QEventLoop>
 #include <QFrame>
 #include <QGridLayout>
+#include <QGroupBox>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -88,7 +99,8 @@ const RoomChoice RoomChoices[] = {
 	{ 14, "Lounge", "dp_Lounge" }, { 15, "Open to Deck Below", "dp_OpenToBelow" },
 	{ 16, "Sensor Room", "dp_SensorRoom" }, { 17, "Shield Room", "dp_ShieldRoom" },
 	{ 18, "Sickbay", "dp_SickBay" }, { 19, "Stateroom", "dp_Stateroom" },
-	{ 20, "Transporter Room", "dp_TransporterRoom" }, { 21, "Weapon Bay", "dp_WeaponBay" }
+	{ 20, "Transporter Room", "dp_TransporterRoom" }, { 21, "Weapon Bay", "dp_WeaponBay" },
+	{ 22, "Roof, Gable", "dp_RoofGable" }, { 23, "Roof, Hip", "dp_RoofHip" }, { 24, "Roof, Round", "dp_RoofRound" }
 };
 
 struct EquipmentChoice
@@ -99,6 +111,76 @@ struct EquipmentChoice
 	const char* icon;
 	int row;
 	int column;
+};
+
+using AuLegacyBuildingPalette::BuildingTool;
+using AuLegacyBuildingPalette::BuildingRooms;
+using AuLegacyBuildingPalette::FindBuildingTool;
+
+QString BuildingDesignTips(bool online)
+{
+	// AuView::DesignStatus, 2016 EXE 0x1402e7810, has separate offline
+	// and game-connected instructions. The offline station tip is original.
+	QString tips = QStringLiteral("<b>NEW BUILDING DESIGN TIPS</b><br>- All the buttons on this window have tooltips.<br>");
+	if(online) tips += QStringLiteral("- Exit the design studio using the top-left button on this window.<br>");
+	tips += QStringLiteral("- Start by painting the floor of a room, such as a Hall.<br>"
+		"- Move the design grid up and down using buttons on this window.<br>"
+		"- Add equipment by clicking a location on the floor.<br>"
+		"- Rotate beds and vehicles with arrow keys while placing them.<br>"
+		"- A hatch or turret is placed in the ceiling by raising the design grid and placing the hatch on the story above.<br>");
+	if(!online) tips += QStringLiteral("- A station is made by keeping the gravity drive acceleration very low.<br>");
+	tips += online ? QStringLiteral("- Room number distinguishes between different rooms of the same type on the same story. To make two bedrooms on the same story, change the room number before painting the second bedroom. Room number can be the same on different stories.")
+		: QStringLiteral("- Room identifier distinguishes between different rooms of the same type on the same story. To make two bedrooms on the same story, change the room id before painting the second bedroom. Room id can be the same on different stories.");
+	tips += QStringLiteral(" e.g. Story 1 can have bedroom 4 and story 2 can also have bedroom 4.<br>"
+		"<br><b>WHEN FINISHED</b><br>"
+		"1. Check Paths to find routing conditions that may need attention.<br>"
+		"2. Close this window.<br>"
+		"3. Walk through the design to be sure every room can be accessed.<br>");
+	tips += online ? QStringLiteral("4. Save the design into the design library. You may also wish to save the design to a file. Design files can be loaded in the design studio when running in client-only off-line mode. Design files backup your designs so they may survive resets to the game universe.<br>5. ")
+		: QStringLiteral("4. Save the design to a file.<br>"
+			"5. Go to a design studio in the game and load the design from the file. Save the design into the building design library.<br>6. ");
+	tips += QStringLiteral("Store the design onto a blank disk or paper drawing in your inventory using the <b>Burn CD/Inscribe Drawing</b> button. "
+		"The design studio sells blank disks and paper from the city's inventory. <b>THE <i>BURN CD/INSCRIBE DRAWING</i> BUTTON IS ONLY VISIBLE IF THE DESIGN IS VALID AND SAVED.</b><br>");
+	tips += online ? QStringLiteral("6. Use a building design disk or drawing when you construct a building.<br>7. ")
+		: QStringLiteral("7. Use the design disk or drawing when you construct a building.<br>8. ");
+	return tips + QStringLiteral("Publish a building design by selling a design disk or drawing to a design studio.<br>");
+}
+
+const BuildingTool BuildingDetails[] = {
+	{17, 0, 1, "Shield Station", "Operates energy shields."},
+	{15, 0, 2, "Radar Station", "Operates radar."},
+	{1, 0, 3, "Telescope Station", "Displays solar system and wormhole information."},
+	{7, 0, 4, "Fire Control Station", "Required in each weapon room to operate the weapon."},
+	{4, 0, 5, "Doctor's Station", "Required in each doctor's office to operate the surgical unit."},
+	{19, 0, 6, "Transporter Station", "Operates matter transmission equipment."},
+	{22, 0, 7, "Turret (Ceiling/Floor)", "Provides a standard floor or ceiling mount for various weapons."},
+	{21, 0, 8, "Turret (Wall)", "Provides a standard wall mount for various weapons."},
+	{65, 0, 9, "Bed", "Personal respawn location for one person."},
+	{2, 0, 10, "Bunk Bed", "Personal respawn location for two people."},
+	{74, 0, 11, "Game Table", "Provides interactive games for up to four people."},
+	{100, 1, 1, "Flag Pole", "Displays the flag of the empire that controls the building."},
+	{142, 1, 2, "Light Pole", "Illuminates an area."},
+	{99, 1, 4, "Weapon Emitter", "Locates a weapon effect emission point of a weapon system. Weapon emitter is optional. Weapon effect emanates from the base of the fire control console when the weapon effect emitter is omitted."},
+	{11, 1, 5, "Surgery Unit", "Performs complex anatomical operations. Requires a Doctor's Station in the same room."},
+	{20, 1, 6, "Transporter Pad", "One pad is required per person transported simultaneously. Requires a Transporter Station in the same room."},
+	{141, 1, 8, "Troop Station", "Location for a troop to stand while on duty. Troop stations are secondary to the fire control station when troops go to stations."},
+	{50, 2, 1, "Exterior Door", "Doorway through exterior wall. Locked to prevent access by unauthorized personnel."},
+	{49, 2, 2, "Restricted Door", "Doorway through interior wall. Locked to prevent use by unauthorized personnel."},
+	{5, 2, 3, "Door", "Doorway through interior wall."},
+	{3, 2, 4, "Large Wall Door", "Large wall-length doorway through exterior wall. Locked to prevent use by unauthorized personnel."},
+	{54, 2, 5, "Large Restricted Door", "Large wall-length doorway through interior wall. Locked to prevent use by unauthorized personnel."},
+	{53, 2, 6, "Large Door", "Large wall-length doorway through interior wall."},
+	{52, 2, 7, "Exterior Hatch", "Doorway through exterior floors. Locked to prevent use by unauthorized personnel."},
+	{51, 2, 8, "Restricted Hatch", "Doorway through interior floors. Locked to prevent use by unauthorized personnel."},
+	{8, 2, 9, "Hatch", "Doorway through interior floors. Includes a ladder."},
+	{55, 2, 10, "Wall Opening", "Large wall-length opening through interior wall."},
+	{9, 2, 11, "Exterior Wall Opening", "Large wall-length opening through exterior wall."},
+	{56, 2, 12, "Railing", "Changes interior wall into a railing."},
+	{101, 3, 4, "Stairs, Straight", "Stairs up to next story above, straight with no turns. Next story above must already exist."},
+	{109, 3, 5, "Stairs, Turn Left", "Stairs up to next story above, with 90 degree turn to the left. Next story above must already exist."},
+	{117, 3, 6, "Stairs, Turn Right", "Stairs up to next story above, with 90 degree turn to the right. Next story above must already exist."},
+	{125, 3, 7, "Stairs, U-turn Left", "Stairs up to next story above, with 180 degree turn to the left. Next story above must already exist."},
+	{133, 3, 8, "Stairs, U-turn Right", "Stairs up to next story above, with 180 degree turn to the right. Next story above must already exist."},
 };
 
 // Original AuView equipment slots and AuTabDesign vehicle commodity IDs.
@@ -153,7 +235,8 @@ const EquipmentChoice EquipmentChoices[] = {
 	{57, 231, "Space fighter F2", "c_SpaceFighter2", 4, 8},
 	{57, 104, "APC", "c_APC", 4, 10},
 	{57, 133, "Motorbike", "c_MotorBike", 4, 11},
-	{57, 82, "SUV", "c_Suv", 4, 12}
+	{57, 82, "SUV", "c_Suv", 4, 12},
+	{100, 0, "Flag Pole", "dp_FlagPole", -1, -1}, {142, 0, "Light Pole", "dp_LightPole", -1, -1}
 };
 
 bool EquipmentUsesBrush(int type)
@@ -232,23 +315,6 @@ QWidget* DesignerDockTitle(QDockWidget* dock, const QIcon& icon)
 	return title;
 }
 
-QString RoomName(int type)
-{
-	for (const RoomChoice& choice : RoomChoices)
-		if (choice.type == type)
-			return QString::fromLatin1(choice.name);
-	// Original GD names for records outside the spacecraft paint palette.
-	switch (type)
-	{
-	case 0: return QStringLiteral("None");
-	case 12: return QString();
-	case 22: return QStringLiteral("Roof, Gable");
-	case 23: return QStringLiteral("Roof, Hip");
-	case 24: return QStringLiteral("Roof, Round");
-	}
-	return QStringLiteral("Type %1").arg(type);
-}
-
 bool ValidLegacyLibraryName(const QString& name)
 {
 	// AuDesignSave and its IsTextValid helper in the 2016 executable.
@@ -266,10 +332,11 @@ class AuLegacyShipViewer::Impl
 public:
 	enum ToolMode { HandMode, PaintMode, EraseMode, DeleteRoomMode, EquipmentMode, DeleteEquipmentMode, DeleteEquipmentAreaMode };
 
-	explicit Impl(AuLegacyShipViewer* owner) : window(owner),
+	explicit Impl(AuLegacyShipViewer* owner, bool buildingMode) : window(owner), building(buildingMode),
 		settings(QSettings::NativeFormat, QSettings::UserScope,
 			QStringLiteral("Hazeron Freehold"), QStringLiteral("Shores of Hazeron"))
 	{
+		window->setWindowIcon(QIcon(QStringLiteral(":data/SoHIcon.ico")));
 		renderView = new AuLegacyShipRender(window);
 
 		newAction = MakeAction("New spacecraft", "dp_New", "Start a new spacecraft (Ctrl+N).");
@@ -279,6 +346,14 @@ public:
 		openAction->setShortcut(QKeySequence::Open);
 		QObject::connect(openAction, &QAction::triggered, window, &AuLegacyShipViewer::ChooseFile);
 		saveAction = MakeAction("Save spacecraft", "dp_Save", "Save spacecraft to a .ship file (Ctrl+S).");
+		if(building)
+		{
+			newAction->setText(QStringLiteral("New building"));
+			newAction->setToolTip(QStringLiteral("Start a new building design (Ctrl+N)."));
+			openAction->setText(QStringLiteral("Open building"));
+			openAction->setToolTip(QStringLiteral("Open a building design (Ctrl+O)."));
+			saveAction->setText(QStringLiteral("Save building"));
+		}
 		saveAction->setShortcut(QKeySequence::Save);
 		QObject::connect(saveAction, &QAction::triggered, window, [this]() { SaveDesign(); });
 		passwordAction = MakeAction("Studio Password...", "dp_Password", "Change the password used by other people to join this studio.");
@@ -288,6 +363,11 @@ public:
 		QObject::connect(passwordAction, &QAction::triggered, window, [this]() { ChangeStudioPassword(); });
 		burnAction = MakeAction("Burn CD", "dp_BurnCD",
 			"<b>Burn CD</b><br>Store the spacecraft design onto a disk. You must have a blank data disk in your inventory.");
+		if(building)
+		{
+			burnAction->setText(QStringLiteral("Burn CD/Inscribe Drawing"));
+			burnAction->setToolTip(QStringLiteral("<b>Burn CD/Inscribe Drawing</b><br>Store the building design onto disk or paper. You must have a blank data disk or paper in your inventory."));
+		}
 		burnAction->setEnabled(false);
 		QObject::connect(burnAction, &QAction::triggered, window, [this]() { BurnStudioMedia(); });
 		QAction* fitAction = MakeAction("Show design plane", "dp_ShowDesignPlane", "Move the scene camera to view the current design plane (F).");
@@ -332,8 +412,11 @@ public:
 		QObject::connect(deleteDeckAction, &QAction::triggered, window, [this]() { DeleteCurrentDeck(); });
 		for (const RoomChoice& choice : RoomChoices)
 		{
-			QAction* action = MakeAction(choice.name, choice.icon,
+			const BuildingTool* tool = FindBuildingTool(BuildingRooms, choice.type);
+			if((building && !tool) || (!building && choice.type >= 22)) continue;
+			QAction* action = MakeAction(building ? tool->name : choice.name, choice.icon,
 				qPrintable(QStringLiteral("Paint %1 cells on the current deck. Room Number distinguishes rooms of the same type.").arg(QString::fromLatin1(choice.name))));
+			if(building) action->setToolTip(QStringLiteral("<b>%1</b><br>%2").arg(QString::fromLatin1(tool->name), QString::fromLatin1(tool->tip)));
 			action->setCheckable(true);
 			tools->addAction(action);
 			roomActions.insert(choice.type, action);
@@ -408,9 +491,10 @@ public:
 		layout->addWidget(renderView, 1);
 		window->setCentralWidget(central);
 
-		toolDock = new QDockWidget(QStringLiteral("Spacecraft Design (F6)"), window);
+		toolDock = new QDockWidget(building ? QStringLiteral("Building Design (F6)") : QStringLiteral("Spacecraft Design (F6)"), window);
 		toolDock->setObjectName(QStringLiteral("LegacySpacecraftTools"));
-		const QIcon designerIcon = AuLegacyShipIcon(QStringLiteral("c_DesignDisk"));
+		const QIcon designerIcon = building ? QIcon(QStringLiteral(":data/c_BuildingDesignDisk.png"))
+			: AuLegacyShipIcon(QStringLiteral("c_DesignDisk"));
 		toolDock->setWindowIcon(designerIcon);
 		toolDock->setTitleBarWidget(DesignerDockTitle(toolDock, designerIcon));
 		toolDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
@@ -440,7 +524,7 @@ public:
 		statsBrowser = new QTextBrowser(panel);
 		statsBrowser->document()->setDocumentMargin(4);
 		statsBrowser->setObjectName(QStringLiteral("LegacyShipStats"));
-		statsBrowser->setAccessibleName(QStringLiteral("Spacecraft design statistics"));
+		statsBrowser->setAccessibleName(building ? QStringLiteral("Building design statistics") : QStringLiteral("Spacecraft design statistics"));
 		statsBrowser->setOpenLinks(false);
 		statsBrowser->setOpenExternalLinks(false);
 		statsTimer = new QTimer(window);
@@ -485,6 +569,7 @@ public:
 			"Use Save or Ctrl+S to save your work. New, Open and Exit offer to save changes.<br>"
 			"The sidebar designer button or your Design Parts window binding hides or shows this panel. "
 			"Drag its title to dock it elsewhere or float it beside the 3D view.");
+		if(building) designTips = BuildingDesignTips(false);
 		statsBrowser->setMinimumHeight(130);
 		panelLayout->addWidget(statsBrowser, 1);
 		QScrollArea* panelScroll = new QScrollArea(toolDock);
@@ -496,7 +581,7 @@ public:
 		window->addDockWidget(Qt::RightDockWidgetArea, toolDock);
 		window->resizeDocks(QList<QDockWidget*>() << toolDock, QList<int>() << 380, Qt::Horizontal);
 		showTools = toolDock->toggleViewAction();
-		showTools->setText(QStringLiteral("Spacecraft Design tools"));
+		showTools->setText(building ? QStringLiteral("Building Design tools") : QStringLiteral("Spacecraft Design tools"));
 		showTools->setIcon(designerIcon);
 		toolDock->addAction(showTools);
 		toolDock->addAction(closeAction);
@@ -509,6 +594,7 @@ public:
 
 		renderView->cellEntered = [this](const QPointF& point) { EditAt(point); };
 		renderView->editStrokeFinished = [this]() { if(studioFlush) studioFlush(false); };
+		renderView->restartRoof = [this]() { SetToolMode(PaintMode); };
 		renderView->rotateEquipment = [this](int steps) {
 			if (toolMode != EquipmentMode || !EquipmentCanRotate(selectedEquipmentType)) return;
 			selectedEquipmentType = AuLegacyShip::RotateDetailType(selectedEquipmentType, steps);
@@ -524,6 +610,7 @@ public:
 		renderView->tipsChanged = {};
 		renderView->cellEntered = std::function<void(const QPointF&)>();
 		renderView->rotateEquipment = std::function<void(int)>();
+		renderView->restartRoof = {};
 	}
 
 	void RefreshControlLabels()
@@ -531,7 +618,7 @@ public:
 		AuDesignerFrame* frame = qobject_cast<AuDesignerFrame*>(auApp->Frame());
 		if(!frame) return;
 		const QString binding = frame->ControlBinding(AuFrame::CI_ToggleDesignPartsUI);
-		toolDock->setWindowTitle(QStringLiteral("Spacecraft Design")
+		toolDock->setWindowTitle((building ? QStringLiteral("Building Design") : QStringLiteral("Spacecraft Design"))
 			+ (binding.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(binding)));
 	}
 
@@ -539,14 +626,6 @@ public:
 	{
 		QAction* action = new QAction(AuLegacyShipIcon(QString::fromLatin1(icon)), QString::fromLatin1(text), window);
 		action->setToolTip(QString::fromLatin1(tip));
-		return action;
-	}
-
-	QAction* UnavailableAction(const char* text, const char* icon, const char* reason)
-	{
-		QAction* action = MakeAction(text, icon, reason);
-		action->setToolTip(QStringLiteral("%1\n%2").arg(QString::fromLatin1(text), QString::fromLatin1(reason)));
-		action->setEnabled(false);
 		return action;
 	}
 
@@ -560,6 +639,26 @@ public:
 		button->setToolButtonStyle(Qt::ToolButtonIconOnly);
 		layout->addWidget(button, row, column, Qt::AlignCenter);
 		return button;
+	}
+
+	void AddModuleButton(QGridLayout* layout, int row, int column)
+	{
+		systemModulesAction = MakeAction(building ? "Building Module" : "System Modules", "UpgradeModule",
+			"<html><b>System Modules</b><br>Configure modules for most systems. The modules for medical units and turrets are selected when they are placed.</html>");
+		if(building)
+			systemModulesAction->setToolTip(QStringLiteral("<html><b>Building Module</b><br>Configure module for building system. "
+				"The modules for medical units and turrets are selected when they are placed.<br>Only these buildings have modules:<br>")
+				+ BuildingModuleIndustries() + QStringLiteral("</html>"));
+		QObject::connect(systemModulesAction, &QAction::triggered, window, [this]() { ChooseModules(); });
+		AddButton(layout, systemModulesAction, row, column);
+	}
+
+	static QString BuildingModuleIndustries()
+	{
+		QStringList names;
+		for(int industry : {111, 123, 128, 121, 12, 11})
+			names << QStringLiteral("&middot; ") + AuLegacyBd::DesignerIndustry(industry).name.toHtmlEscaped();
+		return names.join(QStringLiteral("<br>"));
 	}
 
 	void BuildPalette(QWidget* parent, QAction* newAction, QAction* openAction, QAction* saveAction)
@@ -580,29 +679,50 @@ public:
 		AddButton(outer, deckUpAction, 2, 0);
 		AddButton(outer, lineActions[2], 2, 1);
 		AddButton(outer, lineActions[0], 2, 2);
-		AddButton(outer, deleteDeckAction, 2, 4);
+		QWidget* eraseDeck = AddButton(outer, deleteDeckAction, 2, 4);
 		AddButton(outer, deckDownAction, 3, 0);
 		AddButton(outer, lineActions[1], 3, 1);
 		AddButton(outer, lineActions[3], 3, 2);
 		moveAction = MakeAction("Move/Copy Rooms And Equipment", "dp_Move",
 			"<b>Move/Copy Rooms And Equipment</b><br>Moves rooms and equipment of the entire design or the current deck.<br>Copies rooms and equipment of the current deck.");
 		QObject::connect(moveAction, &QAction::triggered, window, [this]() { MoveCopyDesign(); });
-		AddButton(outer, moveAction, 3, 4);
+		QWidget* move = AddButton(outer, moveAction, 3, 4);
 
-		PaletteGroups* roomPalette = new PaletteGroups(parent);
-		roomPalette->groups << QRect(0, 0, 8, 3) << QRect(9, 0, 1, 3);
+		QWidget* roomPalette;
+		if(building) roomPalette = new QGroupBox(QStringLiteral("Rooms"), parent);
+		else
+		{
+			PaletteGroups* group = new PaletteGroups(parent);
+			group->groups << QRect(0, 0, 8, 3) << QRect(9, 0, 1, 3);
+			roomPalette = group;
+		}
 		QGridLayout* rooms = new QGridLayout(roomPalette);
-		rooms->setContentsMargins(2, 2, 2, 2);
+		rooms->setContentsMargins(2, building ? 14 : 2, 2, 2);
 		rooms->setSpacing(2);
 		rooms->setColumnMinimumWidth(8, 6);
 		rooms->setColumnStretch(8, 1);
 		QAction* drawMode = MakeAction("Room mode: draw", "dp_RoomMode0", "Draw room cells using the selected room type. Changing a whole room's type is not available yet.");
-		QObject::connect(drawMode, &QAction::triggered, window, [this]() { SetToolMode(PaintMode); });
+		if(building) drawMode->setToolTip(QStringLiteral("Room Mode - Draw. Click to change existing room types."));
+		QObject::connect(drawMode, &QAction::triggered, window, [this, drawMode]() {
+			if(building)
+			{
+				changeRoomType = !changeRoomType;
+				drawMode->setIcon(AuLegacyShipIcon(changeRoomType ? QStringLiteral("dp_RoomMode1") : QStringLiteral("dp_RoomMode0")));
+				drawMode->setToolTip(changeRoomType ? QStringLiteral("Room Mode - Change Room Type. Click to draw room cells.")
+					: QStringLiteral("Room Mode - Draw. Click to change existing room types."));
+			}
+			SetToolMode(PaintMode);
+		});
 		AddButton(rooms, drawMode, 0, 0);
 		AddButton(rooms, eraseAction, 1, 0);
 		AddButton(rooms, deleteRoomAction, 2, 0);
 		const int roomTypes[3][7] = { {1, 2, 3, 7, 8, 13, 9}, {10, 11, 6, 5, 4, 15, 14}, {16, 17, 18, 19, 20, 21, 0} };
-		for (int row = 0; row < 3; ++row)
+		if(building)
+		{
+			for(const BuildingTool& tool : BuildingRooms)
+				if(tool.type < 22) buildingRoomButtons.insert(tool.type, AddButton(rooms, roomActions.value(tool.type), tool.row, tool.column));
+		}
+		else for (int row = 0; row < 3; ++row)
 			for (int column = 0; column < 7; ++column)
 				if (roomTypes[row][column])
 					AddButton(rooms, roomActions.value(roomTypes[row][column]), row, column + 1);
@@ -615,12 +735,22 @@ public:
 		AddButton(rooms, roomDown, 2, 9);
 		outer->addWidget(roomPalette, 0, 6, 4, 8);
 
-		PaletteGroups* equipmentPalette = new PaletteGroups(parent);
-		equipmentPalette->groups << QRect(0, 0, 1, 2) << QRect(1, 0, 12, 2)
-			<< QRect(1, 2, 12, 1) << QRect(13, 0, 2, 3) << QRect(8, 3, 5, 1)
-			<< QRect(0, 4, 3, 1) << QRect(6, 4, 7, 1);
+		QWidget* equipmentPalette;
+		if(building)
+		{
+			equipmentPalette = new QGroupBox(QStringLiteral("Equipment"), parent);
+			buildingEditWidgets << roomPalette << equipmentPalette << eraseDeck << move;
+		}
+		else
+		{
+			PaletteGroups* group = new PaletteGroups(parent);
+			group->groups << QRect(0, 0, 1, 2) << QRect(1, 0, 12, 2)
+				<< QRect(1, 2, 12, 1) << QRect(13, 0, 2, 3) << QRect(8, 3, 5, 1)
+				<< QRect(0, 4, 3, 1) << QRect(6, 4, 7, 1);
+			equipmentPalette = group;
+		}
 		QGridLayout* equipment = new QGridLayout(equipmentPalette);
-		equipment->setContentsMargins(2, 6, 2, 3);
+		equipment->setContentsMargins(2, building ? 14 : 6, 2, 3);
 		equipment->setSpacing(3);
 		deleteEquipmentAction = MakeAction("Erase equipment", "dp_DelDetail", "Remove equipment at the cursor. Left click or drag.");
 		deleteEquipmentAreaAction = MakeAction("Erase equipment area", "dp_DelDetails", "Remove equipment at the cursor, then equipment of that same type within the brush.");
@@ -632,14 +762,16 @@ public:
 		QObject::connect(deleteEquipmentAction, &QAction::triggered, window, [this]() { SetToolMode(DeleteEquipmentMode); });
 		QObject::connect(deleteEquipmentAreaAction, &QAction::triggered, window, [this]() { SetToolMode(DeleteEquipmentAreaMode); });
 		AddButton(equipment, deleteEquipmentAction, 0, 0);
-		AddButton(equipment, deleteEquipmentAreaAction, 1, 0);
+		if(!building) AddButton(equipment, deleteEquipmentAreaAction, 1, 0);
 		for (const EquipmentChoice& choice : EquipmentChoices)
 		{
-			QAction* action = MakeAction(choice.name, choice.icon, choice.name);
+			const BuildingTool* tool = FindBuildingTool(BuildingDetails, choice.type);
+			if((building && !tool) || (!building && choice.row < 0)) continue;
+			QAction* action = MakeAction(building ? tool->name : choice.name, choice.icon, choice.name);
 			const bool supported = choice.commodity ? AuLegacyShip::Rendering::VehicleSupported(choice.commodity)
 				: AuLegacyShip::Rendering::EquipmentSupported(choice.type)
 					|| AuLegacyShip::Rendering::ResourceEquipmentSupported(choice.type);
-			action->setEnabled(supported);
+			action->setEnabled(building || supported);
 			action->setCheckable(true);
 			tools->addAction(action);
 			QString tip = QString::fromLatin1(choice.name) + QLatin1Char('\n')
@@ -652,36 +784,60 @@ public:
 				tip += QStringLiteral("\nPosition marker; has no physical model in the stationary preview.");
 			if (!supported)
 				tip += QStringLiteral("\nThis object's 2016 model is not available yet.");
-			action->setToolTip(tip);
+			action->setToolTip(building ? QStringLiteral("<b>%1</b><br>%2").arg(QString::fromLatin1(tool->name), QString::fromLatin1(tool->tip)) : tip);
 			const EquipmentChoice* selected = &choice;
 			QObject::connect(action, &QAction::triggered, window, [this, selected, action]() {
+				quint16 commodity = selected->commodity;
+				if(!building && (selected->type == 11 || selected->type == 21 || selected->type == 22))
+				{
+					// DdDesignDetail selected the module when the tool was activated.
+					// Closing the picker also armed the tool with its current selection.
+					const bool surgery = selected->type == 11;
+					AuSystemModule dialog(surgery ? SYS_SurgeryUnit : SYS_Turret, false,
+						COMMODITYID(surgery ? 0xf3 : 0x106), window, true);
+					dialog.exec();
+					commodity = dialog.m_Module;
+				}
 				selectedEquipment = selected;
 				selectedEquipmentType = selected->type;
+				selectedEquipmentCommodity = commodity;
 				selectedEquipmentAction = action;
 				SetToolMode(EquipmentMode);
 			});
-			AddButton(equipment, action, choice.row, choice.column);
+			if(building) buildingDetailButtons.insert(choice.type, AddButton(equipment, action, tool->row, tool->column));
+			else AddButton(equipment, action, choice.row, choice.column);
 		}
+		if(building)
+			for(const BuildingTool& tool : BuildingRooms)
+				if(tool.type >= 22) buildingRoomButtons.insert(tool.type, AddButton(equipment, roomActions.value(tool.type), tool.row, tool.column));
 		brushUpAction = MakeAction("Increase equipment brush size", "dp_BrushSzUp", "Increase the equipment brush. The original radius range is 0 to 25.");
 		brushDownAction = MakeAction("Decrease equipment brush size", "dp_BrushSzDown", "Decrease the equipment brush; the smallest brush places one object.");
 		QObject::connect(brushUpAction, &QAction::triggered, window, [this]() { ChangeEquipmentBrush(1); });
 		QObject::connect(brushDownAction, &QAction::triggered, window, [this]() { ChangeEquipmentBrush(-1); });
-		AddButton(equipment, brushUpAction, 0, 14);
-		AddButton(equipment, brushDownAction, 2, 14);
+		if(!building)
+		{
+			AddButton(equipment, brushUpAction, 0, 14);
+			AddButton(equipment, brushDownAction, 2, 14);
+		}
 		brushSize = new QLabel(QStringLiteral("1"), equipmentPalette);
 		brushSize->setAlignment(Qt::AlignCenter);
 		brushSize->setToolTip(QStringLiteral("Equipment brush size, 1 to 26. Applies to machinery and Erase Equipment Area."));
 		brushDownAction->setEnabled(false);
-		equipment->addWidget(brushSize, 1, 13, 1, 2);
-		outer->addWidget(equipmentPalette, 4, 0, 1, 14);
+		if(!building) equipment->addWidget(brushSize, 1, 13, 1, 2);
+		else brushSize->hide();
+		outer->addWidget(equipmentPalette, building ? 5 : 4, 0, 1, 14);
 
-		AddButton(outer, UnavailableAction("System modules", "UpgradeModule", "Module allocation is not available yet."), 5, 0);
+		if(building) AddModuleButton(equipment, 2, 0);
+		else AddModuleButton(outer, 5, 0);
 		armorUpAction = MakeAction("Increase armor", "dp_ArmorIncrease", "Increase armor, up to 10.");
 		armorDownAction = MakeAction("Decrease armor", "dp_ArmorDecrease", "Decrease armor, down to 0.");
 		QObject::connect(armorUpAction, &QAction::triggered, window, [this]() { ChangeArmor(1); });
 		QObject::connect(armorDownAction, &QAction::triggered, window, [this]() { ChangeArmor(-1); });
-		AddButton(outer, armorUpAction, 5, 2);
-		AddButton(outer, armorDownAction, 5, 3);
+		if(!building)
+		{
+			AddButton(outer, armorUpAction, 5, 2);
+			AddButton(outer, armorDownAction, 5, 3);
+		}
 		streamline = new QCheckBox(QStringLiteral("Streamline Hull"), parent);
 		streamline->setToolTip(QStringLiteral("Streamline the hull for atmospheric flight: improves speed and reduces hull stress."));
 		QObject::connect(streamline, &QCheckBox::toggled, window, [this](bool enabled) {
@@ -716,6 +872,32 @@ public:
 			}
 		});
 		outer->addWidget(minimumTech, 5, 12, 1, 2);
+		if(building)
+		{
+			streamline->hide();
+			minimumTech->hide();
+			material = new QComboBox(parent);
+			material->setAccessibleName(QStringLiteral("Building Material"));
+			material->setToolTip(QStringLiteral("<b>Building Material</b><br>Shows the building as it will appear when constructed using various materials. This setting only affects the 3D shaded model."));
+			for(quint16 id : AuLegacyBd::BuildingMaterials)
+			{
+				const auto* commodity = AuLegacyShip::LegacyCommodity::Get(id);
+				material->addItem(QIcon(AuLegacyCityConstruction::IconPath(QString::fromLatin1(commodity->bitmap))),
+					QString::fromLatin1(commodity->name), int(id));
+			}
+			outer->addWidget(material, 4, 0, 1, 5);
+			QObject::connect(material, static_cast<void (QComboBox::*)(int)>(&QComboBox::activated), window, [this](int index) {
+				const int value = material->itemData(index).toInt();
+				if(!loaded || value == design.buildingMaterial) return;
+				if(studioHandler)
+				{
+					AuLegacyStudioProtocol::Command edit; edit.kind = AuLegacyStudioProtocol::BuildingMaterial; edit.value = value;
+					SendStudioEdit(edit); RefreshHeaderControls(); return;
+				}
+				design.buildingMaterial = quint16(value);
+				HeaderChanged(true);
+			});
+		}
 	}
 
 	void RefreshStudioControls()
@@ -726,14 +908,16 @@ public:
 		tools->setEnabled(online);
 		deleteDeckAction->setEnabled(loaded && online);
 		moveAction->setEnabled(loaded && online);
+		systemModulesAction->setEnabled(loaded && online && (!building || design.buildingIndustry));
 		streamline->setEnabled(online);
 		minimumTech->setEnabled(online);
 		roomNumber->setEnabled(online);
+		if(material) material->setEnabled(loaded && online);
 		armorUpAction->setEnabled(loaded && online && design.header.armor < 10);
 		armorDownAction->setEnabled(loaded && online && design.header.armor > 0);
 		newAction->setEnabled(online && ownsFileCommands);
 		openAction->setEnabled(online && ownsFileCommands);
-		saveAction->setEnabled(loaded && (!studioHandler || studioReady) && ownsFileCommands);
+		saveAction->setEnabled(loaded && (!building || design.buildingIndustry) && (!studioHandler || studioReady) && ownsFileCommands);
 		passwordAction->setVisible(bool(studioHandler));
 		passwordButton->setVisible(bool(studioHandler));
 		passwordAction->setEnabled(bool(studioHandler) && online && studioOwner && !studioBusy);
@@ -741,7 +925,7 @@ public:
 		burnAction->setVisible(showBurn);
 		burnButton->setVisible(showBurn);
 		burnAction->setEnabled(bool(studioHandler) && online && !studioBusy && !modified && studioCanBurn);
-		saveAction->setToolTip(studioHandler && studioConnected
+		saveAction->setToolTip(building ? QStringLiteral("Save the building design (Ctrl+S).") : studioHandler && studioConnected
 			? QStringLiteral("Save the spacecraft design in your library or export a .ship file (Ctrl+S).")
 			: QStringLiteral("Save spacecraft to a .ship file (Ctrl+S)."));
 		editTool.active = loaded && online && !renderAction->isChecked() && toolMode != HandMode;
@@ -881,9 +1065,9 @@ public:
 			studioLoadTable->setSortingEnabled(true);
 			studioLoadTable->horizontalHeader()->setStretchLastSection(true);
 		}
-		const QString status = !studioLibraryLoaded ? QStringLiteral("Loading spacecraft design library...")
+		const QString status = !studioLibraryLoaded ? QStringLiteral("Loading design library...")
 			: studioLibraryTruncated ? QStringLiteral("The first %1 designs are shown.").arg(studioLibrary.size())
-			: studioLibrary.isEmpty() ? QStringLiteral("No spacecraft designs are saved in your library.") : QString();
+			: studioLibrary.isEmpty() ? QStringLiteral("No designs are saved in your library.") : QString();
 		if(studioSaveLibraryStatus) studioSaveLibraryStatus->setText(status);
 		if(studioLoadLibraryStatus) studioLoadLibraryStatus->setText(status);
 	}
@@ -892,14 +1076,34 @@ public:
 	{
 		if(!StudioFileCommandAllowed()) return false;
 		QString directory = fileName.isEmpty()
-			? settings.value(QStringLiteral("LegacySpacecraft/LastOpenDirectory")).toString()
+			? settings.value(DirectoryKey()).toString()
 			: QFileInfo(fileName).absolutePath();
 		if(directory.isEmpty() || !QFileInfo(directory).isDir())
 			directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
 		if(directory.isEmpty() || !QFileInfo(directory).isDir()) directory = QDir::homePath();
-		const QString selected = QFileDialog::getOpenFileName(window, QStringLiteral("Open spacecraft design"),
-			directory, QStringLiteral("Old spacecraft designs (*.ship);;All files (*)"));
+		QStringList filters;
+		if(building)
+		{
+			for(int industry = 3; industry < 130; ++industry)
+				if(AuLegacyBd::SelectableIndustry(industry)) filters << BuildingFilter(industry);
+			filters.sort();
+			filters.prepend(QStringLiteral("All Files (*.*)"));
+		}
+		else filters << QStringLiteral("Old spacecraft designs (*.ship)") << QStringLiteral("All files (*)");
+		const QString selected = QFileDialog::getOpenFileName(window, building ? QStringLiteral("Building Design File") : QStringLiteral("Open spacecraft design"),
+			directory, filters.join(QStringLiteral(";;")));
 		return !selected.isEmpty() && window->OpenFile(selected);
+	}
+
+	QString DirectoryKey() const
+	{
+		return building ? QStringLiteral("LegacyBuilding/LastOpenDirectory") : QStringLiteral("LegacySpacecraft/LastOpenDirectory");
+	}
+
+	QString BuildingFilter(int industry) const
+	{
+		const QString name = AuLegacyBd::DesignerIndustry(industry).name;
+		return QStringLiteral("%1 (*.%2)").arg(name, QString(name).replace(' ', '_'));
 	}
 
 	void ChooseStudioDesign()
@@ -909,12 +1113,12 @@ public:
 		// AuDesignOpen (2016 executable 0x140183c60) offers the owner's
 		// library separately from importing a file from personal storage.
 		AuDialog dialog(window);
-		dialog.setAuDlgTitle(QStringLiteral("Load Spacecraft Design"));
-		dialog.setAuDlgIcon(AuLegacyShipIcon(QStringLiteral("c_DesignDisk")));
+		dialog.setAuDlgTitle(building ? QStringLiteral("Load Building Design") : QStringLiteral("Load Spacecraft Design"));
+		dialog.setAuDlgIcon(toolDock->windowIcon());
 		QGridLayout* layout = new QGridLayout;
-		layout->addWidget(new QLabel(QStringLiteral("Select a spacecraft design to load into the design studio.\n"
-			"The current contents of the design studio will be lost.\nBe sure to save your work before proceeding."), &dialog), 0, 0, 1, 2);
-		layout->addWidget(new QLabel(QStringLiteral("Spacecraft Design Library"), &dialog), 1, 0, 1, 2);
+		layout->addWidget(new QLabel(QStringLiteral("Select a %1 design to load into the design studio.\n"
+			"The current contents of the design studio will be lost.\nBe sure to save your work before proceeding.").arg(building ? "building" : "spacecraft"), &dialog), 0, 0, 1, 2);
+		layout->addWidget(new QLabel(building ? QStringLiteral("Building Design Library") : QStringLiteral("Spacecraft Design Library"), &dialog), 1, 0, 1, 2);
 		QTableWidget* library = new QTableWidget(&dialog);
 		studioLoadTable = library;
 		library->setObjectName(QStringLiteral("twlib"));
@@ -926,16 +1130,17 @@ public:
 		library->setShowGrid(false);
 		library->verticalHeader()->hide();
 		library->setMinimumHeight(180);
-		library->setToolTip(QStringLiteral("Spacecraft designs in your personal library. Spacecraft designs are stored in your personal library when you save them."));
+		library->setToolTip(building ? QStringLiteral("Building designs in your personal library. Building designs are stored in your personal library when you save them.")
+			: QStringLiteral("Spacecraft designs in your personal library. Spacecraft designs are stored in your personal library when you save them."));
 		layout->addWidget(library, 2, 0, 1, 2);
 		studioLoadLibraryStatus = new QLabel(&dialog);
 		layout->addWidget(studioLoadLibraryStatus, 3, 0, 1, 2);
 		QPushButton* load = new QPushButton(QIcon(QStringLiteral(":/data/Library.png")), QStringLiteral("Load Design"), &dialog);
 		load->setObjectName(QStringLiteral("pbload"));
 		load->setEnabled(false);
-		load->setToolTip(QStringLiteral("Loads a spacecraft design from the library."));
+		load->setToolTip(building ? QStringLiteral("Loads a building design from the library.") : QStringLiteral("Loads a spacecraft design from the library."));
 		QPushButton* file = new QPushButton(QIcon(QStringLiteral(":/data/c_BlankDisk.png")), QStringLiteral("Load Design From File"), &dialog);
-		file->setToolTip(QStringLiteral("Loads a spacecraft design from a file on your local computer."));
+		file->setToolTip(building ? QStringLiteral("Loads a building design from a file on your local computer.") : QStringLiteral("Loads a spacecraft design from a file on your local computer."));
 		layout->addWidget(load, 4, 0);
 		layout->addWidget(file, 4, 1);
 		dialog.setAuDlgLayout(layout);
@@ -997,7 +1202,7 @@ public:
 	{
 		if(!loaded) return;
 		AuDialog dialog(window);
-		dialog.setAuDlgTitle(QStringLiteral("Move/Copy Spacecraft Design"));
+		dialog.setAuDlgTitle(building ? QStringLiteral("Move/Copy Building Design") : QStringLiteral("Move/Copy Spacecraft Design"));
 		dialog.setAuDlgIcon(AuLegacyShipIcon(QStringLiteral("dp_Move")));
 		QGridLayout* layout = new QGridLayout;
 		QRadioButton* entire = new QRadioButton(QStringLiteral("Move Entire Design"), &dialog);
@@ -1120,6 +1325,73 @@ public:
 		SetFeedback(message);
 	}
 
+	static std::unordered_map<quint16, quint16> DialogModules(const QMap<quint16, quint16>& values)
+	{
+		std::unordered_map<quint16, quint16> result;
+		for(auto it = values.cbegin(); it != values.cend(); ++it) result.emplace(it.key(), it.value());
+		return result;
+	}
+
+	static QMap<quint16, quint16> ChangedModules(const std::unordered_map<quint16, quint16>& selected,
+		const QMap<quint16, quint16>& original)
+	{
+		QMap<quint16, quint16> changes;
+		for(const auto& choice : selected)
+			if(choice.second != original.value(choice.first)) changes.insert(choice.first, choice.second);
+		return changes;
+	}
+
+	void ChooseModules()
+	{
+		if(!loaded) return;
+		const quint32 generation = studioGeneration;
+		AuLegacyStudioProtocol::Command edit;
+		if(building)
+		{
+			const SYSTEM system = AuLegacyShip::BuildingModuleSystem(design.buildingIndustry);
+			if(system == SYS_Count)
+			{
+				QMessageBox::warning(window, g_Au.ApplicationName(),
+					QStringLiteral("<html>No module options available to %1. Only these buildings have modules:<br>%2</html>")
+						.arg(AuLegacyBd::DesignerIndustry(design.buildingIndustry).name.toHtmlEscaped(), BuildingModuleIndustries()));
+				return;
+			}
+			const quint16 original = design.buildingModule;
+			AuSystemModule dialog(system, true, COMMODITYID(original), window, true);
+			if(dialog.exec() != QDialog::Accepted || dialog.m_Module == original) return;
+			edit.kind = AuLegacyStudioProtocol::BuildingModule;
+			edit.value = dialog.m_Module;
+		}
+		else
+		{
+			const AuLegacyShip::ModuleChanges original = AuLegacyShip::CurrentModules(design);
+			const auto& values = original.scalars;
+			AuSystemModules dialog(false, roomDecks.isEmpty() ? 0 : roomDecks.firstKey(),
+				values.value(0), values.value(1), values.value(2), values.value(3), values.value(4), values.value(5),
+				values.value(6), values.value(7), DialogModules(original.bays), DialogModules(original.transporters), window, true);
+			if(dialog.exec() != QDialog::Accepted) return;
+			const quint16 selected[] = {dialog.m_CnCModule, dialog.m_FTLDriveModule, dialog.m_HullModule,
+				dialog.m_LifeSupportModule, dialog.m_ManeuverDriveModule, dialog.m_PowerPlantModule,
+				dialog.m_SensorModule, dialog.m_ShieldModule};
+			edit.kind = AuLegacyStudioProtocol::SystemModules;
+			for(int i = 0; i < 8; ++i)
+				if(selected[i] != values.value(i)) edit.modules.scalars.insert(i, selected[i]);
+			edit.modules.bays = ChangedModules(dialog.m_BayModules, original.bays);
+			edit.modules.transporters = ChangedModules(dialog.m_TransporterModules, original.transporters);
+			if(edit.modules.scalars.isEmpty() && edit.modules.bays.isEmpty() && edit.modules.transporters.isEmpty()) return;
+		}
+		if(studioHandler)
+		{
+			if(generation == studioGeneration) SendStudioEdit(edit);
+			else SetFeedback(QStringLiteral("The shared design was replaced while the module window was open."));
+			return;
+		}
+		QString error;
+		bool changed = false;
+		if(!AuLegacyStudioProtocol::Apply(edit, design, error, changed)) SetFeedback(error);
+		else if(changed) HeaderChanged(true);
+	}
+
 	void ChangeArmor(int delta)
 	{
 		if (!loaded || (delta > 0 && design.header.armor >= 10) || (delta < 0 && design.header.armor == 0))
@@ -1135,6 +1407,14 @@ public:
 
 	void RefreshHeaderControls()
 	{
+		if(building)
+		{
+			material->setCurrentIndex(material->findData(design.buildingMaterial));
+			for(auto i = buildingRoomButtons.cbegin(); i != buildingRoomButtons.cend(); ++i)
+				i.value()->setVisible(AuLegacyBd::BuildingRoomAllowed(design.buildingIndustry, i.key()));
+			for(auto i = buildingDetailButtons.cbegin(); i != buildingDetailButtons.cend(); ++i)
+				i.value()->setVisible(AuLegacyBd::BuildingDetailAllowed(design.buildingIndustry, i.key()));
+		}
 		streamline->blockSignals(true);
 		streamline->setChecked(design.header.streamline != 0);
 		streamline->blockSignals(false);
@@ -1189,14 +1469,16 @@ public:
 		progress.setMinimumDuration(0);
 		progress.setAutoClose(false);
 		progress.setAutoReset(false);
-		progress.show();
+		if(!building) progress.show();
 		// Progress dispatches GUI events, including remote studio snapshots.
 		// Analyze a stable copy rather than allowing an update to replace the
 		// room/detail arrays while the path analyzer is traversing them.
 		const AuLegacyShip::Design checkedDesign = design;
 		const quint32 checkedGeneration = studioGeneration;
 		const quint64 checkedRevision = studioRevision;
-		const QString report = AuLegacyShipPathReport(checkedDesign,
+		// AuDesignCheck (EXE 14017d380) looks for a spacecraft even when
+		// invoked by the original building palette.
+		const QString report = building ? QStringLiteral("Ship in design environment not found.") : AuLegacyShipPathReport(checkedDesign,
 			[&progress](const QString& label, int value, int maximum) {
 				if (progress.wasCanceled())
 					return false;
@@ -1264,14 +1546,15 @@ public:
 		statsTimer->stop();
 		if (statsDirty)
 		{
-			designReport = AuLegacyShipStatsReport(design);
+			if(!building) designReport = AuLegacyShipStatsReport(design);
+			else designReport = AuLegacyBuildingStatsReport(design);
 			statsDirty = false;
 		}
 		QString report = QStringLiteral("<html><body>");
 		if (modified)
 			report += QStringLiteral("<p style=\"margin: 0; color: #ffff00;\">Modified</p>");
 		report += designReport.isEmpty() ? designTips : designReport;
-		if(designReport.isEmpty() && studioHandler)
+		if(designReport.isEmpty() && studioHandler && !building)
 			report += QStringLiteral("<br><br><b>STORING THE FINISHED DESIGN</b><br>"
 				"Check Paths, then walk through the spacecraft to inspect it.<br>"
 				"Save Design stores it in your spacecraft design library. Save Design To File creates a personal backup.<br>"
@@ -1318,6 +1601,7 @@ public:
 	void SetRenderMode(bool solid)
 	{
 		if(solid) PrepareSkyForScene();
+		for(QWidget* widget : buildingEditWidgets) widget->setVisible(!solid);
 		renderView->SetRenderSolid(solid);
 		editTool.active = loaded && !solid && toolMode != HandMode
 			&& (!studioHandler || (studioConnected && studioReady));
@@ -1360,6 +1644,9 @@ public:
 
 	void SetToolMode(ToolMode mode)
 	{
+		editTool.roofPoints.clear();
+		if(building && mode == PaintMode && !AuLegacyBd::BuildingRoomAllowed(design.buildingIndustry, selectedRoomType))
+			mode = HandMode;
 		if (mode != HandMode && renderAction->isChecked())
 			renderAction->setChecked(false);
 		toolMode = mode;
@@ -1377,9 +1664,13 @@ public:
 		}
 		editTool.active = loaded && (!studioHandler || (studioConnected && studioReady));
 		editTool.erasing = mode == EraseMode || mode == DeleteRoomMode || mode == DeleteEquipmentMode || mode == DeleteEquipmentAreaMode;
-		editTool.wholeRoom = mode == DeleteRoomMode;
+		editTool.roofType = building && mode == PaintMode && selectedRoomType >= 22 ? selectedRoomType : 0;
+		editTool.wholeRoom = mode == DeleteRoomMode || (building && mode == PaintMode && !editTool.roofType && changeRoomType);
+		editTool.singleClick = editTool.roofType || (building && mode == PaintMode && changeRoomType);
 		editTool.equipment = mode == EquipmentMode || mode == DeleteEquipmentMode || mode == DeleteEquipmentAreaMode;
 		editTool.detailType = mode == EquipmentMode ? selectedEquipmentType : 0;
+		editTool.rotationFamily = EquipmentCanRotate(editTool.detailType)
+			? AuLegacyShip::CanonicalDetailType(editTool.detailType) : 0;
 		editTool.radius = mode == DeleteEquipmentAreaMode
 			|| (mode == EquipmentMode && EquipmentUsesBrush(selectedEquipmentType)) ? equipmentBrushRadius : 0;
 		if(mode == PaintMode) editTool.icon = roomActions.value(selectedRoomType)->icon();
@@ -1390,7 +1681,8 @@ public:
 		else editTool.icon = selectedEquipmentAction ? selectedEquipmentAction->icon() : QIcon();
 		editTool.rotation = AuLegacyShip::DetailRotationStep(selectedEquipmentType);
 		editTool.footprint = mode == EquipmentMode && selectedEquipment && selectedEquipment->commodity
-			? AuLegacyShip::Rendering::VehicleFootprint(selectedEquipment->commodity) : QRectF();
+			? AuLegacyShip::Rendering::VehicleFootprint(selectedEquipment->commodity)
+			: AuLegacyShip::BerthFootprint(editTool.detailType);
 		renderView->ResetEditStroke();
 		renderView->SetEditTool(editTool);
 		eraseAction->setChecked(mode == EraseMode);
@@ -1407,8 +1699,9 @@ public:
 			QString text;
 			if (mode == EquipmentMode && selectedEquipment)
 			{
-				text = QString::fromLatin1(selectedEquipment->name) + QStringLiteral(": ")
-					+ AuLegacyShip::DetailPlacementDescription(selectedEquipmentType);
+				const BuildingTool* tool = building ? FindBuildingTool(BuildingDetails, selectedEquipment->type) : nullptr;
+				text = selectedEquipmentAction->text() + QStringLiteral(": ") + (tool
+					? QString::fromLatin1(tool->tip) : AuLegacyShip::DetailPlacementDescription(selectedEquipmentType));
 				if (EquipmentCanRotate(selectedEquipmentType))
 					text += QStringLiteral(" Left/right arrows rotate (%1 degrees).")
 						.arg(AuLegacyShip::DetailRotationStep(selectedEquipmentType) * 45);
@@ -1423,7 +1716,9 @@ public:
 		}
 		SetFeedback(mode == DeleteRoomMode ? QStringLiteral("Erase Room: click inside a room on the active design plane to erase the whole room.")
 				: mode == EraseMode ? QStringLiteral("Erase Room Cells: left click or drag with the hand cursor on the active design plane.")
-				: QStringLiteral("Paint %1: left click or drag with the hand cursor on the active design plane.").arg(RoomName(selectedRoomType)));
+				: editTool.roofType ? QStringLiteral("Select the first roof point on the active design plane.")
+				: editTool.wholeRoom ? QStringLiteral("Click a room to change it to %1.").arg(roomActions.value(selectedRoomType)->text())
+				: QStringLiteral("Paint %1: left click or drag with the hand cursor on the active design plane.").arg(roomActions.value(selectedRoomType)->text()));
 	}
 
 	void ChangeEquipmentBrush(int delta)
@@ -1455,6 +1750,33 @@ public:
 		if (!loaded || toolMode == HandMode || renderAction->isChecked())
 			return;
 		const int deck = currentDeck;
+		if(building && toolMode == PaintMode && changeRoomType && selectedRoomType < 22)
+		{
+			AuLegacyStudioProtocol::Command edit;
+			edit.kind = AuLegacyStudioProtocol::ChangeRoomType;
+			edit.deck = deck; edit.roomType = selectedRoomType; edit.cursor = cursor;
+			ApplyBuildingEdit(edit);
+			return;
+		}
+		if(building && toolMode == PaintMode && selectedRoomType >= 22)
+		{
+			if(editTool.roofPoints.contains(cursor)) return;
+			if(editTool.roofPoints.size() < 2)
+			{
+				editTool.roofPoints.append(cursor);
+				renderView->SetEditTool(editTool);
+				SetFeedback(editTool.roofPoints.size() == 1 ? QStringLiteral("Select the second roof point.") : QStringLiteral("Select the roof edge."));
+				return;
+			}
+			AuLegacyStudioProtocol::Command edit;
+			edit.kind = AuLegacyStudioProtocol::BuildingRoof;
+			edit.roomType = selectedRoomType; edit.deck = deck;
+			edit.cursor = editTool.roofPoints.first(); edit.roofAxis = editTool.roofPoints.last(); edit.roofEdge = cursor;
+			editTool.roofPoints.clear();
+			renderView->SetEditTool(editTool);
+			ApplyBuildingEdit(edit);
+			return;
+		}
 		if(studioHandler)
 		{
 			AuLegacyStudioProtocol::Command edit; edit.deck = deck; edit.cursor = cursor;
@@ -1463,7 +1785,7 @@ public:
 				if(toolMode == EquipmentMode && !selectedEquipment) return;
 				edit.kind = toolMode == EquipmentMode ? AuLegacyStudioProtocol::PlaceDetail : AuLegacyStudioProtocol::EraseDetails;
 				edit.detailType = quint8(selectedEquipmentType);
-				edit.commodity = selectedEquipment ? selectedEquipment->commodity : 0;
+				edit.commodity = toolMode == EquipmentMode ? selectedEquipmentCommodity : 0;
 				edit.radius = editTool.radius;
 			}
 			else
@@ -1480,7 +1802,7 @@ public:
 			if (toolMode == EquipmentMode && !selectedEquipment) return;
 			const AuLegacyShip::DetailEditResult result = toolMode == EquipmentMode
 				? AuLegacyShip::PlaceDetail(design, deck, cursor, selectedEquipmentType,
-					selectedEquipment->commodity, editTool.radius)
+					selectedEquipmentCommodity, editTool.radius)
 				: AuLegacyShip::DeleteDetails(design, deck, cursor, editTool.radius);
 			if (!result.accepted)
 			{
@@ -1525,6 +1847,15 @@ public:
 				: (result.changed ? QStringLiteral("Cell updated. Press Ctrl+S to save.") : QStringLiteral("No change at this cell."))) : result.error);
 	}
 
+	void ApplyBuildingEdit(const AuLegacyStudioProtocol::Command& edit)
+	{
+		if(studioHandler) { SendStudioEdit(edit); return; }
+		QString error;
+		bool changed = false;
+		if(!AuLegacyStudioProtocol::Apply(edit, design, error, changed)) SetFeedback(error);
+		else if(changed) { IndexDecks(); HeaderChanged(true); }
+	}
+
 	void DeleteCurrentDeck()
 	{
 		if(!loaded) return;
@@ -1556,14 +1887,18 @@ public:
 	{
 		if (!design.header.name.isEmpty())
 			return design.header.name;
-		return fileName.isEmpty() ? QStringLiteral("Untitled spacecraft") : QFileInfo(fileName).completeBaseName();
+		return fileName.isEmpty() ? (building ? QStringLiteral("Untitled building") : QStringLiteral("Untitled spacecraft")) : QFileInfo(fileName).completeBaseName();
 	}
 
 	void ShowDeck(int deck)
 	{
 		deck = std::max(MinimumGridDeck, std::min(MaximumGridDeck, deck));
 		if (deck != currentDeck)
+		{
+			editTool.roofPoints.clear();
+			renderView->SetEditTool(editTool);
 			renderView->ResetEditStroke();
+		}
 		currentDeck = deck;
 		SyncRenderDesign();
 		deckUpAction->setEnabled(loaded && deck < MaximumGridDeck);
@@ -1628,8 +1963,9 @@ public:
 
 	void UpdateTitle()
 	{
-		window->setWindowTitle(QStringLiteral("%1%2 \u2014 Legacy Spacecraft Designer")
-			.arg(modified ? QStringLiteral("*") : QString(), DisplayName()));
+		window->setWindowTitle(QStringLiteral("%1%2 \u2014 %3")
+			.arg(modified ? QStringLiteral("*") : QString(), DisplayName(),
+				building ? QStringLiteral("Legacy Building Designer") : QStringLiteral("Legacy Spacecraft Designer")));
 	}
 
 	bool SaveDesign()
@@ -1639,7 +1975,7 @@ public:
 		// AuDesignSave (2016 executable 0x140186040) keeps the named
 		// server library save separate from an optional local file backup.
 		AuDialog dialog(window);
-		dialog.setAuDlgTitle(QStringLiteral("Save Spacecraft Design"));
+		dialog.setAuDlgTitle(building ? QStringLiteral("Save Building Design") : QStringLiteral("Save Spacecraft Design"));
 		dialog.setAuDlgIcon(AuLegacyShipIcon(QStringLiteral("dp_Save")));
 		QGridLayout* layout = new QGridLayout;
 		QLabel* libraryText = new QLabel(QStringLiteral(
@@ -1653,7 +1989,7 @@ public:
 		studioSaveNames = name;
 		name->setEditable(true);
 		name->setEditText(design.header.name);
-		name->setAccessibleName(QStringLiteral("Spacecraft design name"));
+		name->setAccessibleName(building ? QStringLiteral("Building design name") : QStringLiteral("Spacecraft design name"));
 		QPushButton* librarySave = new QPushButton(AuLegacyShipIcon(QStringLiteral("dp_Save")),
 			QStringLiteral("Save Design"), &dialog);
 		studioSaveButton = librarySave;
@@ -1664,6 +2000,13 @@ public:
 		QPushButton* fileSave = new QPushButton(QIcon(QStringLiteral(":/data/c_BlankDisk.png")),
 			QStringLiteral("Save Design To File"), &dialog);
 		fileSave->setToolTip(QStringLiteral("Saves the current design into a file on your personal storage medium."));
+		if(building)
+		{
+			libraryText->setText(QStringLiteral("<b>BUILDING DESIGN LIBRARY</b><br><br>Enter a name to save this building in your design library. "
+				"Selecting an existing name replaces that design. Existing buildings, disks and drawings retain their reference to a replaced read-only design."));
+			librarySave->setToolTip(QStringLiteral("Saves the current design into the building design library."));
+			fileText->setText(QStringLiteral("<b>BUILDING DESIGN FILE</b><br><br>Save a copy of the design to a file on your computer."));
+		}
 		layout->addWidget(libraryText, 0, 0, 1, 3);
 		layout->addWidget(name, 1, 0, 1, 2);
 		layout->addWidget(librarySave, 1, 2);
@@ -1686,8 +2029,8 @@ public:
 			for(const auto& entry : studioLibrary) if(entry.name == savedName) { replacing = true; break; }
 			const quint32 generation = studioGeneration;
 			const quint64 revision = studioRevision;
-			if(replacing && QMessageBox::question(&dialog, QStringLiteral("Replace Spacecraft Design"),
-				QStringLiteral("Confirm replacement of existing design '%1' in the spacecraft design library.").arg(savedName),
+			if(replacing && QMessageBox::question(&dialog, building ? QStringLiteral("Replace Building Design") : QStringLiteral("Replace Spacecraft Design"),
+				QStringLiteral("Confirm replacement of existing design '%1' in your design library.").arg(savedName),
 				QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Ok) return;
 			if(!StudioFileCommandAllowed()) return;
 			if(generation != studioGeneration || revision != studioRevision)
@@ -1715,9 +2058,11 @@ public:
 		if(!loaded || !StudioFileCommandAllowed(true))
 			return false;
 		QString suggested = fileName;
+		const QString suffix = building ? AuLegacyBd::DesignerIndustry(design.buildingIndustry).name.replace(' ', '_') : QStringLiteral("ship");
+		if(suffix.isEmpty()) return false;
 		if(suggested.isEmpty())
 		{
-			QString directory = settings.value(QStringLiteral("LegacySpacecraft/LastOpenDirectory")).toString();
+			QString directory = settings.value(DirectoryKey()).toString();
 			if(directory.isEmpty() || !QFileInfo(directory).isDir())
 				directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
 			if(directory.isEmpty() || !QFileInfo(directory).isDir())
@@ -1725,15 +2070,15 @@ public:
 			QString baseName = DisplayName();
 			baseName.replace(QLatin1Char('/'), QLatin1Char('_'));
 			baseName.replace(QLatin1Char('\\'), QLatin1Char('_'));
-			suggested = QDir(directory).filePath(baseName + QStringLiteral(".ship"));
+			suggested = QDir(directory).filePath(baseName + QLatin1Char('.') + suffix);
 		}
 		// The original Save button always opens a save dialog. Let the dialog
 		// apply the suffix before its overwrite confirmation, including *.ship.
-		QFileDialog dialog(window, QStringLiteral("Spacecraft Design File"), suggested,
-			QStringLiteral("Spacecraft Designs (*.ship);;All Files (*.*)"));
+		QFileDialog dialog(window, building ? QStringLiteral("Building Design File") : QStringLiteral("Spacecraft Design File"), suggested,
+			building ? BuildingFilter(design.buildingIndustry) + QStringLiteral(";;All Files (*.*)") : QStringLiteral("Spacecraft Designs (*.ship);;All Files (*.*)"));
 		dialog.setAcceptMode(QFileDialog::AcceptSave);
 		dialog.setFileMode(QFileDialog::AnyFile);
-		dialog.setDefaultSuffix(QStringLiteral("ship"));
+		dialog.setDefaultSuffix(suffix);
 		if(dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty())
 			return false;
 		// A shared studio can change owner or receive edits while the dialog is open.
@@ -1747,17 +2092,20 @@ public:
 		QString error;
 		if(!AuLegacyShip::Save(path, exportedDesign, error, fallbackName))
 		{
-			QMessageBox::warning(window, QStringLiteral("Could not save spacecraft"), error);
+			QMessageBox::warning(window, QStringLiteral("Could not save design"), error);
 			return false;
 		}
 		if(!studioHandler)
 		{
 			if(design.header.name.isEmpty() && !fallbackName.isEmpty())
 				design.header.name = fallbackName;
-			if(design.header.version == 0 && design.header.scalarSlots.isEmpty())
-				design.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
-			design.header.version = 2;
-			design.header.versionStateRaw = quint8(0x20 | design.header.state);
+			if(!building)
+			{
+				if(design.header.version == 0 && design.header.scalarSlots.isEmpty())
+					design.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
+				design.header.version = 2;
+				design.header.versionStateRaw = quint8(0x20 | design.header.state);
+			}
 		}
 		fileName = path;
 		// Exporting a shared design is a backup, not a library save. Only
@@ -1768,7 +2116,7 @@ public:
 		SetFeedback(studioHandler && !studioConnected
 			? QStringLiteral("Saved your local studio working copy to %1.").arg(QFileInfo(path).fileName())
 			: QStringLiteral("Saved %1").arg(QFileInfo(path).fileName()));
-		settings.setValue(QStringLiteral("LegacySpacecraft/LastOpenDirectory"), QFileInfo(path).absolutePath());
+		settings.setValue(DirectoryKey(), QFileInfo(path).absolutePath());
 		settings.sync();
 		return true;
 	}
@@ -1806,6 +2154,11 @@ public:
 	}
 
 	AuLegacyShipViewer* window;
+	const bool building;
+	QMap<int, QToolButton*> buildingRoomButtons, buildingDetailButtons;
+	QVector<QWidget*> buildingEditWidgets;
+	QComboBox* material = nullptr;
+	bool changeRoomType = false;
 	// Use the same preference store for embedded and standalone launches.
 	QSettings settings;
 	AuLegacyShipRender* renderView;
@@ -1830,6 +2183,7 @@ public:
 	QAction* passwordAction;
 	QAction* burnAction;
 	QAction* moveAction;
+	QAction* systemModulesAction = nullptr;
 	QToolButton* passwordButton;
 	QToolButton* burnButton;
 	QAction* eraseAction;
@@ -1878,6 +2232,7 @@ public:
 	int selectedRoomType = 2;
 	const EquipmentChoice* selectedEquipment = nullptr;
 	int selectedEquipmentType = 0;
+	quint16 selectedEquipmentCommodity = 0;
 	int equipmentBrushRadius = 0;
 	int currentDeck = 0;
 	int occupiedDeckCount = 0;
@@ -1893,12 +2248,17 @@ public:
 	QMargins loadingMargins;
 };
 
-AuLegacyShipViewer::AuLegacyShipViewer(QWidget* parent)
-	: QMainWindow(parent), m_Impl(new Impl(this))
+AuLegacyShipViewer::AuLegacyShipViewer(QWidget* parent, bool building)
+	: QMainWindow(parent), m_Impl(new Impl(this, building))
 {
-	setWindowTitle(QStringLiteral("Legacy Spacecraft Designer"));
 	resize(1200, 800);
-	NewDesign();
+	if(building)
+	{
+		AuLegacyShip::Design empty;
+		empty.building = true;
+		m_Impl->SetDesign(QString(), std::move(empty));
+	}
+	else NewDesign();
 }
 
 AuLegacyShipViewer::~AuLegacyShipViewer()
@@ -1959,10 +2319,28 @@ void AuLegacyShipViewer::NewDesign()
 	if (!m_Impl->StudioFileCommandAllowed() || !m_Impl->ConfirmChanges(false))
 		return;
 	AuLegacyShip::Design incoming;
-	incoming.header.version = 2;
-	incoming.header.versionStateRaw = 0x20;
-	incoming.header.streamline = 1;
-	incoming.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
+	if(m_Impl->building)
+	{
+		QMap<QString, INDUSTRYID> industries;
+		for(int id = 3; id < 130; ++id)
+			if(AuLegacyBd::SelectableIndustry(id))
+				industries.insert(AuLegacyBd::DesignerIndustry(id).name, INDUSTRYID(id));
+		const int current = m_Impl->design.buildingIndustry;
+		AuChooseIndustry choose(QStringLiteral("<html>Choose the type of building to design.<br><br>The current working building design will be lost with no way to get it back.</html>"),
+			INDUSTRYID(current), industries, this);
+		if(choose.exec() != QDialog::Accepted || !m_Impl->StudioFileCommandAllowed()) return;
+		incoming.building = true;
+		incoming.buildingIndustry = quint8(choose.IndustryId());
+		incoming.buildingModule = AuLegacyShip::DefaultBuildingModule(incoming.buildingIndustry);
+		incoming.buildingMaterial = m_Impl->design.buildingMaterial;
+	}
+	else
+	{
+		incoming.header.version = 2;
+		incoming.header.versionStateRaw = 0x20;
+		incoming.header.streamline = 1;
+		incoming.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
+	}
 	if(m_Impl->studioHandler)
 	{
 		m_Impl->ReplaceStudioDesign(incoming);
@@ -1977,15 +2355,32 @@ bool AuLegacyShipViewer::OpenFile(const QString& fileName)
 		return false;
 	AuLegacyShip::Design incoming;
 	QString error;
-	if(!AuLegacyShip::Load(fileName, incoming, error))
+	bool opened = false;
+	if(m_Impl->building)
 	{
-		QMessageBox::warning(this, QStringLiteral("Could not open legacy spacecraft"),
+		QFile file(fileName);
+		if(file.open(QIODevice::ReadOnly))
+		{
+			const QByteArray bytes = file.read(AuLegacyBd::MaximumPayloadBytes + 3);
+			opened = file.error() == QFileDevice::NoError && AuLegacyBd::ReadDesignFile(bytes, incoming, error);
+			// DnBuilding::DesignLoaded copies the industry and module into a new
+			// working design. Publication state belongs to the source design.
+			incoming.header.state = 0;
+			incoming.publishedEmpires.clear();
+			incoming.buildingMaterial = m_Impl->design.buildingMaterial;
+		}
+		if(error.isEmpty() && !opened) error = file.errorString();
+	}
+	else opened = AuLegacyShip::Load(fileName, incoming, error);
+	if(!opened)
+	{
+		QMessageBox::warning(this, QStringLiteral("Could not open legacy design"),
 			QStringLiteral("%1\n\n%2").arg(fileName, error));
 		return false;
 	}
 	if(m_Impl->studioHandler) m_Impl->ReplaceStudioDesign(incoming);
 	else m_Impl->SetDesign(fileName, std::move(incoming));
-	m_Impl->settings.setValue(QStringLiteral("LegacySpacecraft/LastOpenDirectory"),
+	m_Impl->settings.setValue(m_Impl->DirectoryKey(),
 		QFileInfo(fileName).absolutePath());
 	m_Impl->settings.sync();
 	return true;
@@ -2001,6 +2396,7 @@ void AuLegacyShipViewer::SetStudioCommandHandler(const std::function<void(AuLega
 	const std::function<bool(bool)>& flush)
 {
 	m_Impl->studioHandler = handler;
+	if(m_Impl->building) m_Impl->designTips = BuildingDesignTips(bool(handler));
 	m_Impl->studioFlush = flush;
 	m_Impl->studioReady = false;
 	m_Impl->studioExitAfterSave = false;

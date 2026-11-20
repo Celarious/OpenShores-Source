@@ -10,6 +10,7 @@
 #include "auclientlib.h"
 #include "audialog.h"
 #include "dbindustry.h"
+#include <QMap>
 
 class QListWidget;
 class QListWidgetItem;
@@ -22,11 +23,13 @@ private:
 
 	// Widgets
 	QListWidget*						m_Industries;
+	void Populate(const QString& caption, INDUSTRYID currentIndustry, const QMap<QString, INDUSTRYID>& industries, bool legacy);
 
 public:
 	// 'withBuildings' is true to only offer industries that have buildings. This omits town square and road.
 	// 'currentIndustry' will be selected in the list, if it's in the list. Use IID_None to select none.
 	AuChooseIndustry(const QString& caption, INDUSTRYID currentIndustry, bool withBuildings, QWidget* parent=0);
+	AuChooseIndustry(const QString& caption, INDUSTRYID currentIndustry, const QMap<QString, INDUSTRYID>& industries, QWidget* parent);
 	virtual ~AuChooseIndustry();
 
 	inline INDUSTRYID IndustryId() const

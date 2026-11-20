@@ -1,4 +1,5 @@
 #include "aulegacyshipedit.h"
+#include "aulegacybd.h"
 #include "aulegacyshipdetails.h"
 #include "aulegacyshipgeometry.h"
 #include "aupoint.h"
@@ -26,6 +27,8 @@ bool SameRoomKey(const Room& room, int deck, int type, quint8 number)
 {
 	return int(room.deck) == deck && int(room.roomType) == type && room.roomSubtype == number;
 }
+
+void InsertRoom(QVector<Room>& rooms, Room&& room);
 
 quint16 NextRoomId(const Design& design)
 {
@@ -83,21 +86,32 @@ bool SameDetails(const QVector<Detail>& left, const QVector<Detail>& right)
 }
 }
 
+int AuLegacyShip::DesignMinimumDeck(const Design& design)
+{
+	return design.building ? AuLegacyBd::MinimumDesignDeck(design.buildingIndustry) : MinimumDeck;
+}
+
+int AuLegacyShip::DesignMaximumDeck(const Design& design)
+{
+	return design.building ? AuLegacyBd::DesignerIndustry(design.buildingIndustry).maximumDeck : MaximumDeck;
+}
+
 AuLegacyShip::CellEditResult AuLegacyShip::EditCell(Design& design, int deck,
 	const QPointF& cursor, quint8 gridMask, int roomType, quint8 roomNumber)
 {
 	CellEditResult result;
 	// The spacecraft palette exposes 1..21 except 12. Roof creation is a
 	// separate building-only command (DaDesignEnvironment::CreateRoof).
-	if(roomType != -1 && (roomType < 1 || roomType > 21 || roomType == 12))
+	if(roomType != -1 && (roomType < 1 || roomType > 21 || (design.building
+		? !AuLegacyBd::BuildingRoomAllowed(design.buildingIndustry, roomType) : roomType == 12)))
 	{
-		result.error = QStringLiteral("Select a spacecraft room type or the Erase Cells tool. Building roofs cannot be painted in spacecraft mode.");
+		result.error = QStringLiteral("Select an available room type or the Erase Cells tool.");
 		return result;
 	}
 	const bool erase = roomType == -1;
-	if(deck < -128 || deck > 127 || (!erase && (deck < MinimumDeck || deck > MaximumDeck)))
+	if(deck < -128 || deck > 127 || (!erase && (deck < DesignMinimumDeck(design) || deck > DesignMaximumDeck(design))))
 	{
-		result.error = QStringLiteral("The 2016 designer adds room cells only on decks -28 through 28.");
+		result.error = QStringLiteral("The selected deck is outside this design's deck limits.");
 		return result;
 	}
 	if(!std::isfinite(cursor.x()) || !std::isfinite(cursor.y()))
@@ -115,7 +129,8 @@ AuLegacyShip::CellEditResult AuLegacyShip::EditCell(Design& design, int deck,
 	{
 		const double x = std::round(point.x() / CoordinateSpacing);
 		const double y = std::round(point.y() / CoordinateSpacing);
-		if(!std::isfinite(x) || !std::isfinite(y) || x < -120 || x > 120 || y < -120 || y > 120)
+		if(!std::isfinite(x) || !std::isfinite(y) || x < -120 || x > 120 || y < -120 || y > 120
+			|| (design.building && !AuLegacyBd::ValidDesignerPoint(design.buildingIndustry, deck, point)))
 		{
 			result.error = QStringLiteral("This cell extends beyond the 2016 design grid.");
 			return result;
@@ -147,9 +162,10 @@ AuLegacyShip::CellEditResult AuLegacyShip::EditCell(Design& design, int deck,
 	// Original add subtracts the whole proposed room, not just the cursor cell.
 	// Empty file records remain inspectable but never enter the original room
 	// array, so they cannot block edits or reserve working room IDs here.
-	const auto affected = [=](const Room& room)
+	const auto affected = [&](const Room& room)
 	{
 		return HasBoundary(room) && int(room.deck) == deck
+			&& (!design.building || !IsRoof(room))
 			&& (erase || (!IsRoof(room) && !SameRoomKey(room, deck, roomType, roomNumber)));
 	};
 	for(const Room& room : design.rooms)
@@ -222,7 +238,8 @@ AuLegacyShip::CellEditResult AuLegacyShip::EditCell(Design& design, int deck,
 			room.roomSubtype = roomNumber;
 			if(!SetBoundary(room, proposed, result.error))
 				return result;
-			candidate.rooms.append(std::move(room));
+			if(design.building) InsertRoom(candidate.rooms, std::move(room));
+			else candidate.rooms.append(std::move(room));
 		}
 		changed = true;
 	}
@@ -246,7 +263,7 @@ int AuLegacyShip::RoomAtPoint(const Design& design, int deck, const QPointF& cur
 		if(error) *error = QStringLiteral("The room position is outside the legacy coordinate range.");
 		return -1;
 	}
-	const AuPoint location(cursor.x(), cursor.y(), deck * DeckHeight);
+	const AuPoint location(cursor.x(), cursor.y(), deck * AuLegacyShip::DeckHeight);
 	for(int i = 0; i < design.rooms.size(); ++i)
 	{
 		const Room& room = design.rooms[i];
@@ -260,7 +277,7 @@ int AuLegacyShip::RoomAtPoint(const Design& design, int deck, const QPointF& cur
 		}
 		AuPointArray polygon;
 		for(const QPointF& vertex : boundary)
-			polygon.append(AuPoint(vertex.x(), vertex.y(), deck * DeckHeight));
+			polygon.append(AuPoint(vertex.x(), vertex.y(), deck * AuLegacyShip::DeckHeight));
 		if(polygon.PointInBoundary(location)) return i;
 	}
 	return -1;
@@ -381,19 +398,109 @@ void InsertRoom(QVector<Room>& rooms, Room&& room)
 }
 }
 
-QString AuLegacyShip::MoveCopyError(const Design& design, const MoveCopyRequest& request)
+AuLegacyShip::CellEditResult AuLegacyShip::ChangeRoomTypeAt(Design& design, int deck,
+	const QPointF& cursor, int roomType)
+{
+	CellEditResult result;
+	if(!design.building || roomType < 1 || roomType > 21
+		|| !AuLegacyBd::BuildingRoomAllowed(design.buildingIndustry, roomType))
+	{ result.error = QStringLiteral("Select an available building room type."); return result; }
+	const int index = RoomAtPoint(design, deck, cursor, &result.error);
+	if(!result.error.isEmpty()) return result;
+	if(index < 0 || !design.rooms[index].roomId || IsRoof(design.rooms[index])
+		|| design.rooms[index].roomType == roomType)
+	{ result.accepted = true; return result; }
+	Room replacement = design.rooms[index];
+	for(const Room& other : design.rooms)
+		if(SameRoomKey(other, deck, roomType, replacement.roomSubtype))
+		{
+			result.error = QStringLiteral("A room of that type and number already exists on this story.");
+			return result;
+		}
+	// BuildingDesignChangeRoomType (AuData13 0x18012e4b0) assigns the
+	// first free ID *after* removing the room, then reinserts in key order.
+	Design candidate = design;
+	candidate.rooms.removeAt(index);
+	replacement.roomId = NextRoomId(candidate);
+	replacement.roomType = quint8(roomType);
+	InsertRoom(candidate.rooms, std::move(replacement));
+	if(!ReconcileDetails(candidate, result.error)) return result;
+	design = std::move(candidate);
+	result.accepted = result.changed = true;
+	return result;
+}
+
+AuLegacyShip::CellEditResult AuLegacyShip::CreateRoof(Design& design, int deck, int type,
+	const QPointF& first, const QPointF& axis, const QPointF& edge)
+{
+	CellEditResult result;
+	if(!design.building || type < 22 || type > 24 || deck < 0 || deck > 127
+		|| !AuLegacyBd::BuildingRoomAllowed(design.buildingIndustry, type)
+		|| !AuLegacyBd::ValidDesignerPoint(design.buildingIndustry, deck, first)
+		|| !AuLegacyBd::ValidDesignerPoint(design.buildingIndustry, deck, axis)
+		|| !AuLegacyBd::ValidDesignerPoint(design.buildingIndustry, deck, edge))
+	{
+		result.error = QStringLiteral("The roof must fit inside the building site on an above-ground deck.");
+		return result;
+	}
+	// DaDesignEnvironment::CreateRoof (0x1802f7dd0) orients gable and hip
+	// rectangles clockwise, and mirrors the second ellipse axis when needed.
+	const QPointF along = axis - first, across = edge - first;
+	const double cross = along.x() * across.y() - along.y() * across.x();
+	QPolygonF boundary;
+	if(cross != 0)
+	{
+		if(type == 24) boundary = EllipseBoundary(first, axis, cross < 0 ? first - across : edge);
+		else if(cross < 0) boundary << first << axis << edge + along << edge;
+		else boundary << axis << first << edge << edge + along;
+	}
+	if(boundary.isEmpty())
+	{
+		result.error = QStringLiteral("Choose three distinct, noncollinear roof points.");
+		return result;
+	}
+	for(const QPointF& point : boundary)
+		if(!AuLegacyBd::ValidDesignerPoint(design.buildingIndustry, deck, point))
+		{
+			result.error = QStringLiteral("The roof extends beyond the building site.");
+			return result;
+		}
+	Room roof;
+	roof.streamOffset = -1;
+	roof.deck = qint8(deck);
+	roof.roomType = quint8(type);
+	roof.designId = design.header.designId;
+	roof.roomId = NextRoomId(design);
+	if(!roof.roomId || design.rooms.size() >= 65535)
+	{
+		result.error = QStringLiteral("No room identifier is available for the roof.");
+		return result;
+	}
+	// BuildingDesignNextRoomNumber returns zero for a missing room array,
+	// otherwise the first free number in 1..255, wrapping back to zero.
+	if(!design.rooms.isEmpty())
+	{
+		QSet<quint8> used;
+		for(const Room& room : design.rooms)
+			if(room.deck == deck && room.roomType == type) used.insert(room.roomSubtype);
+		for(int number = 1; number <= 255; ++number)
+			if(!used.contains(quint8(number))) { roof.roomSubtype = quint8(number); break; }
+	}
+	if(!SetBoundary(roof, boundary, result.error)) return result;
+	Design candidate = design;
+	InsertRoom(candidate.rooms, std::move(roof));
+	if(!ReconcileDetails(candidate, result.error)) return result;
+	design = std::move(candidate);
+	result.changed = result.accepted = true;
+	return result;
+}
+
+namespace
+{
+QString MoveCopyGeometryError(const Design& design, const MoveCopyRequest& request)
 {
 	// SpaceShipDesignTestMove/TestCopy, AuData13 18014a8c0 / 18014a2c0.
 	const bool entire = request.mode == MoveCopyMode::MoveEntireDesign;
-	const bool copy = request.mode == MoveCopyMode::CopyCurrentDeck;
-	if(request.lateral == 0 && request.longitudinal == 0 && request.vertical == 0)
-		return QStringLiteral("No movement has been specified.");
-	if(copy && request.vertical == 0)
-		return QStringLiteral("Cannot copy to current deck.");
-	if(request.deck < -128 || request.deck > 127 || request.lateral < -80 || request.lateral > 80
-		|| request.longitudinal < -80 || request.longitudinal > 80
-		|| request.vertical < -84 || request.vertical > 84 || request.copies < 1 || request.copies > 84)
-		return QStringLiteral("The move/copy settings are outside the 2016 dialog ranges.");
 	const bool differentDeck = !entire && request.vertical != 0;
 	const int destination = request.deck + request.vertical;
 	const QPointF offset(request.lateral * GridSpacing, request.longitudinal * GridSpacing);
@@ -426,6 +533,20 @@ QString AuLegacyShip::MoveCopyError(const Design& design, const MoveCopyRequest&
 				return QStringLiteral("A room would exceed the grid coordinates limit.");
 	}
 	return QString();
+}
+}
+
+QString AuLegacyShip::MoveCopyError(const Design& design, const MoveCopyRequest& request)
+{
+	if(request.lateral == 0 && request.longitudinal == 0 && request.vertical == 0)
+		return QStringLiteral("No movement has been specified.");
+	if(request.mode == MoveCopyMode::CopyCurrentDeck && request.vertical == 0)
+		return QStringLiteral("Cannot copy to current deck.");
+	if(request.deck < -128 || request.deck > 127 || request.lateral < -80 || request.lateral > 80
+		|| request.longitudinal < -80 || request.longitudinal > 80
+		|| request.vertical < -84 || request.vertical > 84 || request.copies < 1 || request.copies > 84)
+		return QStringLiteral("The move/copy settings are outside the 2016 dialog ranges.");
+	return MoveCopyGeometryError(design, request);
 }
 
 AuLegacyShip::MoveCopyResult AuLegacyShip::MoveCopy(Design& design, const MoveCopyRequest& request)
@@ -501,6 +622,14 @@ AuLegacyShip::MoveCopyResult AuLegacyShip::MoveCopy(Design& design, const MoveCo
 			// The repeat loop calls BuildingDesignTestCopy (180145025), which
 			// finds no building for an offline spacecraft's working design ID.
 			// Keep that quirk; stop before overflowing this adapter's packed records.
+			if(design.building && repeat > 1)
+			{
+				MoveCopyRequest destination = request;
+				destination.lateral *= repeat;
+				destination.longitudinal *= repeat;
+				destination.vertical *= repeat;
+				if(!MoveCopyGeometryError(candidate, destination).isEmpty()) break;
+			}
 			QVector<Room> newRooms = rooms;
 			QVector<Detail> newDetails = details;
 			if(qint64(candidate.rooms.size()) + candidate.details.size() + newRooms.size()

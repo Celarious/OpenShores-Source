@@ -29,6 +29,7 @@ class AUCLIENT_DLL AuLegacyCityConstruction : public QWidget
 	Q_OBJECT
 public:
 	explicit AuLegacyCityConstruction(QWidget* parent = nullptr);
+	static QString IconPath(const QString& original);
 	void Submit(AuLegacyCityProtocol::Request request);
 	QPixmap PlacementIcon(const AuLegacyCityProtocol::Request& request) const;
 	void SetCursorMaterial(quint16 material);

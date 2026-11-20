@@ -53,12 +53,13 @@ AuBldDesignStudioPanel::AuBldDesignStudioPanel(int panelIndex, QWidget* parent, 
 			"that others must enter to join you. If it is <b>Occupied</b>, enter the owner's password.<br>"
 			"A blank password prevents anyone from joining, even with another blank password.</html>"));
 		pbBuilding = new QPushButton(QIcon(":data/c_BuildingDesignDrawing.png"), tr("Enter Building Designer"), this);
-		pbBuilding->setEnabled(false);
-		pbBuilding->setToolTip(tr("The legacy building designer is not available yet."));
+		pbBuilding->setObjectName("LegacyBuilding");
+		pbBuilding->setToolTip(tr("Enters the studio for designing legacy buildings."));
 		pb2 = new QPushButton(QIcon(":data/c_DesignDisk.png"), tr("Enter Spacecraft Designer"), this);
 		pb2->setObjectName("LegacyEnter");
 		pb2->setToolTip(tr("Enters the studio for designing legacy spacecraft."));
-		connect(pb2, SIGNAL(clicked(bool)), SLOT(EnterLegacyDesignerPushed()));
+		connect(pbBuilding, &QPushButton::clicked, this, [this]() { EnterLegacyDesigner(true); });
+		connect(pb2, &QPushButton::clicked, this, [this]() { EnterLegacyDesigner(false); });
 		connect(le0, &QLineEdit::textChanged, this, [this](const QString&) { SetOccupied(m_Occupied); });
 	}
 	else
@@ -136,18 +137,18 @@ void AuBldDesignStudioPanel::SetOccupied(bool occupied)
 		status->setText(occupied ? tr("Occupied") : tr("Vacant"));
 	if(m_Legacy)
 	{
-		QPushButton* enter = findChild<QPushButton*>("LegacyEnter");
 		const QLineEdit* password = findChild<QLineEdit*>("Password");
-		if(enter)
-			enter->setEnabled(!occupied || (password && !password->text().isEmpty()));
+		const bool canEnter = !occupied || (password && !password->text().isEmpty());
+		findChild<QPushButton*>("LegacyEnter")->setEnabled(canEnter);
+		findChild<QPushButton*>("LegacyBuilding")->setEnabled(canEnter);
 	}
 }
 
-void AuBldDesignStudioPanel::EnterLegacyDesignerPushed()
+void AuBldDesignStudioPanel::EnterLegacyDesigner(bool building)
 {
 	const QLineEdit* password = findChild<QLineEdit*>("Password");
 	if(password && (!m_Occupied || !password->text().isEmpty()))
-		emit LegacyEnter(m_PanelIndex, password->text());
+		emit LegacyEnter(m_PanelIndex, password->text(), building);
 }
 
 //-+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
@@ -284,7 +285,7 @@ bool AuLegacyCityDesignStudio::InitializeNextPanel()
 	if(IsInitialized()) return true;
 	const int pidx = m_InitializedPanels++;
 	m_Panels[pidx] = new AuBldDesignStudioPanel(pidx, m_PanelContent, true);
-	connect(m_Panels[pidx], SIGNAL(LegacyEnter(int, QString)), SLOT(EnterDesignerPushed(int, QString)));
+	connect(m_Panels[pidx], &AuBldDesignStudioPanel::LegacyEnter, this, &AuLegacyCityDesignStudio::EnterDesignerPushed);
 	m_PanelLayout->insertWidget(pidx, m_Panels[pidx]);
 	m_Panels[pidx]->setVisible(pidx < m_StudioCount);
 	return IsInitialized();
@@ -316,8 +317,8 @@ void AuLegacyCityDesignStudio::SetOccupied(int studioIndex, bool occupied)
 		m_Panels[studioIndex]->SetOccupied(occupied);
 }
 
-void AuLegacyCityDesignStudio::EnterDesignerPushed(int studioIndex, QString password)
+void AuLegacyCityDesignStudio::EnterDesignerPushed(int studioIndex, QString password, bool building)
 {
 	if(m_CityId && m_DevelopmentId && studioIndex >= 0 && studioIndex < m_StudioCount)
-		emit Enter(m_CityId, m_DevelopmentId, studioIndex, password);
+		emit Enter(m_CityId, m_DevelopmentId, studioIndex, password, building);
 }

@@ -194,7 +194,10 @@ void AuLegacyStudioSession::Pump()
 		{
 			request.action = EditBatch;
 			request.edits.append(request.edit);
+			// A module dialog can carry a variable number of transporter
+			// selections. Send it as one batch even alongside queued strokes.
 			while(!m_Queue.isEmpty() && m_Queue.head().action == Edit
+				&& request.edit.kind != SystemModules && m_Queue.head().edit.kind != SystemModules
 				&& m_Queue.head().generation == m_Generation && request.edits.size() < MaximumBatchCommands)
 				request.edits.append(m_Queue.dequeue().edit);
 			m_BatchWait.restart();

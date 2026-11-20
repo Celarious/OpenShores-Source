@@ -702,6 +702,13 @@ const AuLegacyCity::ConstructionProcessRecord* AuLegacyCityCatalogue::Constructi
 
 int AuLegacyCityCatalogue::BuildingDesignMaximumDeck(AuLegacyCity::IndustryId industry, AuLegacyCity::CommodityId material) const
 {
+	const auto* process = ConstructionProcessForIndustry(industry);
+	return BuildingDesignMaximumDeck(industry, material, process ? process->stackLimit : 99);
+}
+
+int AuLegacyCityCatalogue::BuildingDesignMaximumDeck(AuLegacyCity::IndustryId industry,
+	AuLegacyCity::CommodityId material, int limit)
+{
 	// DgData::BuildingDesignMaxDeckLimit, AuData13 0x131180. These fixed
 	// shapes do not describe how many industrial levels can be constructed.
 	switch(industry.value)
@@ -714,9 +721,6 @@ int AuLegacyCityCatalogue::BuildingDesignMaximumDeck(AuLegacyCity::IndustryId in
 	case 112: case 128: return 3;
 	default: break;
 	}
-	const auto* process = ConstructionProcessForIndustry(industry);
-	if(!process) return 0;
-	const int limit = process->stackLimit;
 	if(limit == 34) return 1;
 	if(limit == 0 || limit == 32 || limit == 33 || material.value == 86) return 0;
 	if(limit != 1 && limit != 3 && limit != 7 && limit != 15 && limit != 31) return 0;

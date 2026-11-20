@@ -13,12 +13,6 @@ namespace
 {
 using namespace AuLegacyShip;
 
-quint16 ScalarModule(const Design& design, int slot)
-{
-	return slot < design.header.scalarSlots.size() ? design.header.scalarSlots.at(slot)
-		: DefaultModuleSlots().at(slot);
-}
-
 quint16 MappedModule(const QVector<ModulePair>& modules, quint16 key, quint16 fallback)
 {
 	for(const ModulePair& pair : modules)
@@ -46,16 +40,17 @@ void ModuleTechLevel(const Design& design, const Stats& stats, Performance& resu
 	QSet<quint16> transporterKeys;
 	for(const ModulePair& pair : design.header.secondPairs)
 	{
-		if(transporterKeys.contains(pair.first)) continue;
+		if(!stats.transporterRooms.contains(pair.first) || transporterKeys.contains(pair.first)) continue;
 		transporterKeys.insert(pair.first);
 		const quint16 module = pair.secondNormalized;
 		if(module == 0xf6) RequireModule(result, module, 6);
 		else if(module == 0xf7) RequireModule(result, module, 13);
 	}
+	if(transporterKeys.size() < stats.transporterRooms.size()) RequireModule(result, 0xf6, 6);
 	QSet<quint16> bayKeys;
 	for(const ModulePair& pair : design.header.firstPairs)
 	{
-		if(bayKeys.contains(pair.first)) continue;
+		if(pair.first > 255 || !stats.weaponBays.contains(quint8(pair.first)) || bayKeys.contains(pair.first)) continue;
 		bayKeys.insert(pair.first);
 		const quint16 module = pair.secondNormalized;
 		switch(module)
@@ -69,6 +64,7 @@ void ModuleTechLevel(const Design& design, const Stats& stats, Performance& resu
 		case 0x123: RequireModule(result, module, 2); break;
 		}
 	}
+	if(bayKeys.size() < stats.weaponBays.size()) RequireModule(result, 0x105, 1);
 	for(const Detail& detail : design.details)
 	{
 		const int type = detail.detailType;

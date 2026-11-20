@@ -1,5 +1,6 @@
 <RCC>
  <qresource prefix="/legacy/cities">
+  <file alias="GD2016">../../../../resources/runtime/legacy/cities/GD2016</file>
   <file alias="manifest.json">../../../../resources/runtime/legacy/cities/manifest.json</file>
   <file alias="designs/B1">../../../../resources/runtime/legacy/cities/designs/B1</file>
   <file alias="designs/B2">../../../../resources/runtime/legacy/cities/designs/B2</file>

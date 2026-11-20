@@ -882,7 +882,7 @@ public slots:
 protected:
 	virtual void closeEvent(QCloseEvent* event);
 
-	void LaunchLegacyDesigner();
+	void LaunchLegacyDesigner(bool building = false);
 	void BeginLegacyStudioEntry();
 	void FinishLegacyStudioEntry(bool accepted);
 	void UpdateLegacyStudio();

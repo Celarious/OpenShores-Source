@@ -285,19 +285,24 @@ QPolygonF AuLegacyShip::RoomBoundary(const Room& room, QString* error)
 	}
 
 	const QPointF center = DecodePoint(room.packedVertices.at(0));
-	const QPointF axisX = DecodePoint(room.packedVertices.at(1)) - center;
-	const QPointF axisY = DecodePoint(room.packedVertices.at(2)) - center;
+	boundary = EllipseBoundary(center, DecodePoint(room.packedVertices.at(1)), DecodePoint(room.packedVertices.at(2)));
+	if(boundary.isEmpty() && error)
+		*error = QStringLiteral("offset 0x%1: room %2 has degenerate ellipse controls")
+			.arg(room.streamOffset, 0, 16).arg(room.roomId);
+	return boundary;
+}
+
+QPolygonF AuLegacyShip::EllipseBoundary(const QPointF& center, const QPointF& axisPoint, const QPointF& sidePoint)
+{
+	QPolygonF boundary;
+	const QPointF axisX = axisPoint - center;
+	const QPointF axisY = sidePoint - center;
 	const double radiusX = std::sqrt(axisX.x() * axisX.x() + axisX.y() * axisX.y());
 	const double radiusY = std::sqrt(axisY.x() * axisY.x() + axisY.y() * axisY.y());
 	const double cross = axisX.x() * axisY.y() - axisX.y() * axisY.x();
 	if(radiusX == 0.0 || radiusY == 0.0
 		|| std::abs(cross) <= 4 * std::numeric_limits<double>::epsilon() * radiusX * radiusY)
-	{
-		if(error)
-			*error = QStringLiteral("offset 0x%1: room %2 has degenerate ellipse controls")
-				.arg(room.streamOffset, 0, 16).arg(room.roomId);
 		return boundary;
-	}
 
 	// DnRoom::operator<< at AuData13.dll:0x180167cf0 casts to float before
 	// sqrtf/ceilf. Keep that rounding when selecting the original facet count.

@@ -82,6 +82,11 @@ struct Detail
 struct Design
 {
 	Header header;
+	bool building = false;
+	quint8 buildingIndustry = 0;
+	quint16 buildingModule = 0;
+	quint16 buildingMaterial = 86; // DpBuilding starts with logs. DnBuilding::Tx omits this preview.
+	QVector<quint32> publishedEmpires;
 	QVector<Room> rooms;
 	QVector<Detail> details;
 	int bytesConsumed = 0;
@@ -96,6 +101,7 @@ QPointF DecodePoint(quint16 packedXY);
 // expands ellipse rooms for display only. Degenerate
 // ellipse controls return an empty boundary and an explanatory error.
 QPolygonF RoomBoundary(const Room& room, QString* error = nullptr);
+QPolygonF EllipseBoundary(const QPointF& center, const QPointF& axisPoint, const QPointF& sidePoint);
 }
 
 #endif // AuLegacyShip_H

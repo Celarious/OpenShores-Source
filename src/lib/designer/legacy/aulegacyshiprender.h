@@ -6,6 +6,7 @@
 #include <QPointF>
 #include <QRectF>
 #include <QStringList>
+#include <QVector>
 #include <functional>
 
 namespace AuLegacyShip { struct Design; }
@@ -22,8 +23,12 @@ struct AuLegacyShipEditTool
 	bool active = false;
 	bool erasing = false;
 	bool wholeRoom = false;
+	bool singleClick = false;
+	int roofType = 0;
+	QVector<QPointF> roofPoints;
 	bool equipment = false;
 	int detailType = 0;
+	int rotationFamily = 0;
 	int radius = 0;
 	int rotation = 0;
 	QIcon icon;
@@ -60,6 +65,7 @@ public:
 	std::function<void(const QPointF&)> cellEntered;
 	std::function<void()> editStrokeFinished;
 	std::function<void(int)> rotateEquipment;
+	std::function<void()> restartRoof;
 	std::function<void(InteriorLight)> interiorLightChanged;
 
 protected:

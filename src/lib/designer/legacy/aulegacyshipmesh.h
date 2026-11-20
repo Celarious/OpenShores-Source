@@ -88,6 +88,7 @@ struct Batch
 	// Procedural equipment shares draw batches; one owner per triangle.
 	QVector<quint32> triangleDetails;
 	QString textureFile;
+	int buildingTextureSlot = -1;
 	QVector4D tint = QVector4D(1, 1, 1, 1);
 	float selfIllumination = 0;
 	bool twoSided = false;

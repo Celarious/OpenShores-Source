@@ -1,4 +1,5 @@
 #include "aulegacybd.h"
+#include "aulegacycitycatalogue.h"
 
 #include <QCryptographicHash>
 #include <QDataStream>
@@ -10,6 +11,7 @@
 #include <QMutexLocker>
 #include <QSet>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <utility>
 #include <zlib.h>
@@ -21,6 +23,73 @@ static void InitializeLegacyBuildingResources()
 
 namespace AuLegacyBd
 {
+bool SelectableIndustry(int industry)
+{
+	return industry >= 3 && industry < 130 && industry != 10 && industry != 114 && !DesignerIndustry(industry).name.isEmpty();
+}
+
+// DbIndustry::DoesManufacture, AuData13 0x18002ff50, in the 2016 ID namespace.
+bool DoesManufacture(int industry)
+{
+	return (industry >= 30 && industry <= 32) || industry == 34 || industry == 35 ||
+		(industry >= 40 && industry <= 48) || industry == 50 || industry == 51 ||
+		(industry >= 60 && industry <= 67) || (industry >= 70 && industry <= 89) || industry == 110 || industry == 125;
+}
+
+// The original refresh at EXE 14017bc60 uses DbIndustry population and
+// storage plus two jump tables. Ordinary structural tools always remain.
+bool BuildingRoomAllowed(int industry, int type)
+{
+	const auto record = DesignerIndustry(industry);
+	const bool militarySystem = industry == 11 || industry == 12;
+	const bool residential = record.population != 0;
+	switch(type)
+	{
+	case 1:  return militarySystem || industry == 128;
+	case 2:  return militarySystem || industry == 111 || industry == 127;
+	case 3:  return industry == 124 || industry == 112 || industry == 113 || industry == 30 || industry == 45;
+	case 5: case 9: return record.storage || (industry >= 60 && industry <= 67);
+	case 6: case 11: case 13: case 15: case 22: case 23: case 24: return true;
+	case 8:
+		return DoesManufacture(industry) || industry == 3 || industry == 103 || industry == 104;
+	case 10: case 14:
+		return residential || militarySystem || industry == 102 || industry == 105 || industry == 111
+			|| industry == 112 || industry == 113 || industry == 120 || industry == 121 || industry == 122
+			|| industry == 125 || (type == 14 && (industry == 100 || industry == 101 || industry == 123 || industry == 124));
+	case 16: case 20: return industry == 111;
+	case 17: return industry == 12;
+	case 18: return industry == 121;
+	case 19: return residential;
+	case 21: return industry == 11;
+	default: return false;
+	}
+}
+
+bool BuildingDetailAllowed(int industry, int type)
+{
+	const bool militarySystem = industry == 11 || industry == 12;
+	switch(type)
+	{
+	case 1: return industry == 127;
+	case 2: case 25: case 26: case 27: case 28: case 29: case 30: case 31:
+	case 65: case 66: case 67: case 68: case 69: case 70: case 71: case 72:
+		return DesignerIndustry(industry).population || militarySystem || industry == 128;
+	case 4: case 11: return industry == 121;
+	case 7: case 99: return industry == 11;
+	case 15: case 19: case 20: return industry == 111;
+	case 17: return industry == 12;
+	case 21: case 22: case 33: case 34: case 35: case 36: case 37: case 38: case 39: case 40:
+		return industry == 128;
+	case 49: case 51: case 54: case 84: case 85: case 86: case 87: case 88: case 89: case 90:
+		return militarySystem || industry == 111 || (industry >= 121 && industry <= 125) || industry == 127 || industry == 128;
+	case 74: case 75: return industry == 102 || industry == 105;
+	case 3: case 5: case 8: case 9: case 50: case 52: case 53: case 55: case 56: case 142:
+		return true;
+	default:
+		return (type >= 77 && type <= 83) || (type >= 91 && type <= 97) || (type >= 101 && type <= 140);
+	}
+}
+
 namespace
 {
 class Reader
@@ -148,6 +217,122 @@ bool Uncompress(const QByteArray& compressed, QByteArray& output, QString& error
 	output = std::move(decoded); error.clear(); return true;
 }
 
+float FixedTerrainLevelRadius(int industry)
+{
+	// DnBuilding::TerrainLevelRadius, AuData13 0x180046d70.
+	switch(industry)
+	{
+	case 20: return 26.24672f;
+	case 30: case 32: return 42.650917f;
+	case 31: case 50: case 51: return 32.8084f;
+	case 66: case 67: return 49.2126f;
+	case 113: return 65.6168f;
+	case 114: return 9.84252f;
+	default: return 0;
+	}
+}
+
+DesignerIndustryInfo DesignerIndustry(int industry)
+{
+	using namespace AuLegacyCity;
+	DesignerIndustryInfo info;
+	if(industry < 0 || industry >= 130) return info;
+	const IndustryId id{quint8(industry)};
+	const CommodityId vulcium(145);
+	if(const AuLegacyCityCatalogue* catalogue = AuLegacyCityCatalogue::BuiltIn())
+	{
+		if(const auto* record = catalogue->Industry(id))
+		{
+			info.name = record->name;
+			info.population = record->populationPerLevel;
+			info.storage = record->StorageUnits();
+			info.capacitor = record->CapacitorUnits();
+			info.employees = record->employees;
+		}
+		if(const auto* recipe = catalogue->ConstructionProcessForIndustry(id))
+		{
+			info.siteRadius = recipe->buildRadius * 3.28083989501312;
+			info.stackLimit = recipe->stackLimit;
+		}
+		info.maximumDeck = catalogue->BuildingDesignMaximumDeck(id, vulcium);
+		return info;
+	}
+
+	// Only the standalone editor uses these two tables from the bundled,
+	// immutable 0x18/0x3a GD. Their boundaries are in catalogue-manifest.json.
+	// Online game data continues to come from the negotiated SQL catalogue.
+	static const QVector<DesignerIndustryInfo> original = []() {
+		InitializeLegacyBuildingResources();
+		QFile file(QStringLiteral(":/legacy/cities/GD2016"));
+		QVector<DesignerIndustryInfo> rows(130);
+		if(!file.open(QIODevice::ReadOnly) || !file.seek(153107)) return QVector<DesignerIndustryInfo>();
+		QDataStream in(&file);
+		in.setVersion(QDataStream::Qt_4_0);
+		quint16 count;
+		in >> count;
+		if(count != 130) return QVector<DesignerIndustryInfo>();
+		for(int i = 0; i < count; ++i)
+		{
+			quint8 capacitor, industryId, population, storage;
+			qint8 employees;
+			QString name;
+			in >> capacitor >> industryId >> name >> population >> employees >> storage;
+			if(in.status() != QDataStream::Ok || industryId >= rows.size()) return QVector<DesignerIndustryInfo>();
+			rows[industryId].name = name;
+			rows[industryId].population = population;
+			rows[industryId].storage = storage * 10;
+			rows[industryId].capacitor = capacitor * 10;
+			rows[industryId].employees = employees;
+		}
+		if(!file.seek(206135)) return QVector<DesignerIndustryInfo>();
+		in >> count;
+		if(count != 82) return QVector<DesignerIndustryInfo>();
+		QSet<int> seen;
+		for(int i = 0; i < count; ++i)
+		{
+			quint8 process, industryId, preparation, stack, terrain, radius;
+			QString name;
+			in >> process >> name >> industryId >> preparation >> stack >> terrain >> radius;
+			if(in.status() != QDataStream::Ok || industryId >= rows.size()) return QVector<DesignerIndustryInfo>();
+			if(seen.contains(industryId)) continue;
+			seen.insert(industryId);
+			rows[industryId].stackLimit = stack;
+			rows[industryId].maximumDeck = AuLegacyCityCatalogue::BuildingDesignMaximumDeck(
+				IndustryId(industryId), CommodityId(145), stack);
+			rows[industryId].siteRadius = radius * 3.28083989501312;
+		}
+		return rows;
+	}();
+	return original.value(industry);
+}
+
+double DesignerSiteRadius(int industry, int deck)
+{
+	const double fixed = FixedTerrainLevelRadius(industry);
+	if(industry == 50 && deck < -1)
+		return std::min(DesignerIndustry(industry).siteRadius, fixed + (-1 - deck) * AuLegacyShip::GridSpacing);
+	return fixed ? fixed : DesignerIndustry(industry).siteRadius;
+}
+
+int MinimumDesignDeck(int industry)
+{
+	switch(industry)
+	{
+	case 11: case 12: return -5;
+	case 50: return -8;
+	case 51: return -1;
+	default: return 0;
+	}
+}
+
+bool ValidDesignerPoint(int industry, int deck, const QPointF& point)
+{
+	// AuData13 0x180159bd0 restricts coastal sites to the landward half.
+	const bool coastal = industry == 34 || industry == 62 || industry == 85;
+	const double radius = DesignerSiteRadius(industry, deck);
+	return std::abs(point.x()) <= radius && std::abs(point.y()) <= radius && (!coastal || point.y() <= 0);
+}
+
 bool ReadPayload(const QByteArray& payload, Design& output, QString& error)
 {
 	if(payload.isEmpty() || payload.size() > MaximumPayloadBytes)
@@ -245,6 +430,22 @@ bool ReadCache(const QByteArray& source, Design& output, QString& error)
 	output = std::move(candidate); error.clear(); return true;
 }
 
+bool ReadDesignFile(const QByteArray& bytes, AuLegacyShip::Design& output, QString& error)
+{
+	// The standalone 1a01 file contains precisely the uncompressed cache payload.
+	if(bytes.size() < 2 || bytes.size() - 2 > MaximumPayloadBytes
+		|| quint8(bytes.at(0)) != 0x1a || quint8(bytes.at(1)) != 1)
+	{
+		error = QStringLiteral("Expected a 2016 building design file (1a01).");
+		return false;
+	}
+	Design parsed;
+	if(!ReadPayload(bytes.mid(2), parsed, error)) return false;
+	output = parsed.AuthoringDesign();
+	output.bytesConsumed = bytes.size();
+	return true;
+}
+
 bool LoadCache(const QString& fileName, Design& output, QString& error)
 {
 	QFile file(fileName);
@@ -270,6 +471,10 @@ int Design::MaximumDeck() const
 AuLegacyShip::Design Design::AuthoringDesign() const
 {
 	AuLegacyShip::Design result;
+	result.building = true;
+	result.buildingIndustry = header.industryId;
+	result.buildingModule = header.module;
+	result.publishedEmpires = header.publishedEmpires;
 	result.header.designId = header.designId; result.header.name = header.name;
 	result.header.architectId = header.architectId; result.header.architectName = header.architectName;
 	result.header.state = header.state; result.rooms = rooms; result.details = details;

@@ -279,7 +279,7 @@ Stats CalculateStats(const Design& design)
 	Stats stats;
 	QHash<quint16, const Room*> roomsById;
 	QVector<RoomGeometry> geometry;
-	geometry.reserve(design.rooms.size());
+	if(!design.building) geometry.reserve(design.rooms.size());
 	QRectF hullBounds;
 	int invalidRooms = 0;
 	int duplicateRooms = 0;
@@ -335,9 +335,9 @@ Stats CalculateStats(const Design& design)
 				stats.maximumDeck = std::max(stats.maximumDeck, int(room.deck));
 			}
 		}
-		geometry.append(item);
+		if(!design.building) geometry.append(item);
 	}
-	stats.hullContiguous = HullIsContiguous(geometry);
+	if(!design.building) stats.hullContiguous = HullIsContiguous(geometry);
 	if(stats.hasHull)
 	{
 		stats.width = hullBounds.width();
@@ -399,6 +399,7 @@ Stats CalculateStats(const Design& design)
 		if(room && IsConsole(type))
 		{
 			++stats.consoles;
+			++stats.consoleCounts[type];
 			if(type == 73)
 				++stats.officerStations;
 			else

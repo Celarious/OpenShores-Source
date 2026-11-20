@@ -111,6 +111,13 @@ static const Button Buttons[] =
 	{129, 79, 8, 10, 3, 1, 2, "Biodome", ":data/bBiodome.png"},
 };
 
+inline const char* IndustryIcon(int industry)
+{
+	for(const auto& button : Buttons)
+		if(button.industry == industry) return button.icon;
+	return "";
+}
+
 struct Category
 {
 	quint8 page;

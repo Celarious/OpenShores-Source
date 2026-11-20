@@ -14,6 +14,13 @@
 class AuComboBoxValue;
 class QComboBox;
 
+namespace AuModuleDialog
+{
+QString Name(SYSTEM system, bool legacy);
+QString Icon(SYSTEM system, bool legacy);
+void ListModules(QComboBox* cb, SYSTEM system, bool building, quint16 current, bool legacy);
+}
+
 class AUCLIENT_DLL AuSystemModule : public AuDialog
 {
 	Q_OBJECT;
@@ -26,14 +33,13 @@ private:
 	QComboBox*		m_Modules;
 
 public:
-	AuSystemModule(SYSTEM system, bool isBuilding, COMMODITYID currentModule=CID_Invalid, QWidget* parent=0);
+	AuSystemModule(SYSTEM system, bool isBuilding, COMMODITYID currentModule=CID_Invalid, QWidget* parent=0,
+		bool legacy=false);
 	virtual ~AuSystemModule();
 
 private slots:
 	void ModuleChanged(int);
 
-private:
-	void ListModules(QComboBox* cb, SYSTEM system, bool isBuilding, COMMODITYID currentModuleCID);
 };
 
 #endif // AuSystemModule_H

@@ -2,9 +2,19 @@
 #define AuLegacyShipEdit_H
 
 #include "aulegacyship.h"
+#include <QMap>
 
 namespace AuLegacyShip
 {
+struct ModuleChanges
+{
+	QMap<quint16, quint16> scalars, bays, transporters;
+};
+
+ModuleChanges CurrentModules(const Design& design);
+// Sparse changes keep other participants' independent module choices intact.
+bool ApplyModuleChanges(Design& design, const ModuleChanges& modules, bool& changed, QString& error);
+
 struct CellEditResult
 {
 	// Erasing unoccupied space can succeed without changing any records.
@@ -15,11 +25,15 @@ struct CellEditResult
 
 // Apply one original mouse-event position to an offline working design.
 // roomType -1 erases cells; 1..21 except 12 are spacecraft room-paint tools.
-// Building roofs and unknown room types remain readable but cannot be painted.
+// Building paint tools follow the selected industry. Roofs have three controls.
 // Rejection, including unavailable validation data, leaves design unchanged.
 // The input file is never written. Room Number is the saved subtype byte.
 CellEditResult EditCell(Design& design, int deck, const QPointF& cursor,
 	quint8 gridMask, int roomType, quint8 roomNumber);
+int DesignMinimumDeck(const Design& design);
+int DesignMaximumDeck(const Design& design);
+CellEditResult CreateRoof(Design& design, int deck, int type, const QPointF& first,
+	const QPointF& axis, const QPointF& edge);
 
 // DnRoomArray::InsideRoom: first room containing the point, excluding walls.
 // Returns -1 when no room is selected or the geometry cannot be read.
@@ -28,6 +42,7 @@ int RoomAtPoint(const Design& design, int deck, const QPointF& cursor,
 
 // Whole-room/deck erasure revalidates equipment before committing the edit.
 CellEditResult DeleteRoomAt(Design& design, int deck, const QPointF& cursor);
+CellEditResult ChangeRoomTypeAt(Design& design, int deck, const QPointF& cursor, int roomType);
 CellEditResult DeleteDeck(Design& design, int deck);
 
 enum class MoveCopyMode { MoveEntireDesign, MoveCurrentDeck, CopyCurrentDeck };

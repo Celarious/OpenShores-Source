@@ -32,5 +32,14 @@ CREATE TABLE IF NOT EXISTS n_LegacyBdDesign
   publicDefault boolean NOT NULL DEFAULT false
 );
 GRANT SELECT, INSERT ON n_LegacyBdDesign TO audog;
+-- IDs 1 through 74 belong to the original public catalog. Each studio save
+-- receives an immutable ID so replacing a name preserves its older designs.
+CREATE SEQUENCE IF NOT EXISTS n_legacybddesign_studio_id_seq
+  AS bigint MINVALUE 75 MAXVALUE 4294967295 START WITH 75 NO CYCLE;
+ALTER TABLE n_LegacyBdDesign ADD COLUMN IF NOT EXISTS architectId bigint
+  CHECK (architectId BETWEEN 1 AND 4294967295);
+CREATE INDEX IF NOT EXISTS legacy_bd_library_architect_name
+  ON n_LegacyBdDesign (architectId, name, id DESC) WHERE architectId IS NOT NULL;
+GRANT USAGE, SELECT ON SEQUENCE n_legacybddesign_studio_id_seq TO audog;
 
 COMMIT;

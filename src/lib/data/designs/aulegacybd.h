@@ -16,6 +16,36 @@ constexpr int MaximumCacheBytes = 8 * 1024 * 1024;
 constexpr int MaximumPayloadBytes = 16 * 1024 * 1024;
 constexpr int MaximumRecords = 250000;
 constexpr double DeckHeight = 8.0;
+// DpBuilding::MaterialCommodity, in the original combo's display order.
+constexpr quint16 BuildingMaterials[] = {86, 48, 76, 51, 146, 145};
+inline bool IsBuildingMaterial(int commodity)
+{
+	for(quint16 material : BuildingMaterials) if(material == commodity) return true;
+	return false;
+}
+
+struct DesignerIndustryInfo
+{
+	QString name;
+	int population = 0;
+	int storage = 0;
+	int capacitor = 0;
+	int employees = 0;
+	int stackLimit = 99;
+	int maximumDeck = 0;
+	double siteRadius = 0;
+};
+AUDATA_DLL DesignerIndustryInfo DesignerIndustry(int industry);
+AUDATA_DLL float FixedTerrainLevelRadius(int industry);
+AUDATA_DLL double DesignerSiteRadius(int industry, int deck);
+AUDATA_DLL int MinimumDesignDeck(int industry);
+AUDATA_DLL bool ValidDesignerPoint(int industry, int deck, const QPointF& point);
+
+// Tool visibility in the original building design palette (AuDesignBuilding).
+AUDATA_DLL bool SelectableIndustry(int industry);
+AUDATA_DLL bool DoesManufacture(int industry);
+AUDATA_DLL bool BuildingRoomAllowed(int industry, int type);
+AUDATA_DLL bool BuildingDetailAllowed(int industry, int type);
 
 struct Header
 {
@@ -53,6 +83,7 @@ struct Design
 // expects DnBuilding::Tx followed by DnRoomArray and DnDetailArray streams.
 AUDATA_DLL bool ReadCache(const QByteArray& source, Design& output, QString& error);
 AUDATA_DLL bool ReadPayload(const QByteArray& payload, Design& output, QString& error);
+AUDATA_DLL bool ReadDesignFile(const QByteArray& bytes, AuLegacyShip::Design& output, QString& error);
 AUDATA_DLL bool LoadCache(const QString& fileName, Design& output, QString& error);
 
 // Bounded qCompress decoder shared by original geometry/path fixture readers.

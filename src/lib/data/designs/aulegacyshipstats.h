@@ -23,6 +23,7 @@ struct Stats
 	std::array<quint64, 256> roomVolumes{};
 	std::array<int, 256> roomCounts{};
 	std::array<int, 256> detailCounts{};
+	std::array<int, 256> consoleCounts{};
 	quint64 hullVolume = 0;
 	quint64 equipmentMass = 0;
 	int unknownVehicleMasses = 0;

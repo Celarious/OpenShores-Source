@@ -16,7 +16,7 @@ namespace AuLegacyStudioProtocol { struct Request; struct Command; struct Librar
 class AuLegacyShipViewer : public QMainWindow
 {
 public:
-	explicit AuLegacyShipViewer(QWidget* parent = nullptr);
+	explicit AuLegacyShipViewer(QWidget* parent = nullptr, bool building = false);
 	~AuLegacyShipViewer() override;
 
 	bool OpenFile(const QString& fileName);

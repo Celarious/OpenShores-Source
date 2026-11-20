@@ -33,11 +33,11 @@ public:
 
 protected slots:
 	void EnterDesignerPushed();
-	void EnterLegacyDesignerPushed();
+	void EnterLegacyDesigner(bool building);
 
 signals:
 	void Enter(int panelIndex, QString password);
-	void LegacyEnter(int panelIndex, QString password);
+	void LegacyEnter(int panelIndex, QString password, bool building);
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
@@ -83,10 +83,10 @@ public:
 	void SetOccupied(int studioIndex, bool occupied);
 
 protected slots:
-	void EnterDesignerPushed(int studioIndex, QString password);
+	void EnterDesignerPushed(int studioIndex, QString password, bool building);
 
 signals:
-	void Enter(quint32 cityId, quint32 developmentId, int studioIndex, QString password);
+	void Enter(quint32 cityId, quint32 developmentId, int studioIndex, QString password, bool building);
 };
 
 #endif // AuBldDesignStudio_H

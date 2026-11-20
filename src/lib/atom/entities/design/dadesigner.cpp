@@ -13,6 +13,7 @@
 #include "augleffects.h"
 #include "auglobal.h"
 #include "aulegacycityprotocol.h"
+#include "aulegacybd.h"
 #include "aulegacystudioprotocol.h"
 #include "aulegacyshipsave.h"
 #include "aulegacyscdesign.h"
@@ -1108,11 +1109,15 @@ bool DaDesigner::InitializeLegacyStudio(const DaPerson& owner, QString& error)
 	QWriteLocker lock(&m_EnvLock);
 	if(m_LegacyStudio) { error.clear(); return true; }
 	AuLegacyStudioProtocol::State initial;
+	initial.design.building = (StudioId() & AuLegacyCityProtocol::BuildingStudioIdFlag) != 0;
 	initial.design.header.version = 2;
 	initial.design.header.designId = initial.generation;
 	initial.design.header.versionStateRaw = 0x20;
-	initial.design.header.streamline = 1;
-	initial.design.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
+	if(!initial.design.building)
+	{
+		initial.design.header.streamline = 1;
+		initial.design.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
+	}
 	initial.design.header.architectId = owner.Id().GetID();
 	initial.design.header.architectName = owner.Name();
 	if(AuLegacyStudioProtocol::EncodeState(initial, error).isEmpty()) return false;
@@ -1255,12 +1260,25 @@ void DaDesigner::ProcessLegacyStudioRequest(DaPerson& person,
 			candidate.header.architectId = actorId;
 			candidate.header.architectName = person.Name();
 			candidate.header.version = 2;
-			if(candidate.header.scalarSlots.isEmpty()) candidate.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
-			if(request.action == Replace) candidate.header.state = 0;
+			// DaAtom::DesignNew and DpBuilding::DesignLoad change the design
+			// inside the existing development. Its preview material survives.
+			if(candidate.building) candidate.buildingMaterial = state.design.buildingMaterial;
+			if(!candidate.building && candidate.header.scalarSlots.isEmpty())
+				candidate.header.scalarSlots = AuLegacyShip::DefaultModuleSlots();
+			if(request.action == Replace)
+			{
+				candidate.header.state = 0;
+				if(candidate.building) candidate.publishedEmpires.clear();
+			}
 			candidate.header.versionStateRaw = quint8(0x20 | candidate.header.state);
 			for(auto& room : candidate.rooms) room.designId = candidate.header.designId;
 			for(auto& detail : candidate.details) detail.designId = candidate.header.designId;
-			if(!EncodeDocument(candidate, error).isEmpty())
+			if(candidate.building != state.design.building)
+				error = tr("Open the design in the matching studio.");
+			else if(candidate.building && (!candidate.buildingIndustry
+				|| AuLegacyBd::DesignerIndustry(candidate.buildingIndustry).name.isEmpty()))
+				error = tr("Select a building industry.");
+			else if(!EncodeDocument(candidate, error).isEmpty())
 			{
 				state.design = candidate; state.modified = false;
 				state.libraryDesignId = libraryId;
@@ -1335,6 +1353,7 @@ void DaDesigner::ProcessLegacyStudioRequest(DaPerson& person,
 bool DaDesigner::LegacyStudioCanBurn(const DaPerson& person, QString& error)
 {
 	const auto& state = *m_LegacyStudio;
+	if(state.design.building) { error = tr("Building designs cannot use spacecraft media."); return false; }
 	if(state.modified) { error = tr("Save the shared design before burning media."); return false; }
 	if(!state.libraryDesignId) { error = tr("Save the design to the design library before burning media."); return false; }
 	if(!AuLegacyStudioProtocol::IsLibraryNameValid(state.design.header.name))

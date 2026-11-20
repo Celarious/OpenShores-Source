@@ -74,12 +74,6 @@ void Count(QString& html, const QString& label, int value, int depth = 1)
 	if(value) Row(html, label, QLocale().toString(value), depth);
 }
 
-quint16 ScalarModule(const AuLegacyShip::Design& design, int slot)
-{
-	return slot < design.header.scalarSlots.size() ? design.header.scalarSlots.at(slot)
-		: AuLegacyShip::DefaultModuleSlots().at(slot);
-}
-
 QString ModuleWithTech(quint16 module, int techLevel)
 {
 	return QStringLiteral("%1 TL%2").arg(ModuleName(module)).arg(techLevel + 1);

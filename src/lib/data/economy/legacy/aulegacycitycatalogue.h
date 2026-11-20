@@ -208,6 +208,8 @@ public:
 	QVector<AuLegacyCity::ConstructionComponentRecord> ComponentsForConstruction(AuLegacyCity::ConstructionProcessId id) const;
 	const AuLegacyCity::ConstructionProcessRecord* ConstructionProcessForIndustry(AuLegacyCity::IndustryId id) const;
 	int BuildingDesignMaximumDeck(AuLegacyCity::IndustryId industry, AuLegacyCity::CommodityId material) const;
+	static int BuildingDesignMaximumDeck(AuLegacyCity::IndustryId industry, AuLegacyCity::CommodityId material,
+		int stackLimit);
 	// A count of industrial levels, distinct from the authored design's top deck.
 	int ConstructionLevelLimit(AuLegacyCity::ConstructionProcessId process, AuLegacyCity::CommodityId material,
 		bool flammableMaterialsAllowed = true) const;

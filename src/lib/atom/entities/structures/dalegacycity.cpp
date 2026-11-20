@@ -609,16 +609,8 @@ double TerrainLevelRadius(quint8 industry, const AuLegacyCityCatalogue& catalogu
 {
 	// DpDevelopment::TerrainLevelRadius, AuAtom13 0xfe610. Default BuildRadius
 	// uses the construction recipe's meter byte (AuData13 0x2c4e0).
-	switch(industry)
-	{
-	case 20: return 26.24672f;
-	case 30: case 32: return 42.650917f;
-	case 31: case 50: case 51: return 32.8084f;
-	case 66: case 67: return 49.2126f;
-	case 113: return 65.6168f;
-	case 114: return 9.84252f;
-	default: break;
-	}
+	const double fixed = AuLegacyBd::FixedTerrainLevelRadius(industry);
+	if(fixed) return fixed;
 	if(constructionProcess)
 	{
 		const auto* process = catalogue.ConstructionProcess(AuLegacyCity::ConstructionProcessId(constructionProcess));
@@ -781,8 +773,7 @@ void ConstructedDecks(AuLegacyCity::Development& dev)
 {
 	// DpBuilding::ConstructedDecks, 0x59cb20. Level counts have different
 	// geometry meanings for mines, wells and fixed-shape industrial buildings.
-	dev.minimumDeck = dev.industryId == 11 || dev.industryId == 12 ? -5
-		: dev.industryId == 50 ? -8 : dev.industryId == 51 ? -1 : 0;
+	dev.minimumDeck = qint8(AuLegacyBd::MinimumDesignDeck(dev.industryId));
 	dev.maximumDeck = qint8(MaximumDesignDeck(dev.industryId, dev.materialId));
 	const auto* recipe = ConstructionRecipe(dev.industryId, dev.constructionProcessId);
 	if(recipe && recipe->stackLimit == 32) dev.minimumDeck = qint8(-2 * int(dev.completedLevels));
@@ -1512,10 +1503,7 @@ struct DaLegacyCity::Runtime
 				else
 				{
 					if(!atlases.contains(atlasMaterial)) atlases.insert(atlasMaterial, QImage(AuLegacyBd::Geometry::MaterialAtlas(atlasMaterial)));
-					texture = atlases.value(atlasMaterial).copy(AuLegacyBd::Geometry::TextureTile(batch.textureSlot));
-					if(batch.textureSlot == 16) texture = texture.mirrored(true, false);
-					// Lamp lenses use effect 3, not the window alpha cutoff.
-					if(batch.textureSlot == 37 || batch.textureSlot == 38) texture = texture.convertToFormat(QImage::Format_RGB32);
+					texture = AuLegacyBd::Geometry::MaterialTile(atlases.value(atlasMaterial), batch.textureSlot);
 				}
 				textures.insert(prepared.textureKey, texture);
 			}

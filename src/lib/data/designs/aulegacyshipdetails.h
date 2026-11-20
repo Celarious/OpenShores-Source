@@ -20,6 +20,7 @@ QString DetailName(int type);
 QString DetailPlacementDescription(int type);
 int CanonicalDetailType(int type);
 int DetailRotationStep(int type);
+QRectF BerthFootprint(int type);
 int RotateDetailType(int type, int steps = 1);
 
 // One original equipment brush event. Positions snap to the half-cell grid.

@@ -5,6 +5,8 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "auchooseindustry.h"
+#include "aulegacycityconstruction.h"
+#include "aulegacycityconstructionlayout.h"
 //
 #include <dgdata.h>
 #include <QComboBox>
@@ -36,9 +38,20 @@ AuChooseIndustry::AuChooseIndustry(const QString& caption, INDUSTRYID currentInd
 			industries.insert(gd.IndustryName((INDUSTRYID)iid), (INDUSTRYID)iid);
 	}
 	g_Au.UnlockData();
+	Populate(caption, currentIndustry, industries, false);
+}
 
+AuChooseIndustry::AuChooseIndustry(const QString& caption, INDUSTRYID currentIndustry,
+	const QMap<QString, INDUSTRYID>& industries, QWidget* parent) : AuDialog(parent), m_IndustryId(IID_None)
+{
+	Populate(caption, currentIndustry, industries, true);
+}
+
+void AuChooseIndustry::Populate(const QString& caption, INDUSTRYID currentIndustry,
+	const QMap<QString, INDUSTRYID>& industries, bool legacy)
+{
 	setAuDlgTitle(tr("Choose Building"));
-	setAuDlgIcon(QIcon(":data/bHouse.png"));
+	setAuDlgIcon(QIcon(QStringLiteral(":data/bHouse.png")));
 
 	QLabel* lb = new QLabel(caption, this);
 
@@ -46,11 +59,11 @@ AuChooseIndustry::AuChooseIndustry(const QString& caption, INDUSTRYID currentInd
 	m_Industries = new QListWidget(this);
 	for(QMap<QString, INDUSTRYID>::const_iterator ii = industries.constBegin(); ii != industries.constEnd(); ii++)
 	{
-		QListWidgetItem* item;
-		if(DbIndustry::BitmapName(*ii))
-			item = new QListWidgetItem(QIcon(QPixmap(QString(DbIndustry::BitmapName(*ii)))), ii.key());
-		else
-			item = new QListWidgetItem(ii.key());
+		QString icon;
+		if(legacy)
+			icon = AuLegacyCityConstruction::IconPath(QString::fromLatin1(AuLegacyCityConstructionLayout::IndustryIcon(*ii)));
+		else icon = QString::fromLatin1(DbIndustry::BitmapName(*ii));
+		QListWidgetItem* item = new QListWidgetItem(QIcon(icon), ii.key());
 		item->setData(Qt::UserRole, *ii);
 
 		if(*ii == currentIndustry)

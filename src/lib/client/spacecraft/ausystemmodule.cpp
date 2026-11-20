@@ -7,26 +7,30 @@
 #include "ausystemmodule.h"
 //
 #include "auglobal.h"
+#include "aulegacycityconstruction.h"
+#include "aulegacyshipcommoditydata.h"
+#include "aulegacyshipmoduleoptions.h"
 #include <QComboBox>
 #include <QGridLayout>
 #include <QLabel>
 #include <QPixmap>
 #include <QPushButton>
 
-AuSystemModule::AuSystemModule(SYSTEM system, bool isBuilding, COMMODITYID currentModule, QWidget* parent) :
+AuSystemModule::AuSystemModule(SYSTEM system, bool isBuilding, COMMODITYID currentModule, QWidget* parent,
+		bool legacy) :
 	AuDialog(parent)
 {
 	m_Module = currentModule;
 
-	setAuDlgIcon(QIcon(":data/Design.png"));
-	setAuDlgTitle(QString("%1 Module").arg(ScSystemName(system)));
+	setAuDlgIcon(QIcon(QStringLiteral(":data/Design.png")));
+	setAuDlgTitle(QString("%1 Module").arg(AuModuleDialog::Name(system, legacy)));
 
 	QLabel* lb = new QLabel(this);
-	lb->setPixmap(QPixmap(SystemIcon(system)));
+	lb->setPixmap(QPixmap(AuModuleDialog::Icon(system, legacy)));
 
 	m_Modules = new QComboBox(this);
-	m_Modules->setToolTip(ScSystemName(system));
-	ListModules(m_Modules, system, isBuilding, (COMMODITYID)m_Module);
+	m_Modules->setToolTip(AuModuleDialog::Name(system, legacy));
+	AuModuleDialog::ListModules(m_Modules, system, isBuilding, m_Module, legacy);
 	connect(m_Modules, SIGNAL(activated(int)), SLOT(ModuleChanged(int)));
 
 	QPushButton* pbok = new QPushButton(tr("Place Equipment"));
@@ -48,23 +52,53 @@ AuSystemModule::~AuSystemModule()
 {
 }
 
-void AuSystemModule::ListModules(QComboBox* cb, SYSTEM system, bool isBuilding, COMMODITYID currentModuleCID)
+QString AuModuleDialog::Name(SYSTEM system, bool legacy)
 {
-	for(DbCommodityArray::const_iterator ci = g_Au.m_CommodityArray.constBegin(); ci != g_Au.m_CommodityArray.constEnd(); ci++)
+	if(legacy)
 	{
-		if(isBuilding)
+		switch(system)
 		{
-			if(DbCommodity::IsBdModule(system, (*ci).m_id))
-				cb->addItem(QIcon((*ci).BitmapName()), (*ci).m_name, (*ci).m_id);
-		}
-		else
-		{
-			if(DbCommodity::IsScModule(system, (*ci).m_id))
-				cb->addItem(QIcon((*ci).BitmapName()), (*ci).m_name, (*ci).m_id);
+		case SYS_CommandAndControl: return QStringLiteral("Control Stations");
+		case SYS_Transporter: return QStringLiteral("Transporter Room");
+		case SYS_Weapon: return QStringLiteral("Weapon Bay");
+		default: break;
 		}
 	}
+	return ScSystemName(system);
+}
 
-	int curIndex = cb->findData(currentModuleCID);
+QString AuModuleDialog::Icon(SYSTEM system, bool legacy)
+{
+	if(!legacy) return SystemIcon(system);
+	const QString name = system == SYS_Hull ? QStringLiteral("dp_ArmorIncrease.png")
+		: SystemIcon(system).section(QLatin1Char('/'), -1);
+	return QStringLiteral(":/data/legacy_") + name;
+}
+
+void AuModuleDialog::ListModules(QComboBox* cb, SYSTEM system, bool building, quint16 current, bool legacy)
+{
+	if(legacy)
+	{
+		quint16 id = 0;
+		for(const auto& commodity : AuLegacyShip::LegacyCommodity::Table)
+		{
+			if(AuLegacyShip::IsDesignerModule(system, id, building))
+			{
+				cb->addItem(QIcon(AuLegacyCityConstruction::IconPath(QString::fromLatin1(commodity.bitmap))),
+					QString::fromLatin1(commodity.name), int(id));
+			}
+			++id;
+		}
+	}
+	else
+	{
+		const DbCommodityArray& commodities = g_Au.m_CommodityArray;
+		for(const DbCommodity& commodity : commodities)
+			if(building ? DbCommodity::IsBdModule(system, commodity.m_id) : DbCommodity::IsScModule(system, commodity.m_id))
+				cb->addItem(QIcon(commodity.BitmapName()), commodity.m_name, commodity.m_id);
+	}
+
+	int curIndex = cb->findData(int(current));
 	if(curIndex >= 0)
 		cb->setCurrentIndex(curIndex);
 }

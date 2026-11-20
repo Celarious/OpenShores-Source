@@ -6044,7 +6044,8 @@ void AuDesignerFrame::LaunchDesigner()
 			"Old is a work in progress."),
 		QMessageBox::NoButton, this);
 	QPushButton* modern = choice.addButton(tr("Modern Designer"), QMessageBox::AcceptRole);
-	QPushButton* legacy = choice.addButton(tr("Old Designer"), QMessageBox::ActionRole);
+	QPushButton* spacecraft = choice.addButton(tr("Old Spacecraft Designer"), QMessageBox::ActionRole);
+	QPushButton* building = choice.addButton(tr("Old Building Designer"), QMessageBox::ActionRole);
 	choice.addButton(QMessageBox::Cancel);
 	choice.setDefaultButton(modern);
 	choice.exec();
@@ -6052,9 +6053,9 @@ void AuDesignerFrame::LaunchDesigner()
 	// The selection dialog runs an event loop; login may have progressed meanwhile.
 	if(m_View || m_LegacyDesigner || !m_Intro || auApp->RunState() != AuApp::NotLoggedIn)
 		return;
-	if(choice.clickedButton() == legacy)
+	if(choice.clickedButton() == spacecraft || choice.clickedButton() == building)
 	{
-		LaunchLegacyDesigner();
+		LaunchLegacyDesigner(choice.clickedButton() == building);
 		return;
 	}
 	if(choice.clickedButton() != modern)
@@ -6110,7 +6111,7 @@ void AuDesignerFrame::OpenLegacyDesign(const QString& fileName)
 		m_LegacyDesigner->OpenFile(fileName);
 }
 
-void AuDesignerFrame::LaunchLegacyDesigner()
+void AuDesignerFrame::LaunchLegacyDesigner(bool building)
 {
 	// A designer is chosen before creating the modern scene, never over an open design.
 	if(m_View || m_LegacyDesigner || !m_Intro || centralWidget() != m_Intro
@@ -6129,7 +6130,7 @@ void AuDesignerFrame::LaunchLegacyDesigner()
 	intro->setParent(this);
 	intro->hide();
 
-	m_LegacyDesigner = new AuLegacyShipViewer(this);
+	m_LegacyDesigner = new AuLegacyShipViewer(this, building);
 	m_LegacyDesigner->setWindowFlags(Qt::Widget);
 	AuLegacyShipViewer* viewer = m_LegacyDesigner;
 	viewer->SetExitHandler([this, viewer]()
@@ -6143,6 +6144,7 @@ void AuDesignerFrame::LaunchLegacyDesigner()
 			setWindowTitle(title);
 	});
 	setWindowTitle(m_LegacyDesigner->windowTitle());
+	setWindowIcon(viewer->windowIcon());
 	setCentralWidget(m_LegacyDesigner);
 	m_LegacyDesigner->show();
 	m_LegacyDesigner->setFocus();
@@ -6161,6 +6163,7 @@ void AuDesignerFrame::ExitLegacyDesigner()
 	if(!m_LegacyDesigner->ConfirmDiscardChanges())
 		return;
 
+	setWindowIcon(QIcon(auApp->Icon32()));
 	if(m_LegacyStudioOnline)
 	{
 		if(m_LegacyStudioSession) m_LegacyStudioSession->Stop();
@@ -6258,6 +6261,7 @@ void AuDesignerFrame::UpdateLegacyStudio()
 	const DaDesignBase* environment = hasPerson ? person->FindParentDesignBaseInEnv() : nullptr;
 	const bool privateStudio = environment && (environment->StudioId() & AuLegacyCityProtocol::PrivateStudioIdBase);
 	const bool inDesigner = environment != nullptr;
+	const bool buildingStudio = privateStudio && (environment->StudioId() & AuLegacyCityProtocol::BuildingStudioIdFlag);
 	const quint32 environmentId = environment ? environment->Id().GetID() : 0;
 	const quint32 personId = person ? person->Id().GetID() : 0;
 	m_View->UnlockSceneAtom();
@@ -6282,7 +6286,7 @@ void AuDesignerFrame::UpdateLegacyStudio()
 		// only its layout item so both views stay children of this window.
 		layout()->removeWidget(m_View);
 		m_View->hide();
-		m_LegacyDesigner = new AuLegacyShipViewer(this);
+		m_LegacyDesigner = new AuLegacyShipViewer(this, buildingStudio);
 		m_LegacyDesigner->setWindowFlags(Qt::Widget);
 		m_LegacyStudioSession = new AuLegacyStudioSession(m_LegacyDesigner, environmentId, personId);
 		AuLegacyShipViewer* viewer = m_LegacyDesigner;
@@ -6293,6 +6297,7 @@ void AuDesignerFrame::UpdateLegacyStudio()
 			if(m_LegacyDesigner == viewer) setWindowTitle(title);
 		});
 		setWindowTitle(viewer->windowTitle());
+		setWindowIcon(viewer->windowIcon());
 		setCentralWidget(viewer);
 		viewer->show();
 		viewer->setFocus();

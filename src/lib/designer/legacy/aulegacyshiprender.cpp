@@ -3,6 +3,8 @@
 #include "aulegacyshipmesh.h"
 #include "aulegacyshipgeometry.h"
 #include "aulegacyshipedit.h"
+#include "aupoint.h"
+#include "aulegacybuildinggeometry.h"
 #include "aulegacyshipicons.h"
 #include "aulegacyshipequipment.h"
 #include "aulegacyshipwalk.h"
@@ -85,6 +87,49 @@ namespace
 const float Pi = 3.14159265358979323846f;
 using namespace AuLegacyShip::Rendering;
 const qint64 DoorTickMilliseconds = qint64(DoorAnimationTickSeconds * 1000);
+
+Mesh BuildingPreview(const AuLegacyShip::Design& design)
+{
+	AuLegacyBd::Design building;
+	building.header.designId = design.header.designId;
+	building.header.industryId = design.buildingIndustry;
+	building.header.module = design.buildingModule;
+	building.rooms = design.rooms;
+	building.details = design.details;
+	AuLegacyBd::Geometry::Options options;
+	options.materialCommodity = design.buildingMaterial;
+	for(const AuLegacyShip::Room& room : design.rooms)
+	{
+		options.minimumDeck = qMin(options.minimumDeck, int(room.deck));
+		options.maximumDeck = qMax(options.maximumDeck, int(room.deck) - (room.roomType >= 22 ? 1 : 0));
+	}
+	AuLegacyBd::Geometry::Mesh source = AuLegacyBd::Geometry::Build(building, options);
+	Mesh mesh;
+	mesh.minimum = source.minimum; mesh.maximum = source.maximum;
+	mesh.hullOpenings = source.wallOpenings; mesh.hatchOpenings = source.floorOpenings;
+	mesh.warnings = source.warnings;
+	for(auto& surface : source.batches)
+	{
+		if(surface.collisionOnly || surface.depthOnly || surface.empireFlag) continue;
+		Batch batch;
+		batch.material = Material::Untextured;
+		batch.vertices.swap(surface.vertices);
+		batch.deck = surface.deck;
+		batch.equipment = surface.equipment;
+		batch.interior = surface.interior;
+		batch.twoSided = surface.twoSided;
+		batch.tint = surface.tint;
+		batch.selfIllumination = surface.selfIllumination;
+		batch.textureFile = surface.textureFile;
+		batch.buildingTextureSlot = surface.textureFile.isEmpty() ? surface.textureSlot : -1;
+		batch.detailId = surface.detailId;
+		batch.turretId = surface.turretId;
+		batch.rotationPivot = surface.rotationPivot;
+		batch.turretMuzzle = surface.turretMuzzle;
+		mesh.batches.append(std::move(batch));
+	}
+	return mesh;
+}
 
 enum SystemAction { PowerToggle, DriveToggle, DriveCycle, DriveHold, InteriorLightCycle, CloseHullDoors, MooringsToggle };
 
@@ -469,6 +514,7 @@ public:
 	bool gridVisible = true;
 	quint8 gridMask = 5;
 	AuLegacyShipEditTool editTool;
+	int rotationWheelDelta = 0;
 	QCursor toolCursor;
 	bool toolCursorApplied = false;
 	QPointF editCursor, lastEquipmentPoint;
@@ -556,6 +602,8 @@ public:
 	QSet<QString> transparentTextures;
 	QOpenGLTexture* effectTexture = nullptr;
 	QImage litAtlas, unlitAtlas;
+	QImage buildingAtlas;
+	quint16 buildingAtlasMaterial = 0;
 	QElapsedTimer animationClock;
 	QTimer* animationTimer = nullptr;
 	QMetaObject::Connection contextConnection;
@@ -1012,6 +1060,13 @@ public:
 		qint64 vertexCount = 0;
 		for (const auto& batch : mesh.batches)
 			vertexCount += batch.vertices.size();
+		if(vertexCount == 0)
+		{
+			// A new building has a design grid before it has any solid surfaces.
+			dirty = false;
+			glError.clear();
+			return true;
+		}
 		if (vertexCount > std::numeric_limits<int>::max() / qint64(sizeof(RenderVertex)))
 		{
 			glError = QStringLiteral("This design exceeds the rendering buffer limit.");
@@ -1205,6 +1260,8 @@ public:
 	QString TextureKey(int source) const
 	{
 		const auto& batch = mesh.batches[source];
+		if(batch.buildingTextureSlot >= 0)
+			return QStringLiteral("building:%1:%2").arg(design.buildingMaterial).arg(batch.buildingTextureSlot);
 		if(batch.textureFile == QStringLiteral("legacy:pc_Console.bmp")
 			|| batch.textureFile == QStringLiteral(":/data/ec_Console.bmp"))
 			return QStringLiteral("%1:power%2:drive%3:light%4:moored%5:doorsOpen%6").arg(batch.textureFile)
@@ -1248,7 +1305,16 @@ public:
 		if (textures.contains(key))
 			return remember(textures.value(key));
 		QImage tile;
-		if (batch.textureFile == QStringLiteral("legacy:pc_Console.bmp")){
+		if(batch.buildingTextureSlot >= 0)
+		{
+			if(buildingAtlasMaterial != design.buildingMaterial)
+			{
+				buildingAtlasMaterial = design.buildingMaterial;
+				buildingAtlas.load(AuLegacyBd::Geometry::MaterialAtlas(buildingAtlasMaterial));
+			}
+			tile = AuLegacyBd::Geometry::MaterialTile(buildingAtlas, batch.buildingTextureSlot).mirrored();
+		}
+		else if (batch.textureFile == QStringLiteral("legacy:pc_Console.bmp")){
     		tile = QImage(":/data/legacy_pc_Console.bmp").mirrored();
 		}
 		else if (!batch.textureFile.isEmpty())
@@ -1511,7 +1577,7 @@ void AuLegacyShipRender::PrepareDesign()
 	m_Impl->console.CreateDeviceObjects(SceneRenderInfo(), AuId(STATIC_TEXTURE_ID), false);
 	m_Impl->InitializeCharacter();
 	m_Impl->SyncCharacter();
-	if(m_Impl->dirty) m_Impl->Upload();
+	if(m_Impl->solid && m_Impl->dirty) m_Impl->Upload();
 	PrepareWireframe();
 	doneCurrent();
 }
@@ -1567,8 +1633,11 @@ void AuLegacyShipRender::SetGrid(bool visible, quint8 mask)
 void AuLegacyShipRender::SetEditTool(const AuLegacyShipEditTool& tool)
 {
 	const auto& previous = m_Impl->editTool;
+	if(!tool.active || previous.rotationFamily != tool.rotationFamily)
+		m_Impl->rotationWheelDelta = 0;
 	if(previous.active == tool.active && previous.erasing == tool.erasing
-		&& previous.wholeRoom == tool.wholeRoom
+		&& previous.wholeRoom == tool.wholeRoom && previous.singleClick == tool.singleClick
+		&& previous.roofType == tool.roofType && previous.roofPoints == tool.roofPoints
 		&& previous.equipment == tool.equipment && previous.detailType == tool.detailType && previous.radius == tool.radius
 		&& previous.rotation == tool.rotation && previous.icon.cacheKey() == tool.icon.cacheKey()
 		&& previous.footprint == tool.footprint) return;
@@ -1616,8 +1685,8 @@ void AuLegacyShipRender::SetDesign(const AuLegacyShip::Design& design)
 	const QVector<DoorDefinition> previousDoors = m_Impl->doors;
 	const QHash<quint32, DoorAnimation> previousStates = m_Impl->doorStates;
 	m_Impl->design = design;
-	m_Impl->designStats = AuLegacyShip::CalculateStats(design);
-	m_Impl->performance = AuLegacyShip::CalculatePerformance(design, m_Impl->designStats, design.header.minimumTechLevel);
+	m_Impl->designStats = design.building ? AuLegacyShip::Stats() : AuLegacyShip::CalculateStats(design);
+	m_Impl->performance = design.building ? AuLegacyShip::Performance() : AuLegacyShip::CalculatePerformance(design, m_Impl->designStats, design.header.minimumTechLevel);
 	m_Impl->RebuildContrails();
 	if(reset)
 	{
@@ -1639,7 +1708,7 @@ void AuLegacyShipRender::SetDesign(const AuLegacyShip::Design& design)
 	if(!m_Impl->designStats.maneuverUnits) m_Impl->driveState = 0;
 	m_Impl->sound.SetDesign(design);
 	m_Impl->haveDesign = true;
-	m_Impl->mesh = AuLegacyShip::Rendering::BuildMesh(design);
+	m_Impl->mesh = design.building ? BuildingPreview(design) : AuLegacyShip::Rendering::BuildMesh(design);
 	m_Impl->wireframeDirty = true;
 	m_Impl->consoleScreens.clear();
 	for(int i = 0; i < m_Impl->mesh.batches.size(); ++i)
@@ -2739,7 +2808,7 @@ void AuLegacyShipRender::paintGL()
 		m_Impl->InitializeCharacter();
 		m_Impl->SyncCharacter();
 	}
-	if (m_Impl->ready && (!m_Impl->dirty || m_Impl->Upload()))
+	if (m_Impl->ready && (!m_Impl->solid || !m_Impl->dirty || m_Impl->Upload()))
 	{
 		if(m_Impl->solid) RenderSky();
 		const auto camera = m_Impl->Camera(SceneRenderInfo());
@@ -2799,9 +2868,10 @@ void AuLegacyShipRender::paintGL()
 				const int material = m_Impl->batchTextures[source].material;
 				const bool atlas = batch.textureFile.isEmpty() && material >= 0
 					&& material < int(sizeof(ShipTextures) / sizeof(ShipTextures[0]));
-				m_Impl->program->setUniformValue("u_atlas", atlas);
+				const bool buildingTile = batch.buildingTextureSlot >= 0;
+				m_Impl->program->setUniformValue("u_atlas", atlas || buildingTile);
 				m_Impl->program->setUniformValue("u_tileRepeat", m_Impl->atlasRepeat[source]);
-				m_Impl->program->setUniformValue("u_tileInset", atlas
+				m_Impl->program->setUniformValue("u_tileInset", buildingTile ? AuLegacyBd::Geometry::TextureInset(batch.buildingTextureSlot) : atlas
 					? QVector2D(0.5f / ShipTextures[material].width, 0.5f / ShipTextures[material].height)
 					: QVector2D());
 				m_Impl->program->setUniformValue("u_model", m_Impl->transforms[source]);
@@ -2890,10 +2960,12 @@ void AuLegacyShipRender::paintGL()
 				|| std::abs(projected.x()) > projected.w() || std::abs(projected.y()) > projected.w()) continue;
 			const QPointF point((projected.x() / projected.w() + 1) * width() * .5,
 				(1 - projected.y() / projected.w()) * height() * .5);
-			QRectF bounds = painter.fontMetrics().boundingRect(label.text);
+			const bool multiline = label.text.contains('\n');
+			const int flags = multiline ? int(Qt::AlignCenter) : int(Qt::AlignLeft | Qt::AlignBottom | Qt::TextSingleLine);
+			QRectF bounds = multiline ? painter.fontMetrics().boundingRect(QRect(), flags, label.text)
+				: painter.fontMetrics().boundingRect(label.text);
 			if(label.centered) bounds.moveCenter(point);
 			else bounds.moveBottomLeft(point - QPointF(1, 1));
-			const int flags = Qt::AlignLeft | Qt::AlignBottom | Qt::TextSingleLine;
 			painter.setPen(Qt::black);
 			painter.drawText(bounds.translated(1, 1), flags, label.text);
 			painter.setPen(QColor::fromRgbF(label.color.x(), label.color.y(), label.color.z(), label.color.w()));
@@ -2964,10 +3036,41 @@ bool AuLegacyShipRender::DesignPlanePoint(const QPoint& pixel, QPointF& point)
 	const float distance = (float(m_Impl->deck * AuLegacyShip::DeckHeight) - camera.eye.z()) / direction.z();
 	if(distance < .1f || !std::isfinite(distance)) return false;
 	const QVector3D hit = camera.eye + direction * distance;
-	const float radius = float(40 * AuLegacyShip::GridSpacing);
-	if(std::abs(hit.x()) > radius || std::abs(hit.y()) > radius) return false;
 	point = QPointF(hit.x(), hit.y());
-	return true;
+	if(m_Impl->design.building)
+	{
+		const auto& tool = m_Impl->editTool;
+		const auto valid = [this](const QPointF& location) {
+			return AuLegacyBd::ValidDesignerPoint(m_Impl->design.buildingIndustry, m_Impl->deck, location);
+		};
+		if(!tool.roofType) return valid(point);
+		if(m_Impl->deck < 0) return false;
+		// DdDesignRoof (0x140313380) tests the first click before rounding.
+		// Later clicks constrain the raw cursor to a roof axis before testing.
+		const double spacing = AuLegacyShip::CoordinateSpacing;
+		if(tool.roofPoints.isEmpty())
+		{
+			if(!valid(point)) return false;
+		}
+		else if(tool.roofPoints.size() == 1)
+		{
+			const QPointF& first = tool.roofPoints.first();
+			AuPoint aligned(point.x(), point.y());
+			aligned.Ortho(AuPoint(first.x(), first.y()), spacing, false, true);
+			point = QPointF(aligned.x, aligned.y);
+		}
+		else
+		{
+			const QPointF& first = tool.roofPoints.first();
+			const QPointF axis = tool.roofPoints.at(1) - first;
+			const QPointF normal = QPointF(-axis.y(), axis.x()) / std::sqrt(QPointF::dotProduct(axis, axis));
+			point = first + normal * QPointF::dotProduct(point - first, normal);
+		}
+		point = QPointF(std::round(point.x() / spacing) * spacing, std::round(point.y() / spacing) * spacing);
+		return tool.roofPoints.isEmpty() || valid(point);
+	}
+	const float radius = float(40 * AuLegacyShip::GridSpacing);
+	return std::abs(hit.x()) <= radius && std::abs(hit.y()) <= radius;
 }
 
 void AuLegacyShipRender::UpdateEditCursor(const QPoint& pixel)
@@ -3081,6 +3184,17 @@ void AuLegacyShipRender::RenderWireframe(const QMatrix4x4& viewProjection)
 				polygon.append(center + QPointF(corner.x() * std::cos(angle) - corner.y() * std::sin(angle),
 					corner.x() * std::sin(angle) + corner.y() * std::cos(angle)));
 		}
+		else if(m_Impl->editTool.roofType)
+		{
+			const QVector<QPointF>& points = m_Impl->editTool.roofPoints;
+			if(points.size() == 1) polygon << points.first() << m_Impl->editCursor;
+			else if(points.size() == 2)
+			{
+				if(m_Impl->editTool.roofType == 24)
+					polygon = AuLegacyShip::EllipseBoundary(points.first(), points.last(), m_Impl->editCursor);
+				else polygon << points.first() << points.last() << points.last() + m_Impl->editCursor - points.first() << m_Impl->editCursor;
+			}
+		}
 		else if(m_Impl->editTool.wholeRoom)
 		{
 			const int room = AuLegacyShip::RoomAtPoint(m_Impl->design, m_Impl->deck, m_Impl->editCursor);
@@ -3088,7 +3202,8 @@ void AuLegacyShipRender::RenderWireframe(const QMatrix4x4& viewProjection)
 		}
 		else polygon = AuLegacyShip::Geometry::FillShape(m_Impl->gridMask, m_Impl->editCursor);
 		QVector<WireframeVertex> vertices;
-		const QVector4D color = m_Impl->editTool.erasing ? QVector4D(1, .45f, .43f, 1) : QVector4D(.5f, .85f, 1, 1);
+		const QVector4D color = m_Impl->editTool.erasing ? QVector4D(1, .45f, .43f, 1)
+			: m_Impl->editTool.roofType ? QVector4D(.7f, 1.f, .7f, 1.f) : QVector4D(.5f, .85f, 1, 1);
 		const float z = float(m_Impl->deck * AuLegacyShip::DeckHeight) + .01f;
 		if(m_Impl->editTool.equipment && m_Impl->editTool.detailType >= 101 && m_Impl->editTool.detailType <= 140)
 		{
@@ -3118,6 +3233,28 @@ void AuLegacyShipRender::RenderWireframe(const QMatrix4x4& viewProjection)
 			const QPointF& b = polygon[(i + 1) % polygon.size()];
 			vertices.append(WireframeVertex{QVector3D(a.x(), a.y(), z), color});
 			vertices.append(WireframeVertex{QVector3D(b.x(), b.y(), z), color});
+		}
+		if(m_Impl->editTool.roofPoints.size() == 2 && polygon.size() >= 3)
+		{
+			const auto segment = [&vertices, &color](const QPointF& a, float az, const QPointF& b, float bz) {
+				vertices.append(WireframeVertex{QVector3D(a.x(), a.y(), az), color});
+				vertices.append(WireframeVertex{QVector3D(b.x(), b.y(), bz), color});
+			};
+			if(m_Impl->editTool.roofType == 24)
+			{
+				const QPointF center = m_Impl->editTool.roofPoints.first();
+				const QPointF along = m_Impl->editTool.roofPoints.last() - center;
+				const QPointF across = m_Impl->editCursor - center;
+				const float top = z + float(std::sqrt(std::max(QPointF::dotProduct(along, along), QPointF::dotProduct(across, across))) / 3);
+				for(const QPointF& point : polygon) segment(center, top, point, z);
+			}
+			else
+			{
+				const auto ridge = AuLegacyBd::Geometry::RectangularRoofRidge(polygon, m_Impl->editTool.roofType == 23);
+				const float top = z + float(ridge.halfWidth / 3);
+				for(int i = 0; i < 4; ++i) segment(polygon.at(i), z, i < 2 ? ridge.first : ridge.last, top);
+				segment(ridge.first, top, ridge.last, top);
+			}
 		}
 		m_Impl->editVao.bind();
 		m_Impl->editBuffer.bind();
@@ -3256,7 +3393,7 @@ void AuLegacyShipRender::mouseMoveEvent(QMouseEvent* event)
 	if(!m_Impl->solid && !m_Impl->mouseCaptured)
 	{
 		UpdateEditCursor(event->pos());
-		if(m_Impl->editingStroke && (event->buttons() & Qt::LeftButton)) EditCursor();
+		if(m_Impl->editingStroke && !m_Impl->editTool.singleClick && (event->buttons() & Qt::LeftButton)) EditCursor();
 	}
 	if(m_Impl->handClick && (event->pos() - m_Impl->mousePressed).manhattanLength() > 3)
 		m_Impl->handClick = false;
@@ -3292,6 +3429,21 @@ void AuLegacyShipRender::mouseDoubleClickEvent(QMouseEvent* event)
 
 void AuLegacyShipRender::wheelEvent(QWheelEvent* event)
 {
+	const int delta = event->angleDelta().y();
+	if(delta && !m_Impl->solid && !m_Impl->mouseCaptured && m_Impl->editTool.active
+		&& m_Impl->editTool.rotationFamily && rotateEquipment)
+	{
+		m_Impl->rotationWheelDelta += delta;
+		const int steps = m_Impl->rotationWheelDelta / 120;
+		m_Impl->rotationWheelDelta %= 120;
+		if(steps)
+		{
+			rotateEquipment(steps);
+			UpdateEditCursor(event->pos());
+		}
+		event->accept();
+		return;
+	}
 	m_Impl->sceneControls.SampleWheelInput(m_Impl->pendingSceneControls, event, AuId(0), 0, false, AuPoint(0, 0), 0);
 	if(m_Impl->toggleControl.TestWheelTriggered(event))
 	{
@@ -3314,6 +3466,12 @@ void AuLegacyShipRender::wheelEvent(QWheelEvent* event)
 void AuLegacyShipRender::keyPressEvent(QKeyEvent* event)
 {
 	const Qt::Key key = Qt::Key(event->key());
+	if(!m_Impl->solid && m_Impl->editTool.active && m_Impl->editTool.roofType && key == Qt::Key_Space && restartRoof)
+	{
+		restartRoof();
+		event->accept();
+		return;
+	}
 	if(!m_Impl->solid && !m_Impl->mouseCaptured && m_Impl->editTool.active && m_Impl->editTool.equipment
 		&& rotateEquipment && (key == Qt::Key_Left || key == Qt::Key_Right))
 	{

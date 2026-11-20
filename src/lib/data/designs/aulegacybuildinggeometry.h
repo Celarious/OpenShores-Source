@@ -4,6 +4,7 @@
 #include "aulegacybd.h"
 #include "aulegacyshipmesh.h"
 #include <QRect>
+#include <QImage>
 #include <QSet>
 #include <functional>
 
@@ -95,6 +96,12 @@ struct Mesh
 // CPU triangles use CCW order for shared collision; scene upload reverses their
 // vertex order to the original 2016 CW rendering convention, preserving normals.
 AUDATA_DLL Mesh Build(const Design& design, const Options& options);
+struct RoofRidge
+{
+	QPointF first, last;
+	double halfWidth = 0;
+};
+AUDATA_DLL RoofRidge RectangularRoofRidge(const QPolygonF& boundary, bool hip);
 AUDATA_DLL bool HasGlassAt(const Design& design, int deck, const QPointF& location);
 struct RoadFixtureGround
 {
@@ -133,6 +140,7 @@ AUDATA_DLL QString SiteTextureFile(int slot);
 // BuildingTexture uses bottom-origin OpenGL coordinates; this rect converts
 // them to the top-origin original PNG. AuGLTexture flips the crop on upload.
 AUDATA_DLL QRect TextureTile(int originalBuildingTextureSlot);
+AUDATA_DLL QImage MaterialTile(const QImage& atlas, int slot);
 // Half of one original logical pixel is one physical PNG pixel. Apply this
 // affine inset to atlas batch UVs after cropping; slot16 also mirrors x.
 AUDATA_DLL QVector2D TextureInset(int originalBuildingTextureSlot);

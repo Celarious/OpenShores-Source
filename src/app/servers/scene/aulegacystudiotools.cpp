@@ -3,6 +3,7 @@
 #include "auserverinterface.h"
 #include "auether.h"
 #include "aulegacystudioprotocol.h"
+#include "aulegacycityprotocol.h"
 #include "aulegacyspacecraftcatalog.h"
 #include "aulegacystudiolibrary.h"
 #include "aulegacyshipsave.h"
@@ -51,6 +52,7 @@ void DtChatChannel::ReadLegacyStudioPacket(const QByteArray& payload)
 			const bool current = request.action == Library || (request.generation == reply.generation && request.revision == reply.revision);
 			const bool allowed = request.action == BurnMedia ? reply.canBurn : reply.ownerId == person->Id().GetID();
 			const AuId actorId = person->Id();
+			const bool building = (environment->StudioId() & AuLegacyCityProtocol::BuildingStudioIdFlag) != 0;
 			AuLegacyShip::Design prepared;
 			const quint32 savedLibraryId = reply.libraryDesignId;
 			if(duplicate && (request.action == BurnMedia || reply.ownerId == actorId.GetID()))
@@ -89,14 +91,19 @@ void DtChatChannel::ReadLegacyStudioPacket(const QByteArray& payload)
 					{
 						AuLegacyShip::Design normalized;
 						stored = AuLegacyShip::PrepareForSave(prepared, normalized, error);
-						if(stored) { prepared = normalized; stored = SaveLegacyStudioDesign(prepared, libraryId, error); }
+						if(stored)
+						{
+							prepared = normalized;
+							stored = building ? SaveLegacyBuildingStudioDesign(prepared, libraryId, error)
+								: SaveLegacyStudioDesign(prepared, libraryId, error);
+						}
 					}
 					else if(request.action == BurnMedia) stored = PrepareLegacyStudioMedia(savedLibraryId, exchange, error);
-					else if(request.action == Library) stored = ListLegacyStudioLibrary(actorId, library, libraryTruncated, error);
+					else if(request.action == Library) stored = ListLegacyStudioLibrary(actorId, building, library, libraryTruncated, error);
 					else
 					{
 						libraryId = request.designId;
-						stored = LoadLegacyStudioLibrary(libraryId, actorId, prepared, error);
+						stored = LoadLegacyStudioLibrary(libraryId, actorId, building, prepared, error);
 					}
 					person = m_I->LockAvatar();
 					avatarLocked = true;

@@ -1,5 +1,7 @@
 #include "aulegacystudioprotocol.h"
+#include "aulegacybd.h"
 #include "aulegacyshipdetails.h"
+#include "aulegacyshipmoduleoptions.h"
 #include <QDataStream>
 #include <QIODevice>
 #include <QSet>
@@ -13,6 +15,7 @@ using namespace AuLegacyStudioProtocol;
 const quint32 DocumentMagic = 0x4c535744; // LSWD: legacy studio working document.
 const quint32 StateMagic = 0x4c535354;    // LSST: persisted studio state.
 const quint8 CodecVersion = 1;
+const quint8 BuildingDocumentVersion = 2;
 const quint8 StateCodecVersion = 2;
 const quint8 ReplyCodecVersion = 3;
 const int MaximumMemberNameCharacters = 128;
@@ -85,18 +88,22 @@ bool FinitePoint(const QPointF& point)
 	return std::isfinite(point.x()) && std::isfinite(point.y());
 }
 
+bool ToolPoint(const QPointF& point)
+{
+	return FinitePoint(point) && std::abs(point.x()) <= 1024 && std::abs(point.y()) <= 1024;
+}
+
 bool ValidCommand(const Command& command)
 {
-	if(command.kind > Armor) return false;
-	if(command.kind <= EraseDeck)
+	if(command.kind > ChangeRoomType) return false;
+	if(command.kind <= EraseDeck || command.kind == BuildingRoof || command.kind == ChangeRoomType)
 	{
 		if(command.deck < -128 || command.deck > 127) return false;
-		if(command.kind != EraseDeck && (!FinitePoint(command.cursor)
-			|| std::abs(command.cursor.x()) > 1024 || std::abs(command.cursor.y()) > 1024)) return false;
+		if(command.kind != EraseDeck && !ToolPoint(command.cursor)) return false;
 	}
 	if(command.kind == PaintCell)
 		return command.gridMask <= 15 && (command.roomType == -1
-			|| (command.roomType >= 1 && command.roomType <= 21 && command.roomType != 12));
+			|| (command.roomType >= 1 && command.roomType <= 21));
 	if(command.kind == PlaceDetail || command.kind == EraseDetails)
 		return command.radius >= 0 && command.radius <= 25
 			&& (command.kind != PlaceDetail || (command.detailType >= 1 && command.detailType <= 142));
@@ -112,7 +119,35 @@ bool ValidCommand(const Command& command)
 	if(command.kind == Streamline) return command.value == 0 || command.value == 1;
 	if(command.kind == MinTech) return command.value >= 0 && command.value <= 31;
 	if(command.kind == Armor) return command.value == -1 || command.value == 1;
+	if(command.kind == BuildingRoof) return command.roomType >= 22 && command.roomType <= 24
+		&& ToolPoint(command.roofAxis) && ToolPoint(command.roofEdge);
+	if(command.kind == SystemModules)
+		return command.modules.scalars.size() <= 8 && command.modules.bays.size() <= 256
+			&& command.modules.transporters.size() <= 65536;
+	if(command.kind == BuildingMaterial) return AuLegacyBd::IsBuildingMaterial(command.value);
+	if(command.kind == BuildingModule) return command.value > 0 && command.value <= 65535;
+	if(command.kind == ChangeRoomType) return command.roomType >= 1 && command.roomType <= 21;
 	return true;
+}
+
+void WriteModuleMap(QDataStream& out, const QMap<quint16, quint16>& values)
+{
+	out << quint32(values.size());
+	for(auto it = values.cbegin(); it != values.cend(); ++it) out << it.key() << it.value();
+}
+
+bool ReadModuleMap(QDataStream& in, QMap<quint16, quint16>& values, quint32 maximum)
+{
+	quint32 count = 0;
+	if(!ReadCount(in, count, 4, maximum)) return false;
+	for(quint32 index = 0; index < count; ++index)
+	{
+		quint16 key = 0, value = 0;
+		in >> key >> value;
+		if(values.contains(key)) return false;
+		values.insert(key, value);
+	}
+	return in.status() == QDataStream::Ok;
 }
 
 void WriteCommand(QDataStream& out, const Command& command)
@@ -122,6 +157,14 @@ void WriteCommand(QDataStream& out, const Command& command)
 		<< command.commodity << qint32(command.radius) << quint8(command.move.mode) << qint32(command.move.deck)
 		<< qint32(command.move.lateral) << qint32(command.move.longitudinal) << qint32(command.move.vertical)
 		<< qint32(command.move.copies) << qint32(command.value);
+	if(command.kind == SystemModules)
+	{
+		WriteModuleMap(out, command.modules.scalars);
+		WriteModuleMap(out, command.modules.bays);
+		WriteModuleMap(out, command.modules.transporters);
+	}
+	if(command.kind == BuildingRoof)
+		out << command.roofAxis.x() << command.roofAxis.y() << command.roofEdge.x() << command.roofEdge.y();
 }
 
 bool ReadCommand(QDataStream& in, Command& command)
@@ -131,11 +174,21 @@ bool ReadCommand(QDataStream& in, Command& command)
 	double x = 0, y = 0;
 	in >> kind >> deck >> x >> y >> command.gridMask >> command.roomNumber >> roomType >> command.detailType
 		>> command.commodity >> radius >> mode >> moveDeck >> lateral >> longitudinal >> vertical >> copies >> value;
-	if(in.status() != QDataStream::Ok || kind > Armor || mode > quint8(AuLegacyShip::MoveCopyMode::CopyCurrentDeck)) return false;
+	if(in.status() != QDataStream::Ok || kind > ChangeRoomType || mode > quint8(AuLegacyShip::MoveCopyMode::CopyCurrentDeck)) return false;
 	command.kind = static_cast<EditKind>(kind); command.deck = deck; command.cursor = QPointF(x, y);
 	command.roomType = roomType; command.radius = radius; command.value = value;
 	command.move.mode = static_cast<AuLegacyShip::MoveCopyMode>(mode); command.move.deck = moveDeck;
 	command.move.lateral = lateral; command.move.longitudinal = longitudinal; command.move.vertical = vertical; command.move.copies = copies;
+	if(kind == SystemModules && (!ReadModuleMap(in, command.modules.scalars, 8)
+		|| !ReadModuleMap(in, command.modules.bays, 256)
+		|| !ReadModuleMap(in, command.modules.transporters, 65536))) return false;
+	if(kind == BuildingRoof)
+	{
+		double ax = 0, ay = 0, ex = 0, ey = 0;
+		in >> ax >> ay >> ex >> ey;
+		if(in.status() != QDataStream::Ok) return false;
+		command.roofAxis = QPointF(ax, ay); command.roofEdge = QPointF(ex, ey);
+	}
 	return ValidCommand(command);
 }
 
@@ -171,6 +224,12 @@ bool DocumentSize(const AuLegacyShip::Design& design, quint64& bytes, QString& e
 		+ quint64(header.legacyDiscardedString.size()) * 2
 		+ (quint64(header.firstPairs.size()) + header.secondPairs.size()) * 6
 		+ quint64(header.scalarSlots.size()) * 2 + quint64(design.details.size()) * 23;
+	if(design.building)
+	{
+		if(design.publishedEmpires.size() > AuLegacyShip::MaximumRecords
+			|| !AuLegacyBd::IsBuildingMaterial(design.buildingMaterial)) return false;
+		bytes += 9 + quint64(design.publishedEmpires.size()) * 4;
+	}
 	for(const auto& room : design.rooms)
 	{
 		if(room.packedVertices.size() > AuLegacyShip::MaximumRecords || room.workingBoundary.size() > AuLegacyShip::MaximumRecords)
@@ -377,7 +436,7 @@ QByteArray AuLegacyStudioProtocol::EncodeDocument(const AuLegacyShip::Design& de
 	error = QStringLiteral("The studio working document exceeds its limits.");
 	const auto& header = design.header;
 	QByteArray raw; QDataStream out(&raw, QIODevice::WriteOnly); out.setVersion(QDataStream::Qt_4_1);
-	out << DocumentMagic << CodecVersion << header.designId;
+	out << DocumentMagic << (design.building ? BuildingDocumentVersion : CodecVersion) << header.designId;
 	if(!WriteString(out, header.name, MaximumDocumentBytes / 2)) return QByteArray();
 	out << header.architectId << header.streamline << header.armor << header.versionStateRaw << header.version << header.state;
 	if(!WriteString(out, header.architectName, MaximumDocumentBytes / 2)
@@ -401,6 +460,11 @@ QByteArray AuLegacyStudioProtocol::EncodeDocument(const AuLegacyShip::Design& de
 	for(const auto& detail : design.details)
 		out << qint32(detail.streamOffset) << detail.deck << detail.detailType << detail.hiddenRaw << detail.detailId
 			<< detail.designId << detail.packedXY << detail.roomId << detail.commodityIdRaw << detail.commodityIdNormalized;
+	if(design.building)
+	{
+		out << design.buildingIndustry << design.buildingModule << design.buildingMaterial << quint32(design.publishedEmpires.size());
+		for(const quint32 empire : design.publishedEmpires) out << empire;
+	}
 	if(out.status() != QDataStream::Ok || quint64(raw.size()) != expectedBytes) return QByteArray();
 	QByteArray compressed = qCompress(raw);
 	if(compressed.isEmpty() || compressed.size() > MaximumCompressedDocumentBytes) return QByteArray();
@@ -416,7 +480,8 @@ bool AuLegacyStudioProtocol::DecodeDocument(const QByteArray& bytes, AuLegacyShi
 	quint32 magic = 0; quint8 version = 0;
 	AuLegacyShip::Design parsed; auto& header = parsed.header;
 	in >> magic >> version >> header.designId;
-	if(magic != DocumentMagic || version != CodecVersion || !ReadString(in, header.name, MaximumDocumentBytes / 2)) return false;
+	if(magic != DocumentMagic || (version != CodecVersion && version != BuildingDocumentVersion)
+		|| !ReadString(in, header.name, MaximumDocumentBytes / 2)) return false;
 	in >> header.architectId >> header.streamline >> header.armor >> header.versionStateRaw >> header.version >> header.state;
 	if(!ReadString(in, header.architectName, MaximumDocumentBytes / 2)
 		|| !ReadString(in, header.legacyDiscardedString, MaximumDocumentBytes / 2)) return false;
@@ -457,6 +522,17 @@ bool AuLegacyStudioProtocol::DecodeDocument(const QByteArray& bytes, AuLegacyShi
 		in >> offset >> detail.deck >> detail.detailType >> detail.hiddenRaw >> detail.detailId >> detail.designId
 			>> detail.packedXY >> detail.roomId >> detail.commodityIdRaw >> detail.commodityIdNormalized;
 		detail.streamOffset = offset; parsed.details.append(detail);
+	}
+	if(version == BuildingDocumentVersion)
+	{
+		parsed.building = true;
+		in >> parsed.buildingIndustry >> parsed.buildingModule >> parsed.buildingMaterial;
+		if(!AuLegacyBd::IsBuildingMaterial(parsed.buildingMaterial) || !ReadCount(in, count, 4, AuLegacyShip::MaximumRecords)) return false;
+		parsed.publishedEmpires.reserve(int(count));
+		for(quint32 index = 0; index < count; ++index)
+		{
+			quint32 empire = 0; in >> empire; parsed.publishedEmpires.append(empire);
+		}
 	}
 	if(in.status() != QDataStream::Ok || !in.atEnd()) return false;
 	design = std::move(parsed); error.clear(); return true;
@@ -508,6 +584,14 @@ bool AuLegacyStudioProtocol::Apply(const Command& command, AuLegacyShip::Design&
 {
 	error.clear(); changed = false;
 	if(!ValidCommand(command)) { error = QStringLiteral("The studio edit is outside the legacy tool limits."); return false; }
+	if(design.building)
+	{
+		if((!design.buildingIndustry && command.kind != BuildingMaterial)
+			|| (command.kind >= Streamline && command.kind <= SystemModules))
+		{ error = QStringLiteral("This tool is unavailable for this building industry."); return false; }
+	}
+	else if(command.kind >= BuildingMaterial)
+	{ error = QStringLiteral("This tool is available in the building designer only."); return false; }
 	AuLegacyShip::CellEditResult result;
 	switch(command.kind)
 	{
@@ -539,6 +623,21 @@ bool AuLegacyStudioProtocol::Apply(const Command& command, AuLegacyShip::Design&
 		if(armor < 0 || armor > 10) { error = QStringLiteral("Armor must remain between 0 and 10."); return false; }
 		design.header.armor = quint8(armor); changed = true; return true;
 	}
+	case SystemModules:
+		return AuLegacyShip::ApplyModuleChanges(design, command.modules, changed, error);
+	case BuildingMaterial:
+		changed = design.buildingMaterial != command.value;
+		design.buildingMaterial = quint16(command.value); return true;
+	case BuildingRoof:
+		result = AuLegacyShip::CreateRoof(design, command.deck, command.roomType, command.cursor,
+			command.roofAxis, command.roofEdge); break;
+	case BuildingModule:
+		if(!AuLegacyShip::IsBuildingModule(design.buildingIndustry, quint16(command.value)))
+		{ error = QStringLiteral("This module is unavailable for this building industry."); return false; }
+		changed = design.buildingModule != command.value;
+		design.buildingModule = quint16(command.value); return true;
+	case ChangeRoomType:
+		result = AuLegacyShip::ChangeRoomTypeAt(design, command.deck, command.cursor, command.roomType); break;
 	}
 	error = result.error; changed = result.changed; return result.accepted;
 }
