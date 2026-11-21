@@ -43,6 +43,7 @@ public:
 	~AuLegacyShipRender() override;
 
 	void SetDesign(const AuLegacyShip::Design& design);
+	void SetOfflineBuildingArchitect(AuLegacyShip::Design& design) const;
 	void SetDeck(int deck);
 	void SetGravity(bool enabled);
 	void ResetCharacter();

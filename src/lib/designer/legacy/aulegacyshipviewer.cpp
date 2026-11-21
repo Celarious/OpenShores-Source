@@ -511,7 +511,7 @@ public:
 			"QSpinBox, QComboBox { background: #102442; color: #d5e3fa; border: 1px solid #40618d; padding: 2px; }"
 			"QComboBox QAbstractItemView { background: #0a1c3b; color: #d5e3fa; selection-background-color: #294c7b; }"
 			"QLabel, QCheckBox { color: #d5e3fa; background: transparent; }"
-			"QTextBrowser { background: #081a40; color: #b8cef5; border: 0; padding: 0; font-size: 11px; }"));
+			"QTextBrowser#LegacyShipStats { background: #081a40; color: #b8cef5; border: 1px solid #a0a0a0; border-radius: 0; padding: 0; font-size: 11px; }"));
 		QWidget* panel = new QWidget(toolDock);
 		panel->setObjectName(QStringLiteral("LegacyPalette"));
 		QVBoxLayout* panelLayout = new QVBoxLayout(panel);
@@ -1405,10 +1405,17 @@ public:
 		HeaderChanged(true);
 	}
 
+	void RefreshBuildingEditVisibility()
+	{
+		const bool visible = design.buildingIndustry != 0 && !renderAction->isChecked();
+		for(QWidget* widget : buildingEditWidgets) widget->setVisible(visible);
+	}
+
 	void RefreshHeaderControls()
 	{
 		if(building)
 		{
+			RefreshBuildingEditVisibility();
 			material->setCurrentIndex(material->findData(design.buildingMaterial));
 			for(auto i = buildingRoomButtons.cbegin(); i != buildingRoomButtons.cend(); ++i)
 				i.value()->setVisible(AuLegacyBd::BuildingRoomAllowed(design.buildingIndustry, i.key()));
@@ -1601,7 +1608,7 @@ public:
 	void SetRenderMode(bool solid)
 	{
 		if(solid) PrepareSkyForScene();
-		for(QWidget* widget : buildingEditWidgets) widget->setVisible(!solid);
+		if(building) RefreshBuildingEditVisibility();
 		renderView->SetRenderSolid(solid);
 		editTool.active = loaded && !solid && toolMode != HandMode
 			&& (!studioHandler || (studioConnected && studioReady));
@@ -2086,7 +2093,7 @@ public:
 		const QString path = QFileInfo(dialog.selectedFiles().first()).absoluteFilePath();
 		// Name fresh designs from their first filename; preserve loaded QString
 		// bytes, including the distinction between null and empty names.
-		const QString fallbackName = fileName.isEmpty() || (studioHandler && design.header.name.isEmpty())
+		const QString fallbackName = !building && (fileName.isEmpty() || (studioHandler && design.header.name.isEmpty()))
 			? QFileInfo(path).completeBaseName() : QString();
 		AuLegacyShip::Design exportedDesign = design;
 		QString error;
@@ -2123,11 +2130,16 @@ public:
 
 	void SetDesign(const QString& path, AuLegacyShip::Design&& incoming)
 	{
-		// The 2016 offline client's design counter starts at 20000 and lasts
-		// for the process. New/import allocate once; saving never consumes an ID.
-		// Evidence: Shores of Hazeron.exe:0x14013ff50 and DaAtom::DesignSpaceShipLoaded.
-		static quint32 nextDesignId = 20000;
-		const quint32 workingDesignId = nextDesignId++;
+		// Adjacent process-wide counters in Fresh 2016 at 0x1406f00a8 and 0x1406f00ac.
+		static quint32 nextBuildingId = 10000, nextSpacecraftId = 20000;
+		const quint32 workingDesignId = building ? nextBuildingId++ : nextSpacecraftId++;
+		if(building)
+		{
+			// DesignBuildingLoaded creates a fresh working design under the
+			// current architect before importing the source industry and geometry.
+			incoming.header.name = QString();
+			renderView->SetOfflineBuildingArchitect(incoming);
+		}
 		incoming.header.designId = workingDesignId;
 		for(AuLegacyShip::Room& room : incoming.rooms)
 			room.designId = workingDesignId;

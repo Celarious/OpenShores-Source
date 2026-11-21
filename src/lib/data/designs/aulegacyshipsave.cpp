@@ -241,6 +241,8 @@ bool AuLegacyShip::Write(const Design& design, QByteArray& output, QString& erro
 		: qint64(header.firstPairs.size()) + header.secondPairs.size();
 	qint64 byteCount = (design.building ? 32 : 56) + qint64(name.size()) * 2
 		+ qint64(header.architectName.size()) * 2 + headerRecords * 4 + qint64(design.details.size()) * 17;
+	const bool writeDetailCount = !design.building || !design.details.isEmpty();
+	if(!writeDetailCount) byteCount -= 4;
 	qint64 records = headerRecords + design.details.size();
 	const int maximumBytes = design.building ? AuLegacyBd::MaximumPayloadBytes + 2 : MaximumFileBytes;
 	if(byteCount > maximumBytes || records + design.rooms.size() > MaximumRecords)
@@ -311,7 +313,7 @@ bool AuLegacyShip::Write(const Design& design, QByteArray& output, QString& erro
 		for(quint16 vertex : saved.vertices)
 			stream << vertex;
 	}
-	stream << quint32(design.details.size());
+	if(writeDetailCount) stream << quint32(design.details.size());
 	for(const Detail& detail : design.details)
 		stream << detail.deck << detail.detailType << bool(detail.hiddenRaw != 0) << detail.detailId
 			<< detail.designId << detail.packedXY << detail.roomId << detail.commodityIdNormalized;

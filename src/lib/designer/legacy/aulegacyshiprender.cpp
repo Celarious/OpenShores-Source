@@ -87,6 +87,33 @@ namespace
 const float Pi = 3.14159265358979323846f;
 using namespace AuLegacyShip::Rendering;
 const qint64 DoorTickMilliseconds = qint64(DoorAnimationTickSeconds * 1000);
+const QString BuildingGroundTexture = QStringLiteral(":/data/CobblestoneLight.png");
+
+Batch BuildingSiteGround(int industry)
+{
+	// DpBuilding::RenderInDesignStudio, AuAtom13 0x1805c0f30.
+	const double site = AuLegacyBd::DesignerSiteRadius(industry, 0);
+	const double radius = site > 0 ? site / .7071 : 320.0030688162919;
+	const bool coastal = industry == 34 || industry == 62 || industry == 85;
+	const QVector3D up(0, 0, 1);
+	const Vertex center = {QVector3D(0, 0, -.010375f), up, QVector2D(.5f, .5f)};
+	Batch ground;
+	ground.material = Material::Untextured;
+	ground.textureFile = BuildingGroundTexture;
+	Vertex previous = center;
+	const int first = coastal ? 20 : 0;
+	for(int i = first; i <= 40; ++i)
+	{
+		const float angle = i == 40 ? 0.f : i * (2.f * Pi) / 40.f;
+		const double x = std::cos(angle), y = std::sin(angle);
+		const double scale = radius / std::max(std::abs(x), std::abs(y));
+		const QVector2D point(float(x * scale), float(y * scale));
+		const Vertex edge = {QVector3D(point, center.position.z()), up, point / 3.280839895f};
+		if(i > first) ground.vertices << center << previous << edge;
+		previous = edge;
+	}
+	return ground;
+}
 
 Mesh BuildingPreview(const AuLegacyShip::Design& design)
 {
@@ -804,7 +831,7 @@ public:
 		characterEther.AddAtom(environment);
 		DhDNA dna;
 		dna.InitDefaultHuman();
-		person = new LegacyRenderPerson(dna, AuDNABase::Alpha, RightHanded, QStringLiteral("Designer"), Mature, 0);
+		person = new LegacyRenderPerson(dna, AuDNABase::Alpha, RightHanded, QStringLiteral("Human"), Mature, 0);
 		person->Create();
 		person->Stand();
 		person->ResetHitPoints();
@@ -1392,7 +1419,7 @@ public:
 		// Opaque tiles can be mipmapped separately to prevent distant moire;
 		// keep the original filtering when averaging alpha would change cutouts.
 		const bool studio = IsStudioSurface(batch);
-		const bool mipMap = !studio || !transparentTextures.contains(key);
+		const bool mipMap = batch.textureFile != BuildingGroundTexture && (!studio || !transparentTextures.contains(key));
 		QOpenGLTexture* texture = new QOpenGLTexture(tile, mipMap
 			? QOpenGLTexture::GenerateMipMaps : QOpenGLTexture::DontGenerateMipMaps);
 		texture->setWrapMode(studio ? QOpenGLTexture::ClampToEdge : QOpenGLTexture::Repeat);
@@ -1679,6 +1706,12 @@ void AuLegacyShipRender::FocusDesignPlane()
 	update();
 }
 
+void AuLegacyShipRender::SetOfflineBuildingArchitect(AuLegacyShip::Design& design) const
+{
+	design.header.architectId = m_Impl->person->Id().GetID();
+	design.header.architectName = m_Impl->person->Name();
+}
+
 void AuLegacyShipRender::SetDesign(const AuLegacyShip::Design& design)
 {
 	const bool reset = !m_Impl->haveDesign || design.header.designId != m_Impl->design.header.designId;
@@ -1729,6 +1762,9 @@ void AuLegacyShipRender::SetDesign(const AuLegacyShip::Design& design)
 	m_Impl->targetHealth = AuLegacyShip::TargetHealth();
 	m_Impl->world.SetDesignPlane(float(m_Impl->deck * AuLegacyShip::DeckHeight));
 	m_Impl->doors = DoorDefinitions(design, m_Impl->mesh);
+	// The studio ground is scenery and has no authored bounds or collision records.
+	if(design.building)
+		m_Impl->mesh.batches.append(BuildingSiteGround(design.buildingIndustry));
 	m_Impl->doorStates.clear();
 	for (const DoorDefinition& door : m_Impl->doors)
 	{

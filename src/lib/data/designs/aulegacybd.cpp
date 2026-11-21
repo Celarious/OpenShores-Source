@@ -333,7 +333,7 @@ bool ValidDesignerPoint(int industry, int deck, const QPointF& point)
 	return std::abs(point.x()) <= radius && std::abs(point.y()) <= radius && (!coastal || point.y() <= 0);
 }
 
-bool ReadPayload(const QByteArray& payload, Design& output, QString& error)
+static bool DecodePayload(const QByteArray& payload, Design& output, QString& error, bool standalone)
 {
 	if(payload.isEmpty() || payload.size() > MaximumPayloadBytes)
 	{
@@ -377,7 +377,9 @@ bool ReadPayload(const QByteArray& payload, Design& output, QString& error)
 		// only for analysis/rendering, exactly as the original reader did.
 		roomIds.insert(room.roomId); candidate.rooms.append(std::move(room));
 	}
-	if(!reader.U32(count) || !reader.Count(count, 17)) return false;
+	// A standalone 2016 export can end immediately after the last room.
+	count = 0;
+	if((!standalone || reader.Remaining()) && (!reader.U32(count) || !reader.Count(count, 17))) return false;
 	candidate.details.reserve(int(count));
 	QSet<quint32> detailIds;
 	for(quint32 i = 0; i < count; ++i)
@@ -397,6 +399,11 @@ bool ReadPayload(const QByteArray& payload, Design& output, QString& error)
 	if(reader.Remaining()) return reader.Fail(QStringLiteral("trailing building payload"));
 	candidate.bytesConsumed = reader.Offset(); candidate.payloadHash = Hash(payload);
 	output = std::move(candidate); error.clear(); return true;
+}
+
+bool ReadPayload(const QByteArray& payload, Design& output, QString& error)
+{
+	return DecodePayload(payload, output, error, false);
 }
 
 bool ReadCache(const QByteArray& source, Design& output, QString& error)
@@ -440,7 +447,7 @@ bool ReadDesignFile(const QByteArray& bytes, AuLegacyShip::Design& output, QStri
 		return false;
 	}
 	Design parsed;
-	if(!ReadPayload(bytes.mid(2), parsed, error)) return false;
+	if(!DecodePayload(bytes.mid(2), parsed, error, true)) return false;
 	output = parsed.AuthoringDesign();
 	output.bytesConsumed = bytes.size();
 	return true;
