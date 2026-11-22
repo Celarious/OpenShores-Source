@@ -908,6 +908,10 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 		sliderlay->addWidget(buildingViewRangeSlider, row,1);
 		sliderlay->addWidget(m_BuildingViewRange, row,2);
 		row++;
+		sliderlay->addWidget(fovlabel, row,0);
+		sliderlay->addWidget(m_FoVSlider, row,1);
+		sliderlay->addWidget(m_FoVLabel, row,2);
+		row++;
 
 		QHBoxLayout* deflay = new QHBoxLayout;
 		deflay->addWidget(lowMemoryDefault);
@@ -955,10 +959,6 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 		sliderlayPixelShaders->addWidget(hairGlossTitle, row,0);
 		sliderlayPixelShaders->addWidget(glossSliders[2], row,1);
 		sliderlayPixelShaders->addWidget(m_HairGlossLabel, row,2);
-		row++;
-		sliderlayPixelShaders->addWidget(fovlabel, row,0);
-		sliderlayPixelShaders->addWidget(m_FoVSlider, row,1);
-		sliderlayPixelShaders->addWidget(m_FoVLabel, row,2);
 		row++;
 	}
 
