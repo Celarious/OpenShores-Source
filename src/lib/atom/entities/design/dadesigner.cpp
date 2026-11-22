@@ -1353,7 +1353,6 @@ void DaDesigner::ProcessLegacyStudioRequest(DaPerson& person,
 bool DaDesigner::LegacyStudioCanBurn(const DaPerson& person, QString& error)
 {
 	const auto& state = *m_LegacyStudio;
-	if(state.design.building) { error = tr("Building designs cannot use spacecraft media."); return false; }
 	if(state.modified) { error = tr("Save the shared design before burning media."); return false; }
 	if(!state.libraryDesignId) { error = tr("Save the design to the design library before burning media."); return false; }
 	if(!AuLegacyStudioProtocol::IsLibraryNameValid(state.design.header.name))
@@ -1367,7 +1366,9 @@ bool DaDesigner::LegacyStudioCanBurn(const DaPerson& person, QString& error)
 		AuLegacyShip::Design prepared;
 		QByteArray source;
 		AuLegacyScDesign accepted;
-		if(AuLegacyShip::PrepareForSave(state.design, prepared, m_LegacyBurnError)
+		if(state.design.building)
+			m_LegacyBurnValid = AuLegacyBd::CanManufacture(state.design, m_LegacyBurnError);
+		else if(AuLegacyShip::PrepareForSave(state.design, prepared, m_LegacyBurnError)
 			&& AuLegacyShip::Write(prepared, source, m_LegacyBurnError)
 			&& AuLegacyScDesign::ReadUpload(source, accepted, m_LegacyBurnError))
 		{

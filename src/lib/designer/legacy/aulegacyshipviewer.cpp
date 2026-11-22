@@ -1007,9 +1007,9 @@ public:
 		// AuView::DesignBurnCD (2016 executable 0x1402e8db0) confirms the
 		// first transition to Read Only, then asks the server to burn one disk.
 		if(design.header.state == 0 && QMessageBox::warning(window, QStringLiteral("Burn CD"),
-			QStringLiteral("Storing the design onto a disk or paper drawing causes the design to become Read Only.\n"
-				"A Read Only design can not be replaced later. A Read Only design\n"
-				"can be modified but changes must be saved using a different name."),
+			QStringLiteral("<html>This copy will contain a <b>read-only version</b> of the design.\n"
+				"You can save under the same library name.\n"
+				"Existing copies, buildings, and spacecraft will use their original version.</html>"),
 			QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Ok) return;
 		if(!studioConnected || studioBusy || modified || !studioCanBurn
 			|| generation != studioGeneration || revision != studioRevision)
@@ -2368,13 +2368,14 @@ bool AuLegacyShipViewer::OpenFile(const QString& fileName)
 	AuLegacyShip::Design incoming;
 	QString error;
 	bool opened = false;
+	bool repaired = false;
 	if(m_Impl->building)
 	{
 		QFile file(fileName);
 		if(file.open(QIODevice::ReadOnly))
 		{
 			const QByteArray bytes = file.read(AuLegacyBd::MaximumPayloadBytes + 3);
-			opened = file.error() == QFileDevice::NoError && AuLegacyBd::ReadDesignFile(bytes, incoming, error);
+			opened = file.error() == QFileDevice::NoError && AuLegacyBd::ImportDesignFile(bytes, incoming, repaired, error);
 			// DnBuilding::DesignLoaded copies the industry and module into a new
 			// working design. Publication state belongs to the source design.
 			incoming.header.state = 0;
@@ -2392,6 +2393,11 @@ bool AuLegacyShipViewer::OpenFile(const QString& fileName)
 	}
 	if(m_Impl->studioHandler) m_Impl->ReplaceStudioDesign(incoming);
 	else m_Impl->SetDesign(fileName, std::move(incoming));
+	if(repaired)
+	{
+		if(!m_Impl->studioHandler) m_Impl->HeaderChanged();
+		m_Impl->SetFeedback(QStringLiteral("Overlapping rooms were repaired. Review the rooms and equipment before saving."));
+	}
 	m_Impl->settings.setValue(m_Impl->DirectoryKey(),
 		QFileInfo(fileName).absolutePath());
 	m_Impl->settings.sync();

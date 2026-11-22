@@ -857,7 +857,8 @@ bool DtDb::InitGameGeneration(QSqlDatabase& db)
 	if(selected == AuGameGeneration::Legacy && !AuPrepareLegacyGenerationIdentity(identity, error)) return fail(error);
 	if(selected == AuGameGeneration::Legacy)
 	{
-		if(!query.exec("SELECT to_regclass('a_legacycity') IS NOT NULL AND to_regclass('n_legacybddesign') IS NOT NULL")
+		if(!query.exec("SELECT to_regclass('a_legacycity') IS NOT NULL AND to_regclass('n_legacybddesign') IS NOT NULL "
+			"AND to_regclass('n_legacybdfinal') IS NOT NULL AND to_regclass('n_legacybdpublication') IS NOT NULL")
 			|| !query.next() || !query.value(0).toBool())
 			return fail(QStringLiteral("Install legacycities.sql before initializing a Legacy universe."));
 	}

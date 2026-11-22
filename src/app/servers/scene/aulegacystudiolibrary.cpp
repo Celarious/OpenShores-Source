@@ -1,4 +1,5 @@
 #include "aulegacystudiolibrary.h"
+#include "audbglobal.h"
 #include "aulegacyscdesign.h"
 #include "aulegacyscprotocol.h"
 #include "aulegacybd.h"
@@ -96,6 +97,72 @@ bool SaveLegacyBuildingStudioDesign(const AuLegacyShip::Design& design, quint32&
 	libraryId = id; error.clear(); return true;
 }
 
+QByteArray LegacyStudioBuildingSource(quint32 id, bool finalOnly, QString& error)
+{
+	LibraryConnection connection;
+	if(!connection.Open()) { error = QStringLiteral("The building library is unavailable."); return {}; }
+	QSqlQuery query(connection.db);
+	query.prepare("SELECT sourceData, contentHash FROM n_LegacyBdDesign WHERE id=? AND NOT publicDefault "
+		"AND octet_length(sourceData) <= ? AND (NOT ? OR EXISTS(SELECT 1 FROM n_LegacyBdFinal WHERE designId=id))");
+	query.addBindValue(qulonglong(id)); query.addBindValue(int(AuLegacyBd::MaximumCacheBytes)); query.addBindValue(finalOnly);
+	if(query.exec() && query.next())
+	{
+		const QByteArray bytes = query.value(0).toByteArray();
+		if(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex() == query.value(1).toByteArray())
+			return qCompress(bytes);
+	}
+	error = QStringLiteral("The saved building blueprint is unavailable or damaged."); return {};
+}
+
+QByteArray AuDbGlobal::LegacyBuildingSource(quint32 id, QString& error)
+{
+	return LegacyStudioBuildingSource(id, true, error);
+}
+
+bool FinalizeLegacyBuilding(quint32 id, QString& error)
+{
+	LibraryConnection connection;
+	if(connection.Open())
+	{
+		QSqlQuery query(connection.db);
+		query.prepare("INSERT INTO n_LegacyBdFinal(designId) VALUES (?) ON CONFLICT DO NOTHING");
+		query.addBindValue(qulonglong(id));
+		if(query.exec()) return true;
+	}
+	error = QStringLiteral("The building library could not finalize the blueprint."); return false;
+}
+
+bool AuDbGlobal::PublishLegacyBuilding(quint32 empire, quint32 id, QString& error)
+{
+	LibraryConnection connection;
+	if(connection.Open())
+	{
+		QSqlQuery query(connection.db);
+		query.prepare("INSERT INTO n_LegacyBdPublication(empireId,designId) VALUES(?,?) ON CONFLICT DO NOTHING RETURNING designId");
+		query.addBindValue(qulonglong(empire)); query.addBindValue(qulonglong(id));
+		if(query.exec() && query.next()) return true;
+	}
+	error = QStringLiteral("The blueprint is already published here or the building library is unavailable."); return false;
+}
+
+bool AuDbGlobal::ListLegacyBuildingPublications(quint32 empire, QList<quint32>& ids, QString& error, quint8 industry)
+{
+	LibraryConnection connection;
+	if(connection.Open())
+	{
+		QSqlQuery query(connection.db);
+		query.prepare("SELECT designId FROM n_LegacyBdPublication JOIN n_LegacyBdDesign ON id=designId WHERE empireId=? AND (?=0 OR industry=?) ORDER BY designId");
+		query.addBindValue(qulonglong(empire)); query.addBindValue(int(industry)); query.addBindValue(int(industry));
+		if(query.exec())
+		{
+			QList<quint32> found;
+			while(query.next()) found.append(query.value(0).toUInt());
+			if(!query.lastError().isValid()) { ids = found; return true; }
+		}
+	}
+	error = QStringLiteral("The empire building library is unavailable."); return false;
+}
+
 bool ListLegacyStudioLibrary(const AuId& architect, bool building,
 	QVector<AuLegacyStudioProtocol::LibraryEntry>& entries, bool& truncated, QString& error)
 {
@@ -111,7 +178,8 @@ bool ListLegacyStudioLibrary(const AuId& architect, bool building,
 		// Every save creates an immutable catalog row. A newer row with the same
 		// library name replaces only the visible reference, retaining burned IDs.
 		if(!query.prepare(building
-				? "SELECT DISTINCT ON (name) id, left(name,128), 0, NULL FROM n_LegacyBdDesign "
+				? "SELECT DISTINCT ON (name) id, left(name,128), CASE WHEN EXISTS(SELECT 1 FROM n_LegacyBdPublication WHERE designId=id) THEN 4 "
+				  "WHEN EXISTS(SELECT 1 FROM n_LegacyBdFinal WHERE designId=id) THEN 1 ELSE 0 END, NULL FROM n_LegacyBdDesign "
 				  "WHERE architectId = ? AND NOT publicDefault ORDER BY name, id DESC LIMIT 257"
 				: "SELECT DISTINCT ON (source.name) source.id, left(source.name,128), "
 				"CASE WHEN runtime.state = ? THEN 1 ELSE 0 END, runtime.id "
@@ -133,7 +201,7 @@ bool ListLegacyStudioLibrary(const AuId& architect, bool building,
 			if(!ReadId(query.value(0), entry.id) || !ReadOptionalId(query.value(3), runtimeId))
 			{ error = QStringLiteral("The design library contains an invalid identifier."); return false; }
 			entry.name = query.value(1).toString();
-			entry.state = query.value(2).toUInt() ? 1 : 0;
+			entry.state = quint8(query.value(2).toUInt());
 			found.append(entry); runtimeIds.append(runtimeId);
 		}
 		if(query.lastError().isValid())
@@ -166,7 +234,7 @@ bool LoadLegacyStudioLibrary(quint32 designId, const AuId& architect, bool build
 		// its length has been checked. Use the same 8 MiB online intake bound.
 		if(!query.prepare(building
 				? "SELECT octet_length(sourceData), CASE WHEN octet_length(sourceData) <= ? THEN sourceData END, "
-				  "0, NULL FROM n_LegacyBdDesign WHERE id = ? AND architectId = ? AND NOT publicDefault"
+				  "CASE WHEN EXISTS(SELECT 1 FROM n_LegacyBdFinal WHERE designId=id) THEN 1 ELSE 0 END, NULL FROM n_LegacyBdDesign WHERE id = ? AND architectId = ? AND NOT publicDefault"
 				: "SELECT octet_length(source.sourceData), "
 				"CASE WHEN octet_length(source.sourceData) <= ? THEN source.sourceData END, "
 				"CASE WHEN runtime.state = ? THEN 1 ELSE 0 END, runtime.id "
@@ -196,6 +264,7 @@ bool LoadLegacyStudioLibrary(quint32 designId, const AuId& architect, bool build
 		if(!AuLegacyBd::ReadDesignFile(source, incoming, error)) return false;
 		if(incoming.header.architectId != architect.GetID() || incoming.header.designId != designId)
 		{ error = QStringLiteral("The stored building design does not match its library record."); return false; }
+		incoming.header.state = readOnly ? 1 : 0;
 		design = std::move(incoming); return true;
 	}
 	if(runtimeId)

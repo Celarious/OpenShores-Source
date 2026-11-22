@@ -7,6 +7,9 @@
 #include "aulegacyspacecraftcatalog.h"
 #include "aulegacystudiolibrary.h"
 #include "aulegacyshipsave.h"
+#include "aulegacybd.h"
+#include "aubddesignexchange.h"
+#include "aubdreport.h"
 #include "auscdesignexchange.h"
 #include "auscdesign.h"
 #include "dgdata.h"
@@ -50,7 +53,8 @@ void DtChatChannel::ReadLegacyStudioPacket(const QByteArray& payload)
 			environment->ProcessLegacyStudioRequest(*person, snapshot, reply);
 			const bool duplicate = request.action != Library && request.operationId <= reply.lastOperation;
 			const bool current = request.action == Library || (request.generation == reply.generation && request.revision == reply.revision);
-			const bool allowed = request.action == BurnMedia ? reply.canBurn : reply.ownerId == person->Id().GetID();
+			// Burn eligibility, including its specific refusal reason, is checked under the reservation lock.
+			const bool allowed = request.action == BurnMedia || reply.ownerId == person->Id().GetID();
 			const AuId actorId = person->Id();
 			const bool building = (environment->StudioId() & AuLegacyCityProtocol::BuildingStudioIdFlag) != 0;
 			AuLegacyShip::Design prepared;
@@ -61,7 +65,7 @@ void DtChatChannel::ReadLegacyStudioPacket(const QByteArray& payload)
 			{
 				reply.accepted = false;
 				reply.message = !current ? tr("The shared design changed. Review it and try again.")
-					: !allowed ? tr("Only the owner may save a library design; burning also requires a saved, valid design.") : error;
+					: !allowed ? tr("Only the studio owner may use library file commands.") : error;
 			}
 			else
 			{
@@ -84,6 +88,7 @@ void DtChatChannel::ReadLegacyStudioPacket(const QByteArray& payload)
 					m_I->UnlockAvatar(); avatarLocked = false; person = nullptr;
 					quint32 libraryId = savedLibraryId;
 					AuScDesignExchangeEntry exchange;
+					AuBdDesignExchangeEntry buildingExchange;
 					QVector<LibraryEntry> library;
 					bool libraryTruncated = false;
 					bool stored = false;
@@ -96,6 +101,17 @@ void DtChatChannel::ReadLegacyStudioPacket(const QByteArray& payload)
 							prepared = normalized;
 							stored = building ? SaveLegacyBuildingStudioDesign(prepared, libraryId, error)
 								: SaveLegacyStudioDesign(prepared, libraryId, error);
+						}
+					}
+					else if(request.action == BurnMedia && building)
+					{
+						const auto source = LegacyStudioBuildingSource(savedLibraryId, false, error);
+						const auto verified = AuLegacyBd::ReadConstructionDesign(source, savedLibraryId, error);
+						if(verified && verified->header.architectId == prepared.header.architectId)
+						{
+							const AuBdReport report(verified->header);
+							buildingExchange = AuBdDesignExchangeEntry(report, AuDesign::Final, 0, true, true, false, 0, POL_Neutral);
+							stored = true;
 						}
 					}
 					else if(request.action == BurnMedia) stored = PrepareLegacyStudioMedia(savedLibraryId, exchange, error);
@@ -137,11 +153,17 @@ void DtChatChannel::ReadLegacyStudioPacket(const QByteArray& payload)
 								if(request.action == Saved || request.action == LoadDesign)
 								{ candidate = prepared; committedId = libraryId; return true; }
 								if(committedId != savedLibraryId) { message = tr("The saved library design changed."); return false; }
+								if(building)
+								{
+									mediaChanged = person->BurnLegacyStudioMedia(nullptr, &buildingExchange, message,
+										[&](QString& err) { return FinalizeLegacyBuilding(savedLibraryId, err); });
+									return mediaChanged;
+								}
 								DgData& data = g_Au.LockScDesignsForWrite();
 								const auto runtime = data.m_ScDesigns->find(exchange.DesignId());
 								if(runtime == data.m_ScDesigns->end() || runtime->second.IsDeleted() || !runtime->second.LegacyStats())
 								{ g_Au.UnlockScDesigns(); message = tr("The legacy runtime blueprint is unavailable."); return false; }
-								mediaChanged = person->BurnLegacyStudioMedia(exchange, message);
+								mediaChanged = person->BurnLegacyStudioMedia(&exchange, nullptr, message);
 								if(mediaChanged)
 								{
 									runtime->second.SetState(AuDesign::Final);

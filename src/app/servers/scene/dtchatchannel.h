@@ -513,7 +513,7 @@ private:
 	AuElapsedTimer m_LastLegacyScUpload;
 	AuElapsedTimer m_LastLegacyScCatalogQuery;
 	AuElapsedTimer m_LastLegacyScSpawn;
-	AuElapsedTimer m_LastLegacyCityRequest;
+	AuElapsedTimer m_LastLegacyCityRequest, m_LastLegacyBlueprintRequest;
 	QSet<quint32> m_LegacyCitySurfaceBodies; // At most one visual snapshot per body per connection.
 	AuElapsedTimer m_LastLegacyStudioRequest;
 	int									m_PacketSizeBytesLeft;	// Number of packet size bytes we are expecting.

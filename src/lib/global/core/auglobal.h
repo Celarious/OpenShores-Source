@@ -3009,6 +3009,9 @@ public:
 
 	// Original Legacy blueprints may be published independently to several
 	// empires. The modern exchange's single publisher is a separate registry.
+	virtual bool ListLegacyBuildingPublications(quint32, QList<quint32>&, QString&, quint8 = 0) { return false; }
+	virtual bool PublishLegacyBuilding(quint32, quint32, QString&) { return false; }
+	virtual QByteArray LegacyBuildingSource(quint32, QString&) { return {}; }
 	virtual bool ListLegacySpacecraftPublications(quint32 empire, QList<quint32>& runtimeIds, QString& error)
 	{
 		Q_UNUSED(empire); runtimeIds.clear();

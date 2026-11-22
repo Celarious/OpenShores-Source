@@ -44,13 +44,6 @@ int StoryNumber(int deck)
 	return deck < 0 ? deck : deck + 1;
 }
 
-int ConstructionLevels(const DesignerIndustryInfo& info, int minimumDeck, int stories)
-{
-	if(!info.stackLimit && info.maximumDeck > minimumDeck) return 1;
-	if(info.stackLimit == 32) return std::max(1, (stories - 3) / 2 + 1);
-	return stories;
-}
-
 QStringList Construction(int industry, const DesignerIndustryInfo& info, const Stats& stats, int levels)
 {
 	QStringList lines;
@@ -191,28 +184,7 @@ QString Facilities(int industry, const Stats& stats, const QString& module, int 
 	return heading.isEmpty() ? QString() : Section(heading, lines);
 }
 
-void StoragePerLevel(int industry, const DesignerIndustryInfo& info, int& goods, int& liquid)
-{
-	const int total = info.storage * 5 / 3;
-	goods = total;
-	liquid = 0;
-	switch(industry)
-	{
-	case 4: goods = total * 3 / 16; liquid = total / 16; break;
-	case 30: case 31: case 32: goods = total / 5; liquid = goods / 4; break;
-	case 34: case 85: goods = total / 2; break;
-	case 50: goods = total / 4; break;
-	case 35: case 83: case 89: goods = total / 4; liquid = total * 3 / 4; break;
-	case 41: case 42: case 48: goods = liquid = total / 2; break;
-	case 51: goods = total / 8; liquid = total * 3 / 8; break;
-	case 60: goods = info.capacitor * 3 / 4; liquid = info.capacitor / 4; break;
-	case 61: case 62: case 63: case 64: case 65:
-		goods = info.capacitor / 4; liquid = info.capacitor * 3 / 4; break;
-	case 66: case 67:
-		goods = (info.capacitor / 2) * 3 / 4; liquid = (info.capacitor / 2) / 4; break;
-	case 104: liquid = goods; break;
-	}
-}
+
 }
 
 QString AuLegacyBuildingStatsReport(const AuLegacyShip::Design& design)
@@ -223,7 +195,7 @@ QString AuLegacyBuildingStatsReport(const AuLegacyShip::Design& design)
 	if(!industry) return QString();
 	const DesignerIndustryInfo info = AuLegacyBd::DesignerIndustry(industry);
 	const Stats stats = AuLegacyShip::CalculateStats(design);
-	const int levels = ConstructionLevels(info, AuLegacyBd::MinimumDesignDeck(industry), stats.maximumDeck - stats.minimumDeck + 1);
+	const int levels = AuLegacyBd::ConstructionLevels(info, AuLegacyBd::MinimumDesignDeck(industry), stats.maximumDeck - stats.minimumDeck + 1);
 	const int troops = industry == 1 || (industry >= 10 && industry <= 12) || industry == 128 ? std::abs(info.employees) : 0;
 	QString html = Image(AuLegacyCityConstructionLayout::IndustryIcon(industry), false) + QStringLiteral("<br><b>%1</b>").arg(info.name.toHtmlEscaped());
 	html += Section(QString(), Construction(industry, info, stats, levels));
@@ -238,8 +210,7 @@ QString AuLegacyBuildingStatsReport(const AuLegacyShip::Design& design)
 	}
 	if(AuLegacyBd::DoesManufacture(industry))
 	{
-		int workArea = (std::abs(info.employees) + (info.employees > 0 ? levels - 1 : 0)) * 90;
-		if(industry >= 30 && industry <= 32) workArea /= 5;
+		const int workArea = AuLegacyBd::RequiredShopArea(industry, info, levels);
 		if(workArea)
 		{
 			lines.clear();
@@ -248,7 +219,7 @@ QString AuLegacyBuildingStatsReport(const AuLegacyShip::Design& design)
 		}
 	}
 	int goods, liquid;
-	StoragePerLevel(industry, info, goods, liquid);
+	AuLegacyBd::StoragePerLevel(industry, info, goods, liquid);
 	if(goods || liquid)
 	{
 		lines.clear();

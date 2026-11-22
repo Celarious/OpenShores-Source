@@ -121,6 +121,7 @@ private:
 	AuLegacyStudioSession* m_LegacyStudioSession = nullptr;
 	bool m_LegacyStudioPending = false, m_LegacyStudioAccepted = false;
 	bool m_LegacyStudioOnline = false, m_LegacyStudioReturning = false;
+	bool m_LegacyStudioSceneSuspended = false;
 	QTimer* m_LegacyStudioTimer;
 	AuElapsedTimer m_LegacyStudioEntryWait;
 	AuElapsedTimer m_LegacyStudioExitSent;
@@ -884,9 +885,10 @@ protected:
 
 	void LaunchLegacyDesigner(bool building = false);
 	void BeginLegacyStudioEntry();
+	void SuspendLegacyStudioScene();
 	void FinishLegacyStudioEntry(bool accepted);
 	void UpdateLegacyStudio();
-	void RestoreLegacyStudioScene();
+	void RestoreLegacyStudioScene(bool checkEnvironment = true);
 
 	void CreateDockWidgets();
 

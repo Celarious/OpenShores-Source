@@ -221,7 +221,7 @@ void DaLegacyCity::RxChatMessage(const AuCommPacket* message, quint32& countSupp
 	const auto* catalogue = ShopCatalogue();
 	if(!message || !catalogue || IsDead()) return;
 	LogReceivedCommunication(message);
-	if(RxCivicChat(message) || RxStatusChat(message) || RxPersonnelChat(message, countSupplied) || RxSpacecraftBlueprintMessage(message)
+	if(RxCivicChat(message) || RxStatusChat(message) || RxPersonnelChat(message, countSupplied) || RxBlueprintMessage(message)
 		|| RxGoodsSaleMessage(message) || RxSpacecraftServiceMessage(message)) return;
 	COMMODITYFILTER filter = FILTER_All;
 	const bool solicit = SalesFilter(message->Type(), filter);

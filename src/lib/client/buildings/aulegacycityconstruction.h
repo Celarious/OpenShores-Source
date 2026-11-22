@@ -57,7 +57,10 @@ private:
 	QToolButton *m_Clear, *m_Stop;
 	QLabel *m_Name, *m_Levels, *m_Terrain, *m_Jobs, *m_Homes;
 	QLabel *m_Recipe, *m_ProductIcons, *m_ProductHeading;
-	QTimer *m_Timer, *m_Timeout;
+	QTimer *m_Timer, *m_Timeout, *m_BlueprintTimer;
+	quint32 m_BlueprintToken = 0, m_AfterBlueprint = 0;
+	QMap<quint32, QSharedPointer<const AuLegacyBd::Design>> m_Blueprints;
+	void RefreshBlueprints();
 	quint8 m_Industry = 0, m_Process = 0;
 	quint16 m_Material = 76;
 	quint32 m_PendingToken = 0;

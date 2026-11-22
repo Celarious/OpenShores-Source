@@ -36,6 +36,10 @@ struct DesignerIndustryInfo
 	double siteRadius = 0;
 };
 AUDATA_DLL DesignerIndustryInfo DesignerIndustry(int industry);
+AUDATA_DLL int ConstructionLevels(const DesignerIndustryInfo& info, int minimumDeck, int stories);
+AUDATA_DLL int RequiredShopArea(int industry, const DesignerIndustryInfo& info, int levels);
+AUDATA_DLL void StoragePerLevel(int industry, const DesignerIndustryInfo& info, int& goods, int& liquid);
+AUDATA_DLL bool CanManufacture(const AuLegacyShip::Design& design, QString& error);
 AUDATA_DLL float FixedTerrainLevelRadius(int industry);
 AUDATA_DLL double DesignerSiteRadius(int industry, int deck);
 AUDATA_DLL int MinimumDesignDeck(int industry);
@@ -65,6 +69,7 @@ struct Design
 	Header header;
 	QVector<AuLegacyShip::Room> rooms;
 	QVector<AuLegacyShip::Detail> details;
+	QByteArray constructionSource; // Compressed standalone file for a player-authored development.
 	QByteArray sourceHash;
 	QByteArray payloadHash;
 	QDateTime cacheTime;
@@ -83,7 +88,9 @@ struct Design
 // expects DnBuilding::Tx followed by DnRoomArray and DnDetailArray streams.
 AUDATA_DLL bool ReadCache(const QByteArray& source, Design& output, QString& error);
 AUDATA_DLL bool ReadPayload(const QByteArray& payload, Design& output, QString& error);
+AUDATA_DLL QSharedPointer<const Design> ReadConstructionDesign(const QByteArray& compressed, quint32 id, QString& error, bool verifyRequirements = true);
 AUDATA_DLL bool ReadDesignFile(const QByteArray& bytes, AuLegacyShip::Design& output, QString& error);
+AUDATA_DLL bool ImportDesignFile(const QByteArray& bytes, AuLegacyShip::Design& output, bool& repaired, QString& error);
 AUDATA_DLL bool LoadCache(const QString& fileName, Design& output, QString& error);
 
 // Bounded qCompress decoder shared by original geometry/path fixture readers.

@@ -406,6 +406,9 @@ public:
 
 	virtual void ScDesignAdded(quint32 designId);
 	bool ListLegacySpacecraftPublications(quint32 empire, QList<quint32>& runtimeIds, QString& error) override;
+	bool ListLegacyBuildingPublications(quint32 empire, QList<quint32>& ids, QString& error, quint8 industry) override;
+	bool PublishLegacyBuilding(quint32 empire, quint32 id, QString& error) override;
+	QByteArray LegacyBuildingSource(quint32 id, QString& error) override;
 	bool SetLegacySpacecraftPublication(quint32 empire, quint32 runtimeId, bool published, QString& error) override;
 	virtual void ScDesignChanged(quint32 designId);
 	virtual void ScDesignDeactivated(quint32 designId);

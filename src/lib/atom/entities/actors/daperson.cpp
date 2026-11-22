@@ -25255,7 +25255,7 @@ void DaPerson::CommAccept(const AuCommAccept& msg)
 	if(g_Au.IsLegacyGeneration())
 		if(DaLegacyCity* city = dynamic_cast<DaLegacyCity*>(buyer))
 		{
-			if(dynamic_cast<const AuItemScDesign*>(msg.Item())) city->AcceptSpacecraftBlueprint(*this, msg);
+			if(dynamic_cast<const AuItemScDesign*>(msg.Item()) || dynamic_cast<const AuItemBdDesign*>(msg.Item())) city->AcceptStudioBlueprint(*this, msg);
 			else city->AcceptGoodsSale(*this, msg);
 			return;
 		}

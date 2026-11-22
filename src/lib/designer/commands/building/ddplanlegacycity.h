@@ -43,6 +43,7 @@ private:
 	int m_ExistingLevels = 0;
 	quint16 m_SiteMaterial = 0;
 	quint32 m_SiteDesignId = 0;
+	QSharedPointer<const AuLegacyBd::Design> m_SiteBlueprint;
 	AuPoint m_SiteCenter;
 	double m_SiteFacing = 0;
 	quint32 m_PreviousSiteWorld = 0;

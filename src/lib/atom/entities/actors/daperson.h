@@ -292,6 +292,7 @@ private:
 
 private:
 	friend class AuLegacyFinanceTransfer;
+	QMutex m_LegacyStudioMovementMutex;
 	mutable QMutex                     m_LegacyFinanceMutex{QMutex::Recursive};
 	mutable QReadWriteLock				m_PersonLock;
 	AuTime								m_ArenaEntered;			// Time arena was entered.
@@ -1844,9 +1845,12 @@ public:
 			const DaPerson& sceneAtom);
 
 	void DesignEnvironmentExit();
+	// Serialize server studio transfers with position reports for this avatar.
+	QMutex& LegacyStudioMovementMutex() { return m_LegacyStudioMovementMutex; }
 	// A completed attempt consumes one blank disk, including a defective disk.
 	// Refresh gear weight after releasing the studio lock when this returns true.
-	bool BurnLegacyStudioMedia(const AuScDesignExchangeEntry& exchange, QString& message);
+	bool BurnLegacyStudioMedia(const AuScDesignExchangeEntry* spacecraft, const AuBdDesignExchangeEntry* building,
+		QString& message, const std::function<bool(QString&)>& finalize = {});
 
 	inline QString DesignPassword() const
 	{

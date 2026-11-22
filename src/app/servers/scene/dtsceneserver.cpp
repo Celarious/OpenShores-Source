@@ -18,6 +18,7 @@
 #include "ausynccontroller.h"
 #include "daasteroid.h"
 #include "daatomlist.h"
+#include "dadesigner.h"
 #include "dagalaxy.h"
 #include "daperson.h"
 #include "dasc.h"
@@ -3190,11 +3191,18 @@ void DtSceneServer::ClientPositionUpdate(bool atRest, float headTilt, AuAtomPos&
 		DaAtom* requestedParent = system->FindIdRecursive(pos.ParentId());
 		if(person)
 		{
+			QMutexLocker movement(g_Au.IsLegacyGeneration() ? &person->LegacyStudioMovementMutex() : nullptr);
 			person->SetControlled(m_idUnit);
 			bool checkCollision = false;	// Set true if CheckCollision must be called
 			AuPoint oloc, nloc;				// For CheckCollision, if needed.
 
 			DaAtom* parent = person->Parent();
+			// Studio entry/exit runs on the chat thread. A late position report
+			// can still refer to the world after entry, or the studio after exit.
+			const auto* oldStudio = dynamic_cast<const DaDesigner*>(parent);
+			const auto* newStudio = dynamic_cast<const DaDesigner*>(requestedParent);
+			const bool crossesLegacyStudio = g_Au.IsLegacyGeneration() && parent != requestedParent &&
+				((oldStudio && oldStudio->IsLegacyStudio()) || (newStudio && newStudio->IsLegacyStudio()));
 			bool updatePerson = true;							// False rejects the position update; reacquires pos vars instead.
 			if(!parent)
 				updatePerson = false;
@@ -3204,7 +3212,7 @@ void DtSceneServer::ClientPositionUpdate(bool atRest, float headTilt, AuAtomPos&
 				updatePerson = false;							// Scene atom's parent is a teleporter.
 			else if(!parent->IsNormal())
 				updatePerson = false;
-			else if(!requestedParent)
+			else if(!requestedParent || crossesLegacyStudio)
 				updatePerson = false;
 
 			LegacyMovementCheck legacyCheck;
@@ -3251,7 +3259,7 @@ void DtSceneServer::ClientPositionUpdate(bool atRest, float headTilt, AuAtomPos&
 				legacyCheck.ship = LegacyShipAncestor(parent);
 				legacyCheck.reason = QStringLiteral("unknown parent");
 			}
-			if(!legacyCheck.reason.isEmpty() || (!requestedParent && parent && parent->IsNormal()
+			if(crossesLegacyStudio || !legacyCheck.reason.isEmpty() || (!requestedParent && parent && parent->IsNormal()
 				&& !person->NeedsInit() && !dynamic_cast<DaTeleporter*>(parent)))
 			{
 				// A missing requested parent must also correct an already-ejected avatar.

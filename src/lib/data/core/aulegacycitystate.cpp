@@ -1,4 +1,5 @@
 #include "aulegacycitystate.h"
+#include "aulegacybd.h"
 #include "aulegacycitycatalogue.h"
 #include <QBuffer>
 #include <QDataStream>
@@ -7,6 +8,11 @@
 
 namespace AuLegacyCity
 {
+QSharedPointer<const AuLegacyBd::Design> Development::Blueprint() const
+{
+	return authoredDesign ? authoredDesign : AuLegacyBd::Catalog::BuiltIn().Find(designId);
+}
+
 quint16 Development::HitsTotal() const
 {
 	if(industryId == 2 || !completedLevels) return 0;
@@ -62,7 +68,9 @@ bool Valid(const State& state, QString& error)
 	QSet<quint32> ids;
 	for(const Development& dev : state.developments)
 	{
-		if(!dev.id || !dev.industryId || ids.contains(dev.id)
+		if((dev.designId > 74) != bool(dev.authoredDesign)
+			|| (dev.authoredDesign && (dev.authoredDesign->header.designId != dev.designId || dev.authoredDesign->header.industryId != dev.industryId))
+			|| !dev.id || !dev.industryId || ids.contains(dev.id)
 			|| dev.minimumDeck < -127 || dev.maximumDeck > 126 || dev.minimumDeck > dev.maximumDeck
 			|| int(dev.maximumDeck) - int(dev.minimumDeck) > 127
 			|| !std::isfinite(dev.altitudeMSL) || !std::isfinite(dev.facingRadians)
@@ -158,13 +166,24 @@ bool EncodeState(const State& state, QByteArray& output, QString& error)
 			<< crisis.createdAt << crisis.treatedUnits << crisis.species;
 	out << quint16(state.pendingEvents.size());
 	for(const CityEvent& event : state.pendingEvents) out << event.type << event.text << event.when;
+	// Include each immutable custom design once, for persistence and scene observers.
+	QMap<quint32, QByteArray> sources;
+	for(const auto& dev : state.developments)
+		if(dev.authoredDesign) sources.insert(dev.designId, dev.authoredDesign->constructionSource);
+	out << quint32(sources.size());
+	for(auto it = sources.cbegin(); it != sources.cend(); ++it)
+	{
+		if(it.value().size() > MaximumStateBytes - bytes.size() - 8)
+		{ error = QStringLiteral("The city cannot store another building blueprint."); return false; }
+		out << it.key() << it.value();
+	}
 	if(out.status() != QDataStream::Ok || bytes.size() > MaximumStateBytes)
 	{ error = QStringLiteral("Legacy city state exceeds its envelope limit."); return false; }
 	output = bytes;
 	return true;
 }
 
-bool DecodeState(const QByteArray& bytes, State& output, QString& error)
+bool DecodeState(const QByteArray& bytes, State& output, QString& error, const State* previous)
 {
 	error.clear();
 	if(bytes.size() > MaximumStateBytes)
@@ -283,6 +302,30 @@ bool DecodeState(const QByteArray& bytes, State& output, QString& error)
 			in >> event.when;
 			state.pendingEvents.append(event);
 		}
+	}
+	if(version >= 7)
+	{
+		quint32 count; in >> count;
+		QSet<quint32> required;
+		for(const auto& dev : state.developments) if(dev.designId > 74) required.insert(dev.designId);
+		if(count != quint32(required.size())) { error = QStringLiteral("Missing city building blueprints."); return false; }
+		QMap<quint32, QSharedPointer<const AuLegacyBd::Design>> sources;
+		if(previous && count)
+			for(const auto& dev : previous->developments)
+				if(dev.authoredDesign) sources.insert(dev.designId, dev.authoredDesign);
+		for(quint32 index = 0; index < count; ++index)
+		{
+			quint32 id; QByteArray bytes;
+			in >> id;
+			if(!required.remove(id) || !Bytes(in, bytes, AuLegacyBd::MaximumCacheBytes)) return false;
+			const auto known = sources.value(id);
+			if(known && known->constructionSource == bytes) continue;
+			// Completed developments keep the design accepted at construction time.
+			const auto design = AuLegacyBd::ReadConstructionDesign(bytes, id, error, false);
+			if(!design) return false;
+			sources.insert(id, design);
+		}
+		for(auto& dev : state.developments) dev.authoredDesign = sources.value(dev.designId);
 	}
 	if(in.status() != QDataStream::Ok || !in.atEnd() || !Valid(state, error))
 	{ if(error.isEmpty()) error = QStringLiteral("Malformed legacy city state or trailing data."); return false; }

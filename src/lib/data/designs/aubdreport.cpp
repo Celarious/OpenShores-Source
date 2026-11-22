@@ -5,6 +5,7 @@
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
 #include "aubdreport.h"
+#include "aulegacybd.h"
 //
 #include "aubddesign.h"
 #include "aucombat.h"
@@ -19,6 +20,15 @@
 #define d_PoliceRadius					(500*FeetPerMeter())	// Jurisdiction area radius of min police station with 2 offices.
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
+
+AuBdReport::AuBdReport(const AuLegacyBd::Header& blueprint)
+	: AuBdReport()
+{
+	m_LegacyBuilding = true;
+	m_DesignId = blueprint.designId; m_DesignName = blueprint.name;
+	m_ArchitectId = AuId(blueprint.architectId); m_ArchitectName = blueprint.architectName;
+	m_IndustryId = blueprint.industryId; m_Structure = BD_Building;
+}
 
 AuBdReport::AuBdReport()
 {
@@ -127,6 +137,7 @@ AuBdReport::AuBdReport(const AuBdReport& c) : m_PartArchitects(c.m_PartArchitect
 	m_ArchitectId = c.m_ArchitectId;
 	m_ArchitectName = c.m_ArchitectName;
 	m_DesignDesc = c.m_DesignDesc;
+	m_LegacyBuilding = c.m_LegacyBuilding;
 	m_DesignId = c.m_DesignId;
 	m_DesignName = c.m_DesignName;
 
@@ -212,6 +223,7 @@ const AuBdReport& AuBdReport::operator=(const AuBdReport& c)
 	m_ArchitectId = c.m_ArchitectId;
 	m_ArchitectName = c.m_ArchitectName;
 	m_DesignDesc = c.m_DesignDesc;
+	m_LegacyBuilding = c.m_LegacyBuilding;
 	m_DesignId = c.m_DesignId;
 	m_DesignName = c.m_DesignName;
 	m_PartArchitects = c.m_PartArchitects;
@@ -1733,6 +1745,8 @@ QString AuBdReport::ReportAnalysis(quint8 designState) const
 {
 	if(designState == AuDesign::Deleted)
 		return QObject::tr("Deleted Design");
+	if(m_LegacyBuilding)
+		return ReportToolTip();
 	// Fence does not have to have any hull volume.
 	else if(designState == AuDesign::Edit && (!HullVolume() && !m_FieldCapacity && m_Structure != BD_Fence) && !g_Au.IsWebCGI())
 		return "";		// Return an empty string. That cues the caller to provide helpful design tips in place of this report.
@@ -2961,6 +2975,9 @@ QString AuBdReport::ReportAnalysis(quint8 designState) const
 // This function is used by AuItemScDesign::HtmlToolTip.
 QString AuBdReport::ReportToolTip() const
 {
+	if(m_LegacyBuilding)
+		return QObject::tr("<b>%1 by %2</b><br>%3 (B%4)").arg(m_DesignName.toHtmlEscaped(),
+			m_ArchitectName.toHtmlEscaped(), AuLegacyBd::DesignerIndustry(m_IndustryId).name.toHtmlEscaped()).arg(m_DesignId);
 	QString stat;	// This will be our return value.
 
 	// Design name
@@ -3025,7 +3042,8 @@ QString AuBdReport::ReportToolTip() const
 
 void AuBdReport::operator>>(QDataStream& out) const
 {
-	out << (quint8)REPORT_SERIALIZE_VER;
+	// Legacy building IDs belong to a separate library. Both report types have the same wire layout.
+	out << quint8(REPORT_SERIALIZE_VER | (m_LegacyBuilding ? 0x80 : 0));
 
 	// Design
 	out << m_ArchitectId;
@@ -3134,6 +3152,8 @@ void AuBdReport::operator<<(QDataStream& in)
 {
 	quint8 ver;
 	in >> ver;
+	m_LegacyBuilding = (ver & 0x80) != 0;
+	ver &= 0x7f;
 
 	// Design
 	in >> m_ArchitectId;
@@ -3279,6 +3299,8 @@ void AuBdReport::operator<<(QDataStream& in)
 bool AuBdReport::operator==(const AuBdReport& c) const
 {
 	// Design
+	if(m_LegacyBuilding != c.m_LegacyBuilding)
+		return false;
 	if(m_ArchitectId != c.m_ArchitectId)
 		return false;
 	if(m_ArchitectName != c.m_ArchitectName)

@@ -6,10 +6,13 @@
 #include "aupoint.h"
 #include <QByteArray>
 #include <QVector>
+#include <QSharedPointer>
+
+namespace AuLegacyBd { struct Design; }
 
 namespace AuLegacyCity
 {
-constexpr quint8 StateVersion = 6;
+constexpr quint8 StateVersion = 7;
 inline bool SupportedStateVersion(quint32 version) { return version >= 1 && version <= StateVersion; }
 constexpr int MaximumStateBytes = 8 * 1024 * 1024;
 constexpr int MaximumDevelopments = 32768;
@@ -27,6 +30,8 @@ struct Development
 {
 	quint32 id = 0;
 	quint32 designId = 0;
+	QSharedPointer<const AuLegacyBd::Design> authoredDesign;
+	AUDATA_DLL QSharedPointer<const AuLegacyBd::Design> Blueprint() const;
 	quint8 industryId = 0;
 	quint16 materialId = 51;
 	AuGlobeLLF location;
@@ -130,6 +135,6 @@ struct State
 // New runtime envelope, independent of the 2016 DB layout. Atomic bounded read;
 // malformed/trailing data never publishes a partial city.
 AUDATA_DLL bool EncodeState(const State& state, QByteArray& output, QString& error);
-AUDATA_DLL bool DecodeState(const QByteArray& bytes, State& output, QString& error);
+AUDATA_DLL bool DecodeState(const QByteArray& bytes, State& output, QString& error, const State* previous = nullptr);
 }
 #endif

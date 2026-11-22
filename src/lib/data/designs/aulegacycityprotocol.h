@@ -40,7 +40,7 @@ enum Action : quint8
 	TestingFinishIndustryProcess = 30,
 	BuySpacecraft = 31,
 	SurfaceSnapshot = 32, // One-shot visual data; never a city subscription.
-	EnterBuildingStudio = 33
+	EnterBuildingStudio = 33, BuildingBlueprints = 34
 };
 inline bool IsEconomy(Action action) { return (action >= EconomyList && action <= RunIndustryProcess)
 	|| action == BuySpacecraft || action == TestingFinishIndustryProcess; } // TEMPORARY ARCHITECT MANUFACTURING TEST
@@ -48,10 +48,11 @@ inline bool IsBank(Action action) { return action >= BankState && action <= Bank
 inline bool IsStudioEntry(Action action) { return action == EnterSpacecraftStudio || action == EnterBuildingStudio; }
 inline bool IsStudio(Action action) { return action == StudioState || IsStudioEntry(action); }
 inline bool IsGameplay(Action action) { return (action >= ConstructionList && action <= EnterSpacecraftStudio)
-	|| action == EnterBuildingStudio || action == BuySpacecraft || action == TestingFinishIndustryProcess; } // TEMPORARY ARCHITECT MANUFACTURING TEST
+	|| action == BuildingBlueprints || action == EnterBuildingStudio || action == BuySpacecraft || action == TestingFinishIndustryProcess; } // TEMPORARY ARCHITECT MANUFACTURING TEST
 struct Request
 {
 	Action action = List;
+	QSharedPointer<const AuLegacyBd::Design> previewDesign; // Local construction cursor only.
 	quint32 token = 0, cityId = 0, developmentId = 0, designId = 0;
 	quint16 material = 76;
 	qint8 minimumDeck = 0, maximumDeck = 0;
@@ -128,6 +129,8 @@ struct Reply
 	quint16 occupiedStudios = 0;
 	quint32 surfaceWorldId = 0;
 	SurfaceCities surfaceCities;
+	QMap<quint32, QByteArray> blueprints; // Verified compressed files, in ascending library ID order.
+	quint32 nextBlueprint = 0;
 };
 AUDATA_DLL QByteArray EncodeRequest(const Request& request);
 AUDATA_DLL bool DecodeRequest(const QByteArray& bytes, Request& request);

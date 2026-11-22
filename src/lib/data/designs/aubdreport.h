@@ -16,10 +16,13 @@ class DbIndustry;
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+namespace AuLegacyBd { struct Header; }
+
 class AUDATA_DLL AuBdReport
 {
 friend class AuBdDesign;
 	// Design
+	bool m_LegacyBuilding = false;
 	AuId								m_ArchitectId;			// The architect of the design.
 	QString								m_ArchitectName;
 	QString								m_DesignDesc;
@@ -118,6 +121,8 @@ friend class AuBdDesign;
 
 public:	// Constructors
 	AuBdReport();
+	explicit AuBdReport(const AuLegacyBd::Header& blueprint);
+	bool IsLegacyBuilding() const { return m_LegacyBuilding; }
 	virtual ~AuBdReport();
 	AuBdReport(const AuBdReport& c);
 

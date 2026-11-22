@@ -85,7 +85,7 @@ AuBdDesignExchangeEntry& AuBdDesignExchangeEntry::operator=(const AuBdDesignExch
 
 bool AuBdDesignExchangeEntry::operator==(const AuBdDesignExchangeEntry& c) const
 {
-	if(m_Report->DesignId() != c.m_Report->DesignId())
+	if(m_Report->DesignId() != c.m_Report->DesignId() || m_Report->IsLegacyBuilding() != c.m_Report->IsLegacyBuilding())
 		return false;
 	if(m_Empire != c.m_Empire)
 		return false;

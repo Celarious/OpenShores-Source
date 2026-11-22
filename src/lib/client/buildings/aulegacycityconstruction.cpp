@@ -255,10 +255,16 @@ AuLegacyCityConstruction::AuLegacyCityConstruction(QWidget* parent) : QWidget(pa
 
 	connect(m_Stop, &QToolButton::clicked, this, [this]() { PlanningStopped(); emit StopPlanning(); });
 	connect(m_Clear, &QToolButton::clicked, this, &AuLegacyCityConstruction::StartClearing);
-	connect(m_Designs, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+	connect(m_Designs, QOverload<int>::of(&QComboBox::activated), this, [this]() {
 		g_Au.Settings().writeEntry(QStringLiteral("Legacy2016/BuildingConstruction/%1").arg(m_Industry), m_Designs->currentData().toUInt());
+	});
+	connect(m_Designs, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
 		if(m_Planning && m_ActiveRequest.industryId == m_Industry)
-		{ m_ActiveRequest.designId = m_Designs->currentData().toUInt(); UpdatePlanningSettings(); }
+		{
+			m_ActiveRequest.designId = m_Designs->currentData().toUInt();
+			m_ActiveRequest.previewDesign = m_Blueprints.value(m_ActiveRequest.designId);
+			UpdatePlanningSettings();
+		}
 	});
 	connect(m_Grading, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
 		g_Au.Settings().writeEntry("Legacy2016/RoadType", m_Grading->currentIndex());
@@ -279,6 +285,13 @@ AuLegacyCityConstruction::AuLegacyCityConstruction(QWidget* parent) : QWidget(pa
 	});
 	connect(m_Products, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() { DescribeProducts(); UpdatePlanningSettings(); });
 	connect(m_MakeProduct, &QCheckBox::toggled, this, [this](bool) { UpdateControls(); UpdatePlanningSettings(); });
+	m_BlueprintTimer = new QTimer(this);
+	m_BlueprintTimer->setSingleShot(true); m_BlueprintTimer->setInterval(200);
+	connect(m_BlueprintTimer, &QTimer::timeout, this, [this]() {
+		AuLegacyCityProtocol::Request request; request.action = AuLegacyCityProtocol::BuildingBlueprints;
+		request.industryId = m_Industry; request.designId = m_AfterBlueprint;
+		m_BlueprintToken = auApp->RequestLegacyCityTool(request);
+	});
 	m_Timer = new QTimer(this); m_Timer->setInterval(1000);
 	connect(m_Timer, &QTimer::timeout, this, &AuLegacyCityConstruction::UpdateControls);
 	m_Timeout = new QTimer(this); m_Timeout->setSingleShot(true); m_Timeout->setInterval(60000);
@@ -370,7 +383,7 @@ void AuLegacyCityConstruction::SelectProcess(quint8 processId)
 			}
 		const int selected = m_Products->findData(uint(defaultProcess.value)); if(selected >= 0) m_Products->setCurrentIndex(selected);
 	}
-	DescribeRecipe(); DescribeProducts(); UpdateControls();
+	DescribeRecipe(); DescribeProducts(); UpdateControls(); RefreshBlueprints();
 }
 
 void AuLegacyCityConstruction::DescribeRecipe()
@@ -486,8 +499,8 @@ void AuLegacyCityConstruction::StartPlanning()
 {
 	const bool online = g_Au.IsLegacyGeneration() && !auApp->IsSingleUserMode() && auApp->IsSceneConnected();
 	if(!online || !m_Loaded || !m_Process || !m_LevelLimit || m_PendingToken) return;
-	if(m_Industry == 35)
-	{ ReportMessage(tr("The original Dairy blueprint has not been recovered.")); return; }
+	if(m_Industry == 35 && !m_Designs->currentData().toUInt())
+	{ ReportMessage(tr("Select a Dairy blueprint from your gear or empire library.")); return; }
 	m_Planning = true; m_ActiveRequest = BuildRequest(); emit PlanConstruction(m_ActiveRequest);
 }
 
@@ -571,6 +584,7 @@ AuLegacyCityProtocol::Request AuLegacyCityConstruction::BuildRequest() const
 	AuLegacyCityProtocol::Request request; request.action = AuLegacyCityProtocol::Build;
 	request.industryId = m_Industry; request.processId = m_Process; request.material = m_Material;
 	request.designId = m_Designs->currentData().toUInt(); request.levels = 1;
+	request.previewDesign = m_Blueprints.value(request.designId);
 	request.manufacturingRecipe = quint16(m_Products->currentData().toUInt());
 	request.citizenEnabled = m_MakeProduct->isChecked();
 	request.roadWidthMeters = float(qBound(8.0, m_RoadWidth->currentText().toDouble(), 80.0));
@@ -642,10 +656,40 @@ void AuLegacyCityConstruction::Refresh()
 	AuLegacyCityProtocol::Request request; request.action = AuLegacyCityProtocol::ConstructionList; Submit(request);
 }
 
+void AuLegacyCityConstruction::RefreshBlueprints()
+{
+	m_BlueprintTimer->stop(); m_BlueprintToken = 0; m_AfterBlueprint = 0;
+	m_Blueprints.clear();
+	const QSignalBlocker blocked(m_Designs);
+	for(int i = m_Designs->count()-1; i >= 0; --i)
+		if(m_Designs->itemData(i).toUInt() > 74) m_Designs->removeItem(i);
+	if(isVisible() && AuLegacyBd::SelectableIndustry(m_Industry) && m_Industry != 129) m_BlueprintTimer->start();
+}
+
 void AuLegacyCityConstruction::ReceiveReply(QByteArray payload)
 {
 	AuLegacyCityProtocol::Reply reply;
-	if(!AuLegacyCityProtocol::DecodeReply(payload, reply) || !m_PendingToken || reply.token != m_PendingToken) return;
+	if(!AuLegacyCityProtocol::DecodeReply(payload, reply)) return;
+	if(reply.action == AuLegacyCityProtocol::BuildingBlueprints)
+	{
+		if(!m_BlueprintToken || reply.token != m_BlueprintToken) return;
+		m_BlueprintToken = 0;
+		if(!reply.message.isEmpty()) ReportMessage(reply.message);
+		if(!reply.accepted) return;
+		const quint32 preferred = quint32(g_Au.Settings().readNumEntry(QStringLiteral("Legacy2016/BuildingConstruction/%1").arg(m_Industry), 0));
+		for(auto i = reply.blueprints.cbegin(); i != reply.blueprints.cend(); ++i)
+		{
+			QString error;
+			const auto design = AuLegacyBd::ReadConstructionDesign(i.value(), i.key(), error);
+			if(!design || design->header.industryId != m_Industry) continue;
+			m_Blueprints.insert(i.key(), design);
+			m_Designs->addItem(QIcon(":data/Library.png"), tr("%1 by %2").arg(design->header.name, design->header.architectName), i.key());
+			if(i.key() == preferred) m_Designs->setCurrentIndex(m_Designs->count()-1);
+		}
+		if(reply.nextBlueprint > m_AfterBlueprint) { m_AfterBlueprint = reply.nextBlueprint; m_BlueprintTimer->start(); }
+		return;
+	}
+	if(!m_PendingToken || reply.token != m_PendingToken) return;
 	m_PendingToken = 0; m_Timeout->stop();
 	if(!reply.accepted && !reply.message.isEmpty()) ReportMessage(reply.message);
 	UpdateControls();
@@ -664,6 +708,7 @@ void AuLegacyCityConstruction::UpdateControls()
 
 void AuLegacyCityConstruction::ResetTransport()
 {
+	RefreshBlueprints();
 	const bool interrupted = m_PendingToken || m_Planning;
 	PlanningStopped(); emit StopPlanning(); m_PendingToken = 0; m_Timeout->stop();
 	if(interrupted && isVisible()) ReportMessage(tr("Connection changed. Select construction again after reconnecting."));
@@ -672,12 +717,12 @@ void AuLegacyCityConstruction::ResetTransport()
 
 void AuLegacyCityConstruction::showEvent(QShowEvent* event)
 {
-	QWidget::showEvent(event); LoadCatalogue(); UpdateControls(); m_Timer->start(); Refresh();
+	QWidget::showEvent(event); LoadCatalogue(); UpdateControls(); m_Timer->start(); Refresh(); RefreshBlueprints();
 }
 
 void AuLegacyCityConstruction::hideEvent(QHideEvent* event)
 {
-	PlanningStopped(); emit StopPlanning(); m_Timer->stop(); QWidget::hideEvent(event);
+	PlanningStopped(); emit StopPlanning(); m_Timer->stop(); m_BlueprintTimer->stop(); m_BlueprintToken = 0; QWidget::hideEvent(event);
 }
 
 

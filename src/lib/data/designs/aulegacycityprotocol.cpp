@@ -66,6 +66,13 @@ bool ReadText(QDataStream& in, QString& text, int maximum)
 
 QByteArray AuLegacyCityProtocol::EncodeRequest(const Request& r)
 {
+	if(r.action == BuildingBlueprints)
+	{
+		if(!r.token || !r.industryId || r.industryId >= 130) return {};
+		QByteArray bytes; QDataStream out(&bytes, QIODevice::WriteOnly);
+		out << quint8(9) << quint8(r.action) << r.token << r.industryId << r.designId;
+		return bytes;
+	}
 	if(r.action == SurfaceSnapshot)
 	{
 		if(!r.token || !r.worldId) return QByteArray();
@@ -99,6 +106,12 @@ bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& resul
 	Request r; quint8 version = 0, action = 0; bool retiredDoorsOpen = false;
 	QDataStream in(bytes); in.setVersion(QDataStream::Qt_4_1);
 	in >> version >> action >> r.token;
+	if(version == 9 && action == BuildingBlueprints)
+	{
+		in >> r.industryId >> r.designId;
+		if(!r.token || !r.industryId || r.industryId >= 130 || !in.atEnd() || in.status() != QDataStream::Ok) return false;
+		r.action = BuildingBlueprints; result = r; return true;
+	}
 	if(version == 7 && action == SurfaceSnapshot)
 	{
 		in >> r.worldId;
@@ -135,6 +148,15 @@ bool AuLegacyCityProtocol::DecodeRequest(const QByteArray& bytes, Request& resul
 }
 QByteArray AuLegacyCityProtocol::EncodeReply(const Reply& r)
 {
+	if(r.action == BuildingBlueprints)
+	{
+		if(!r.token || r.blueprints.size() > MaximumEntries) return {};
+		QByteArray bytes; QDataStream out(&bytes, QIODevice::WriteOnly);
+		out << quint8(9) << quint8(r.action) << r.token << r.accepted << r.nextBlueprint << quint16(r.blueprints.size());
+		if(!Text(out, r.message, 4096)) return {};
+		for(auto it = r.blueprints.cbegin(); it != r.blueprints.cend(); ++it) out << it.key() << it.value();
+		return bytes.size() <= AuLegacyBd::MaximumCacheBytes + 8192 ? bytes : QByteArray();
+	}
 	if(r.action == SurfaceSnapshot)
 	{
 		if(!r.token || !r.surfaceWorldId || r.surfaceCities.size() > MaximumEntries
@@ -216,10 +238,28 @@ QByteArray AuLegacyCityProtocol::EncodeReply(const Reply& r)
 }
 bool AuLegacyCityProtocol::DecodeReply(const QByteArray& bytes, Reply& result)
 {
-	if(bytes.size() > MaximumReplyBytes || bytes.size() < 6) return false;
+	if(bytes.size() < 6) return false;
 	Reply r; quint8 version = 0, action = 0; quint16 count = 0;
 	QDataStream in(bytes); in.setVersion(QDataStream::Qt_4_1);
 	in >> version >> action >> r.token;
+	if(version == 9 && action == BuildingBlueprints)
+	{
+		if(bytes.size() > AuLegacyBd::MaximumCacheBytes + 8192) return false;
+		in >> r.accepted >> r.nextBlueprint >> count;
+		if(!r.token || count > MaximumEntries || !ReadText(in, r.message, 4096)) return false;
+		for(int index = 0; index < count; ++index)
+		{
+			quint32 id, size; in >> id >> size;
+			if(id <= 74 || r.blueprints.contains(id) || !size || size > AuLegacyBd::MaximumCacheBytes
+				|| size > quint64(in.device()->bytesAvailable())) return false;
+			QByteArray source(int(size), Qt::Uninitialized);
+			if(in.readRawData(source.data(), int(size)) != int(size)) return false;
+			r.blueprints.insert(id, source);
+		}
+		if(!in.atEnd() || in.status() != QDataStream::Ok || (!r.accepted && (r.nextBlueprint || count))) return false;
+		r.action = BuildingBlueprints; result = r; return true;
+	}
+	if(bytes.size() > MaximumReplyBytes) return false;
 	if(version == 7 && action == SurfaceSnapshot)
 	{
 		in >> r.surfaceWorldId >> r.accepted >> count;

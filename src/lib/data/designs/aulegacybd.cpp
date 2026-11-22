@@ -1,4 +1,9 @@
 #include "aulegacybd.h"
+#include "aulegacyshipstats.h"
+#include "aulegacyshipgeometry.h"
+#include "aulegacyshipedit.h"
+#include "aulegacyshipdetails.h"
+#include "aulegacyshipmoduleoptions.h"
 #include "aulegacycitycatalogue.h"
 
 #include <QCryptographicHash>
@@ -9,6 +14,7 @@
 #include <QJsonObject>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QRegion>
 #include <QSet>
 #include <algorithm>
 #include <cmath>
@@ -333,6 +339,179 @@ bool ValidDesignerPoint(int industry, int deck, const QPointF& point)
 	return std::abs(point.x()) <= radius && std::abs(point.y()) <= radius && (!coastal || point.y() <= 0);
 }
 
+int ConstructionLevels(const DesignerIndustryInfo& info, int minimumDeck, int stories)
+{
+	if(!info.stackLimit && info.maximumDeck > minimumDeck) return 1;
+	if(info.stackLimit == 32) return std::max(1, (stories - 3) / 2 + 1);
+	return stories;
+}
+
+int RequiredShopArea(int industry, const DesignerIndustryInfo& info, int levels)
+{
+	if(!DoesManufacture(industry)) return 0;
+	const int area = (std::abs(info.employees) + (info.employees > 0 ? levels - 1 : 0)) * 90;
+	return industry >= 30 && industry <= 32 ? area / 5 : area;
+}
+
+void StoragePerLevel(int industry, const DesignerIndustryInfo& info, int& goods, int& liquid)
+{
+	const int total = info.storage * 5 / 3;
+	goods = total;
+	liquid = 0;
+	switch(industry)
+	{
+	case 4: goods = total * 3 / 16; liquid = total / 16; break;
+	case 30: case 31: case 32: goods = total / 5; liquid = goods / 4; break;
+	case 34: case 85: goods = total / 2; break;
+	case 50: goods = total / 4; break;
+	case 35: case 83: case 89: goods = total / 4; liquid = total * 3 / 4; break;
+	case 41: case 42: case 48: goods = liquid = total / 2; break;
+	case 51: goods = total / 8; liquid = total * 3 / 8; break;
+	case 60: goods = info.capacitor * 3 / 4; liquid = info.capacitor / 4; break;
+	case 61: case 62: case 63: case 64: case 65:
+		goods = info.capacitor / 4; liquid = info.capacitor * 3 / 4; break;
+	case 66: case 67:
+		goods = (info.capacitor / 2) * 3 / 4; liquid = (info.capacitor / 2) / 4; break;
+	case 104: liquid = goods; break;
+	}
+}
+
+// Painting a room subtracts its interior from all other rooms on the story.
+// Enforce the same property on imported files before counting their capacity.
+static bool FloorRegion(const QPolygonF& polygon, QRegion& floor, QString& error)
+{
+	if(!AuLegacyShip::Geometry::IsSupportedBoundary(polygon, &error)) return false;
+	QPolygon grid;
+	for(const auto& point : polygon)
+		grid.append(QPoint(4 * qRound(point.x() / AuLegacyShip::CoordinateSpacing),
+			4 * qRound(point.y() / AuLegacyShip::CoordinateSpacing)));
+	QMap<int, QVector<int>> crossings;
+	qint64 twiceArea = 0;
+	QPoint previous = grid.last();
+	for(const auto& point : grid)
+	{
+		twiceArea += previous.x()*point.y() - point.x()*previous.y();
+		if(point.y() != previous.y())
+		{
+			// On this grid diagonals meet at most halfway up a cell. Midpoints
+			// of both half-cell bands integrate the enclosed area exactly.
+			const int slope = (point.x() - previous.x()) / (point.y() - previous.y());
+			for(int y = qMin(previous.y(), point.y()); y < qMax(previous.y(), point.y()); y += 2)
+				crossings[y / 2].append(previous.x() + (y + 1 - previous.y()) * slope);
+		}
+		previous = point;
+	}
+	floor = QRegion();
+	qint64 filledArea = 0;
+	for(auto row = crossings.begin(); row != crossings.end(); ++row)
+	{
+		auto& edges = row.value();
+		std::sort(edges.begin(), edges.end());
+		for(int i = 1; i < edges.size(); i += 2)
+		{
+			const int width = edges[i] - edges[i-1];
+			if(!width) continue;
+			filledArea += 2 * width;
+			floor += QRect(edges[i-1], row.key(), width, 1);
+		}
+	}
+	if(floor.isEmpty() || 2 * filledArea != std::abs(twiceArea))
+	{ error = QStringLiteral("A room has an invalid boundary."); return false; }
+	return true;
+}
+
+// DgData::BuildingDesignAllowedToManufacture, AuData13 0x18012d0f0.
+bool CanManufacture(const AuLegacyShip::Design& design, QString& error)
+{
+	const int industry = design.buildingIndustry;
+	const auto info = DesignerIndustry(industry);
+	if(!design.building || !SelectableIndustry(industry) || industry == 129 || design.rooms.isEmpty())
+	{ error = QStringLiteral("Select a construction industry and draw rooms."); return false; }
+	if(AuLegacyShip::DefaultBuildingModule(industry) ? !AuLegacyShip::IsBuildingModule(industry, design.buildingModule) : design.buildingModule != 0)
+	{ error = QStringLiteral("Invalid module for this industry."); return false; }
+	const int lowest = MinimumDesignDeck(industry);
+	QHash<quint16, QPolygonF> floors;
+	QHash<quint16, int> floorDecks;
+	QHash<int, QRegion> occupiedFloors;
+	quint64 boundaryWork = 0;
+	for(const auto& room : design.rooms)
+	{
+		const auto polygon = AuLegacyShip::RoomBoundary(room);
+		if(!BuildingRoomAllowed(industry, room.roomType) || polygon.size() < 3 || room.deck < lowest
+			|| room.deck > info.maximumDeck + (room.roomType >= 22 ? 1 : 0))
+		{ error = QStringLiteral("Invalid room, roof or story for this industry."); return false; }
+		// Bound triangulation work before accepting geometry that every observer will render.
+		boundaryWork += quint64(polygon.size()) * quint64(polygon.size());
+		if(boundaryWork > 4 * 1024 * 1024)
+		{ error = QStringLiteral("Room boundaries are too complex for online construction."); return false; }
+		if(room.roomType < 22)
+		{
+			QRegion floor;
+			if(!FloorRegion(polygon, floor, error)) return false;
+			if(occupiedFloors[room.deck].intersects(floor))
+			{ error = QStringLiteral("Room interiors overlap."); return false; }
+			occupiedFloors[room.deck] += floor;
+			floors.insert(room.roomId, polygon);
+			floorDecks.insert(room.roomId, room.deck);
+		}
+		else if(room.roomType != 24 && polygon.size() != 4)
+		{ error = QStringLiteral("A gable or hip roof needs four corners."); return false; }
+		double area = 0;
+		QPointF previous = polygon.last();
+		for(const auto& point : polygon)
+		{
+			if(!ValidDesignerPoint(industry, room.deck, point))
+			{ error = QStringLiteral("A room extends outside the construction site."); return false; }
+			area += previous.x()*point.y() - point.x()*previous.y();
+			previous = point;
+		}
+		if(std::abs(area) < 0.01) { error = QStringLiteral("A room has no floor area."); return false; }
+	}
+	const auto stats = AuLegacyShip::CalculateStats(design);
+	if(!stats.hasHull || stats.minimumDeck > 0 || stats.maximumDeck < 0)
+	{ error = QStringLiteral("The building must reach ground level."); return false; }
+	QSet<quint32> occupied;
+	for(const auto& detail : design.details)
+	{
+		if(!BuildingDetailAllowed(industry, detail.detailType) || detail.deck < stats.minimumDeck || detail.deck > stats.maximumDeck + 1
+			|| !ValidDesignerPoint(industry, detail.deck, AuLegacyShip::DecodePoint(detail.packedXY)))
+		{ error = QStringLiteral("Invalid equipment or placement for this industry."); return false; }
+		const int type = AuLegacyShip::CanonicalDetailType(detail.detailType);
+		// Interior facilities contribute capacity only at distinct positions on their referenced floor.
+		if(type == 1 || type == 2 || type == 4 || type == 7 || type == 11 || type == 15 || type == 17 || type == 65 || type == 74)
+		{
+			const quint32 position = (quint32(quint8(detail.deck)) << 16) | detail.packedXY;
+			const auto floor = floors.constFind(detail.roomId);
+			if(occupied.contains(position) || floor == floors.constEnd() || floorDecks.value(detail.roomId) != detail.deck
+				|| !floor.value().containsPoint(AuLegacyShip::DecodePoint(detail.packedXY), Qt::OddEvenFill))
+			{ error = QStringLiteral("A station, bed or facility has an invalid floor position."); return false; }
+			occupied.insert(position);
+		}
+	}
+	const int levels = ConstructionLevels(info, lowest, stats.maximumDeck - stats.minimumDeck + 1);
+	const auto area = [&](int type) { return qint64(std::ceil(double(stats.roomVolumes[type]) * 0.125 * 0.092903)); };
+	const auto& counts = stats.detailCounts;
+	const int troops = industry == 11 || industry == 12 || industry == 128 ? std::abs(info.employees) : 0;
+	const int work = RequiredShopArea(industry, info, levels);
+	int goods, liquid;
+	StoragePerLevel(industry, info, goods, liquid);
+	if(counts[142] > 1) { error = QStringLiteral("Only one light pole is permitted."); return false; }
+	const int missingBeds = std::max(levels * info.population, troops) - stats.passengerBerths - stats.troopBerths;
+	if(missingBeds > 0) { error = QStringLiteral("%1 additional beds are required.").arg(missingBeds); return false; }
+	if(area(8) < work) { error = QStringLiteral("Insufficient shop floor area."); return false; }
+	if(area(5) < levels * goods || qint64(double(stats.roomVolumes[9]) * 0.0283168466) < levels * liquid)
+	{ error = QStringLiteral("Insufficient storage for the building's construction levels."); return false; }
+	const bool weapon = industry == 11, shield = industry == 12;
+	if(((weapon || shield || industry == 111) && (area(2) < 50 || area(weapon ? 21 : shield ? 17 : 16) < 100
+			|| counts[weapon ? 7 : shield ? 17 : 15] != 1))
+		|| ((industry == 113 || industry == 124) && area(3) < 100)
+		|| (industry == 121 && (!counts[4] || counts[4] != counts[11]))
+		|| (industry == 102 && !stats.gameTables) || (industry == 127 && counts[1] != 1)
+		|| (industry == 128 && stats.turrets != 1))
+	{ error = QStringLiteral("The building lacks its required facilities or has excess stations."); return false; }
+	error.clear(); return true;
+}
+
 static bool DecodePayload(const QByteArray& payload, Design& output, QString& error, bool standalone)
 {
 	if(payload.isEmpty() || payload.size() > MaximumPayloadBytes)
@@ -451,6 +630,71 @@ bool ReadDesignFile(const QByteArray& bytes, AuLegacyShip::Design& output, QStri
 	output = parsed.AuthoringDesign();
 	output.bytesConsumed = bytes.size();
 	return true;
+}
+
+bool ImportDesignFile(const QByteArray& bytes, AuLegacyShip::Design& output, bool& repaired, QString& error)
+{
+	repaired = false;
+	AuLegacyShip::Design design;
+	if(!ReadDesignFile(bytes, design, error)) return false;
+	QHash<int, QRegion> occupied;
+	QHash<int, QVector<int>> laterRooms;
+	QSet<quint16> erased;
+	bool changed = false;
+	// File order breaks ties when the original order of painting is unavailable.
+	for(int i = design.rooms.size() - 1; i >= 0; --i)
+	{
+		auto& room = design.rooms[i];
+		if(room.roomType >= 22) continue;
+		auto boundary = AuLegacyShip::RoomBoundary(room);
+		QRegion floor;
+		if(!FloorRegion(boundary, floor, error)) return false;
+		auto& used = occupied[room.deck];
+		auto& later = laterRooms[room.deck];
+		if(used.intersects(floor))
+		{
+			changed = true;
+			const auto remainder = floor.subtracted(used);
+			if(remainder.isEmpty()) { erased.insert(room.roomId); continue; }
+			for(int index : later)
+			{
+				const auto other = AuLegacyShip::RoomBoundary(design.rooms[index]);
+				if(!other.boundingRect().intersects(boundary.boundingRect())) continue;
+				if(!AuLegacyShip::Geometry::Subtract(boundary, other, &error) && !error.isEmpty()) return false;
+			}
+			if(!AuLegacyShip::SetBoundary(room, boundary, error)) return false;
+			room.hasWorkingBoundary = false;
+			room.workingBoundary.clear();
+			if(!FloorRegion(AuLegacyShip::RoomBoundary(room), floor, error) || floor != remainder)
+			{ error = QStringLiteral("The overlapping rooms cannot be separated exactly on the legacy grid."); return false; }
+		}
+		used += floor;
+		later.append(i);
+	}
+	if(changed)
+	{
+		design.rooms.erase(std::remove_if(design.rooms.begin(), design.rooms.end(),
+			[&](const AuLegacyShip::Room& room) { return erased.contains(room.roomId); }), design.rooms.end());
+		if(!AuLegacyShip::ReconcileDetails(design, error)) return false;
+	}
+	repaired = changed;
+	output = std::move(design);
+	return true;
+}
+
+QSharedPointer<const Design> ReadConstructionDesign(const QByteArray& compressed, quint32 id, QString& error, bool verifyRequirements)
+{
+	QByteArray bytes;
+	QSharedPointer<Design> design(new Design);
+	if(id <= 74 || !Uncompress(compressed, bytes, error) || bytes.size() > MaximumCacheBytes
+		|| !bytes.startsWith(QByteArray::fromHex("1a01")) || !DecodePayload(bytes.mid(2), *design, error, true)
+		|| design->header.designId != id || !design->header.architectId || (verifyRequirements && !CanManufacture(design->AuthoringDesign(), error)))
+	{
+		if(error.isEmpty()) error = QStringLiteral("Invalid player-authored building blueprint.");
+		return {};
+	}
+	design->constructionSource = compressed;
+	return design;
 }
 
 bool LoadCache(const QString& fileName, Design& output, QString& error)

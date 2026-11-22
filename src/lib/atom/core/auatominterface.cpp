@@ -78,6 +78,7 @@ void AuAtomInterface::DesignExit()
 	DaPerson* person = LockAvatar();
 	if(person)
 	{
+		QMutexLocker movement(g_Au.IsLegacyGeneration() ? &person->LegacyStudioMovementMutex() : nullptr);
 		if(person->FindParentDesignBaseInEnv())
 			person->DesignEnvironmentExit();
 	}

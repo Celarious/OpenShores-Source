@@ -394,10 +394,10 @@ AuDesignerFrame::AuDesignerFrame(QWidget *parent) : AuFrame(parent)
 	connect(auApp, &AuApp::LegacyStudioEntryStarted, this, &AuDesignerFrame::BeginLegacyStudioEntry);
 	connect(auApp, &AuApp::LegacyStudioEntryFinished, this, &AuDesignerFrame::FinishLegacyStudioEntry);
 	connect(auApp, &AuApp::LegacyScTransportReset, this, [this]() {
-		if(m_LegacyStudioPending)
+		if(m_LegacyStudioPending || m_LegacyStudioReturning)
 		{
-			m_LegacyStudioPending = m_LegacyStudioAccepted = false;
-			RestoreLegacyStudioScene();
+			m_LegacyStudioPending = m_LegacyStudioAccepted = m_LegacyStudioReturning = false;
+			RestoreLegacyStudioScene(false);
 		}
 		// A connected editor owns local unsaved work. Keep it available after
 		// a disconnect; Exit Designer can return when the scene reconnects.
@@ -3436,7 +3436,7 @@ void AuDesignerFrame::KeyPressed(QKeyEvent* e)
 	}
 	//qDebug() << "AuDesignerFrame::KeyPressed" << e->key() << e->modifiers() << m_ActiveKeys.contains((Qt::Key)e->key());
 	// View does not get tab key press events so we'll forward this one.
-	if(m_View && !m_LegacyDesigner && !m_LegacyStudioPending && !m_LegacyStudioReturning
+	if(m_View && !m_LegacyDesigner && !m_LegacyStudioSceneSuspended
 		&& e->key() == Qt::Key_Tab)
 	{
 		m_ControlLock.lock();
@@ -3494,7 +3494,7 @@ void AuDesignerFrame::ProcessControlInput(const DiControlInputArray& aActiveCont
 {
 	for(DiControlInputArray::const_iterator ci = aActiveControls.cbegin(); ci != aActiveControls.cend(); ci++)
 	{
-		if(m_LegacyDesigner || m_LegacyStudioPending || m_LegacyStudioReturning)
+		if(m_LegacyDesigner || m_LegacyStudioSceneSuspended)
 		{
 			// Keep the normal window bindings available without dispatching
 			// world-only commands to the absent modern scene widget.
@@ -6217,6 +6217,14 @@ void AuDesignerFrame::BeginLegacyStudioEntry()
 		return;
 	m_LegacyStudioPending = true;
 	m_LegacyStudioAccepted = false;
+	m_LegacyStudioEntryWait.start();
+	m_LegacyStudioTimer->start();
+}
+
+void AuDesignerFrame::SuspendLegacyStudioScene()
+{
+	if(m_LegacyStudioSceneSuspended) return;
+	m_LegacyStudioSceneSuspended = true;
 	m_IntroWindowTitle = windowTitle();
 	m_IntroMenuVisible = menuWidget() && menuWidget()->isVisible();
 	m_LegacyStudioWidgets.clear();
@@ -6231,12 +6239,11 @@ void AuDesignerFrame::BeginLegacyStudioEntry()
 	m_View->SetInputSuspended(true);
 	m_View->EndCommands();
 	ClearActiveKeys();
-	m_LegacyStudioTimer->start();
 }
 
 void AuDesignerFrame::FinishLegacyStudioEntry(bool accepted)
 {
-	if(!m_LegacyStudioPending) return;
+	if(!m_LegacyStudioPending || m_LegacyStudioAccepted) return;
 	m_LegacyStudioAccepted = accepted;
 	if(!accepted)
 	{
@@ -6244,7 +6251,6 @@ void AuDesignerFrame::FinishLegacyStudioEntry(bool accepted)
 		RestoreLegacyStudioScene();
 		return;
 	}
-	m_LegacyStudioEntryWait.start();
 	UpdateLegacyStudio();
 }
 
@@ -6267,9 +6273,9 @@ void AuDesignerFrame::UpdateLegacyStudio()
 	m_View->UnlockSceneAtom();
 	if(m_LegacyStudioPending)
 	{
-		if(m_LegacyStudioAccepted && !privateStudio && m_LegacyStudioEntryWait.elapsed() >= 60000)
+		if((!m_LegacyStudioAccepted || !privateStudio) && m_LegacyStudioEntryWait.elapsed() >= 60000)
 		{
-			if(auApp->IsSceneConnected()) auApp->DesignExit();
+			if((m_LegacyStudioAccepted || privateStudio) && auApp->IsSceneConnected()) auApp->DesignExit();
 			m_LegacyStudioPending = m_LegacyStudioAccepted = false;
 			RestoreLegacyStudioScene();
 			m_View->LocalLogMessage(tr("The design studio scene did not arrive. Please try again."));
@@ -6278,6 +6284,7 @@ void AuDesignerFrame::UpdateLegacyStudio()
 		// Observe entry before offering Exit, since a reply can arrive ahead
 		// of the scene snapshot containing the sandbox and its occupant.
 		if(!m_LegacyStudioAccepted || !privateStudio) return;
+		SuspendLegacyStudioScene();
 		m_LegacyStudioPending = m_LegacyStudioAccepted = false;
 		m_LegacyStudioOnline = true;
 		m_LegacyStudioTimer->stop();
@@ -6322,9 +6329,9 @@ void AuDesignerFrame::UpdateLegacyStudio()
 	}
 }
 
-void AuDesignerFrame::RestoreLegacyStudioScene()
+void AuDesignerFrame::RestoreLegacyStudioScene(bool checkEnvironment)
 {
-	if(m_View)
+	if(m_View && checkEnvironment)
 	{
 		DaPerson* person = nullptr;
 		m_View->LockSceneAtom(&person);
@@ -6341,6 +6348,8 @@ void AuDesignerFrame::RestoreLegacyStudioScene()
 		}
 	}
 	m_LegacyStudioTimer->stop();
+	if(!m_LegacyStudioSceneSuspended) return;
+	m_LegacyStudioSceneSuspended = false;
 	if(m_View)
 	{
 		m_View->SetInputSuspended(false);

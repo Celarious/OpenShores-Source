@@ -261,7 +261,7 @@ AuLegacyBd::Geometry::Mesh Preview(const AuLegacyCityProtocol::Request& request)
 			const auto design = AuLegacyBd::Catalog::BuiltIn().Find(id);
 			if(design && design->header.industryId == request.industryId) { designId = id; break; }
 		}
-	const auto design = AuLegacyBd::Catalog::BuiltIn().Find(designId);
+	const auto design = request.previewDesign ? request.previewDesign : AuLegacyBd::Catalog::BuiltIn().Find(designId);
 	if(design)
 	{
 		AuLegacyBd::Geometry::Options options; options.materialCommodity = request.material;
@@ -490,7 +490,7 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 	if(!recipe) return;
 	AuLegacyCity::Development site;
 	site.industryId = m_Request.industryId; site.materialId = m_Request.material;
-	site.designId = m_Request.designId;
+	site.designId = m_Request.designId; site.authoredDesign = m_Request.previewDesign;
 	if(!world.LLOfLoc(site.location, point)) { m_SiteStatus = 3; PlacementProblem(m_SiteStatus, m_SiteMessage); return; }
 	site.altitudeMSL = world.SurfaceAltitudeMSL(site.location);
 	const AuPoint clickedSurface = world.LocOfLL(site.location, site.altitudeMSL);
@@ -598,7 +598,7 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 		|| m_SiteDesignId != site.designId)
 		m_PreviewValid = false;
 	m_MaximumLevels = maximum; m_SiteMaterial = site.materialId;
-	m_SiteDesignId = site.designId;
+	m_SiteDesignId = site.designId; m_SiteBlueprint = site.authoredDesign;
 	m_SiteCenter = center; m_SiteFacing = site.facingRadians;
 	m_SiteStatus = DaLegacyCity::ZoneConstructionBlocked(world, site.location, person.EmpireId()) ? 19 : m_SiteBlocked ? 10 : !extensionDevelopment ? TerrainStatus(world, site, *recipe, rocks, trees, water) : 0;
 	if(!m_SiteStatus && !maximum) m_SiteStatus = 4;
@@ -926,7 +926,7 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 	AuLegacyCityProtocol::Request preview = m_Request;
 	if(m_MaximumLevels >= 0 && preview.industryId != 2 && preview.industryId != 129)
 		preview.levels = quint8(m_ExistingLevels + qMin(int(preview.levels), m_MaximumLevels));
-	if(m_SiteMaterial) { preview.material = m_SiteMaterial; preview.designId = m_SiteDesignId; }
+	if(m_SiteMaterial) { preview.material = m_SiteMaterial; preview.designId = m_SiteDesignId; preview.previewDesign = m_SiteBlueprint; }
 	AuPoint roadEnd;
 	const bool roadSwap = RoadSwapMode(m_Request);
 	const bool roadDrag = !roadSwap && m_Request.industryId == 2 && m_HasStart && m_StartWorld == world->Id().GetID();

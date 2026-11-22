@@ -47,7 +47,9 @@ quint16 NextRoomId(const Design& design)
 	return 0;
 }
 
-bool SetBoundary(Room& room, const QPolygonF& boundary, QString& error)
+}
+
+bool AuLegacyShip::SetBoundary(Room& room, const QPolygonF& boundary, QString& error)
 {
 	QVector<quint16> packed;
 	packed.reserve(boundary.size());
@@ -68,6 +70,8 @@ bool SetBoundary(Room& room, const QPolygonF& boundary, QString& error)
 	return true;
 }
 
+namespace
+{
 bool SameDetails(const QVector<Detail>& left, const QVector<Detail>& right)
 {
 	if(left.size() != right.size())

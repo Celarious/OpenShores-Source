@@ -139,6 +139,7 @@ public:
 	void MailLastReport(const AuId& toId) const;
 	void SendCityReport(const AuCityReport& report, const AuCityReport* previous = nullptr);
 	bool SetState(const AuLegacyCity::State& state, QString& error);
+	static bool AvailableBuildingDesigns(const DaPerson& person, QList<quint32>& ids, QString& error, quint8 industry = 0);
 	bool BeginConstruction(DaPerson& person, quint8 industryId, quint8 processId, quint32 designId,
 		quint16 materialId, const AuGlobeLLF& location, double headingRadians, quint8 levels, QString& error,
 		double roadLengthMeters = 10, double roadWidthMeters = 10, bool roadSlab = false, double biodomeRadiusMeters = 100,
@@ -169,8 +170,10 @@ public:
 		const DaPerson* loader = nullptr, const DaSentient* commander = nullptr);
 	int DebarkSpacecraftPassengers(DaVessel& ship, int requested, quint32* transportFee = nullptr, bool requireHomes = true);
 	bool RxPersonnelChat(const AuCommPacket* message, quint32& countSupplied);
-	bool RxSpacecraftBlueprintMessage(const AuCommPacket* message);
-	void AcceptSpacecraftBlueprint(DaPerson& person, const AuCommAccept& message);
+	template<class Report, class Item> bool TradeBlueprint(const AuCommPacket* message, COMMODITYID medium);
+	template<class Report, class Item> void AcceptBlueprint(DaPerson& person, const AuCommAccept& message, COMMODITYID medium);
+	bool RxBlueprintMessage(const AuCommPacket* message);
+	void AcceptStudioBlueprint(DaPerson& person, const AuCommAccept& message);
 	void EquipSpacecraftPersonnel(DaNpc& npc);
 	bool RxSpacecraftServiceMessage(const AuCommPacket* message);
 	void AcceptSpacecraftRepair(DaPerson& person, const AuCommAcceptRepair& message);

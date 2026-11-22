@@ -146,8 +146,10 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	msaa->setToolTip(tr("Smooths polygon edges in the scene. Higher levels use more graphics memory and processing. "
 		"Available levels depend on your graphics hardware. Restart the client to apply changes."));
 	msaaLabel->setBuddy(msaa);
-	connect(msaa, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [msaa](int index) {
+	connect(msaa, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this, msaa](int index) {
 		if(index < 0) return;
+		QMessageBox::warning(this, tr("Restart required!"),
+		tr("<html>Restart the game for the change to take effect.</html>"));
 		g_Au.Settings().writeEntry("/Settings/SceneMsaaSamples", msaa->itemData(index).toInt());
 	});
 
@@ -843,7 +845,6 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 		int row=0;
 		sliderlay->addWidget(msaaLabel, row,0);
 		sliderlay->addWidget(msaa, row,1);
-		sliderlay->addWidget(new QLabel(tr("Restart required")), row,2);
 		row++;
 		sliderlay->addWidget(skyboxsizelabel, row,0);
 		sliderlay->addWidget(m_SkyBoxSizeSlider, row,1);

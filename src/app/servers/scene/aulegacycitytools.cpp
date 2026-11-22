@@ -281,6 +281,7 @@ void StudioRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityPro
 			}
 		}
 	if(request.action == StudioState) { reply.accepted = true; return; }
+	QMutexLocker movement(&person.LegacyStudioMovementMutex());
 	if(person.Parent() != &world)
 	{ reply.message = QObject::tr("Dismount and exit your vehicle or spacecraft before entering a design studio."); return; }
 	if(request.studioIndex >= reply.studioCount)
@@ -328,6 +329,8 @@ void StudioRequest(const AuLegacyCityProtocol::Request& request, AuLegacyCityPro
 	// The shared working document remains separate from modern AuScDesign.
 	// Each participant's editor uses the dedicated studio protocol.
 	if(createdStudio) { selectedStudio->SetNormal(); selectedStudio->TickTockRecursive(); }
+	if(person.ParentId() != selectedStudio->Id())
+	{ reply.message = QObject::tr("The avatar could not enter the design studio. Please try again."); return; }
 	reply.occupiedStudios |= quint16(1u << request.studioIndex);
 	reply.accepted = true;
 }
@@ -436,6 +439,30 @@ void DtChatChannel::ReadLegacyCityPacket(const QByteArray& payload)
 	if(!LegacyCityAuthorized() || !DecodeRequest(payload, request)) { Disconnect(); return; }
 	Reply reply; reply.token = request.token; reply.action = request.action;
 	if(request.action == SurfaceSnapshot) ProcessLegacyCitySurfaceRequest(request, reply);
+	else if(request.action == BuildingBlueprints)
+	{
+		if(m_LastLegacyBlueprintRequest.isValid() && m_LastLegacyBlueprintRequest.elapsed() < 150)
+			reply.message = tr("Wait a moment before requesting blueprints.");
+		else
+		{
+			m_LastLegacyBlueprintRequest.restart();
+			QList<quint32> ids;
+			DaPerson* person = m_I->LockAvatar();
+			reply.accepted = person && !person->IsDead() && DaLegacyCity::AvailableBuildingDesigns(*person, ids, reply.message, request.industryId);
+			m_I->UnlockAvatar();
+			int bytes = 0;
+			for(quint32 id : ids)
+			{
+				if(id <= request.designId) continue;
+				QString error;
+				const auto source = g_Au.LegacyBuildingSource(id, error);
+				if(source.isEmpty()) { reply.message = error; continue; }
+				if(!reply.blueprints.isEmpty() && (reply.blueprints.size() == MaximumEntries || bytes + source.size() > MaximumReplyBytes))
+				{ reply.nextBlueprint = reply.blueprints.lastKey(); break; }
+				reply.blueprints.insert(id, source); bytes += source.size();
+			}
+		}
+	}
 	else if(!IsGameplay(request.action) && !LegacyScAuthorized(true)) reply.message = tr("Enable architect or programmer powers to use Legacy city test tools.");
 	else if(m_LastLegacyCityRequest.isValid() && m_LastLegacyCityRequest.elapsed() < 200)
 	{

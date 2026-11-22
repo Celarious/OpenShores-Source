@@ -726,7 +726,7 @@ bool ValidateDesigns(const AuLegacyCity::State& state, QString& error)
 			{ error=QStringLiteral("A procedural legacy development has an invalid material or size."); return false; }
 			continue;
 		}
-		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(dev.designId);
+		const auto design = dev.Blueprint();
 		if(!design || design->header.industryId != dev.industryId
 			|| AuLegacyBd::Geometry::MaterialAtlas(dev.materialId).isEmpty())
 		{ error = QStringLiteral("Legacy development %1 has an incompatible design, industry or material.").arg(dev.id); return false; }
@@ -1143,7 +1143,7 @@ struct DaLegacyCity::Runtime
 			}
 			// Authored rooms can extend beyond the industry's nominal site. Read
 			// their boundaries, not rasterized floors, resource meshes or BVHs.
-			if(const auto design = AuLegacyBd::Catalog::BuiltIn().Find(dev.designId))
+			if(const auto design = dev.Blueprint())
 			{
 				for(const auto& room : design->rooms)
 				{
@@ -1648,7 +1648,7 @@ struct DaLegacyCity::Runtime
 				if(prepareRender && !building.render) building.render = PrepareRender(building, atlases, textures);
 				buildings.append(std::move(building)); continue;
 			}
-			const auto design = AuLegacyBd::Catalog::BuiltIn().Find(dev.designId);
+			const auto design = dev.Blueprint();
 			if(!design && dev.designId) continue; // Loader rejects unknown authored designs.
 			Building building;
 			building.state = dev;
@@ -2074,7 +2074,7 @@ AuPoint DaLegacyCity::SpawnLocation(const AuGlobeLLF* home) const
 			world->BuildingConstructionTransform(world->LocOfLL(dev.location, dev.altitudeMSL),
 				dev.facingRadians, nullptr, AuPoint(), placement);
 			origin = placement.Translation();
-			const auto design = AuLegacyBd::Catalog::BuiltIn().Find(dev.designId);
+			const auto design = dev.Blueprint();
 			if(!design) break;
 			// DpBuilding::SpawnLocation 0x5f0e10: prefer connected sleeping
 			// rooms. Otherwise use another connected interior room.
@@ -2249,7 +2249,7 @@ void DaLegacyCity::RemoveInteriorRocks(const DaWorldLL& world, QMap<AuResKey, Au
 	for(const auto& dev : developments)
 	{
 		if(dev.demolished || !dev.constructed || !dev.completedLevels) continue;
-		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(dev.designId);
+		const auto design = dev.Blueprint();
 		if(!design) continue;
 		QRectF footprint;
 		for(const auto& room : design->rooms)
@@ -2696,16 +2696,25 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 	{ error = QStringLiteral("Invalid original construction recipe, material, location or level count."); return false; }
 	if(ZoneConstructionBlocked(*world, location, person.EmpireId()))
 	{ error = QObject::tr("Blocked by Foreign City in Resource Zone"); return false; }
+	AuLegacyCity::Development dev;
 	if(industry != 1 && industry != 2 && industry != 10 && industry != 114 && industry != 129)
 	{
 		if(!designId) designId = AuLegacyBd::Catalog::BuiltIn().DefaultForIndustry(industry);
-		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(designId);
+		if(designId > 74)
+		{
+			QList<quint32> permitted;
+			if(!AvailableBuildingDesigns(person, permitted, error, industry)) return false;
+			if(!permitted.contains(designId)) { error = tr("Carry the blueprint or publish it in your empire first."); return false; }
+			dev.authoredDesign = AuLegacyBd::ReadConstructionDesign(g_Au.LegacyBuildingSource(designId, error), designId, error);
+			if(!dev.authoredDesign) return false;
+		}
+		dev.designId = designId;
+		const auto design = dev.Blueprint();
 		if(!design || design->header.industryId != industry)
 		{ error = industry == 35 ? QStringLiteral("The original Dairy blueprint has not been recovered.")
-			: QStringLiteral("Select an original public blueprint for this industry."); return false; }
+			: QStringLiteral("Select a building blueprint for this industry."); return false; }
 	}
 	else designId = 0;
-	AuLegacyCity::Development dev;
 	dev.designId = designId; dev.industryId = industry; dev.materialId = material;
 	dev.location = location; dev.facingRadians = heading; dev.constructionProcessId = recipe->id.value;
 	const double naturalAltitude=world->SurfaceAltitudeMSL(location);
@@ -3563,7 +3572,9 @@ void DaLegacyCity::SetName(const QString& name)
 bool DaLegacyCity::ApplyPayload(const QByteArray& bytes, QString& error)
 {
 	AuLegacyCity::State state;
-	if(!g_Au.IsLegacyGeneration() || !AuLegacyCity::DecodeState(bytes, state, error) || !ValidateDesigns(state, error)) return false;
+	if(!g_Au.IsLegacyGeneration()) return false;
+	const auto previous = Snapshot();
+	if(!AuLegacyCity::DecodeState(bytes, state, error, &previous) || !ValidateDesigns(state, error)) return false;
 	QWriteLocker lock(&m_CityLock);
 	state.lastVisit = qMax(state.lastVisit, m_City.lastVisit);
 	m_City = state; ++m_CityRevision;
@@ -3990,7 +4001,7 @@ bool DaLegacyCity::ContainsBasement(const AuPoint& location) const
 	{
 		const AuPoint local = proxy.placement.UnProject(location);
 		if(local.z >= 0 || !proxy.state.constructed || proxy.state.demolished) continue;
-		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(proxy.state.designId);
+		const auto design = proxy.state.Blueprint();
 		if(design && BasementRoom(*design, proxy.state, local)) return true;
 	}
 	return false;
@@ -4083,7 +4094,7 @@ void DaLegacyCity::QueryLegacyEnvironment(const DaAtom& actor, const AuPoint& lo
 		// ray or the asynchronous collision mesh. Keep it valid while airborne
 		// or seated, including queries cached before the mesh is ready.
 		const auto design = dev.constructed && !dev.demolished
-			? AuLegacyBd::Catalog::BuiltIn().Find(dev.designId) : QSharedPointer<const AuLegacyBd::Design>();
+			? dev.Blueprint() : QSharedPointer<const AuLegacyBd::Design>();
 		const auto* interiorRoom = design ? BuildingRoom(*design, dev, local) : nullptr;
 		if(interiorRoom)
 		{
@@ -4163,7 +4174,7 @@ bool DaLegacyCity::CanGrabLadder(const DaCreature& who, AuMatrix4x4& matrix) con
 	{
 		if(!m_Runtime->CurrentCollision(building)) continue;
 		if(!building.collision->IsValid()) continue;
-		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(building.state.designId);
+		const auto design = building.state.Blueprint();
 		if(!design) continue;
 		AuMatrix4x4 placement;
 		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
@@ -4222,7 +4233,7 @@ bool DaLegacyCity::BasementAmbientLight(const AuPoint& location, float& red, flo
 	{
 		const AuPoint local = proxy.placement.UnProject(location);
 		if(local.z >= 0) continue;
-		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(proxy.state.designId);
+		const auto design = proxy.state.Blueprint();
 		const auto* room = design ? BasementRoom(*design, proxy.state, local) : nullptr;
 		if(!room || AuLegacyBd::Geometry::HasGlassAt(*design, room->deck, QPointF(local.x, local.y))) continue;
 		BuildingInteriorAmbient(powered, red, green, blue);
@@ -4410,7 +4421,7 @@ bool DaLegacyCity::TransporterPads(const DaCreature& who, AuMatrix4x4& frameWorl
 	padsLocal.clear(); maxRange = 0;
 	AuStation station; AuLegacyCity::Development development; quint16 room = 0;
 	if(!Station(who, station, &development, &frameWorld, &room) || !station.IsTransporter()) return false;
-	const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
+	const auto design = development.Blueprint();
 	return design && BuildingTransporterPads(*design, development, room,
 		design->details.at(int(who.StationId()) - 1).deck, padsLocal, maxRange);
 }
@@ -4446,7 +4457,7 @@ int DaLegacyCity::BeamUp(DaPerson& person, int countRequested)
 			const auto& development = building.state;
 			if(development.IsDestroyed()) continue;
 			if(development.industryId != 111 || !development.constructed || development.demolished) continue;
-			const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
+			const auto design = development.Blueprint();
 			if(!design) continue;
 			AuMatrix4x4 placement;
 			world->BuildingConstructionTransform(world->LocOfLL(development.location, development.altitudeMSL),
@@ -4490,7 +4501,7 @@ const DaPerson* DaLegacyCity::DefensePostPlayer(const DefensePost& post) const
 bool DaLegacyCity::ManBuildingStation(DaNpc& troop, const AuLegacyCity::Development& development, quint16 stationId) const
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
-	const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
+	const auto design = development.Blueprint();
 	if(!world || !design || !stationId || troop.EmpireId() != EmpireId()
 		|| development.demolished || development.IsDestroyed()) return false;
 	DaAtomList occupants; world->ListNormalSubatoms(occupants);
@@ -4596,7 +4607,7 @@ bool DaLegacyCity::TurretMatrices(const AuLegacyCity::Development& development, 
 {
 	const auto* world = dynamic_cast<const DaWorldLL*>(Parent());
 	if(!world || development.demolished || !development.completedLevels) return false;
-	const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
+	const auto design = development.Blueprint();
 	const int index = int(stationId) - 1;
 	if(!design || index < 0 || index >= design->details.size()) return false;
 	const auto& detail = design->details[index];
@@ -5179,7 +5190,7 @@ QVector<DaLegacyCity::DefensePost> DaLegacyCity::DefensePosts() const
 	{
 		if(development.demolished || development.IsDestroyed() || !development.completedLevels
 			|| (development.industryId != 11 && development.industryId != 12 && development.industryId != 128)) continue;
-		const auto design = AuLegacyBd::Catalog::BuiltIn().Find(development.designId);
+		const auto design = development.Blueprint();
 		if(!design) continue;
 		AuMatrix4x4 placement;
 		world->BuildingConstructionTransform(world->LocOfLL(development.location, development.altitudeMSL),

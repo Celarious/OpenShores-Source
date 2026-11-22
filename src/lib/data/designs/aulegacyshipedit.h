@@ -6,6 +6,7 @@
 
 namespace AuLegacyShip
 {
+bool SetBoundary(Room& room, const QPolygonF& boundary, QString& error);
 struct ModuleChanges
 {
 	QMap<quint16, quint16> scalars, bays, transporters;
