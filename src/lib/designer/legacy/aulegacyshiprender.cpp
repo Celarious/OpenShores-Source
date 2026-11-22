@@ -1,4 +1,5 @@
 #include "aulegacyshiprender.h"
+#include "aulegacyplacementmessage.h"
 #include "aulegacyship.h"
 #include "aulegacyshipmesh.h"
 #include "aulegacyshipgeometry.h"
@@ -88,6 +89,7 @@ const float Pi = 3.14159265358979323846f;
 using namespace AuLegacyShip::Rendering;
 const qint64 DoorTickMilliseconds = qint64(DoorAnimationTickSeconds * 1000);
 const QString BuildingGroundTexture = QStringLiteral(":/data/CobblestoneLight.png");
+constexpr float BuildingSiteGroundZ = -.010375f;
 
 Batch BuildingSiteGround(int industry)
 {
@@ -96,7 +98,7 @@ Batch BuildingSiteGround(int industry)
 	const double radius = site > 0 ? site / .7071 : 320.0030688162919;
 	const bool coastal = industry == 34 || industry == 62 || industry == 85;
 	const QVector3D up(0, 0, 1);
-	const Vertex center = {QVector3D(0, 0, -.010375f), up, QVector2D(.5f, .5f)};
+	const Vertex center = {QVector3D(0, 0, BuildingSiteGroundZ), up, QVector2D(.5f, .5f)};
 	Batch ground;
 	ground.material = Material::Untextured;
 	ground.textureFile = BuildingGroundTexture;
@@ -688,6 +690,7 @@ public:
 	QVector3D targetPoint;
 	QString interaction;
 	QString reportedTips;
+	AuLegacyPlacementMessage placementMessage;
 	qint64 interactionUntil = 0;
 
 	bool HandInput(Qt::KeyboardModifiers modifiers)
@@ -752,12 +755,17 @@ public:
 			Vector3(camera.ProjectVector(AuPoint(0, 1, 0)))};
 	}
 
+	float StudioFloorHeight() const
+	{
+		return design.building ? BuildingSiteGroundZ : float(deck * AuLegacyShip::DeckHeight);
+	}
+
 	WalkEnvironment SampleEnvironment(const QVector3D& feet, float cgHeight) const
 	{
 		if(solid) return world.Environment(feet, gravity, cgHeight);
 		WalkEnvironment result;
 		result.gravity = gravity;
-		if(gravity) result.fallDistance = feet.z() - float(deck * AuLegacyShip::DeckHeight);
+		if(gravity) result.fallDistance = feet.z() - StudioFloorHeight();
 		return result;
 	}
 
@@ -800,7 +808,7 @@ public:
 			{
 				character.feet = destination;
 				if(milliseconds > 0) character.velocity = displacement * (1000.f / milliseconds);
-				const float plane = float(deck * AuLegacyShip::DeckHeight);
+				const float plane = StudioFloorHeight();
 				if(gravity && character.feet.z() < plane)
 				{
 					character.feet.setZ(plane);
@@ -1760,7 +1768,7 @@ void AuLegacyShipRender::SetDesign(const AuLegacyShip::Design& design)
 	m_Impl->targetLevel = 0;
 	m_Impl->targetDetail = 0;
 	m_Impl->targetHealth = AuLegacyShip::TargetHealth();
-	m_Impl->world.SetDesignPlane(float(m_Impl->deck * AuLegacyShip::DeckHeight));
+	m_Impl->world.SetDesignPlane(m_Impl->StudioFloorHeight());
 	m_Impl->doors = DoorDefinitions(design, m_Impl->mesh);
 	// The studio ground is scenery and has no authored bounds or collision records.
 	if(design.building)
@@ -1813,7 +1821,7 @@ void AuLegacyShipRender::SetDeck(int deck)
 	m_Impl->deck = deck;
 	m_Impl->wireframeDirty = true;
 	ResetEditStroke();
-	m_Impl->world.SetDesignPlane(float(deck * AuLegacyShip::DeckHeight));
+	m_Impl->world.SetDesignPlane(m_Impl->StudioFloorHeight());
 	m_Impl->person->InvalidateEnvironment();
 	update();
 }
@@ -2804,7 +2812,8 @@ bool AuLegacyShipRender::event(QEvent* event)
 		if(key->key() == Qt::Key_Escape
 			&& (key->modifiers() == Qt::NoModifier || key->modifiers() == Qt::ShiftModifier))
 			return QOpenGLWidget::event(event);
-		if(m_Impl->HasKeyBinding(key))
+		if((m_Impl->design.building && m_Impl->mouseCaptured && key->key() == Qt::Key_Space)
+			|| m_Impl->HasKeyBinding(key))
 		{
 			event->accept();
 			return true;
@@ -3026,6 +3035,7 @@ void AuLegacyShipRender::paintGL()
 		if(tipsChanged) tipsChanged(tips);
 	}
 	painter.beginNativePainting();
+	if(!m_Impl->solid && !m_Impl->mouseCaptured) m_Impl->placementMessage.Render(SceneRenderInfo());
 	RenderSceneInterface(m_Impl->mouseCaptured);
 	UpdateToolCursor();
 	RenderSceneCommunications();
@@ -3116,9 +3126,20 @@ void AuLegacyShipRender::UpdateEditCursor(const QPoint& pixel)
 	update();
 }
 
+void AuLegacyShipRender::ShowPlacementMessage(const QString& message)
+{
+	m_Impl->placementMessage.Show(message);
+	update();
+}
+
 void AuLegacyShipRender::EditCursor()
 {
-	if(!m_Impl->editCursorKnown || !cellEntered) return;
+	if(!m_Impl->editCursorKnown)
+	{
+		if(m_Impl->editTool.roofType) ShowPlacementMessage(tr("Choose a roof point on the building site at or above ground."));
+		return;
+	}
+	if(!cellEntered) return;
 	if(m_Impl->editTool.equipment)
 	{
 		const double spacing = AuLegacyShip::CoordinateSpacing;
@@ -3502,6 +3523,13 @@ void AuLegacyShipRender::wheelEvent(QWheelEvent* event)
 void AuLegacyShipRender::keyPressEvent(QKeyEvent* event)
 {
 	const Qt::Key key = Qt::Key(event->key());
+	if(m_Impl->design.building && m_Impl->mouseCaptured && key == Qt::Key_Space)
+	{
+		if(!event->isAutoRepeat()) m_Impl->StopMovement();
+		event->accept();
+		return;
+	}
+	// DdDesignRoof (0x140313750) resets the roof tool's point count on Space.
 	if(!m_Impl->solid && m_Impl->editTool.active && m_Impl->editTool.roofType && key == Qt::Key_Space && restartRoof)
 	{
 		restartRoof();

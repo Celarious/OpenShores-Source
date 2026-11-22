@@ -107,7 +107,8 @@ void DtChatChannel::ReadLegacyStudioPacket(const QByteArray& payload)
 					{
 						const auto source = LegacyStudioBuildingSource(savedLibraryId, false, error);
 						const auto verified = AuLegacyBd::ReadConstructionDesign(source, savedLibraryId, error);
-						if(verified && verified->header.architectId == prepared.header.architectId)
+						if(verified && verified->header.architectId == prepared.header.architectId
+							&& AuLegacyBd::ValidateRoofsForMedia(verified->rooms, error))
 						{
 							const AuBdReport report(verified->header);
 							buildingExchange = AuBdDesignExchangeEntry(report, AuDesign::Final, 0, true, true, false, 0, POL_Neutral);

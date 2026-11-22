@@ -198,6 +198,7 @@ void AuLegacyStudioSession::Pump()
 			// selections. Send it as one batch even alongside queued strokes.
 			while(!m_Queue.isEmpty() && m_Queue.head().action == Edit
 				&& request.edit.kind != SystemModules && m_Queue.head().edit.kind != SystemModules
+				&& request.edit.IsRoomOrRoofPlacement() == m_Queue.head().edit.IsRoomOrRoofPlacement()
 				&& m_Queue.head().generation == m_Generation && request.edits.size() < MaximumBatchCommands)
 				request.edits.append(m_Queue.dequeue().edit);
 			m_BatchWait.restart();
@@ -248,6 +249,9 @@ void AuLegacyStudioSession::Receive(QByteArray payload)
 		return;
 	}
 	const Action action = m_Pending.action;
+	// A batch has a single server error message. Placement batches contain
+	// only rooms and roofs so unrelated failures do not land at the cursor.
+	const bool placementBatch = action == EditBatch && m_Pending.edit.IsRoomOrRoofPlacement();
 	if(!reply.generation || !reply.revision)
 	{
 		// Retain an unconfirmed mutation so a failed reconnect cannot lose
@@ -323,7 +327,11 @@ void AuLegacyStudioSession::Receive(QByteArray payload)
 		{
 			const Request queued = m_Queue.dequeue();
 			QString error; bool changed = false;
-			if(queued.action == Edit && !Apply(queued.edit, working, error, changed)) ++conflicts;
+			if(queued.action == Edit && !Apply(queued.edit, working, error, changed))
+			{
+				++conflicts;
+				if(queued.edit.IsRoomOrRoofPlacement()) m_Viewer->ShowPlacementError(error);
+			}
 			else rebased.enqueue(queued);
 		}
 		m_Queue = rebased;
@@ -344,7 +352,8 @@ void AuLegacyStudioSession::Receive(QByteArray payload)
 		m_Members = members;
 		m_Viewer->ShowStudioMessage(tr("In studio: %1").arg(members));
 	}
-	if(!reply.message.isEmpty()) m_Viewer->ShowStudioMessage(reply.message);
+	if(placementBatch && !reply.message.isEmpty()) m_Viewer->ShowPlacementError(reply.message);
+	else if(!reply.message.isEmpty()) m_Viewer->ShowStudioMessage(reply.message);
 	else if(!reply.accepted && action != Snapshot)
 		m_Viewer->ShowStudioMessage(tr("The studio could not apply that change."));
 	else if(discarded)

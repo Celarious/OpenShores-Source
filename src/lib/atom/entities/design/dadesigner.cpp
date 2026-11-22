@@ -1367,7 +1367,8 @@ bool DaDesigner::LegacyStudioCanBurn(const DaPerson& person, QString& error)
 		QByteArray source;
 		AuLegacyScDesign accepted;
 		if(state.design.building)
-			m_LegacyBurnValid = AuLegacyBd::CanManufacture(state.design, m_LegacyBurnError);
+			m_LegacyBurnValid = AuLegacyBd::CanManufacture(state.design, m_LegacyBurnError)
+				&& AuLegacyBd::ValidateRoofsForMedia(state.design.rooms, m_LegacyBurnError);
 		else if(AuLegacyShip::PrepareForSave(state.design, prepared, m_LegacyBurnError)
 			&& AuLegacyShip::Write(prepared, source, m_LegacyBurnError)
 			&& AuLegacyScDesign::ReadUpload(source, accepted, m_LegacyBurnError))

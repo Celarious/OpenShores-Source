@@ -916,7 +916,7 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 	Q_UNUSED(snapped);
 	if(!person || !g_Au.IsLegacyGeneration() || !info.re || !info.glw) return;
 	RenderSiteCursor(projection, camera, person, pixel, info);
-	RenderPlacementMessage(info);
+	if(m_Interface) m_Interface->RenderPlacementMessage(info);
 }
 
 void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuMatrix4x4& camera,
@@ -1181,29 +1181,4 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 		m_HasStart ? QObject::tr(" Click biodome radius — %1 m").arg(preview.biodomeRadiusMeters, 0, 'f', 1) : QObject::tr(" Click biodome center");
 	}
 	effects.RenderText(pixel.x() + 16, pixel.y() + 24, text, font, QColor(255, 230, 100), info.glw->width(), info.glw->height());
-}
-
-void DdPlanLegacyCity::RenderPlacementMessage(AuAtomRenderInfo& info) const
-{
-	float alpha = 0;
-	const QString message = m_Interface ? m_Interface->PlacementMessage(alpha) : QString();
-	if(message.isEmpty()) return;
-	// Follow the cursor for the original five-second lifetime. Place the
-	// wrapped label above it so the error does not obscure the site pointer.
-	const QPoint pixel = info.glw->mapFromGlobal(QCursor::pos()) - QPoint(0, 32);
-	QFont font; font.setPointSize(10); font.setBold(true);
-	auto& effects = *info.re;
-	const bool blend = effects.glIsEnabled(GL_BLEND);
-	GLint source, destination, sourceAlpha, destinationAlpha;
-	effects.glGetIntegerv(GL_BLEND_SRC_RGB, &source); effects.glGetIntegerv(GL_BLEND_DST_RGB, &destination);
-	effects.glGetIntegerv(GL_BLEND_SRC_ALPHA, &sourceAlpha); effects.glGetIntegerv(GL_BLEND_DST_ALPHA, &destinationAlpha);
-	effects.glEnable(GL_BLEND); effects.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	QColor color; color.setRgbF(0, 0, 0, alpha);
-	effects.RenderText(pixel.x(), pixel.y(), message, font, color, info.glw->width(), info.glw->height(),
-		Qt::AlignBottom | Qt::AlignHCenter | Qt::TextWordWrap, 200);
-	color.setRgbF(.9, .35, .1, alpha);
-	effects.RenderText(pixel.x() - 1, pixel.y() - 1, message, font, color, info.glw->width(), info.glw->height(),
-		Qt::AlignBottom | Qt::AlignHCenter | Qt::TextWordWrap, 200);
-	effects.glBlendFuncSeparate(source, destination, sourceAlpha, destinationAlpha);
-	if(!blend) effects.glDisable(GL_BLEND);
 }

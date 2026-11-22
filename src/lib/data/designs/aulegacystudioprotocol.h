@@ -49,6 +49,7 @@ struct Command
 	AuLegacyShip::MoveCopyRequest move;
 	AuLegacyShip::ModuleChanges modules;
 	int value = 0;
+	bool IsRoomOrRoofPlacement() const { return kind == BuildingRoof || (kind == PaintCell && roomType > 0); }
 };
 
 struct Request

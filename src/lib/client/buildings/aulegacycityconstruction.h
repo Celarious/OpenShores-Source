@@ -4,7 +4,7 @@
 #include "auclientlib.h"
 #include "aulegacycityprotocol.h"
 #include "audockwidget.h"
-#include <QElapsedTimer>
+#include "aulegacyplacementmessage.h"
 #include <QWidget>
 
 class AuBldConstruct;
@@ -39,7 +39,7 @@ public:
 	void PlanningStopped();
 	void StartClearing();
 	void ReportPlacementMessage(const QString& message);
-	QString PlacementMessage(float& alpha) const;
+	void RenderPlacementMessage(AuAtomRenderInfo& info) const { m_PlacementMessage.Render(info); }
 
 signals:
 	void PlanConstruction(AuLegacyCityProtocol::Request request);
@@ -67,8 +67,7 @@ private:
 	bool m_Loaded = false, m_Planning = false;
 	int m_LevelLimit = 1;
 	AuLegacyCityProtocol::Request m_ActiveRequest;
-	QString m_PlacementMessage;
-	QElapsedTimer m_PlacementMessageTime;
+	AuLegacyPlacementMessage m_PlacementMessage;
 	void LoadCatalogue();
 	void SelectCategory(int page);
 	void SelectProcess(quint8 processId);

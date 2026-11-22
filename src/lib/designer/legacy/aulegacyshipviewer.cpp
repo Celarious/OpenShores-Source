@@ -675,7 +675,7 @@ public:
 		passwordButton->hide();
 		AddButton(outer, renderAction, 1, 0);
 		AddButton(outer, gravityAction, 1, 1);
-		AddButton(outer, checkPathsAction, 1, 2);
+		if(!building) AddButton(outer, checkPathsAction, 1, 2);
 		burnButton = AddButton(outer, burnAction, 1, 3);
 		burnButton->hide();
 		AddButton(outer, deckUpAction, 2, 0);
@@ -1760,7 +1760,11 @@ public:
 		}
 		if(building && toolMode == PaintMode && selectedRoomType >= 22)
 		{
-			if(editTool.roofPoints.contains(cursor)) return;
+			if(editTool.roofPoints.contains(cursor))
+			{
+				window->ShowPlacementError(tr("Choose a different roof point."));
+				return;
+			}
 			if(editTool.roofPoints.size() < 2)
 			{
 				editTool.roofPoints.append(cursor);
@@ -1829,7 +1833,8 @@ public:
 			: AuLegacyShip::EditCell(design, deck, cursor, gridMask, type, quint8(roomNumber->value() - 1));
 		if (!result.accepted)
 		{
-			SetFeedback(result.error.isEmpty()
+			if(toolMode == PaintMode && !result.error.isEmpty()) window->ShowPlacementError(result.error);
+			else SetFeedback(result.error.isEmpty()
 				? QStringLiteral("This cell edit could not be applied.") : result.error);
 			return;
 		}
@@ -1852,7 +1857,11 @@ public:
 		if(studioHandler) { SendStudioEdit(edit); return; }
 		QString error;
 		bool changed = false;
-		if(!AuLegacyStudioProtocol::Apply(edit, design, error, changed)) SetFeedback(error);
+		if(!AuLegacyStudioProtocol::Apply(edit, design, error, changed))
+		{
+			if(edit.IsRoomOrRoofPlacement()) window->ShowPlacementError(error);
+			else SetFeedback(error);
+		}
 		else if(changed) { IndexDecks(); HeaderChanged(true); }
 	}
 
@@ -2423,7 +2432,9 @@ bool AuLegacyShipViewer::ApplyStudioEdit(const AuLegacyStudioProtocol::Command& 
 	QString error; bool changed = false;
 	if(!AuLegacyStudioProtocol::Apply(edit, m_Impl->design, error, changed))
 	{
-		ShowStudioMessage(error); return false;
+		if(edit.IsRoomOrRoofPlacement()) ShowPlacementError(error);
+		else ShowStudioMessage(error);
+		return false;
 	}
 	if(changed)
 	{
@@ -2547,6 +2558,13 @@ void AuLegacyShipViewer::ApplyStudioLibrary(const QVector<AuLegacyStudioProtocol
 void AuLegacyShipViewer::ShowStudioMessage(const QString& message)
 {
 	if(!message.isEmpty()) m_Impl->SetFeedback(message);
+}
+
+void AuLegacyShipViewer::ShowPlacementError(const QString& message)
+{
+	if(message.isEmpty()) return;
+	m_Impl->renderView->ShowPlacementMessage(message);
+	m_Impl->SetFeedback(message);
 }
 
 void AuLegacyShipViewer::ChatReceived(AuCommPacket* message)

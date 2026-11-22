@@ -5,6 +5,7 @@
 #include "aupoint.h"
 #include "aulegacyshipsave.h"
 
+#include <QPainterPath>
 #include <QSet>
 #include <cmath>
 #include <utility>
@@ -21,6 +22,69 @@ bool HasBoundary(const Room& room)
 bool IsRoof(const Room& room)
 {
 	return room.roomType >= 0x16 && room.roomType <= 0x18;
+}
+
+bool OverlapsRoom(const QVector<Room>& rooms, int deck, const QPolygonF& footprint,
+	bool roofsOnly, const Room* ignore = nullptr)
+{
+	for(const Room& room : rooms)
+		if(room.deck == deck && &room != ignore && (!roofsOnly || IsRoof(room))
+			&& !footprint.intersected(RoomBoundary(room)).isEmpty())
+			return true;
+	return false;
+}
+
+QPainterPath WithOneTileOverhang(const QPolygonF& floor)
+{
+	QPainterPath interior;
+	interior.addPolygon(floor);
+	// Sweep a grid-aligned square along the perimeter. At a diagonal edge
+	// the two opposite corners perpendicular to the sweep bound the strip.
+	QPainterPath border;
+	border.setFillRule(Qt::WindingFill);
+	QPointF previous = floor.last();
+	for(const QPointF& point : floor)
+	{
+		border.addRect(point.x() - GridSpacing, point.y() - GridSpacing, 2 * GridSpacing, 2 * GridSpacing);
+		const QPointF corner(point.y() > previous.y() ? -GridSpacing : GridSpacing,
+			point.x() < previous.x() ? -GridSpacing : GridSpacing);
+		QPolygonF strip;
+		strip << previous + corner << previous - corner << point - corner << point + corner;
+		border.addPolygon(strip);
+		previous = point;
+	}
+	return interior.united(border);
+}
+
+bool HasRoofSupport(const QVector<Room>& rooms, int deck, const QPolygonF& roof)
+{
+	QPainterPath uncovered;
+	uncovered.addPolygon(roof);
+	const QRectF search = roof.boundingRect().adjusted(-GridSpacing, -GridSpacing, GridSpacing, GridSpacing);
+	bool directlySupported = false;
+	for(const Room& room : rooms)
+	{
+		if(room.deck != deck - 1 || IsRoof(room)) continue;
+		const QPolygonF floor = RoomBoundary(room);
+		if(floor.size() < 3 || !search.intersects(floor.boundingRect())) continue;
+		if(!directlySupported) directlySupported = !roof.intersected(floor).isEmpty();
+		if(!uncovered.isEmpty()) uncovered = uncovered.subtracted(WithOneTileOverhang(floor));
+		if(directlySupported && uncovered.isEmpty()) return true;
+	}
+	return false;
+}
+
+QString RoofSupportMessage()
+{
+	return QStringLiteral("A roof needs a room on the story directly below and can overhang it by at most one grid tile.");
+}
+
+QString RoofPlacementError(const QVector<Room>& rooms, int deck, const QPolygonF& boundary, const Room* existing = nullptr)
+{
+	if(OverlapsRoom(rooms, deck, boundary, false, existing))
+		return QStringLiteral("The roof would overlap a room or roof on the same story.");
+	if(!HasRoofSupport(rooms, deck, boundary)) return RoofSupportMessage();
+	return {};
 }
 
 bool SameRoomKey(const Room& room, int deck, int type, quint8 number)
@@ -47,6 +111,22 @@ quint16 NextRoomId(const Design& design)
 	return 0;
 }
 
+}
+
+bool AuLegacyBd::ValidateRoofsForMedia(const QVector<AuLegacyShip::Room>& rooms, QString& error)
+{
+	for(const auto& room : rooms)
+	{
+		if(!IsRoof(room)) continue;
+		error = RoofPlacementError(rooms, room.deck, AuLegacyShip::RoomBoundary(room), &room);
+		if(!error.isEmpty())
+		{
+			error.prepend(QStringLiteral("Roof %1 on deck %2: ").arg(room.roomId).arg(int(room.deck)));
+			return false;
+		}
+	}
+	error.clear();
+	return true;
 }
 
 bool AuLegacyShip::SetBoundary(Room& room, const QPolygonF& boundary, QString& error)
@@ -139,6 +219,12 @@ AuLegacyShip::CellEditResult AuLegacyShip::EditCell(Design& design, int deck,
 			result.error = QStringLiteral("This cell extends beyond the 2016 design grid.");
 			return result;
 		}
+	}
+
+	if(design.building && !erase && OverlapsRoom(design.rooms, deck, cell, true))
+	{
+		result.error = QStringLiteral("This room cell would overlap a roof on the same story.");
+		return result;
 	}
 
 	QPolygonF proposed = cell;
@@ -469,6 +555,8 @@ AuLegacyShip::CellEditResult AuLegacyShip::CreateRoof(Design& design, int deck, 
 			result.error = QStringLiteral("The roof extends beyond the building site.");
 			return result;
 		}
+	result.error = RoofPlacementError(design.rooms, deck, boundary);
+	if(!result.error.isEmpty()) return result;
 	Room roof;
 	roof.streamOffset = -1;
 	roof.deck = qint8(deck);
@@ -535,6 +623,16 @@ QString MoveCopyGeometryError(const Design& design, const MoveCopyRequest& reque
 			if(std::abs(point.x() + offset.x()) - MoveCopyCoordinateLimit > 1e-5
 				|| std::abs(point.y() + offset.y()) - MoveCopyCoordinateLimit > 1e-5)
 				return QStringLiteral("A room would exceed the grid coordinates limit.");
+		if(design.building && !entire && IsRoof(room))
+		{
+			// All rooms on the source deck travel together. A move up one
+			// story vacates the very deck that would have to support the roof.
+			if(OverlapsRoom(design.rooms, request.deck, boundary, false, &room))
+				return QStringLiteral("The roof would overlap a room or roof on the same story.");
+			if((request.mode == MoveCopyMode::MoveCurrentDeck && request.vertical == 1)
+				|| !HasRoofSupport(design.rooms, destination, boundary.translated(offset)))
+				return RoofSupportMessage();
+		}
 	}
 	return QString();
 }

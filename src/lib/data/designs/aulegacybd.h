@@ -40,6 +40,7 @@ AUDATA_DLL int ConstructionLevels(const DesignerIndustryInfo& info, int minimumD
 AUDATA_DLL int RequiredShopArea(int industry, const DesignerIndustryInfo& info, int levels);
 AUDATA_DLL void StoragePerLevel(int industry, const DesignerIndustryInfo& info, int& goods, int& liquid);
 AUDATA_DLL bool CanManufacture(const AuLegacyShip::Design& design, QString& error);
+AUDATA_DLL bool ValidateRoofsForMedia(const QVector<AuLegacyShip::Room>& rooms, QString& error);
 AUDATA_DLL float FixedTerrainLevelRadius(int industry);
 AUDATA_DLL double DesignerSiteRadius(int industry, int deck);
 AUDATA_DLL int MinimumDesignDeck(int industry);

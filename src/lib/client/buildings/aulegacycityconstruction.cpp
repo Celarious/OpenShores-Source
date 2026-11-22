@@ -583,7 +583,7 @@ void AuLegacyCityConstruction::SetCursorProductChoices(const QVector<quint16>& a
 void AuLegacyCityConstruction::PlanningStopped()
 {
 	m_Planning = false;
-	m_PlacementMessage.clear(); m_PlacementMessageTime.invalidate();
+	m_PlacementMessage = AuLegacyPlacementMessage();
 	if(auto* model = qobject_cast<QStandardItemModel*>(m_Products->model()))
 		for(int index = 0; index < m_Products->count(); ++index)
 			if(auto* item = model->item(index)) item->setEnabled(true);
@@ -649,16 +649,7 @@ void AuLegacyCityConstruction::ReportMessage(const QString& message)
 
 void AuLegacyCityConstruction::ReportPlacementMessage(const QString& message)
 {
-	m_PlacementMessage = message; m_PlacementMessageTime.start();
-}
-
-QString AuLegacyCityConstruction::PlacementMessage(float& alpha) const
-{
-	alpha = 0;
-	if(!m_PlacementMessageTime.isValid() || m_PlacementMessageTime.elapsed() >= 5000) return QString();
-	// DdPlanGlobeBuilding::RenderCursor: five seconds, alpha = 1 / (1 + seconds).
-	alpha = 1.f / (1.f + m_PlacementMessageTime.elapsed() / 1000.f);
-	return m_PlacementMessage;
+	m_PlacementMessage.Show(message);
 }
 
 void AuLegacyCityConstruction::Refresh()

@@ -51,6 +51,7 @@ public:
 	void CycleInteriorLight();
 	void SetGrid(bool visible, quint8 mask);
 	void SetEditTool(const AuLegacyShipEditTool& tool);
+	void ShowPlacementMessage(const QString& message);
 	void ResetEditStroke();
 	void FocusDesignPlane();
 	void UseHandCursor();

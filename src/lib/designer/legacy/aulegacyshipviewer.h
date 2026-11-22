@@ -38,6 +38,7 @@ public:
 	void SetStudioLibraryDesignId(quint32 designId);
 	void ApplyStudioLibrary(const QVector<AuLegacyStudioProtocol::LibraryEntry>& entries, bool truncated);
 	void ShowStudioMessage(const QString& message);
+	void ShowPlacementError(const QString& message);
 	void ChatReceived(AuCommPacket* message);
 
 protected:

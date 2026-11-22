@@ -65,7 +65,6 @@ private:
 	void UpdateSite(const DaWorldLL& world, const AuPoint& point, const DaPerson& person);
 	void RenderSiteCursor(const AuMatrix4x4& projection, const AuMatrix4x4& camera, DaPerson* person,
 		const QPoint& pixel, AuAtomRenderInfo& info);
-	void RenderPlacementMessage(AuAtomRenderInfo& info) const;
 	void ConstrainRoad(const DaWorldLL& world, AuPoint& point, bool constrain) const;
 	int PrepareRoadRequest(const DaWorldLL& world, quint32 builder, AuPoint point, bool constrain,
 		AuLegacyCityProtocol::Request& request, QString& message);

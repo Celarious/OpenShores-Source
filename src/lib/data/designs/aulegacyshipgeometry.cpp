@@ -306,7 +306,7 @@ struct Raster
 		}
 	}
 
-	bool Add(const QVector<QPoint>& polygon, int marker)
+	bool Add(const QVector<QPoint>& polygon, int marker, QString* error = nullptr)
 	{
 		// 1801681f0: counts are visits, including repeated visits, not areas.
 		int newVisits = 0, overlapVisits = 0;
@@ -322,6 +322,8 @@ struct Raster
 		};
 		const Bounds bounds = WalkPerimeter(polygon, add);
 		FillInterior(bounds, marker, false, add);
+		if(newVisits && overlapVisits < 2)
+			SetError(error, "Connect to the existing room on this deck, or choose a different room number.");
 		return newVisits != 0 && overlapVisits >= 2;
 	}
 
@@ -606,7 +608,7 @@ bool Merge(QPolygonF& boundary, const QPolygonF& cell, QString* error)
 		return false;
 	Raster raster;
 	raster.Add(oldPoints, 1);
-	if(!raster.Add(newPoints, 2))
+	if(!raster.Add(newPoints, 2, error))
 		return false;
 	QPolygonF result;
 	if(!Trace(raster, result, false, error) || EqualBoundary(result, boundary))
