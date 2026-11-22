@@ -2707,6 +2707,8 @@ bool DaLegacyCity::BeginConstruction(DaPerson& person, quint8 industry, quint8 p
 			if(!permitted.contains(designId)) { error = tr("Carry the blueprint or publish it in your empire first."); return false; }
 			dev.authoredDesign = AuLegacyBd::ReadConstructionDesign(g_Au.LegacyBuildingSource(designId, error), designId, error);
 			if(!dev.authoredDesign) return false;
+			if(levels > dev.authoredDesign->constructionLevels)
+			{ error = tr("The requested level exceeds the blueprint's limit of %1.").arg(dev.authoredDesign->constructionLevels); return false; }
 		}
 		dev.designId = designId;
 		const auto design = dev.Blueprint();
@@ -2928,6 +2930,8 @@ bool DaLegacyCity::ExtendConstruction(DaPerson& person, quint32 id, quint8 level
 				AuLegacyCity::CommodityId(dev.materialId),world->OrbitZone()!=OZONE_Inferno)
 			|| int(dev.completedLevels)+levels > ResourceLevelLimit(*world,dev))
 		{ error = QStringLiteral("Finish current work first; extensions must fit the original material and resource limits."); return false; }
+		if(dev.authoredDesign && int(dev.completedLevels) + levels > dev.authoredDesign->constructionLevels)
+		{ error = tr("The requested level exceeds the blueprint's limit of %1.").arg(dev.authoredDesign->constructionLevels); return false; }
 		const quint8 expectedProcess=dev.constructionProcessId;
 		dev.constructionProcessId=recipe->id.value;
 		dev.targetLevels = quint8(dev.completedLevels+levels);

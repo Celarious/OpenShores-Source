@@ -694,6 +694,16 @@ QSharedPointer<const Design> ReadConstructionDesign(const QByteArray& compressed
 		return {};
 	}
 	design->constructionSource = compressed;
+	int lowestFloor = 0, highestFloor = 0;
+	for(const auto& room : design->rooms)
+	{
+		if(room.roomType >= 22) continue; // Roofs do not add a construction story.
+		lowestFloor = std::min(lowestFloor, int(room.deck));
+		highestFloor = std::max(highestFloor, int(room.deck));
+	}
+	const int industry = design->header.industryId;
+	design->constructionLevels = ConstructionLevels(DesignerIndustry(industry), MinimumDesignDeck(industry),
+		highestFloor - lowestFloor + 1);
 	return design;
 }
 

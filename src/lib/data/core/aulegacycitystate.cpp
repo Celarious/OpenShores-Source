@@ -329,6 +329,13 @@ bool DecodeState(const QByteArray& bytes, State& output, QString& error, const S
 	}
 	if(in.status() != QDataStream::Ok || !in.atEnd() || !Valid(state, error))
 	{ if(error.isEmpty()) error = QStringLiteral("Malformed legacy city state or trailing data."); return false; }
+	for(auto& dev : state.developments)
+	{
+		if(!dev.authoredDesign || dev.targetLevels <= dev.authoredDesign->constructionLevels) continue;
+		// Preserve completed work and the current level's committed materials on older sites.
+		const int started = int(dev.completedLevels) + (dev.components.isEmpty() ? 0 : 1);
+		dev.targetLevels = quint8(qMin(int(dev.targetLevels), qMax(started, dev.authoredDesign->constructionLevels)));
+	}
 	output = state;
 	return true;
 }

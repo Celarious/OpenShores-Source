@@ -70,6 +70,7 @@ struct Design
 	QVector<AuLegacyShip::Room> rooms;
 	QVector<AuLegacyShip::Detail> details;
 	QByteArray constructionSource; // Compressed standalone file for a player-authored development.
+	int constructionLevels = 0; // Derived once when the immutable construction source is read.
 	QByteArray sourceHash;
 	QByteArray payloadHash;
 	QDateTime cacheTime;

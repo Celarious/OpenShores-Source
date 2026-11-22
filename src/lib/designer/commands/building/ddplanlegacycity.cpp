@@ -439,8 +439,9 @@ void DdPlanLegacyCity::ChangeLevels(int direction)
 {
 	if(m_Request.action != AuLegacyCityProtocol::Build || m_Request.industryId == 2 || m_Request.industryId == 129) return;
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn(); if(!catalogue) return;
-	const int limit = catalogue->ConstructionLevelLimit(AuLegacyCity::ConstructionProcessId(m_Request.processId),
+	int limit = catalogue->ConstructionLevelLimit(AuLegacyCity::ConstructionProcessId(m_Request.processId),
 		AuLegacyCity::CommodityId(m_Request.material));
+	if(m_Request.previewDesign) limit = qMin(limit, m_Request.previewDesign->constructionLevels);
 	const int maximum = qMax(1, m_MaximumLevels < 0 ? limit : m_MaximumLevels);
 	int levels = int(m_Request.levels) + direction;
 	// Original DdPlanGlobeBuilding wraps when stepping past either end.
@@ -591,9 +592,11 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 	// Original SetCursor 0x140321130 counts at most four resources and
 	// subtracts existing levels. Keep desired levels separate from this cap.
 	world.ResourceDistributionAt(placement, center, AuPoint(radius, radius, 0), rocks, shrubs, trees, water, 4);
-	const int maximum = qMax(0, qMin(catalogue->ConstructionLevelLimit(recipe->id,
+	int totalLimit = qMin(catalogue->ConstructionLevelLimit(recipe->id,
 		AuLegacyCity::CommodityId(site.materialId), world.OrbitZone() != OZONE_Inferno),
-		catalogue->ConstructionResourceLevelLimit(recipe->id, rocks, shrubs, trees)) - m_ExistingLevels);
+		catalogue->ConstructionResourceLevelLimit(recipe->id, rocks, shrubs, trees));
+	if(site.authoredDesign) totalLimit = qMin(totalLimit, site.authoredDesign->constructionLevels);
+	const int maximum = qMax(0, totalLimit - m_ExistingLevels);
 	if(maximum != m_MaximumLevels || m_SiteMaterial != site.materialId || previousExistingLevels != m_ExistingLevels
 		|| m_SiteDesignId != site.designId)
 		m_PreviewValid = false;

@@ -259,6 +259,7 @@ AuLegacyCityConstruction::AuLegacyCityConstruction(QWidget* parent) : QWidget(pa
 		g_Au.Settings().writeEntry(QStringLiteral("Legacy2016/BuildingConstruction/%1").arg(m_Industry), m_Designs->currentData().toUInt());
 	});
 	connect(m_Designs, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+		DescribeRecipe();
 		if(m_Planning && m_ActiveRequest.industryId == m_Industry)
 		{
 			m_ActiveRequest.designId = m_Designs->currentData().toUInt();
@@ -393,6 +394,8 @@ void AuLegacyCityConstruction::DescribeRecipe()
 	bool flammable = true; const quint8 environment = ConstructionEnvironment(flammable, m_Industry);
 	const quint16 material = m_Industry == 2 ? (m_Process == 3 ? 23 : 76) : m_Material;
 	m_LevelLimit = catalogue->ConstructionLevelLimit(process->id, AuLegacyCity::CommodityId(material), flammable);
+	const auto blueprint = m_Blueprints.value(m_Designs->currentData().toUInt());
+	if(blueprint) m_LevelLimit = qMin(m_LevelLimit, blueprint->constructionLevels);
 	// AuTabBuild::ListConstructionMaterials, 2016 executable 0x2c13b0.
 	QString levels;
 	if(process->stackLimit == 32) levels = tr("<b>1 per Rock</b>");
@@ -401,12 +404,19 @@ void AuLegacyCityConstruction::DescribeRecipe()
 	else if(process->stackLimit == 0 || process->stackLimit == 1 || process->stackLimit == 3
 		|| process->stackLimit == 7 || process->stackLimit == 15 || process->stackLimit == 31)
 	{
-		const int maximum = int(process->stackLimit) + 1;
-		const int selected = catalogue->ConstructionLevelLimit(process->id, AuLegacyCity::CommodityId(material));
+		int maximum = int(process->stackLimit) + 1;
+		int selected = catalogue->ConstructionLevelLimit(process->id, AuLegacyCity::CommodityId(material));
+		if(blueprint)
+		{
+			maximum = qMin(maximum, blueprint->constructionLevels);
+			selected = qMin(selected, maximum);
+		}
 		levels = selected < maximum ? tr("<b>%1</b> <i>(%2 with Other Material)</i>").arg(selected).arg(maximum)
 			: tr("<b>%1</b>").arg(selected);
 	}
 	else levels = tr("<b>?</b>");
+	if(blueprint && process->stackLimit >= 32)
+		levels += tr(" (blueprint maximum %1)").arg(blueprint->constructionLevels);
 	m_Levels->setText(tr("Levels %1").arg(levels));
 	m_Terrain->setText(tr("Terrain <b>%1</b>").arg(TerrainDescription(process->terrain)));
 	QMap<quint16, quint32> materials;
@@ -661,8 +671,10 @@ void AuLegacyCityConstruction::RefreshBlueprints()
 	m_BlueprintTimer->stop(); m_BlueprintToken = 0; m_AfterBlueprint = 0;
 	m_Blueprints.clear();
 	const QSignalBlocker blocked(m_Designs);
+	const bool removedSelection = m_Designs->currentData().toUInt() > 74;
 	for(int i = m_Designs->count()-1; i >= 0; --i)
 		if(m_Designs->itemData(i).toUInt() > 74) m_Designs->removeItem(i);
+	if(removedSelection) DescribeRecipe();
 	if(isVisible() && AuLegacyBd::SelectableIndustry(m_Industry) && m_Industry != 129) m_BlueprintTimer->start();
 }
 
