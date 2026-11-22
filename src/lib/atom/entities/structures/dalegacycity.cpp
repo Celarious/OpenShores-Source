@@ -929,6 +929,7 @@ struct DaLegacyCity::Runtime
 		GLuint texture = 0;
 		bool twoSided = false;
 		bool interior = false;
+		bool exteriorGlass = false; // A ground-level cap can draw in the interior pass.
 		bool depthOnly = false;
 		bool castsShadow = true;
 		quint8 windowEffect = 0;
@@ -955,6 +956,7 @@ struct DaLegacyCity::Runtime
 		AuLegacyBd::Paths::Graph paths;
 		QVector<LegacyBuildingStation> stations;
 		QSharedPointer<const RenderData> render;
+		double viewRadius = 0;
 	};
 	struct Job
 	{
@@ -1485,6 +1487,7 @@ struct DaLegacyCity::Runtime
 			prepared.draw.development = building.state.id;
 			prepared.draw.turretId = batch.turretId;
 			prepared.draw.twoSided = batch.twoSided; prepared.draw.interior = batch.interior;
+			prepared.draw.exteriorGlass = batch.exteriorGlass;
 			prepared.draw.depthOnly = batch.depthOnly;
 			prepared.draw.castsShadow = batch.castsShadow;
 			prepared.draw.windowEffect = batch.textureSlot == 39 ? 3
@@ -1745,6 +1748,14 @@ struct DaLegacyCity::Runtime
 					if(!building.paths.Build(*design, pathOptions, error)) building.mesh.warnings.append(error);
 				}
 			if(prepareRender && world && !dev.IsDestroyed()) AppendEnclosure(building, developments, *world, pressure, domes);
+			// DpBuilding::SiteRadius 0xfd830 uses the construction radius, including a 10 m margin.
+			// Also cover custom geometry that extends past the nominal site.
+			const auto* recipe = ConstructionRecipe(dev.industryId, dev.constructionProcessId);
+			const double siteRadius = (recipe ? recipe->buildRadius * FeetPerMeter() / .7071 : 0.) + 10 * FeetPerMeter();
+			const QVector3D minimum = building.mesh.minimum, maximum = building.mesh.maximum;
+			const AuPoint extent(qMax(std::abs(minimum.x()), std::abs(maximum.x())),
+				qMax(std::abs(minimum.y()), std::abs(maximum.y())), qMax(std::abs(minimum.z()), std::abs(maximum.z())));
+			building.viewRadius = qMax(siteRadius, extent.Length());
 			AuLegacyShip::Rendering::Mesh collisionMesh;
 			for(const auto& batch : building.mesh.batches)
 			{
@@ -6158,22 +6169,30 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		const Runtime::Building* building = nullptr;
 		AuMatrix4x4 placement, model;
 		AuViewFrustum frustum, maskFrustum;
-		bool insideVisible = true, dark = false;
+		bool inRange = true, insideVisible = false, dark = false;
 	};
 	QHash<quint32, BuildingView> buildingViews;
+	buildingViews.reserve(m_Runtime->buildings.size());
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
+	const double viewRange = g_Au.BuildingViewRangeFt();
 	for(const auto& building : m_Runtime->buildings)
 	{
-		BuildingView view;
+		auto& view = buildingViews[building.state.id];
 		view.building = &building;
 		world->BuildingConstructionTransform(world->LocOfLL(building.state.location, building.state.altitudeMSL),
 			building.state.facingRadians, nullptr, AuPoint(), view.placement);
 		view.model = worldModel * view.placement;
+		const double distanceSquared = view.model.Translation().Length2();
+		const double exteriorRange = viewRange + building.viewRadius;
+		// Roads have a separate terrain and fixture path in the original city renderer.
+		view.inRange = building.state.industryId == 2 || distanceSquared <= exteriorRange * exteriorRange;
+		if(!view.inRange) continue;
 		// DistanceInsideVisible 0xeff00 and DaCity::RenderEnvironmentObject
 		// select the near shader from camera distance, even outside the building.
 		const double radius = catalogue ? qMax(0.0, TerrainLevelRadius(building.state.industryId,
 			*catalogue, building.state.constructionProcessId)) : 0;
-		view.insideVisible = view.model.Translation().Length() < radius + 164.041994750656;
+		const double interiorRange = radius + 50 * FeetPerMeter();
+		view.insideVisible = distanceSquared < interiorRange * interiorRange;
 		view.dark = ExteriorLightsOn(*world, building.state, view.placement);
 		if(ari.re->FrustumCulling())
 		{
@@ -6181,7 +6200,6 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 			view.frustum.Set(clip);
 			view.maskFrustum.Set(clip, false);
 		}
-		buildingViews.insert(building.state.id, view);
 	}
 	shader.SetDirectTextureGlobe(worldModel.Translation(),
 		world->AtomType() == ATOM_WorldGlobe || world->AtomType() == ATOM_WorldGasGiant);
@@ -6208,7 +6226,10 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 	{
 		if(draw.interior != beforeTerrain) continue;
 		const auto found = buildingViews.constFind(draw.development);
-		if(found == buildingViews.cend() || !draw.vao.VAO()) continue;
+		if(found == buildingViews.cend() || !found->inRange || !draw.vao.VAO()) continue;
+		// Hide basement openings and their terrain masks together. The outward-facing
+		// glass cap is still exterior and uses its opaque window effect at a distance.
+		if(draw.interior && !found->insideVisible && !draw.exteriorGlass) continue;
 		AuMatrix4x4 buildingModel = found->model;
 		const auto turret = turretModels.constFind((quint64(draw.development) << 32) | draw.turretId);
 		if(draw.turretId && turret != turretModels.cend()) buildingModel = worldModel * *turret;
@@ -6273,14 +6294,9 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 				for(const auto& item : view.building->stations)
 				{
 					const quint64 key = (quint64(view.building->state.id) << 16) | item.id;
-					QSharedPointer<DpStation> console = m_Runtime->consoles.value(key);
-					if(!console)
-					{
-						console.reset(BuildingConsole(item.station.Type(), item.id));
-						if(!console) continue;
-						m_Runtime->consoles.insert(key, console);
-					}
+					// Keep existing console resources when the camera moves out of range.
 					activeConsoles.insert(key);
+					if(!view.insideVisible) continue;
 					const AuPoint location = view.placement.Project(item.station.OpM().Translation());
 					if(ari.re->FrustumCulling() && !worldFrustum.IntersectsSphere(location, 8)) continue;
 					bool occupied = false;
@@ -6291,6 +6307,13 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 							&& creature->Location().Distance2(location) < 4) { occupied = true; break; }
 					}
 					if(occupied) continue; // The seated creature draws its own swivel console.
+					QSharedPointer<DpStation> console = m_Runtime->consoles.value(key);
+					if(!console)
+					{
+						console.reset(BuildingConsole(item.station.Type(), item.id));
+						if(!console) continue;
+						m_Runtime->consoles.insert(key, console);
+					}
 					console->CreateDeviceObjects(ari, *this, true);
 					if(item.station.Type() == AuStation::Console_Command)
 						static_cast<DpConsoleEmpty*>(console.data())->DpConsole::CreateDeviceObjects(ari, *this, true);
@@ -6310,6 +6333,7 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 	{
 		AuLegacyCity::Flag flag;
 		AuPoint base;
+		bool inRange;
 	};
 	QVector<FlagInstance> flagInstances;
 	for(const auto& flag : flags)
@@ -6318,7 +6342,7 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 			[&flag](const Runtime::Building& b) { return b.state.location == flag.location; });
 		if(building == m_Runtime->buildings.cend() || !building->state.constructed || building->state.demolished) continue;
 		const auto view = buildingViews.constFind(building->state.id);
-		if(view != buildingViews.cend()) flagInstances.append({flag, view->placement.Translation()});
+		if(view != buildingViews.cend()) flagInstances.append({flag, view->placement.Translation(), true});
 	}
 	// Blueprint flagpoles are cosmetic. Only town squares and military flags
 	// are capture points in 2016 (DpDevelopment::HasFlagPole 0xf1d10).
@@ -6332,7 +6356,7 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		flag.location = building.state.location;
 		flag.level = 30;
 		for(const auto& pole : building.mesh.cosmeticFlagPoles)
-			flagInstances.append({flag, view->placement.Project(Point(pole))});
+			flagInstances.append({flag, view->placement.Project(Point(pole)), view->inRange});
 	}
 	for(int i = flagInstances.size(); i < m_Runtime->flagDraws.size(); ++i)
 		if(m_Runtime->flagDraws[i].vao.VAO()) m_Runtime->flagDraws[i].vao.DeleteGL();
@@ -6364,6 +6388,7 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		for(int i = 0; i < flagInstances.size(); ++i)
 		{
 			const auto& instance = flagInstances[i];
+			if(!instance.inRange) continue;
 			const auto& flag = instance.flag;
 			auto& draw = m_Runtime->flagDraws[i];
 			if(!draw.vao.VAO() || draw.empire != flag.empire)
