@@ -5941,16 +5941,20 @@ void DaLegacyCity::RenderAirportNavBeacon(const AuMatrix4x4& projection, AuAtomR
 	QColor color = PoliticalStanceColor(sceneAtom->EmpireId(), EmpireId(), false);
 	color.setRgbF(color.redF() * ari.textBrightness, color.greenF() * ari.textBrightness,
 		color.blueF() * ari.textBrightness, 1);
-	AuPointArray vertices;
-	vertices.append(bottom);
-	vertices.append(top);
-	AuGLVAO vao;
-	vao.CreateForLines(*ari.re, vertices, false, GL_STREAM_DRAW);
-	auto& shader = ari.re->GLSL().LineShader();
-	shader.Select(); shader.SetProjectionModelView(projection * worldModel);
-	shader.SetColor(color.redF(), color.greenF(), color.blueF(), 1);
-	if(vao.VAO()) { vao.SelectGL(); vao.DrawGL(GL_LINES); vao.DeselectGL(); vao.DeleteGL(); }
-	shader.Deselect();
+	const AuMatrix4x4 clip = projection * worldModel;
+	if(!ari.re->FrustumCulling() || AuViewFrustum(clip).IntersectsBox(bottom.Min(top), bottom.Max(top)))
+	{
+		AuPointArray vertices;
+		vertices.append(bottom);
+		vertices.append(top);
+		AuGLVAO vao;
+		vao.CreateForLines(*ari.re, vertices, false, GL_STREAM_DRAW);
+		auto& shader = ari.re->GLSL().LineShader();
+		shader.Select(); shader.SetProjectionModelView(clip);
+		shader.SetColor(color.redF(), color.greenF(), color.blueF(), 1);
+		if(vao.VAO()) { vao.SelectGL(); vao.DrawGL(GL_LINES); vao.DeselectGL(); vao.DeleteGL(); }
+		shader.Deselect();
+	}
 	// Reuse the modern airport's projected text path, alignment and blending.
 	const bool blendEnabled = ari.re->glIsEnabled(GL_BLEND);
 	GLint sourceRGB, destinationRGB, sourceAlpha, destinationAlpha;

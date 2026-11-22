@@ -363,9 +363,8 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	mapQualSlider->setPageStep(1);
 	mapQualSlider->setValue(g_Au.DivTexels());
 	mapQualSlider->setToolTip(tr("<html><b>World Map Quality</b><br>"
-				"Adjusts the quality of the world map created for planets, moons and ringworlds. "
-				"World maps appear on the Locator window and on transporter stations. "
-				"Gas giants are not affected by this setting.<br>"
+				"Adjusts the quality of world maps for planets, moons, ringworlds and gas giants. "
+				"World maps appear on the Locator window and on transporter stations.<br>"
 				"This setting also affects the texture resolution on distant worlds.<br>"
 				"<b>The program must be restarted for this change to take effect.</b></html>"));
 	connect(mapQualSlider, SIGNAL(valueChanged(int)), SLOT(SetDivTexels(int)));
@@ -412,7 +411,7 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	grassSlider->setPageStep(10);
 	grassSlider->setValue(g_Au.GroundCoverQty());
 	grassSlider->setToolTip(tr("<html><b>Grass Quantity</b><br>"
-				"Adjusts the number of grass plants on the terrain.<br>"
+				"Adjusts the number of grass plants on the terrain. Changes apply when nearby grass is regenerated.<br>"
 				"%1 Large numbers of plants create a noticeable delay when a terrain model is added to the OpenGL scene. "
 				"This includes terrain models restored from the model cache.<br>"
 				"%1 Large number of plants create a delay when the terrain model changes during city construction "
@@ -487,6 +486,7 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	if(!g_Au.IsSceneSolo())
 	{
 		m_RatingCombo = new QComboBox(this);
+		m_RatingCombo->setMaximumWidth(250);
 		m_RatingCombo->addItem(AuGlobal::RatingDescription(AuGlobal::Everyone), AuGlobal::Everyone);
 		m_RatingCombo->addItem(AuGlobal::RatingDescription(AuGlobal::Teen), AuGlobal::Teen);
 		m_RatingCombo->addItem(AuGlobal::RatingDescription(AuGlobal::Mature), AuGlobal::Mature);
@@ -502,8 +502,6 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	}
 	else
 		m_RatingCombo = 0;
-
-	m_RatingCombo->setMaximumWidth(250);
 
 	/*
 	// Tree/shrub generation.
@@ -575,7 +573,7 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	QCheckBox* newFlora = new QCheckBox(tr("New Trees (Experimental)"));
 	newFlora->setChecked(g_Au.Settings().readBoolEntry(AuGlobal::NewFloraKey(), false));
 	newFlora->setToolTip(tr("<html><p><b>New Trees (Experimental)</b><br>"
-				"</html>"));
+				"Restart the client to apply changes.</p></html>"));
 	connect(newFlora, SIGNAL(stateChanged(int)), SLOT(SetNewFlora(int)));
 
 	QCheckBox* perPixelLighting = new QCheckBox(tr("Per-Pixel Lighting"));
