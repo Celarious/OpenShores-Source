@@ -414,14 +414,5 @@ QString AuLegacyShipStatsReport(const AuLegacyShip::Design& design)
 		if(material.minimumTechLevel >= 0) text += QStringLiteral(" TL%1").arg(material.minimumTechLevel + 1);
 		FormattedLine(html, CommodityIcon(material.commodity, 16) + text.toHtmlEscaped());
 	}
-	QStringList diagnostics = performance.diagnostics;
-	diagnostics.append(stats.diagnostics);
-	diagnostics.removeDuplicates();
-	if (!diagnostics.isEmpty())
-	{
-		html += QStringLiteral("<hr>");
-		for (const QString& message : diagnostics)
-			Line(html, message, 1, QStringLiteral("#ffff20"));
-	}
 	return html;
 }

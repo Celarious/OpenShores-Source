@@ -117,6 +117,41 @@ using AuLegacyBuildingPalette::BuildingTool;
 using AuLegacyBuildingPalette::BuildingRooms;
 using AuLegacyBuildingPalette::FindBuildingTool;
 
+QString SpacecraftDesignTips(bool online)
+{
+	QString tips = QStringLiteral(
+		"<b>NEW SPACECRAFT DESIGN TIPS</b><br>"
+		"- All the buttons on this window have tooltips.<br>");
+	if(online) tips += QStringLiteral("- Exit the design studio using the top-left button on this window.<br>");
+	tips += QStringLiteral(
+		"- Start by painting the floor of a room, such as the Bridge.<br>"
+		"- Move the design grid up and down using buttons on this window.<br>"
+		"- Add equipment by clicking a location on the floor.<br>"
+		"- Rotate beds and vehicles with arrow keys while placing them.<br>"
+		"- A hatch or turret is placed in the ceiling by raising the design grid and placing the hatch on the story above.<br>");
+	tips += online ? QStringLiteral(
+		"- A space station is made by keeping the gravity drive acceleration very low.<br>"
+		"- Room number distinguishes between different rooms of the same type on the same deck. To make two staterooms on the same deck, change the room number before painting the second stateroom. Room number can be the same on different decks. e.g. Deck 1 can have stateroom 4 and deck 2 can also have stateroom 4.<br>") : QStringLiteral(
+		"- A station is made by keeping the gravity drive acceleration very low.<br>"
+		"- Room identifier distinguishes between different rooms of the same type on the same deck. To make two staterooms on the same deck, change the room id before painting the second stateroom. Room id can be the same on different decks. e.g. Deck 1 can have stateroom 4 and deck 2 can also have stateroom 4.<br>");
+	tips += QStringLiteral(
+		"<br><b>WHEN FINISHED</b><br>"
+		"1. Check Paths to find routing conditions that may need attention.<br>"
+		"2. Close this window.<br>"
+		"3. Walk through the design to be sure every room can be accessed.<br>");
+	tips += online ? QStringLiteral(
+		"4. Save the design into the design library. You may also wish to save the design to a file. Design files can be loaded in the design studio when running in client-only off-line mode. Design files backup your designs so they may survive resets to the game universe.<br>"
+		"5. Store the design onto a blank disk in your inventory using the <b>Burn CD</b> button. The design studio sells blank disks from the city's inventory. <b>THE <i>BURN CD</i> BUTTON IS ONLY VISIBLE IF THE DESIGN IS VALID AND SAVED.</b><br>"
+		"6. Take a spacecraft design disk to a spacecraft factory for manufacturing.<br>"
+		"7. Publish a spacecraft design by selling a design disk to a design studio. You earn an architect commission whenever your spacecraft designs are manufactured.<br>") : QStringLiteral(
+		"4. Save the design to a file.<br>"
+		"5. Go to a design studio in the game and load the design from the file. Save the design into the spacecraft design library.<br>"
+		"6. Store the design onto a blank disk in your inventory using the <b>Burn CD</b> button. The design studio sells blank disks from the city's inventory. <b>THE <i>BURN CD</i> BUTTON IS ONLY VISIBLE IF THE DESIGN IS VALID AND SAVED.</b><br>"
+		"7. Take the design disk to a spacecraft factory for manufacturing.<br>"
+		"8. Publish a spacecraft design by selling a design disk to a design studio. You earn an architect commission whenever your designs are manufactured.<br>");
+	return tips;
+}
+
 QString BuildingDesignTips(bool online)
 {
 	// AuView::DesignStatus, 2016 EXE 0x1402e7810, has separate offline
@@ -536,40 +571,7 @@ public:
 			if(text.isEmpty()) ShowRenderHelp();
 			else SetFeedback(text);
 		};
-		designTips = QStringLiteral(
-			"<b>NEW SPACECRAFT DESIGN TIPS</b><br>"
-			"- All the buttons on this window have tooltips.<br>"
-			"- Start by painting the floor of a room, such as the Bridge.<br>"
-			"- Move the design grid up and down using the deck buttons.<br>"
-			"- Combine the four grid directions to change the cell shape.<br>"
-			"- Room Number distinguishes rooms of the same type on the same deck. Change it before painting a separate room.<br>"
-			"- Left click or drag to paint. Select Erase Room Cells to erase.<br>"
-			"- Erase Room removes the whole room under the cursor; Erase Current Deck removes all rooms and equipment on the selected deck.<br>"
-			"- Select equipment, then left click or drag to place it. Its tooltip lists the room restrictions.<br>"
-			"- Left/right arrow keys rotate berths, vehicles, hatches and stairs before placement.<br>"
-			"- The brush arrows resize machinery placement and Erase Equipment Area.<br>"
-			"- Fly around the design using your Avatar and Scene control bindings. Use the Scene camera bindings for overhead and other views.<br>"
-			"- F frames the active design plane; moving the grid between decks preserves your player position.<br>"
-			"- Render Mode switches between 3D wireframe and solid rendering at the same player position.<br>"
-			"- W/A/S/D move, the mouse looks around, and Shift runs. Q toggles continuous forward movement.<br>"
-			"- Return or right-click switches between avatar input and the free hand cursor. Hold Ctrl to use the hand temporarily. Use the hand to edit the active design plane in wireframe mode.<br>"
-			"- C/Z move up/down when flying, in a gravity well, or on a ladder. Space jumps or brakes in zero gravity.<br>"
-			"- E enters/exits a console or engages/releases a nearby ladder.<br>"
-			"- On ladders, W climbs toward your look direction (up/down); S reverses it. C/Z climb directly. Shift does not increase climb speed.<br>"
-			"- Hold Caps Lock to crouch; X toggles prone/standing. These use your Avatar bindings.<br>"
-			"- Escape clears the selected tool and returns to the hand cursor. Shift+Escape hides or shows the interface.<br>"
-			"- Use the hand to click a nearby door or hatch. Ctrl+P opens the nearest closed door; Ctrl+C closes the nearest open door.<br>"
-			"- Regular and crew doors open on approach. Hull and large doors require manual operation.<br>"
-			"- Gravity toggles the studio floor outside the ship. Ship interiors have their own gravity.<br>"
-			"- Home returns to a clear location on the selected deck if you get lost.<br><br>"
-			"<b>CURRENT EDITOR</b><br>"
-			"Rooms and equipment can be edited on the active plane in the 3D wireframe. Other decks remain visible and dimmed. Unavailable tools remain disabled.<br><br>"
-			"<b>WHEN FINISHED</b><br>"
-			"Use Exit Designer or Ctrl+W to exit.<br>"
-			"Use Save or Ctrl+S to save your work. New, Open and Exit offer to save changes.<br>"
-			"The sidebar designer button or your Design Parts window binding hides or shows this panel. "
-			"Drag its title to dock it elsewhere or float it beside the 3D view.");
-		if(building) designTips = BuildingDesignTips(false);
+		designTips = building ? BuildingDesignTips(false) : SpacecraftDesignTips(false);
 		statsBrowser->setMinimumHeight(130);
 		panelLayout->addWidget(statsBrowser, 1);
 		QScrollArea* panelScroll = new QScrollArea(toolDock);
@@ -1450,7 +1452,6 @@ public:
 
 	void SetFeedback(const QString& text)
 	{
-		feedback = text;
 		statsBrowser->setToolTip(text);
 		if (!statsTimer->isActive())
 			statsTimer->start();
@@ -1561,14 +1562,6 @@ public:
 		if (modified)
 			report += QStringLiteral("<p style=\"margin: 0; color: #ffff00;\">Modified</p>");
 		report += designReport.isEmpty() ? designTips : designReport;
-		if(designReport.isEmpty() && studioHandler && !building)
-			report += QStringLiteral("<br><br><b>STORING THE FINISHED DESIGN</b><br>"
-				"Check Paths, then walk through the spacecraft to inspect it.<br>"
-				"Save Design stores it in your spacecraft design library. Save Design To File creates a personal backup.<br>"
-				"Burn CD appears when the design is valid and saved in the library. Have a blank data disk in your inventory.");
-		if (!feedback.isEmpty())
-			report += QStringLiteral("<hr><p style=\"margin: 0;\">%1</p>")
-				.arg(feedback.toHtmlEscaped().replace(QLatin1Char('\n'), QStringLiteral("<br>")));
 		report += QStringLiteral("</body></html>");
 		if (report == statsHtml)
 			return;
@@ -2233,7 +2226,6 @@ public:
 	QString statsHtml;
 	QString designReport;
 	QString designTips;
-	QString feedback;
 	bool statsDirty = true;
 	QStringList geometryWarnings;
 	QMap<int, QVector<int> > roomDecks;
@@ -2414,7 +2406,7 @@ void AuLegacyShipViewer::SetStudioCommandHandler(const std::function<void(AuLega
 	const std::function<bool(bool)>& flush)
 {
 	m_Impl->studioHandler = handler;
-	if(m_Impl->building) m_Impl->designTips = BuildingDesignTips(bool(handler));
+	m_Impl->designTips = m_Impl->building ? BuildingDesignTips(bool(handler)) : SpacecraftDesignTips(bool(handler));
 	m_Impl->studioFlush = flush;
 	m_Impl->studioReady = false;
 	m_Impl->studioExitAfterSave = false;
