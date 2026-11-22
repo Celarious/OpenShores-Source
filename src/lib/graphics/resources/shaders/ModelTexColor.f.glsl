@@ -342,6 +342,10 @@ uniform sampler2D						texPaletteHigh;			// Palette of textures for various comb
 uniform sampler2D						texPaletteLow;			// Palette of textures for various combinations of materials.
 uniform bool directTexture;
 uniform ivec3 directBuildingWindow; // Original effect, near mode, day/powered-night/unpowered-night.
+uniform vec4 distantBuildingLight;
+uniform int distantBuildingWindows;
+const vec3 electricWindowColor = vec3(244./255., 1., 250./255.);
+const vec3 candleWindowColor = vec3(1., 147./255., 41./255.) / 3.;
 
 #ifdef PER_PIXEL_LIGHTING
 in vec4									vertLitScale;
@@ -358,6 +362,30 @@ out vec4								fragColor;				// Outgoing fragment color.
 
 void main()
 {
+	if(distantBuildingLight.w > 0.)
+	{
+#ifdef PER_PIXEL_LIGHTING
+		fragColor = vertLitScale;
+#else
+		fragColor = vertColor;
+#endif
+		if(distantBuildingWindows != 0 && texTileIndex > .5)
+		{
+			// Filter the pattern down to a faint tint once individual cells are subpixel.
+			vec2 footprint = fwidth(vertTexCoord);
+			vec2 softness = clamp(footprint, vec2(.001), vec2(.25));
+			vec2 cell = floor(vertTexCoord);
+			vec2 edge = abs(fract(vertTexCoord) - vec2(.5, .6));
+			vec2 halfSize = vec2(.17, .13);
+			vec2 pane = 1. - smoothstep(halfSize - softness, halfSize + softness, edge);
+			float occupied = step(mod(cell.x * 3. + cell.y * 7., 11.), 6.);
+			float glow = mix(pane.x * pane.y * occupied, .055,
+				smoothstep(.2, .6, max(footprint.x, footprint.y)));
+			vec3 windowColor = distantBuildingWindows == 1 ? electricWindowColor : candleWindowColor;
+			fragColor.rgb = mix(fragColor.rgb, windowColor, glow);
+		}
+		return;
+	}
 #ifdef PER_PIXEL_LIGHTING
 	vec4 vertColor = vec4(computeLighting(light, vertLitShininess, vertLitP, normalize(vertLitN)), 1) * vertLitScale;
 	vertColor.rgb = min(vertColor.rgb + glow, vec3(1.5, 1.5, 1.5));
@@ -380,12 +408,12 @@ void main()
 			if(directBuildingWindow.z == 1)
 			{
 				if(effect == 1) fragColor.rgb = vec3(1., 214./255., 170./255.);
-				else if(effect == 2) fragColor.rgb = vec3(244./255., 1., 250./255.);
+				else if(effect == 2) fragColor.rgb = electricWindowColor;
 				else if(effect == 3) fragColor.rgb = surface.rgb;
 			}
 			else if(directBuildingWindow.z == 2)
 			{
-				if(effect == 1) fragColor.rgb = vec3(1., 147./255., 41./255.) / 3.;
+				if(effect == 1) fragColor.rgb = candleWindowColor;
 				else if(effect == 3) fragColor.rgb = surface.rgb / 3.;
 			}
 		}

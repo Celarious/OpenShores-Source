@@ -10921,6 +10921,8 @@ private:
 	GLint								m_directTexture;		// Use unmodified UVs for a single texture.
 	GLint								m_directTextureGlobe;	// Globe center in eye space, w enables the horizon test.
 	GLint								m_directBuildingWindow;	// Legacy building window effect, near mode and lighting mode.
+	GLint								m_distantBuildingLight;
+	GLint								m_distantBuildingWindows;
 
 	//--------------------
 	// Lighting parameters
@@ -10965,6 +10967,8 @@ public:
 		m_directTexture = -1;
 		m_directTextureGlobe = -1;
 		m_directBuildingWindow = -1;
+		m_distantBuildingLight = -1;
+		m_distantBuildingWindows = -1;
 
 		m_LightsValid = false;
 		m_SunsValid = false;
@@ -11143,6 +11147,17 @@ public:
 	inline void SetDirectBuildingWindow(int effect, bool insideVisible, int lighting) const
 	{
 		m_GLf->glUniform3i(m_directBuildingWindow, effect, insideVisible ? 1 : 0, lighting);
+	}
+
+	inline void SetDistantBuildingLight(const AuPoint& sun, float ambient) const
+	{
+		m_GLf->glUniform4f(m_distantBuildingLight, sun.x, sun.y, sun.z, ambient);
+	}
+
+	// Lighting: 0 dark windows, 1 electric light, 2 candlelight.
+	inline void SetDistantBuildingWindows(int lighting) const
+	{
+		m_GLf->glUniform1i(m_distantBuildingWindows, lighting);
 	}
 
 	// Sets the high and low resolution texture palettes.

@@ -635,11 +635,9 @@ void DeckSurfaces(Builder& out, const Raster& raster, const Design& design,
 			}
 }
 
-void Roof(Builder& out, const AuLegacyShip::Room& room)
+void Roof(Builder& out, const QPolygonF& boundary, int deck, int roomType, bool distant = false)
 {
-	const QPolygonF boundary = AuLegacyShip::RoomBoundary(room);
 	if(boundary.size() < 3) return;
-	const int deck = room.deck;
 	const double base = deck * AuLegacyBd::DeckHeight;
 	double boundaryArea = 0;
 	for(int i = 0; i < boundary.size(); ++i)
@@ -651,8 +649,13 @@ void Roof(Builder& out, const AuLegacyShip::Room& room)
 		// RenderRoof's authored boundaries are clockwise. Builder derives
 		// normals from CCW triangles, so reverse the outer skin (including
 		// vertical gable ends) together with its UVs. The underside faces down.
-		if((!underside && reverseExterior)
-			|| (underside && QVector3D::crossProduct(b - a, c - a).z() > 0))
+		const bool reverse = (!underside && reverseExterior)
+			|| (underside && QVector3D::crossProduct(b - a, c - a).z() > 0);
+		if(distant)
+		{
+			if(!underside) out.Triangle(-1, 0, false, a, reverse ? c : b, reverse ? b : c);
+		}
+		else if(reverse)
 		{
 			if(slot == 13) out.TiledTriangle(slot, deck, false, a, c, b, ua, uc, ub);
 			else out.Triangle(slot, deck, false, a, c, b, ua, uc, ub);
@@ -662,7 +665,7 @@ void Roof(Builder& out, const AuLegacyShip::Room& room)
 	};
 	// RenderRoof 0x5d3490: the underside sits 1/96 foot above the
 	// authored deck; the top uses a 1:3 slope and does not shift its ridge.
-	if(room.roomType == 24)
+	if(roomType == 24)
 	{
 		const QRectF bounds = boundary.boundingRect();
 		const QPointF center = bounds.center();
@@ -683,16 +686,16 @@ void Roof(Builder& out, const AuLegacyShip::Room& room)
 	}
 	QVector3D p[4];
 	for(int i = 0; i < 4; ++i) p[i] = Position(boundary.at(i), base);
-	const RoofRidge ridge = RectangularRoofRidge(boundary, room.roomType == 23);
+	const RoofRidge ridge = RectangularRoofRidge(boundary, roomType == 23);
 	const QPointF first = ridge.first, last = ridge.last;
 	const double halfWidth = ridge.halfWidth;
 	const double rise = halfWidth / 3;
 	const QVector3D r0 = Position(first, base + rise), r1 = Position(last, base + rise);
-	const float gableRepeat = room.roomType == 22 ? WallRepeat(13, halfWidth * 2) : 1;
-	const float gableTop = room.roomType == 22 ? float(rise / AuLegacyBd::DeckHeight) : 1;
-	triangle(room.roomType == 22 ? 13 : 11, p[1], r0, p[0], {0, 0}, {gableRepeat / 2, gableTop}, {gableRepeat, 0});
-	triangle(room.roomType == 22 ? 13 : 11, p[3], r1, p[2], {0, 0}, {gableRepeat / 2, gableTop}, {gableRepeat, 0});
-	if(room.roomType == 22)
+	const float gableRepeat = roomType == 22 && !distant ? WallRepeat(13, halfWidth * 2) : 1;
+	const float gableTop = roomType == 22 ? float(rise / AuLegacyBd::DeckHeight) : 1;
+	triangle(roomType == 22 ? 13 : 11, p[1], r0, p[0], {0, 0}, {gableRepeat / 2, gableTop}, {gableRepeat, 0});
+	triangle(roomType == 22 ? 13 : 11, p[3], r1, p[2], {0, 0}, {gableRepeat / 2, gableTop}, {gableRepeat, 0});
+	if(roomType == 22)
 	{
 		triangle(11, p[0], r0, r1, {0, 0}, {0, 1}, {1, 1});
 		triangle(11, r1, p[3], p[0], {1, 1}, {1, 0}, {0, 0});
@@ -1075,9 +1078,10 @@ Mesh Build(const Design& design, const Options& options)
 			if(room.deck >= options.minimumDeck && room.deck <= options.maximumDeck + 1
 				&& room.roomType >= 22 && room.roomType <= 24)
 			{
-				Roof(out, room);
+				const QPolygonF boundary = AuLegacyShip::RoomBoundary(room);
+				Roof(out, boundary, room.deck, room.roomType);
 				FloorState state; state.deck = room.deck; state.roomId = room.roomId; state.roomType = room.roomType;
-				state.boundary = AuLegacyShip::RoomBoundary(room); state.roof = true; out.mesh.floors.append(state);
+				state.boundary = boundary; state.roof = true; out.mesh.floors.append(state);
 			}
 	if(options.interior) SharedDetails(out, design, options);
 	if(options.exterior)
@@ -1093,6 +1097,51 @@ Mesh Build(const Design& design, const Options& options)
 			else if(detail.detailType == 142) StreetLight(out, location, detail.deck);
 		}
 	return std::move(out.mesh);
+}
+
+QVector<AuLegacyShip::Rendering::Vertex> BuildDistantExterior(const Mesh& mesh)
+{
+	Builder out;
+	for(const auto& floor : mesh.floors)
+	{
+		const auto& boundary = floor.boundary;
+		if(floor.deck < 0 || boundary.size() < 3) continue;
+		if(floor.roof)
+		{
+			Roof(out, boundary, floor.deck, floor.roomType, true);
+			continue;
+		}
+		// Roofless floor and deck surfaces have little or no visible shell.
+		if(!floor.ceiling) continue;
+		const double base = floor.deck * AuLegacyBd::DeckHeight;
+		const double top = base + AuLegacyBd::DeckHeight;
+		AuPointArray cap, triangles;
+		double area = 0;
+		for(int i = 0; i < boundary.size(); ++i)
+			area += Cross(boundary.at(i), boundary.at((i + 1) % boundary.size()));
+		for(int i = 0; i < boundary.size(); ++i)
+		{
+			const QPointF& a = boundary.at(i);
+			const QPointF& b = boundary.at((i + 1) % boundary.size());
+			cap.append(AuPoint(a.x(), a.y(), top));
+			if(area > 0) out.Quad(-1, 0, false, Position(a, base), Position(b, base), Position(b, top), Position(a, top));
+			else out.Quad(-1, 0, false, Position(b, base), Position(a, base), Position(a, top), Position(b, top));
+		}
+		QVector<bool> edges;
+		cap.TriangulateBoundary(triangles, edges);
+		for(int i = 0; i + 2 < triangles.size(); i += 3)
+		{
+			const AuPoint& a = triangles.at(i);
+			const AuPoint& b = triangles.at(i + 1);
+			const AuPoint& c = triangles.at(i + 2);
+			const bool reverse = (b.x - a.x) * (c.y - a.y) < (b.y - a.y) * (c.x - a.x);
+			out.Triangle(-1, 0, false, Position(QPointF(a.x, a.y), top),
+				Position(QPointF(reverse ? c.x : b.x, reverse ? c.y : b.y), top),
+				Position(QPointF(reverse ? b.x : c.x, reverse ? b.y : c.y), top));
+		}
+	}
+	return out.mesh.batches.isEmpty() ? QVector<AuLegacyShip::Rendering::Vertex>()
+		: std::move(out.mesh.batches.first().vertices);
 }
 
 Mesh BuildEnclosure(const EnclosureOptions& options)

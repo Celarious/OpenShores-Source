@@ -200,6 +200,7 @@ vec3 computeLighting(LightSources light,
 
 uniform vec4							color;					// Color of the model.
 uniform vec3							glow;					// Glow color added to lit color.
+uniform vec4							distantBuildingLight;	// Scaled sun direction, positive ambient enables the low-detail pass.
 #ifndef PER_PIXEL_LIGHTING
 uniform LightSources					light;					// Light sources.
 #endif
@@ -228,6 +229,22 @@ void main()
 
 	// Calculate lighting using eye space position and normal.
 	vec4 eyeN = normalize(mv * vec4(normal, 1) - mv * vec4(0,0,0,1));	// Surface normal in eye space.
+	if(distantBuildingLight.w > 0.)
+	{
+		float shade = clamp(distantBuildingLight.w + max(dot(eyeN.xyz, distantBuildingLight.xyz), 0.), 0., 1.);
+		vec4 shadedColor = vec4(color.rgb * shade, 1.);
+#ifdef PER_PIXEL_LIGHTING
+		vertLitScale = shadedColor;
+#else
+		vertColor = shadedColor;
+#endif
+		// Reuse texture coordinates for an eight-foot facade grid in building-local space.
+		vec2 tangent = vec2(-normal.y, normal.x);
+		vertTexCoord = vec2(dot(position.xy, tangent), position.z) / 8.;
+		texTileIndex = abs(normal.z) < .25 ? 1. : 0.;
+		gl_Position = p * gl_Position;
+		return;
+	}
 #ifdef PER_PIXEL_LIGHTING
 	vertLitScale = vec4(1, 1, 1, 1) * color;
 	vertLitShininess = texCoordShine.z;

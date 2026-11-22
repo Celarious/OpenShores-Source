@@ -946,7 +946,17 @@ struct DaLegacyCity::Runtime
 		QImage texture;
 		bool buildingAtlas = false;
 	};
-	struct RenderData { QVector<PreparedDraw> draws; };
+	struct RenderData
+	{
+		QVector<PreparedDraw> draws;
+		AuModelTexFogVertexData distantVertices;
+		QVector4D distantColor;
+	};
+	struct DistantDraw
+	{
+		AuGLVAO vao;
+		QVector4D color;
+	};
 	struct Building
 	{
 		AuLegacyCity::Development state;
@@ -1070,6 +1080,7 @@ struct DaLegacyCity::Runtime
 	QVector<Building> buildings;
 	QHash<quint32, int> buildingIndex;
 	QVector<DrawBatch> drawBatches;
+	QHash<quint32, DistantDraw> distantDraws;
 	QHash<quint32, QSharedPointer<const RenderData>> drawnModels;
 	QHash<quint32, Upload> uploads;
 	QVector<FlagDraw> flagDraws;
@@ -1474,6 +1485,28 @@ struct DaLegacyCity::Runtime
 		}
 	}
 
+	static void PackRenderVertices(AuModelTexFogVertexData& packed, const QVector<AuLegacyShip::Rendering::Vertex>& vertices,
+		int first, int end, const QVector2D& inset, float shininess)
+	{
+		packed.normal.reserve((end - first) * 3);
+		packed.position.reserve((end - first) * 3);
+		packed.texCoordShine.reserve((end - first) * 3);
+		for(int i = first; i + 2 < end; i += 3)
+			// CPU collision uses CCW. The original renderer submits CW.
+			for(int corner : {0, 2, 1})
+			{
+				const auto& vertex = vertices.at(i + corner);
+				for(int axis = 0; axis < 3; ++axis)
+				{
+					packed.normal.append(vertex.normal[axis]);
+					packed.position.append(vertex.position[axis]);
+				}
+				packed.texCoordShine.append(inset.x() + vertex.uv.x() * (1 - 2 * inset.x()));
+				packed.texCoordShine.append(inset.y() + vertex.uv.y() * (1 - 2 * inset.y()));
+				packed.texCoordShine.append(shininess);
+			}
+	}
+
 	static QSharedPointer<const RenderData> PrepareRender(const Building& building,
 		QHash<quint16, QImage>& atlases, QHash<QString, QImage>& textures)
 	{
@@ -1518,25 +1551,28 @@ struct DaLegacyCity::Runtime
 			{
 				PreparedDraw chunk = prepared;
 				const int end = qMin(first + chunkVertices, batch.vertices.size());
-				chunk.vertices.normal.reserve((end - first) * 3);
-				chunk.vertices.position.reserve((end - first) * 3);
-				chunk.vertices.texCoordShine.reserve((end - first) * 3);
-				for(int i = first; i + 2 < end; i += 3)
-					// CPU collision uses CCW. The original renderer submits CW.
-					for(int corner : {0, 2, 1})
-					{
-						const auto& vertex = batch.vertices[i + corner];
-						for(int axis = 0; axis < 3; ++axis)
-						{
-							chunk.vertices.normal.append(vertex.normal[axis]);
-							chunk.vertices.position.append(vertex.position[axis]);
-						}
-						chunk.vertices.texCoordShine.append(inset.x() + vertex.uv.x() * (1 - 2 * inset.x()));
-						chunk.vertices.texCoordShine.append(inset.y() + vertex.uv.y() * (1 - 2 * inset.y()));
-						chunk.vertices.texCoordShine.append(batch.shininess);
-					}
+				PackRenderVertices(chunk.vertices, batch.vertices, first, end, inset, batch.shininess);
 				result->draws.append(std::move(chunk));
 			}
+		}
+		const auto distant = AuLegacyBd::Geometry::BuildDistantExterior(building.mesh);
+		if(!distant.isEmpty())
+		{
+			PackRenderVertices(result->distantVertices, distant, 0, distant.size(), QVector2D(), 0);
+			QColor color(155, 145, 133);
+			const auto tile = AuLegacyBd::Geometry::TextureTile(13);
+			const auto atlas = atlases.constFind(atlasMaterial);
+			if(atlas != atlases.cend() && atlas->rect().contains(tile))
+			{
+				int red = 0, green = 0, blue = 0;
+				for(int y : {1, 3, 5, 7}) for(int x : {1, 3, 5, 7})
+				{
+					const QRgb texel = atlas->pixel(tile.x() + x * tile.width() / 8, tile.y() + y * tile.height() / 8);
+					red += qRed(texel); green += qGreen(texel); blue += qBlue(texel);
+				}
+				color = QColor(red / 16, green / 16, blue / 16);
+			}
+			result->distantColor = QVector4D(color.redF(), color.greenF(), color.blueF(), 1);
 		}
 		return result;
 	}
@@ -1783,6 +1819,8 @@ struct DaLegacyCity::Runtime
 		if(ari.re) for(const auto& console : consoles) console->DeleteDeviceObjects(*ari.re);
 		consoles.clear();
 		for(auto& batch : drawBatches) if(batch.vao.VAO()) batch.vao.DeleteGL();
+		for(auto& distant : distantDraws) if(distant.vao.VAO()) distant.vao.DeleteGL();
+		distantDraws.clear();
 		for(auto& upload : uploads) for(auto& batch : upload.draws) if(batch.vao.VAO()) batch.vao.DeleteGL();
 		for(auto& flag : flagDraws) if(flag.vao.VAO()) flag.vao.DeleteGL();
 		flagDraws.clear();
@@ -1812,6 +1850,13 @@ struct DaLegacyCity::Runtime
 			}
 		for(auto it = drawnModels.begin(); it != drawnModels.end(); )
 			if(!wanted.contains(it.key())) it = drawnModels.erase(it); else ++it;
+		for(auto it = distantDraws.begin(); it != distantDraws.end(); )
+			if(!wanted.contains(it.key()))
+			{
+				it->vao.DeleteGL();
+				it = distantDraws.erase(it);
+			}
+			else ++it;
 
 		QElapsedTimer& budget = ari.mm.LegacyUploadBudget();
 		for(const auto& building : buildings)
@@ -1839,6 +1884,21 @@ struct DaLegacyCity::Runtime
 				}
 				draw.vao.CreateForModelTexFog(*ari.re, prepared.vertices, GL_STATIC_DRAW);
 				upload.draws.append(draw); ++upload.next;
+			}
+			const quint32 development = building.state.id;
+			if(!source->distantVertices.position.isEmpty() && budget.nsecsElapsed() >= 4000000) return;
+			const auto previousDistant = distantDraws.find(development);
+			if(previousDistant != distantDraws.end())
+			{
+				previousDistant->vao.DeleteGL();
+				distantDraws.erase(previousDistant);
+			}
+			DistantDraw distant;
+			distant.vao.CreateForModelTexFog(*ari.re, source->distantVertices, GL_STATIC_DRAW);
+			if(distant.vao.VAO())
+			{
+				distant.color = source->distantColor;
+				distantDraws.insert(development, distant);
 			}
 			for(int i = drawBatches.size() - 1; i >= 0; --i)
 				if(drawBatches[i].development == building.state.id)
@@ -6170,11 +6230,14 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		AuMatrix4x4 placement, model;
 		AuViewFrustum frustum, maskFrustum;
 		bool inRange = true, insideVisible = false, dark = false;
+		const Runtime::DistantDraw* distant = nullptr;
 	};
 	QHash<quint32, BuildingView> buildingViews;
 	buildingViews.reserve(m_Runtime->buildings.size());
 	const auto* catalogue = AuLegacyCityCatalogue::BuiltIn();
 	const double viewRange = g_Au.BuildingViewRangeFt();
+	const bool useDistant = !beforeTerrain && g_Au.LegacyBuildingLODTest();
+	bool hasDistant = false;
 	for(const auto& building : m_Runtime->buildings)
 	{
 		auto& view = buildingViews[building.state.id];
@@ -6186,7 +6249,21 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 		const double exteriorRange = viewRange + building.viewRadius;
 		// Roads have a separate terrain and fixture path in the original city renderer.
 		view.inRange = building.state.industryId == 2 || distanceSquared <= exteriorRange * exteriorRange;
-		if(!view.inRange) continue;
+		if(!view.inRange)
+		{
+			const double distantRange = exteriorRange + 800 * FeetPerMeter();
+			if(useDistant && distanceSquared <= distantRange * distantRange)
+			{
+				const auto it = m_Runtime->distantDraws.constFind(building.state.id);
+				if(it != m_Runtime->distantDraws.cend() && (!ari.re->FrustumCulling()
+					|| it->vao.IntersectsFrustum(AuViewFrustum(projection * view.model))))
+				{
+					view.distant = &it.value();
+					hasDistant = true;
+				}
+			}
+			continue;
+		}
 		// DistanceInsideVisible 0xeff00 and DaCity::RenderEnvironmentObject
 		// select the near shader from camera distance, even outside the building.
 		const double radius = catalogue ? qMax(0.0, TerrainLevelRadius(building.state.industryId,
@@ -6281,6 +6358,43 @@ void DaLegacyCity::RenderCity(const AuMatrix4x4& projection, AuAtomRenderInfo& a
 			ari.re->glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
 		}
 		if(draw.twoSided && cullingEnabled) ari.re->glEnable(GL_CULL_FACE);
+	}
+	if(hasDistant)
+	{
+		AuPoint distantSun(0, 0, 0);
+		const AuPoint cityCenter = worldModel.Project(Transform().Translation());
+		const AuPoint up = worldModel.ProjectVector(-world->GravityDir(Transform().Translation()));
+		if(!sunsBlocked)
+			for(int i = 0; i < MAX_SUNS; ++i)
+			{
+				const auto& sun = ari.re->Sun(i);
+				if(!sun.m_Enabled) continue;
+				AuPoint direction = AuPoint(sun.m_LocX, sun.m_LocY, sun.m_LocZ) - cityCenter;
+				if(direction.Dot(up) <= 0) continue;
+				direction.Unit();
+				distantSun += direction * .65;
+			}
+		const float ambient = qBound(.04f, (ambientR + ambientG + ambientB) / 3.f, 1.f);
+		const bool dark = IsDark(world->QuerySunlight(Transform().Translation()));
+		const int cityWindowLighting = dark ? (powered ? 1 : 2) : 0;
+		int windowLighting = -1;
+		shader.SetDistantBuildingLight(distantSun, ambient);
+		for(const auto& view : buildingViews)
+		{
+			if(!view.distant) continue;
+			int lighting = cityWindowLighting;
+			if(lighting == 2 && BuildingWindowEffect(view.building->state.industryId) != 1) lighting = 0;
+			if(lighting != windowLighting)
+			{
+				shader.SetDistantBuildingWindows(lighting);
+				windowLighting = lighting;
+			}
+			const auto& distant = *view.distant;
+			shader.SetModelView(view.model);
+			shader.SetColor(distant.color.x(), distant.color.y(), distant.color.z(), 1);
+			distant.vao.SelectGL(); distant.vao.DrawGL(); distant.vao.DeselectGL();
+		}
+		shader.SetDistantBuildingLight(AuPoint(0, 0, 0), 0);
 	}
 	shader.InvalidateSuns();
 	shader.Deselect();

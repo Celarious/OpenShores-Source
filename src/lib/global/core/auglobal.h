@@ -427,6 +427,7 @@ class AUGLOBAL_DLL AuGlobal
 private:
 	std::atomic<AuGameGeneration> m_GameGeneration { AuGameGeneration::Modern };
 	std::atomic<bool> m_MailReports { false };
+	std::atomic<bool> m_LegacyBuildingLODTest { false };
 	mutable QReadWriteLock m_GenerationIdentityLock;
 	AuGameGenerationIdentity m_GenerationIdentity;
 
@@ -1882,6 +1883,9 @@ public:
 	{
 		return m_FrustumCulling;
 	}
+
+	bool LegacyBuildingLODTest() const { return m_LegacyBuildingLODTest.load(std::memory_order_relaxed); }
+	void SetLegacyBuildingLODTest(bool on) { m_LegacyBuildingLODTest.store(on, std::memory_order_relaxed); }
 
 	inline int SceneMsaaSamples() const
 	{

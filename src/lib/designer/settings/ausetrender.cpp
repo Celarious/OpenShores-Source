@@ -478,6 +478,11 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 				"</html>"));
 	connect(buildingViewRangeSlider, SIGNAL(valueChanged(int)), SLOT(SetBuildingViewRange(int)));
 
+	QCheckBox* legacyBuildingLOD = new QCheckBox(tr("Enable distant building LODs"));
+	legacyBuildingLOD->setChecked(g_Au.LegacyBuildingLODTest());
+	legacyBuildingLOD->setToolTip(tr("Draw LOD'd old buildings beyond the Building View Range. Applies immediately."));
+	connect(legacyBuildingLOD, &QCheckBox::toggled, this, [](bool enabled) { g_Au.SetLegacyBuildingLODTest(enabled); });
+
 	if(!g_Au.IsSceneSolo())
 	{
 		m_RatingCombo = new QComboBox(this);
@@ -965,6 +970,7 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	cklay->addWidget(crosshairSmoothing);
 	cklay->addWidget(classicLoadingAnimation);
 	cklay->addWidget(oldSidebar);
+	cklay->addWidget(legacyBuildingLOD);
 
 	QVBoxLayout* infolay = new QVBoxLayout;
 	if(queryVers)

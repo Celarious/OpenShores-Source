@@ -96,6 +96,7 @@ struct Mesh
 // CPU triangles use CCW order for shared collision; scene upload reverses their
 // vertex order to the original 2016 CW rendering convention, preserving normals.
 AUDATA_DLL Mesh Build(const Design& design, const Options& options);
+AUDATA_DLL QVector<AuLegacyShip::Rendering::Vertex> BuildDistantExterior(const Mesh& mesh);
 struct RoofRidge
 {
 	QPointF first, last;
