@@ -29,6 +29,7 @@
 #include <QVBoxLayout>
 #include <QFrame>
 #include <QTabWidget>
+#include <QGroupBox>
 
 AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 {
@@ -907,46 +908,6 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 		sliderlay->addWidget(buildingViewRangeSlider, row,1);
 		sliderlay->addWidget(m_BuildingViewRange, row,2);
 		row++;
-		sliderlay->addWidget(shadowDistanceTitle, row,0);
-		sliderlay->addWidget(shadowDistanceSlider, row,1);
-		sliderlay->addWidget(m_ShadowDistanceLabel, row,2);
-		row++;
-		sliderlay->addWidget(shadowCreatureTitle, row,0);
-		sliderlay->addWidget(shadowCreatureSlider, row,1);
-		sliderlay->addWidget(m_ShadowCreatureDistanceLabel, row,2);
-		row++;
-		sliderlay->addWidget(shadowPlantTitle, row,0);
-		sliderlay->addWidget(shadowPlantSlider, row,1);
-		sliderlay->addWidget(m_ShadowPlantDistanceLabel, row,2);
-		row++;
-		sliderlay->addWidget(shadowGrassTitle, row,0);
-		sliderlay->addWidget(shadowGrassSlider, row,1);
-		sliderlay->addWidget(m_ShadowGrassDistanceLabel, row,2);
-		row++;
-		sliderlay->addWidget(shadowLightsTitle, row,0);
-		sliderlay->addWidget(shadowLightsSlider, row,1);
-		sliderlay->addWidget(m_ShadowLightsLabel, row,2);
-		row++;
-		sliderlay->addWidget(shadowBiasTitle, row,0);
-		sliderlay->addWidget(shadowBiasSlider, row,1);
-		sliderlay->addWidget(m_ShadowBiasLabel, row,2);
-		row++;
-		sliderlay->addWidget(skinGlossTitle, row,0);
-		sliderlay->addWidget(glossSliders[0], row,1);
-		sliderlay->addWidget(m_SkinGlossLabel, row,2);
-		row++;
-		sliderlay->addWidget(clothGlossTitle, row,0);
-		sliderlay->addWidget(glossSliders[1], row,1);
-		sliderlay->addWidget(m_ClothGlossLabel, row,2);
-		row++;
-		sliderlay->addWidget(hairGlossTitle, row,0);
-		sliderlay->addWidget(glossSliders[2], row,1);
-		sliderlay->addWidget(m_HairGlossLabel, row,2);
-		row++;
-		sliderlay->addWidget(fovlabel, row,0);
-		sliderlay->addWidget(m_FoVSlider, row,1);
-		sliderlay->addWidget(m_FoVLabel, row,2);
-		row++;
 
 		QHBoxLayout* deflay = new QHBoxLayout;
 		deflay->addWidget(lowMemoryDefault);
@@ -954,6 +915,51 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 		deflay->addWidget(maxGraphicsDefault);
 
 		sliderlay->addLayout(deflay, row,1, 1,2);
+	}
+
+	QGridLayout* sliderlayPixelShaders = new QGridLayout;
+	{
+		int row=0;
+		sliderlayPixelShaders->addWidget(shadowDistanceTitle, row,0);
+		sliderlayPixelShaders->addWidget(shadowDistanceSlider, row,1);
+		sliderlayPixelShaders->addWidget(m_ShadowDistanceLabel, row,2);
+		row++;
+		sliderlayPixelShaders->addWidget(shadowCreatureTitle, row,0);
+		sliderlayPixelShaders->addWidget(shadowCreatureSlider, row,1);
+		sliderlayPixelShaders->addWidget(m_ShadowCreatureDistanceLabel, row,2);
+		row++;
+		sliderlayPixelShaders->addWidget(shadowPlantTitle, row,0);
+		sliderlayPixelShaders->addWidget(shadowPlantSlider, row,1);
+		sliderlayPixelShaders->addWidget(m_ShadowPlantDistanceLabel, row,2);
+		row++;
+		sliderlayPixelShaders->addWidget(shadowGrassTitle, row,0);
+		sliderlayPixelShaders->addWidget(shadowGrassSlider, row,1);
+		sliderlayPixelShaders->addWidget(m_ShadowGrassDistanceLabel, row,2);
+		row++;
+		sliderlayPixelShaders->addWidget(shadowLightsTitle, row,0);
+		sliderlayPixelShaders->addWidget(shadowLightsSlider, row,1);
+		sliderlayPixelShaders->addWidget(m_ShadowLightsLabel, row,2);
+		row++;
+		sliderlayPixelShaders->addWidget(shadowBiasTitle, row,0);
+		sliderlayPixelShaders->addWidget(shadowBiasSlider, row,1);
+		sliderlayPixelShaders->addWidget(m_ShadowBiasLabel, row,2);
+		row++;
+		sliderlayPixelShaders->addWidget(skinGlossTitle, row,0);
+		sliderlayPixelShaders->addWidget(glossSliders[0], row,1);
+		sliderlayPixelShaders->addWidget(m_SkinGlossLabel, row,2);
+		row++;
+		sliderlayPixelShaders->addWidget(clothGlossTitle, row,0);
+		sliderlayPixelShaders->addWidget(glossSliders[1], row,1);
+		sliderlayPixelShaders->addWidget(m_ClothGlossLabel, row,2);
+		row++;
+		sliderlayPixelShaders->addWidget(hairGlossTitle, row,0);
+		sliderlayPixelShaders->addWidget(glossSliders[2], row,1);
+		sliderlayPixelShaders->addWidget(m_HairGlossLabel, row,2);
+		row++;
+		sliderlayPixelShaders->addWidget(fovlabel, row,0);
+		sliderlayPixelShaders->addWidget(m_FoVSlider, row,1);
+		sliderlayPixelShaders->addWidget(m_FoVLabel, row,2);
+		row++;
 	}
 
 	QVBoxLayout* cklay = new QVBoxLayout;
@@ -988,17 +994,23 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 	infolay->addLayout(shadowDebugLay);
 	infolay->addStretch();
 
-	QFrame* sliderFrame = new QFrame(this);
-	sliderFrame->setObjectName("sceneSliderFrame");
-	/* sliderFrame->setStyleSheet(
-		"QFrame#sceneSliderFrame {"
+	QGroupBox* sliderBox = new QGroupBox(tr("General graphics"), this);
+	sliderBox->setObjectName("sceneSliderBox");
+	sliderBox->setStyleSheet(
+		"QGroupBox#sceneSliderBox {"
 		"  border: 1px solid red;"
 		"}"
-	); */
+	);
+
+	QGroupBox* pixelShaderBox = new QGroupBox(tr("Pixel shader settings"), this);
+	pixelShaderBox->setObjectName("sceneSliderBox");
+	pixelShaderBox->setStyleSheet(sliderBox->styleSheet());
+	pixelShaderBox->setLayout(sliderlayPixelShaders);
 
 	int sliderPadding = 4; // Set padding value here in px
 	sliderlay->setContentsMargins(sliderPadding, sliderPadding, sliderPadding, sliderPadding);
-	sliderFrame->setLayout(sliderlay);
+	sliderlayPixelShaders->setContentsMargins(sliderPadding, sliderPadding, sliderPadding, sliderPadding);
+	sliderBox->setLayout(sliderlay);
 
 	QTabWidget* sceneTabs = new QTabWidget(this);
 	sceneTabs->setStyleSheet(
@@ -1015,7 +1027,8 @@ AuSetRender::AuSetRender(bool glContextOk, QWidget *parent) : QWidget(parent)
 
 	QWidget* graphicsPage = new QWidget;
 	QVBoxLayout* graphicsLayout = new QVBoxLayout(graphicsPage);
-	graphicsLayout->addWidget(sliderFrame);
+	graphicsLayout->addWidget(sliderBox);
+	graphicsLayout->addWidget(pixelShaderBox);
 	graphicsLayout->addStretch();
 	sceneTabs->addTab(graphicsPage, tr("Graphics"));
 
