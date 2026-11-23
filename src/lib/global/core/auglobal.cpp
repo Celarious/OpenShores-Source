@@ -124,6 +124,7 @@ void AuGlobal::Init(MODE mode, const QString& appName, const QString& company, D
 	else if(m_BodyStatSize > 200)
 		m_BodyStatSize = 200;
 
+	m_LegacyBuildingLODTest.store(m_Settings.readBoolEntry("/Settings/LegacyBuildingLOD", true), std::memory_order_relaxed);
 	m_BuildingViewRange = m_Settings.readNumEntry("/Settings/BuildingViewRange", 12000);
 	if(m_BuildingViewRange < 200)
 		m_BuildingViewRange = 200;
@@ -2510,6 +2511,12 @@ void AuGlobal::SetBuildingViewRange(int viewRange)
 	m_BuildingViewRangeFt2 = (quint64)m_BuildingViewRangeFt * (quint64)m_BuildingViewRangeFt;
 
 	m_Settings.writeEntry("/Settings/BuildingViewRange", m_BuildingViewRange);
+}
+
+void AuGlobal::SetLegacyBuildingLODTest(bool on)
+{
+	m_LegacyBuildingLODTest.store(on, std::memory_order_relaxed);
+	m_Settings.writeEntry("/Settings/LegacyBuildingLOD", on);
 }
 
 void AuGlobal::SetTreeViewRange(int viewRange)

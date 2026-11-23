@@ -1885,7 +1885,7 @@ public:
 	}
 
 	bool LegacyBuildingLODTest() const { return m_LegacyBuildingLODTest.load(std::memory_order_relaxed); }
-	void SetLegacyBuildingLODTest(bool on) { m_LegacyBuildingLODTest.store(on, std::memory_order_relaxed); }
+	void SetLegacyBuildingLODTest(bool on);
 
 	inline int SceneMsaaSamples() const
 	{
