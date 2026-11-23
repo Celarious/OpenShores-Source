@@ -141,8 +141,6 @@ private:
 	QComboBox*							m_RoadType;
 	QComboBox*							m_RoadWidth;
 	QComboBox*							m_RoundAngle;
-	QCheckBox*							m_ckGrid;
-	QComboBox*							m_GridSize;
 	AuSkyLineWidget*					m_SkyLine;
 	AuIconButton*						m_Superstructure;
 	QWidget*							m_SuperstructurePage;
@@ -180,7 +178,6 @@ protected:
 protected slots:
 	void AdamantinePressed();
 	void BlueprintChanged(int index);
-	void ViewTakesKeys();
 	void BlueprintExchangePressed();
 	void BlueprintFilterPressed();
 	void ClearCratersPressed();
@@ -203,8 +200,6 @@ protected slots:
 	void RoadTypeChanged(const QString& text);
 	void RoadWidthChanged(const QString& text);
 	void RoundingAngleChanged(const QString& text);
-	void GridToggled(int state);
-	void GridSizeChanged(const QString& text);
 	void SelectManufacturingProcess(quint16 mpid);
 	void StonePressed();
 	void StopPressed();

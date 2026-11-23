@@ -16,6 +16,7 @@ namespace
 
 const double CosStep = 0.92;
 const double PoleRad = 80. * PI / 180.;
+const int LastBand = (int)ceil(log(cos(PoleRad)) / log(CosStep));
 const double Lift = 1.0;
 const double DrawReach = 150. * 3.2808399;
 const int MinCells = 4, MaxCells = 30;
@@ -50,12 +51,31 @@ struct Grid
 
 	bool Covers(double lat) const
 	{
-		return !globe || fabs(lat) <= PoleRad;
+		return fabs(lat) <= (globe ? PoleRad : PI / 2);
 	}
 
 	int Row(double lat) const
 	{
-		return (int)lround(lat / rowRad);
+		const int limit = (int)floor((globe ? PoleRad : PI / 2) / rowRad);
+		return qBound(-limit, (int)lround(lat / rowRad), limit);
+	}
+
+	int Col(double lon, double colRad) const
+	{
+		const int limit = (int)floor(PI / colRad);
+		return qBound(-limit, (int)lround(lon / colRad), limit);
+	}
+
+	double Longitude(int col, double colRad) const
+	{
+		const double lon = col * colRad;
+		if(!globe || fabs(lon) <= PI) return lon;
+		// Across the date line, continue at the actual column on the other side.
+		// Its separation from the last column need not be a full grid cell.
+		const double limit = floor(PI / colRad);
+		const double columns = 2 * limit + 1;
+		const double turns = floor((col + limit) / columns);
+		return (col - turns * columns) * colRad + turns * (2 * PI);
 	}
 
 	int BandStart(int k) const
@@ -72,7 +92,7 @@ struct Grid
 		int k = qMax(0, (int)floor(log(cos(lat)) / log(CosStep)));
 		while(k > 0 && a < BandStart(k))
 			k--;
-		while(a >= BandStart(k + 1))
+		while(k < LastBand && a >= BandStart(k + 1))
 			k++;
 		return row >= 0 ? k : -k;
 	}
@@ -120,7 +140,7 @@ bool Snap(const DaWorldLL* world, AuPoint& loc)
 	const double colRad = g.ColRad(g.Band(row));
 	if(!(colRad > 0))
 		return false;
-	const double lon = lround(ll.Longitude() / colRad) * colRad;
+	const double lon = g.Col(ll.Longitude(), colRad) * colRad;
 	loc = world->GetTerrainLocation(AuGlobeLL(lon, row * g.rowRad));
 	return true;
 }
@@ -128,7 +148,7 @@ bool Snap(const DaWorldLL* world, AuPoint& loc)
 double NorthRotation(const DaWorldLL* world, const AuPoint& loc)
 {
 	AuGlobeLL ll;
-	if(!world || !world->LLOfLoc(ll, loc))
+	if(!world || !world->LLOfLoc(ll, loc) || (world->LLShape() == LL_Globe && fabs(ll.Latitude()) > PoleRad))
 		return 0;
 	const double e = 1e-6;
 	const AuPoint north = world->LocOfLL(AuGlobeLL(ll.Longitude(), ll.Latitude() + e))
@@ -153,7 +173,7 @@ void Render(AuGLEffects& re, const AuMatrix4x4& projectionModel, const DaWorldLL
 	const double colRad0 = g.ColRad(g.Band(row0));
 	if(!(colRad0 > 0))
 		return;
-	const int col0 = (int)lround(ll.Longitude() / colRad0);
+	const int col0 = g.Col(ll.Longitude(), colRad0);
 
 	if(s_Drawn.worldId != world->Id() || s_Drawn.row != row0 || s_Drawn.col != col0 || s_Drawn.spacing != g.spacing
 			|| !s_Drawn.made.isValid() || s_Drawn.made.elapsed() > 2000)
@@ -204,14 +224,20 @@ void Render(AuGLEffects& re, const AuMatrix4x4& projectionModel, const DaWorldLL
 			const double colRad = band == g.Band(row0) ? colRad0 : g.ColRad(band);
 			if(!(colRad > 0))
 				continue;
-			const int colMid = (int)lround(lon0 / colRad);
-			const bool nextSameBand = dr < cells && g.Band(row + 1) == band && g.Covers((row + 1) * g.rowRad);
+			const int colMid = g.Col(lon0, colRad);
+			const bool nextSameBand = dr < cells && g.Covers((row + 1) * g.rowRad) && g.Band(row + 1) == band;
 			for(int dc = -cells; dc <= cells; dc++)
 			{
-				const double lon = (colMid + dc) * colRad;
+				const int col = colMid + dc;
+				const double lon = g.Longitude(col, colRad);
+				if(!g.globe && fabs(lon) > PI) continue;
 				const double dCol = (lon - lon0) / colRad;
 				if(dc < cells)
-					line(lon, lat, lon + colRad, lat, dr, dCol, dr, dCol + 1);
+				{
+					const double nextLon = g.Longitude(col + 1, colRad);
+					if(g.globe || nextLon <= PI)
+						line(lon, lat, nextLon, lat, dr, dCol, dr, (nextLon - lon0) / colRad);
+				}
 
 				if(nextSameBand)
 					line(lon, lat, lon, lat + g.rowRad, dr, dCol, dr + 1, dCol);

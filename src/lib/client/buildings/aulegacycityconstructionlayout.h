@@ -190,8 +190,9 @@ constexpr int CategoryGapHeight = 4;
 constexpr int ClearRow = 10;
 constexpr int StopRow = 11;
 constexpr int StackRowSpan = 12;
-constexpr int ConstraintAngleRow = 12;
-constexpr int DetailRow = 13;
+constexpr int PlacementToggleRow = StopRow + 1;
+constexpr int PlacementOptionsRow = PlacementToggleRow + 1;
+constexpr int DetailRow = PlacementOptionsRow + 1;
 constexpr int DefaultPage = 6;
 
 // The original roads page embeds these controls among its image buttons.

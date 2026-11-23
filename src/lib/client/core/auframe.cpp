@@ -6,6 +6,7 @@
 
 #include "auframe.h"
 //
+#include "auapp.h"
 #include "aublueprintratingdlg.h"
 #include "audialog.h"
 #include "auglobal.h"
@@ -34,6 +35,14 @@ AuFrame::AuFrame(QWidget *parent) : QMainWindow(parent)
 
 AuFrame::~AuFrame()
 {
+}
+
+void AuFrame::FocusCurrentView()
+{
+	AuFrame* frame = auApp->Frame();
+	if(frame)
+		if(QWidget* view = dynamic_cast<QWidget*>(frame->View()))
+			view->setFocus(Qt::OtherFocusReason);
 }
 
 int AuFrame::ExecDialog(AuDialog& dlg)

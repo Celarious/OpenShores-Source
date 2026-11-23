@@ -8,6 +8,7 @@
 #include "aubldconstruct.h"
 #include "aublddesignstudio.h"
 #include "aubldhangar.h"
+#include "aubuildgridcontrols.h"
 #include "deconstructionprocess.h"
 #include "audialog.h"
 #include "auframe.h"
@@ -209,12 +210,41 @@ AuLegacyCityConstruction::AuLegacyCityConstruction(QWidget* parent) : QWidget(pa
 	auto* roads = static_cast<QGridLayout*>(m_Pages->widget(8)->layout());
 	roads->addWidget(m_Grading, GradingRow, GradingColumn, 1, GradingColumnSpan);
 	roads->addWidget(m_RoadWidth, RoadWidthRow, RoadWidthColumn, 1, RoadWidthColumnSpan);
-	m_Angle = new QComboBox(this); m_Angle->setEditable(true);
+	auto* options = new QWidget(this);
+	auto* placementControls = new QVBoxLayout(options);
+	placementControls->setContentsMargins(0, 0, 0, 0);
+	placementControls->setSpacing(Spacing);
+	auto* angleRow = new QHBoxLayout;
+	auto* angleLabel = new QLabel(tr("Snap angle"), options);
+	m_Angle = new QComboBox(options); m_Angle->setEditable(true);
+	angleLabel->setBuddy(m_Angle);
 	m_Angle->addItems(QStringList() << "90" << "60" << "45" << "30" << "22.5" << "11.25" << "10" << "5" << "1");
 	m_Angle->setValidator(new QDoubleValidator(0, 90, 6, m_Angle));
 	m_Angle->setEditText(QString::number(g_Au.Settings().readNumEntry("Legacy2016/RoundingAngle", 90.0)));
-	m_Angle->setToolTip(tr("<html><b>Constraint Angle</b><br>The number of degrees for constraining the angle of buildings, roads and landscape areas.</html>"));
-	layout->addWidget(m_Angle, ConstraintAngleRow, 0);
+	m_Angle->setToolTip(tr("<html><b>Constraint (Snap) Angle</b><br>The number of degrees for constraining the angle of buildings, roads and landscape areas.</html>"));
+	angleRow->addWidget(angleLabel);
+	angleRow->addWidget(m_Angle);
+	angleRow->addStretch();
+	placementControls->addLayout(angleRow);
+	placementControls->addWidget(new AuBuildGridControls(tr("Snap building centers, road and landscape endpoints, "
+		"and biodome centers and radius points to the world grid. The grid covers latitudes up to 80° on a globe."), options));
+	layout->addWidget(options, PlacementOptionsRow, 0, 1, 2);
+
+	QIcon optionsIcon(":data/Plus.png");
+	optionsIcon.addFile(":data/Minus.png", QSize(), QIcon::Normal, QIcon::On);
+	auto* toggle = new AuIconButton(optionsIcon, this);
+	toggle->setFixedSize(CategoryButtonSize, CategoryButtonSize);
+	toggle->setCheckable(true);
+	toggle->setToolTip(tr("Grid and angle options"));
+	toggle->setAccessibleName(toggle->toolTip());
+	layout->addWidget(toggle, PlacementToggleRow, CategoryColumn);
+	const QString expandedKey = QStringLiteral("Legacy2016/PlacementOptionsExpanded");
+	toggle->setChecked(g_Au.Settings().readBoolEntry(expandedKey, false));
+	options->setVisible(toggle->isChecked());
+	connect(toggle, &QToolButton::toggled, options, [options, expandedKey](bool expanded) {
+		options->setVisible(expanded);
+		g_Au.Settings().writeEntry(expandedKey, expanded);
+	});
 
 	// AuTabBuild's original seven-column information panel, below the pages.
 	auto* details = new QGridLayout; details->setMargin(0); details->setSpacing(Spacing);

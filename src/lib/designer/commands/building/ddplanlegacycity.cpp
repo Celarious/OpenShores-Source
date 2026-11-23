@@ -1,4 +1,5 @@
 #include "ddplanlegacycity.h"
+#include "ddbuildgrid.h"
 #include "ddroadconstruction.h"
 #include "auatomrenderinfo.h"
 #include "audesignerview.h"
@@ -11,6 +12,7 @@
 #include "aulegacycityproduction.h"
 #include "aulegacycityconstruction.h"
 #include "aulegacycitystate.h"
+#include "auplane.h"
 #include "auterraininfo.h"
 #include "daperson.h"
 #include "dalegacycity.h"
@@ -174,13 +176,63 @@ bool FindClearTarget(const DaWorldLL& world, const AuPoint& point, ClearTarget& 
 	return false;
 }
 
-// Use live key state for both preview and clicks, including after a missed release.
-bool RoadSwapMode(const AuLegacyCityProtocol::Request& request,
-	Qt::KeyboardModifiers modifiers = QGuiApplication::queryKeyboardModifiers())
+bool RoadSwapMode(const AuLegacyCityProtocol::Request& request, Qt::KeyboardModifiers modifiers)
 {
 	return request.action == AuLegacyCityProtocol::Build && request.industryId == 2
 		&& (request.processId == 2 || request.processId == 3 || request.processId == 4 || request.processId == 7)
 		&& (modifiers & Qt::ControlModifier);
+}
+
+bool ProjectToSitePlane(const DaWorldLL& world, const AuPlane& plane, AuPoint& point)
+{
+	return plane.LineIntersection(AuLine(point, point + world.GravityDir(point)), point);
+}
+
+double SiteAltitudeMSL(const DaWorldLL& world, double surfaceAltitude)
+{
+	return world.Hydrographics() && surfaceAltitude > -32 && surfaceAltitude < 1 ? 1 : surfaceAltitude;
+}
+
+bool SetTwoPointPlacement(const DaWorldLL& world, AuPoint start, AuPoint end, bool snapped, AuLegacyCityProtocol::Request& request)
+{
+	const bool road = request.industryId == 2;
+	if(snapped)
+	{
+		// Find the geographic midpoint independently of the two terrain heights.
+		world.ElevateLocMSL(start, 0);
+		world.ElevateLocMSL(end, 0);
+	}
+	else if(!road)
+	{
+		AuGlobeLLF radiusLocation;
+		if(!world.LLOfLoc(radiusLocation, end)) return false;
+		end = world.LocOfLL(radiusLocation, world.AltitudeMSL(start));
+	}
+
+	AuGlobeLLF location;
+	if(!world.LLOfLoc(location, road ? (start + end) / 2 : start)) return false;
+	double altitude = world.SurfaceAltitudeMSL(location);
+	if(snapped) altitude = SiteAltitudeMSL(world, altitude);
+	const AuPoint center = world.LocOfLL(location, altitude);
+	if(snapped)
+	{
+		// The server lays out road endpoints and dome radii in the site's tangent plane.
+		// A 3-D slope length here would extend the construction past the selected grid point.
+		const AuPlane plane(center, world.GravityDir(center));
+		if(!ProjectToSitePlane(world, plane, start) || !ProjectToSitePlane(world, plane, end)) return false;
+	}
+	AuMatrix4x4 basis;
+	world.BuildingConstructionTransform(center, 0, nullptr, AuPoint(), basis);
+	const AuPoint delta = basis.Inverse().ProjectVector(end - start);
+	request.headingDegrees = float(std::atan2(-delta.x, delta.y) * RAD2DEG);
+	const float lengthMeters = float((end - start).Length() / FeetPerMeter());
+	if(road) request.roadLengthMeters = lengthMeters;
+	else request.biodomeRadiusMeters = lengthMeters;
+	request.worldId = world.Id().GetID();
+	request.latitudeRadians = location.Latitude();
+	request.longitudeRadians = location.Longitude();
+	request.explicitLocation = true;
+	return true;
 }
 
 void ClearOutline(const DaWorldLL& world, const ClearTarget& hit,
@@ -325,7 +377,8 @@ void DdPlanLegacyCity::UpdateSelection(const AuLegacyCityProtocol::Request& requ
 
 void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, const QPoint& pixel)
 {
-	const bool roadSwap = RoadSwapMode(m_Request);
+	const Qt::KeyboardModifiers modifiers = QGuiApplication::queryKeyboardModifiers();
+	const bool roadSwap = RoadSwapMode(m_Request, modifiers);
 	if(person && m_Request.action == AuLegacyCityProtocol::Build && m_Request.industryId != 2 && m_Request.industryId != 129)
 	{
 		AuPoint point;
@@ -338,37 +391,23 @@ void DdPlanLegacyCity::SetCursor(const AuMatrix4x4& camera, DaPerson* person, co
 			m_ConflictWorld = 0; m_ConflictingPerimeters.clear();
 		}
 	}
-	if(person && m_Request.action == AuLegacyCityProtocol::Build && m_Request.industryId == 2)
+	if(person && m_Request.action == AuLegacyCityProtocol::Build
+		&& (m_Request.industryId == 2 || m_Request.industryId == 129))
 	{
 		m_SiteStatus = 0; m_SiteMessage.clear();
 		m_ConflictWorld = 0; m_ConflictingPerimeters.clear();
 		AuPoint point;
-		if(const auto* world = FindPlacementLocation(person, pixel, point))
+		AuLegacyCityProtocol::Request request = m_Request;
+		if(const auto* world = FindPlacementLocation(person, pixel, point, modifiers, request))
 		{
-			if(!roadSwap && m_HasStart && m_StartWorld == world->Id().GetID())
-			{
-				AuLegacyCityProtocol::Request request;
-				m_SiteStatus = PrepareRoadRequest(*world, person->EmpireId(), point, QGuiApplication::keyboardModifiers() & Qt::ShiftModifier,
-					request, m_SiteMessage);
-			}
-		}
-		else m_SiteStatus = 3;
-		if(m_SiteStatus) PlacementProblem(m_SiteStatus, m_SiteMessage);
-	}
-	if(person && m_Request.action == AuLegacyCityProtocol::Build
-		&& (m_Request.industryId == 2 || m_Request.industryId == 129))
-	{
-		if(m_Request.industryId == 129) { m_SiteStatus = 0; m_SiteMessage.clear(); }
-		AuPoint point;
-		if(const auto* world = FindPlacementLocation(person, pixel, point))
-		{
-			if(m_Request.industryId == 2 && m_HasStart) ConstrainRoad(*world, point, QGuiApplication::keyboardModifiers() & Qt::ShiftModifier);
+			if(request.industryId == 2 && request.explicitLocation)
+				m_SiteStatus = CheckRoadRequest(*world, person->EmpireId(), request, m_SiteMessage);
 			AuGlobeLLF location;
 			if(world->LLOfLoc(location, point) && DaLegacyCity::ZoneConstructionBlocked(*world, location, person->EmpireId()))
-			{
-				m_SiteStatus = 19; PlacementProblem(m_SiteStatus, m_SiteMessage);
-			}
+				m_SiteStatus = 19;
 		}
+		else if(m_Request.industryId == 2) m_SiteStatus = 3;
+		if(m_SiteStatus) PlacementProblem(m_SiteStatus, m_SiteMessage);
 	}
 	if(person && g_Au.IsLegacyGeneration() && m_Request.action == AuLegacyCityProtocol::Build
 		&& m_SiteStatus)
@@ -429,7 +468,8 @@ void DdPlanLegacyCity::ChangeRotation(int direction, bool fine)
 		m_Request.roadSlab = !m_Request.roadSlab;
 		if(m_Interface) m_Interface->SetCursorRoadSlab(m_Request.roadSlab); return;
 	}
-	double degrees = m_Request.headingDegrees + direction * (fine ? 1 : (m_Angle > 0 ? m_Angle : 45));
+	const double step = BuildGrid::Enabled() ? 90 : (m_Angle > 0 ? m_Angle : 45);
+	double degrees = m_Request.headingDegrees + direction * (fine ? 1 : step);
 	while(degrees > 180) degrees -= 360;
 	while(degrees < -180) degrees += 360;
 	m_Request.headingDegrees = float(degrees);
@@ -480,7 +520,7 @@ bool DdPlanLegacyCity::AlignToObstruction()
 	return true;
 }
 
-void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, const DaPerson& person)
+void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, AuPoint& point, const DaPerson& person)
 {
 	m_ConflictWorld = world.Id().GetID(); m_ConflictingPerimeters.clear();
 	m_AlignmentAvailable = false;
@@ -492,22 +532,28 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 	AuLegacyCity::Development site;
 	site.industryId = m_Request.industryId; site.materialId = m_Request.material;
 	site.designId = m_Request.designId; site.authoredDesign = m_Request.previewDesign;
+	ClearTarget hit;
+	const auto extensionAtPoint = [&]() {
+		return site.industryId != 1 && FindClearTarget(world, point, hit)
+			&& !hit.development.demolished && hit.development.industryId == site.industryId;
+	};
+	// Keep a directly targeted extension selectable even on a coarse grid.
+	bool extension = extensionAtPoint();
+	const bool snapped = !extension && BuildGrid::Enabled() && BuildGrid::Snap(&world, point);
+	if(snapped) extension = extensionAtPoint();
 	if(!world.LLOfLoc(site.location, point)) { m_SiteStatus = 3; PlacementProblem(m_SiteStatus, m_SiteMessage); return; }
 	site.altitudeMSL = world.SurfaceAltitudeMSL(site.location);
 	const AuPoint clickedSurface = world.LocOfLL(site.location, site.altitudeMSL);
-	if(world.Hydrographics() && site.altitudeMSL > -32 && site.altitudeMSL < 1) site.altitudeMSL = 1;
-	site.facingRadians = m_Request.headingDegrees * DEG2RAD
-		- (m_HeadingRelativeToNorth ? world.BuildingConstructionNorthAngle(point, nullptr) : 0);
+	site.altitudeMSL = SiteAltitudeMSL(world, site.altitudeMSL);
+	site.facingRadians = m_Request.headingDegrees * DEG2RAD;
+	if(m_HeadingRelativeToNorth)
+		site.facingRadians += snapped ? BuildGrid::NorthRotation(&world, point) : -world.BuildingConstructionNorthAngle(point, nullptr);
 	const int previousExistingLevels = m_ExistingLevels;
 	m_ExistingLevels = 0;
 	m_SiteBlocked = false;
-	quint32 extensionDevelopment = 0;
-	ClearTarget hit;
-	if(FindClearTarget(world, point, hit) && !hit.development.demolished
-		&& hit.development.industryId == site.industryId && site.industryId != 1)
+	if(extension)
 	{
 		site = hit.development; m_ExistingLevels = site.completedLevels;
-		extensionDevelopment = site.id;
 		m_SiteBlocked = !site.constructed || !site.components.isEmpty();
 		m_AlignmentAvailable = true;
 		m_AlignmentFacing = AlignmentFacing(world, point, site, hit.placement);
@@ -521,11 +567,11 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 	world.BuildingConstructionTransform(center, site.facingRadians, nullptr, AuPoint(), placement);
 	unsigned int rocks = 0, shrubs = 0, trees = 0; float water = 0;
 	const double radius = recipe->buildRadius * FeetPerMeter();
-	bool adjacent = extensionDevelopment || site.industryId == 1 || recipe->terrain == 15 || recipe->terrain == 16;
+	bool adjacent = extension || site.industryId == 1 || recipe->terrain == 15 || recipe->terrain == 16;
 	// Extensions keep the existing footprint; only its current construction
 	// and level limits need checking, as in the server's ExtendConstruction.
 	DaAtomList cities;
-	if(!extensionDevelopment) world.ListNormalSubatoms(cities);
+	if(!extension) world.ListNormalSubatoms(cities);
 	for(const auto* atom : cities)
 		if(const auto* city = dynamic_cast<const DaLegacyCity*>(atom))
 		{
@@ -603,7 +649,7 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 	m_MaximumLevels = maximum; m_SiteMaterial = site.materialId;
 	m_SiteDesignId = site.designId; m_SiteBlueprint = site.authoredDesign;
 	m_SiteCenter = center; m_SiteFacing = site.facingRadians;
-	m_SiteStatus = DaLegacyCity::ZoneConstructionBlocked(world, site.location, person.EmpireId()) ? 19 : m_SiteBlocked ? 10 : !extensionDevelopment ? TerrainStatus(world, site, *recipe, rocks, trees, water) : 0;
+	m_SiteStatus = DaLegacyCity::ZoneConstructionBlocked(world, site.location, person.EmpireId()) ? 19 : m_SiteBlocked ? 10 : !extension ? TerrainStatus(world, site, *recipe, rocks, trees, water) : 0;
 	if(!m_SiteStatus && !maximum) m_SiteStatus = 4;
 	if(!m_SiteStatus && !adjacent) m_SiteStatus = recipe->terrain == 3 ? 12
 		: recipe->terrain == 13 || recipe->terrain == 14 || recipe->terrain == 9 || recipe->terrain == 10 ? 13 : 14;
@@ -611,7 +657,7 @@ void DdPlanLegacyCity::UpdateSite(const DaWorldLL& world, const AuPoint& point, 
 	if(!m_SiteStatus && person.GetTransformRelativeToParent(avatar, &world)
 		&& clickedSurface.Distance2(avatar.Translation()) > std::pow(500 * FeetPerMeter(), 2)) m_SiteStatus = 3;
 	PlacementProblem(m_SiteStatus, m_SiteMessage);
-	if(m_SiteBlocked && extensionDevelopment) m_SiteMessage = QObject::tr("Finish the current construction before adding more levels.");
+	if(m_SiteBlocked && extension) m_SiteMessage = QObject::tr("Finish the current construction before adding more levels.");
 	if(m_Request.citizenEnabled && (site.industryId == 50 || site.industryId == 51 || site.industryId == 89))
 	{
 		// Recovered cursor rules differ from F10: a well can always select
@@ -708,59 +754,75 @@ void DdPlanLegacyCity::OnMouseWheel(QWheelEvent* event)
 	else ChangeLevels(delta > 0 ? 1 : -1);
 }
 
-DaWorldLL* DdPlanLegacyCity::FindPlacementLocation(DaPerson* person, const QPoint& pixel, AuPoint& point) const
+DaWorldLL* DdPlanLegacyCity::FindPlacementLocation(DaPerson* person, const QPoint& pixel, AuPoint& point,
+	Qt::KeyboardModifiers modifiers, AuLegacyCityProtocol::Request& request) const
 {
-	if(m_Request.action != AuLegacyCityProtocol::Build || m_Request.industryId != 2
-		|| !m_Request.roadSlab || !m_HasStart || RoadSwapMode(m_Request))
+	if(m_Request.action != AuLegacyCityProtocol::Build || (m_Request.industryId != 2 && m_Request.industryId != 129)
+		|| RoadSwapMode(m_Request, modifiers))
 		return m_pWnd->FindTerrainLocationAtPixel(person, pixel, point);
 
-	auto* world = person && person->Parent() ? person->Parent()->FindParentWorldInEnv() : nullptr;
-	if(!world || m_StartWorld != world->Id().GetID()) return nullptr;
-	AuMatrix4x4 personToWorld, perspective, ortho, plane;
-	if(!person->GetTransformRelativeToParent(personToWorld, world)) return nullptr;
-	m_pWnd->GetPixelTransforms(perspective, ortho);
-	world->BuildingConstructionTransform(m_Start, 0, nullptr, AuPoint(), plane);
-	// Once anchored, pick directly on the slab plane rather than the terrain.
-	const AuMatrix4x4 worldToPerson = personToWorld.Inverse();
-	if(!(perspective * worldToPerson).UnProjectIntoPlane(point, AuPoint(pixel), plane)
-		|| (ortho * worldToPerson).Project(point).z >= 0) return nullptr;
-	return world;
-}
-
-void DdPlanLegacyCity::ConstrainRoad(const DaWorldLL& world, AuPoint& point, bool constrain) const
-{
-	if(!m_HasStart) return;
-	if(constrain && m_Angle > 0)
+	const bool roadEnd = m_Request.industryId == 2 && m_HasStart;
+	const bool slabEnd = roadEnd && m_Request.roadSlab;
+	DaWorldLL* world;
+	if(slabEnd)
 	{
-		AuMatrix4x4 basis; world.BuildingConstructionTransform(m_Start, 0, nullptr, AuPoint(), basis);
-		AuPoint delta = basis.Inverse().ProjectVector(point - m_Start);
+		world = person && person->Parent() ? person->Parent()->FindParentWorldInEnv() : nullptr;
+		if(!world || m_StartWorld != world->Id().GetID()) return nullptr;
+	}
+	else
+	{
+		world = m_pWnd->FindTerrainLocationAtPixel(person, pixel, point);
+		if(!world) return nullptr;
+	}
+	AuMatrix4x4 basis;
+	const bool constrain = roadEnd && m_StartWorld == world->Id().GetID() && (modifiers & Qt::ShiftModifier) && m_Angle > 0;
+	if(slabEnd || constrain)
+	{
+		const double rotation = constrain && BuildGrid::Enabled() ? BuildGrid::NorthRotation(world, m_Start) : 0;
+		world->BuildingConstructionTransform(m_Start, rotation, nullptr, AuPoint(), basis);
+	}
+	if(slabEnd)
+	{
+		AuMatrix4x4 personToWorld, perspective, ortho;
+		if(!person->GetTransformRelativeToParent(personToWorld, world)) return nullptr;
+		m_pWnd->GetPixelTransforms(perspective, ortho);
+		const AuMatrix4x4 worldToPerson = personToWorld.Inverse();
+		if(!(perspective * worldToPerson).UnProjectIntoPlane(point, AuPoint(pixel), basis)
+			|| (ortho * worldToPerson).Project(point).z >= 0) return nullptr;
+	}
+	if(constrain)
+	{
+		const AuPoint delta = basis.UnProject(point);
 		const double length = std::hypot(delta.x, delta.y);
 		const double angle = std::round(std::atan2(delta.y, delta.x) * RAD2DEG / m_Angle) * m_Angle * DEG2RAD;
 		point = basis.Project(AuPoint(std::cos(angle) * length, std::sin(angle) * length, 0));
 	}
-	if(m_Request.roadSlab) return; // Keep the endpoint on the anchored slab plane.
-	AuGlobeLLF location;
-	if(world.LLOfLoc(location, point))
-		point = world.LocOfLL(location, world.SurfaceAltitudeMSL(location));
+	AuPoint gridPoint = point;
+	bool snapped = BuildGrid::Enabled() && BuildGrid::Snap(world, gridPoint);
+	if(snapped)
+	{
+		if(slabEnd)
+		{
+			// Intersect the grid point's vertical with the original slab plane.
+			const AuPlane slab(m_Start, world->GravityDir(m_Start));
+			snapped = ProjectToSitePlane(*world, slab, gridPoint);
+		}
+		if(snapped) point = gridPoint;
+	}
+	if(roadEnd && !slabEnd)
+	{
+		AuGlobeLLF location;
+		if(world->LLOfLoc(location, point)) point = world->GetSurfaceLocation(location);
+	}
+	if(m_HasStart && m_StartWorld == world->Id().GetID() && !SetTwoPointPlacement(*world, m_Start, point, snapped, request))
+		return nullptr;
+	return world;
 }
 
-int DdPlanLegacyCity::PrepareRoadRequest(const DaWorldLL& world, quint32 builder, AuPoint point, bool constrain,
-	AuLegacyCityProtocol::Request& request, QString& message)
+int DdPlanLegacyCity::CheckRoadRequest(const DaWorldLL& world, quint32 builder,
+	const AuLegacyCityProtocol::Request& request, QString& message)
 {
 	m_ConflictWorld = world.Id().GetID(); m_ConflictingPerimeters.clear();
-	ConstrainRoad(world, point, constrain);
-	const AuPoint middle = (m_Start + point) / 2;
-	AuGlobeLLF location;
-	if(!world.LLOfLoc(location, middle))
-	{ message = QObject::tr("Location Not In Terrain Or Too Far Away"); return 3; }
-	AuMatrix4x4 basis;
-	world.BuildingConstructionTransform(world.LocOfLL(location, world.SurfaceAltitudeMSL(location)), 0, nullptr, AuPoint(), basis);
-	const AuPoint delta = basis.Inverse().ProjectVector(point - m_Start);
-	request = m_Request;
-	request.headingDegrees = float(std::atan2(-delta.x, delta.y) * RAD2DEG);
-	request.roadLengthMeters = float((point - m_Start).Length() / FeetPerMeter());
-	request.worldId = world.Id().GetID(); request.latitudeRadians = location.Latitude();
-	request.longitudeRadians = location.Longitude(); request.explicitLocation = true;
 	// Use the request's float coordinates, heading and length, exactly as the
 	// server receives them. Checking the raw cursor point drifts at shorelines.
 	AuLegacyCity::Development road;
@@ -804,12 +866,13 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 {
 	if(event->button() != Qt::LeftButton || !m_Interface || !g_Au.IsLegacyGeneration()) return;
 	DaPerson* person = nullptr; m_pWnd->LockSceneAtom(&person);
-	AuPoint point; DaWorldLL* world = person ? FindPlacementLocation(person, event->pos(), point) : nullptr;
+	const Qt::KeyboardModifiers modifiers = QGuiApplication::queryKeyboardModifiers();
 	AuLegacyCityProtocol::Request request = m_Request;
+	AuPoint point; DaWorldLL* world = person ? FindPlacementLocation(person, event->pos(), point, modifiers, request) : nullptr;
 	bool submit = false;
 	if(world)
 	{
-		if(RoadSwapMode(request))
+		if(RoadSwapMode(request, modifiers))
 		{
 			ClearTarget hit;
 			if(FindClearTarget(*world, point, hit, true) && hit.development.constructionProcessId != request.processId)
@@ -821,12 +884,11 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 			if(submit) m_Interface->Submit(request);
 			return;
 		}
-		if(request.action == AuLegacyCityProtocol::Build && (request.industryId == 2 || request.industryId == 129))
+		const bool twoPoint = request.action == AuLegacyCityProtocol::Build && (request.industryId == 2 || request.industryId == 129);
+		if(twoPoint)
 		{
-			AuPoint checkedPoint = point;
-			if(request.industryId == 2 && m_HasStart) ConstrainRoad(*world, checkedPoint, event->modifiers() & Qt::ShiftModifier);
 			AuGlobeLLF location;
-			if(world->LLOfLoc(location, checkedPoint) && DaLegacyCity::ZoneConstructionBlocked(*world, location, person->EmpireId()))
+			if(world->LLOfLoc(location, point) && DaLegacyCity::ZoneConstructionBlocked(*world, location, person->EmpireId()))
 			{
 				QString reason; PlacementProblem(19, reason);
 				m_Interface->ReportPlacementMessage(reason);
@@ -845,6 +907,7 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 			}
 			request = m_Request;
 			request.levels = quint8(qMin(int(request.levels), m_MaximumLevels));
+			request.headingDegrees = float(std::remainder(m_SiteFacing * RAD2DEG, 360.));
 		}
 		if(request.action == AuLegacyCityProtocol::ClearLand)
 		{
@@ -856,45 +919,28 @@ void DdPlanLegacyCity::OnButtonDown(QMouseEvent* event)
 			}
 			request.cityId = hit.city; request.developmentId = hit.development.id;
 		}
-		if((request.industryId == 2 || request.industryId == 129) && request.action == AuLegacyCityProtocol::Build && !m_HasStart)
+		if(twoPoint && !m_HasStart)
 		{ m_Start = point; m_StartWorld = world->Id().GetID(); m_HasStart = true; }
-		else
+		else if(twoPoint)
 		{
-			if((request.industryId == 2 || request.industryId == 129) && m_HasStart)
+			if(m_StartWorld != world->Id().GetID()) { m_HasStart = false; m_pWnd->UnlockSceneAtom(); return; }
+			if(request.industryId == 2)
 			{
-				if(m_StartWorld != world->Id().GetID()) { m_HasStart = false; m_pWnd->UnlockSceneAtom(); return; }
-				if(request.industryId == 2)
+				QString reason;
+				m_SiteStatus = CheckRoadRequest(*world, person->EmpireId(), request, reason);
+				if(m_SiteStatus)
 				{
-					QString reason;
-					m_SiteStatus = PrepareRoadRequest(*world, person->EmpireId(), point, event->modifiers() & Qt::ShiftModifier, request, reason);
-					if(m_SiteStatus)
-					{
-						m_SiteMessage = reason; m_Interface->ReportPlacementMessage(reason);
-						m_pWnd->UnlockSceneAtom(); return;
-					}
-					m_HasStart = false; submit = true;
-				}
-				else
-				{
-					AuGlobeLLF radiusLocation;
-					if(world->LLOfLoc(radiusLocation, point)) point = world->LocOfLL(radiusLocation, world->AltitudeMSL(m_Start));
-					AuPoint middle = m_Start;
-					AuGlobeLLF center;
-					if(world->LLOfLoc(center, middle))
-						middle = world->LocOfLL(center, world->SurfaceAltitudeMSL(center));
-					AuMatrix4x4 basis; world->BuildingConstructionTransform(middle, 0, nullptr, AuPoint(), basis);
-					const AuPoint delta = basis.Inverse().ProjectVector(point - m_Start);
-					request.headingDegrees = float(std::atan2(-delta.x, delta.y) * RAD2DEG);
-					request.biodomeRadiusMeters = float((point - m_Start).Length() / FeetPerMeter());
-					point = middle; m_HasStart = false;
+					m_SiteMessage = reason; m_Interface->ReportPlacementMessage(reason);
+					m_pWnd->UnlockSceneAtom(); return;
 				}
 			}
+			m_HasStart = false; submit = request.explicitLocation;
+		}
+		else
+		{
 			AuGlobeLLF location;
-			if(!submit && world->LLOfLoc(location, point))
+			if(world->LLOfLoc(location, point))
 			{
-				if(request.action == AuLegacyCityProtocol::Build && request.industryId != 2 && request.industryId != 129
-					&& m_HeadingRelativeToNorth)
-					request.headingDegrees = float(std::remainder(request.headingDegrees - world->BuildingConstructionNorthAngle(point, nullptr) * RAD2DEG, 360.));
 				request.worldId = world->Id().GetID(); request.latitudeRadians = location.Latitude();
 				request.longitudeRadians = location.Longitude(); request.explicitLocation = true; submit = true;
 			}
@@ -922,45 +968,28 @@ void DdPlanLegacyCity::RenderCursor(const AuMatrix4x4& projection, const AuMatri
 void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuMatrix4x4& camera,
 	DaPerson* person, const QPoint& pixel, AuAtomRenderInfo& info)
 {
-	AuPoint point; auto* world = FindPlacementLocation(person, pixel, point);
+	const Qt::KeyboardModifiers modifiers = QGuiApplication::queryKeyboardModifiers();
+	AuLegacyCityProtocol::Request preview = m_Request;
+	AuPoint point; auto* world = FindPlacementLocation(person, pixel, point, modifiers, preview);
 	auto* environment = person->FindEnvironmentAtom(); if(!world || !environment) return;
 	AuMatrix4x4 scene, terrain, placement;
 	if(!person->GetTransformRelativeToParent(scene, environment) || !world->GetTransformRelativeToParent(terrain, environment)) return;
-	AuLegacyCityProtocol::Request preview = m_Request;
 	if(m_MaximumLevels >= 0 && preview.industryId != 2 && preview.industryId != 129)
 		preview.levels = quint8(m_ExistingLevels + qMin(int(preview.levels), m_MaximumLevels));
 	if(m_SiteMaterial) { preview.material = m_SiteMaterial; preview.designId = m_SiteDesignId; preview.previewDesign = m_SiteBlueprint; }
-	AuPoint roadEnd;
-	const bool roadSwap = RoadSwapMode(m_Request);
-	const bool roadDrag = !roadSwap && m_Request.industryId == 2 && m_HasStart && m_StartWorld == world->Id().GetID();
+	const AuPoint cursorPoint = point;
+	const bool roadSwap = RoadSwapMode(m_Request, modifiers);
+	const bool roadDrag = preview.industryId == 2 && preview.explicitLocation;
 	if(preview.action == AuLegacyCityProtocol::Build && preview.industryId != 2 && preview.industryId != 129)
 	{
 		// SetCursor samples this site before drawing each frame. Reuse its
 		// effective placement and limits instead of sampling the resources twice.
 		point = m_SiteCenter; preview.headingDegrees = float(m_SiteFacing * RAD2DEG);
 	}
-	if(m_Request.industryId == 129 && m_HasStart && m_StartWorld == world->Id().GetID())
+	if(preview.explicitLocation)
 	{
-		AuGlobeLLF radiusLocation;
-		if(world->LLOfLoc(radiusLocation, point)) point = world->LocOfLL(radiusLocation, world->AltitudeMSL(m_Start));
-		preview.biodomeRadiusMeters = float((point - m_Start).Length() / FeetPerMeter()); point = m_Start;
-	}
-	if(roadDrag)
-	{
-		ConstrainRoad(*world, point, QGuiApplication::keyboardModifiers() & Qt::ShiftModifier);
-		roadEnd = point;
-		AuPoint middle = (point + m_Start) / 2.;
-		// Match the submitted site's center instead of placing the preview at
-		// the chord midpoint beneath a curved world's surface.
-		AuGlobeLLF center;
-		if(world->LLOfLoc(center, middle)) middle = world->LocOfLL(center, world->SurfaceAltitudeMSL(center));
-		// BuildingConstructionTransform appends to its matrix. Keep this
-		// heading basis separate so the final placement is applied only once.
-		AuMatrix4x4 basis;
-		world->BuildingConstructionTransform(middle, 0, nullptr, AuPoint(), basis);
-		const AuPoint delta = basis.Inverse().ProjectVector(point - m_Start);
-		preview.headingDegrees = float(std::atan2(-delta.x, delta.y) * RAD2DEG);
-		preview.roadLengthMeters = float((point - m_Start).Length() / FeetPerMeter()); point = middle;
+		const AuGlobeLLF center(preview.longitudeRadians, preview.latitudeRadians);
+		point = world->LocOfLL(center, SiteAltitudeMSL(*world, world->SurfaceAltitudeMSL(center)));
 	}
 	world->BuildingConstructionTransform(point, preview.headingDegrees * DEG2RAD, nullptr, AuPoint(), placement);
 	// Road edges below are world-relative: rebuilding a horizontal rectangle
@@ -988,14 +1017,14 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 		{
 			// Follow the recovered road cursor: integrate from the saved first
 			// endpoint, interpolating grade and projecting onto world curvature.
-			const AuPoint direction = roadEnd - m_Start;
+			const AuPoint direction = cursorPoint - m_Start;
 			const int segments = qMax(1, int(std::ceil(direction.Length() / (10 * FeetPerMeter()))));
-			const double startAltitude = world->AltitudeMSL(m_Start), endAltitude = world->AltitudeMSL(roadEnd);
+			const double startAltitude = world->AltitudeMSL(m_Start), endAltitude = world->AltitudeMSL(cursorPoint);
 			AuPoint previousLeft, previousRight, firstLeft, firstRight;
 			for(int segment = 0; segment <= segments; ++segment)
 			{
 				const double fraction = double(segment) / segments;
-				AuPoint center = segment == 0 ? m_Start : segment == segments ? roadEnd : m_Start + direction * fraction;
+				AuPoint center = segment == 0 ? m_Start : segment == segments ? cursorPoint : m_Start + direction * fraction;
 				if(segment > 0 && segment < segments)
 					world->ElevateLocMSL(center, startAltitude + (endAltitude - startAltitude) * fraction);
 				const AuPoint up = -world->GravityDir(center);
@@ -1105,6 +1134,8 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 	// Original building/road placement cursors draw over terrain and scenery.
 	// Preserve the caller's state so this overlay cannot affect later passes.
 	effects.glDisable(GL_DEPTH_TEST); effects.glDepthMask(GL_FALSE);
+	if(BuildGrid::Enabled() && m_Request.action == AuLegacyCityProtocol::Build && !roadSwap)
+		BuildGrid::Render(effects, projection * worldModel, world, cursorPoint);
 	effects.GLSL().LineShader().Select(); effects.GLSL().LineShader().SetProjectionModelView(projection * model);
 	if(m_Request.action == AuLegacyCityProtocol::ClearLand)
 		effects.GLSL().LineShader().SetColor(.9f, clearAllowed ? .35f : .1f, .1f, .9f);
@@ -1178,7 +1209,7 @@ void DdPlanLegacyCity::RenderSiteCursor(const AuMatrix4x4& projection, const AuM
 	else if (m_Request.industryId == 2) {
 		text = !m_Request.roadSlab ? m_HasStart ? QObject::tr(" Click road end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr(" Click road start") : text = m_HasStart ? QObject::tr("Click slab end — %1 m").arg(preview.roadLengthMeters, 0, 'f', 1) : QObject::tr("Click slab start");
 	} else if (m_Request.industryId == 129) {
-		m_HasStart ? QObject::tr(" Click biodome radius — %1 m").arg(preview.biodomeRadiusMeters, 0, 'f', 1) : QObject::tr(" Click biodome center");
+		text = m_HasStart ? QObject::tr(" Click biodome radius — %1 m").arg(preview.biodomeRadiusMeters, 0, 'f', 1) : QObject::tr(" Click biodome center");
 	}
 	effects.RenderText(pixel.x() + 16, pixel.y() + 24, text, font, QColor(255, 230, 100), info.glw->width(), info.glw->height());
 }

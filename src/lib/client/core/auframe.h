@@ -263,6 +263,7 @@ public:
 	virtual void StopThreads() = 0;
 
 	virtual AuView* View() const = 0;
+	static void FocusCurrentView();
 
 public slots:
 	void BlueprintRating(quint32 designId, QString designName, AuExchangeBlueprintRating rating);

@@ -10,8 +10,7 @@
 class AuLegacyCityConstruction;
 class DaWorldLL;
 
-// Reuses only the viewport's input/projection mechanism. Historical city
-// placement and requests are independent of DdPlanBdBuilding/modern roads.
+// Legacy city placement and requests use the shared viewport and optional world grid.
 class DdPlanLegacyCity : public DdCommand
 {
 public:
@@ -60,14 +59,13 @@ private:
 	void ChangeLevels(int direction);
 	void ChangeRotation(int direction, bool fine);
 	void ChangeProduct(int direction);
-	DaWorldLL* FindPlacementLocation(DaPerson* person, const QPoint& pixel, AuPoint& point) const;
+	DaWorldLL* FindPlacementLocation(DaPerson* person, const QPoint& pixel, AuPoint& point,
+		Qt::KeyboardModifiers modifiers, AuLegacyCityProtocol::Request& request) const;
 	bool AlignToObstruction();
-	void UpdateSite(const DaWorldLL& world, const AuPoint& point, const DaPerson& person);
+	void UpdateSite(const DaWorldLL& world, AuPoint& point, const DaPerson& person);
 	void RenderSiteCursor(const AuMatrix4x4& projection, const AuMatrix4x4& camera, DaPerson* person,
 		const QPoint& pixel, AuAtomRenderInfo& info);
-	void ConstrainRoad(const DaWorldLL& world, AuPoint& point, bool constrain) const;
-	int PrepareRoadRequest(const DaWorldLL& world, quint32 builder, AuPoint point, bool constrain,
-		AuLegacyCityProtocol::Request& request, QString& message);
+	int CheckRoadRequest(const DaWorldLL& world, quint32 builder, const AuLegacyCityProtocol::Request& request, QString& message);
 };
 
 #endif
