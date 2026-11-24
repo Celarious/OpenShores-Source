@@ -250,6 +250,7 @@ AuLegacyCityConstruction::AuLegacyCityConstruction(QWidget* parent) : QWidget(pa
 	auto* details = new QGridLayout; details->setMargin(0); details->setSpacing(Spacing);
 	m_Name = new QLabel(this); details->addWidget(m_Name, 0, 0, 1, 7);
 	m_Designs = new QComboBox(this); details->addWidget(m_Designs, 1, 0, 1, 7);
+	m_Designs->hide();
 	m_Designs->setToolTip(tr(AuLegacyCityConstructionTips::DesignInitial));
 	auto* materialsHeading = new QLabel(tr("Construction Materials"), this); details->addWidget(materialsHeading, 2, 0, 1, 7);
 	materialsHeading->setToolTip(tr(AuLegacyCityConstructionTips::MaterialsHeading));
@@ -386,6 +387,7 @@ void AuLegacyCityConstruction::SelectProcess(quint8 processId)
 	else if(name.isEmpty() && industry) name = industry->name;
 	m_Name->setText(QStringLiteral("<b>%1</b>").arg(name.toHtmlEscaped()));
 	const bool procedural = m_Industry == 1 || m_Industry == 2 || m_Industry == 10 || m_Industry == 114 || m_Industry == 129;
+	m_Designs->setVisible(!procedural);
 	m_Designs->setToolTip(tr(procedural ? AuLegacyCityConstructionTips::DesignProcedural : AuLegacyCityConstructionTips::DesignOrdinary)
 		.arg(industry ? industry->name.toHtmlEscaped() : QString()));
 	const quint32 previous = quint32(g_Au.Settings().readNumEntry(
