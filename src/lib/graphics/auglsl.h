@@ -6189,9 +6189,41 @@ public:
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
-// AuGLSLFlora shader is used for rendering plants.
+// Per-plant data shared by the color and shadow shaders.
 
-class AUGL_DLL AuGLSLFlora : public AuGLSLProgram
+struct AuGLPlantInstance
+{
+	GLfloat placement[16];
+	GLfloat glowWind[4];
+	GLfloat cityAlpha[4];
+	GLfloat lod[4];
+	enum { Texels = 7 };
+};
+static_assert(sizeof(AuGLPlantInstance) == AuGLPlantInstance::Texels * 4 * sizeof(GLfloat), "Plant texture buffer layout");
+
+// Shared instance uniforms for the plant color and shadow programs.
+class AUGL_DLL AuGLSLPlantProgram : public AuGLSLProgram
+{
+	GLint m_InstanceBase = -1;
+	GLint m_Forces = -1;
+
+protected:
+	void InitPlantInstances();
+
+public:
+	enum { InstanceUnit = 1 };
+
+	// A negative base selects the individual plant uniforms used by potted plants and rocks.
+	void SetInstanceBase(int base) const { m_GLf->glUniform1i(m_InstanceBase, base); }
+	void SetTexture(GLuint texture) const
+	{
+		m_GLf->glActiveTexture(GL_TEXTURE0);
+		m_GLf->glBindTexture(GL_TEXTURE_2D, texture);
+	}
+	void SetForceVectors(const AuPoint* forces) const;
+};
+
+class AUGL_DLL AuGLSLFlora : public AuGLSLPlantProgram
 {
 	bool								m_LightsValid;			// True while this shader's lights are in sync with AuGLEffects.
 	AuMatrix4x4							m_Projection;			// Current projection matrix set.
@@ -6206,14 +6238,7 @@ private:
 	GLint								m_OldTexture0;			// Previous texture binding for restore upon deselect.
 	GLint								m_p;					// Location of 'p' uniform variable.
 	GLint								m_plantM;				// Location of 'plantM' uniform variable.
-	GLint								m_tex;					// Location of 'tex' uniform variable.
 	GLint								m_vForce;				// Location of 'vForce' uniform variable.
-	GLint								m_depthPass;
-	bool								m_ShadePass;
-	GLint								m_instanced;
-	GLint								m_instanceBase;
-	GLint								m_instances;
-	GLint								m_vForces;
 
 	//--------------------
 	// Lighting parameters
@@ -6240,10 +6265,8 @@ private:
 	//--------------------
 
 public:
-	explicit AuGLSLFlora(bool shadePass = false)
+	AuGLSLFlora()
 	{
-		m_ShadePass = shadePass;
-		m_depthPass = -1;
 		m_fogColor = -1;
 		m_fogDensity = -1;
 		m_glowAlpha = -1;
@@ -6252,12 +6275,7 @@ public:
 		m_p = -1;
 		m_ProjectionValid = false;
 		m_plantM = -1;
-		m_tex = -1;
 		m_vForce = -1;
-		m_instanced = -1;
-		m_instanceBase = -1;
-		m_instances = -1;
-		m_vForces = -1;
 
 		m_LightsValid = false;
 		m_SunsValid = false;
@@ -6358,31 +6376,6 @@ public:
 		m_GLf->glUniform3f(m_vForce, x, y, z);
 	}
 
-	enum { InstanceUnit = 18 };
-	inline void SetDepthPass(bool on) const
-	{
-		if(m_depthPass >= 0)
-			m_GLf->glUniform1i(m_depthPass, on ? 1 : 0);
-	}
-
-	inline void SetInstanced(bool on, int base=0) const
-	{
-		m_GLf->glUniform1i(m_instanced, on ? 1 : 0);
-		m_GLf->glUniform1i(m_instanceBase, base);
-	}
-
-	inline void SetForceVectors(const AuPoint* v) const
-	{
-		GLfloat f[30];
-		for(int i=0; i<10; i++)
-		{
-			f[i*3] = v[i].x;
-			f[i*3+1] = v[i].y;
-			f[i*3+2] = v[i].z;
-		}
-		m_GLf->glUniform3fv(m_vForces, 10, f);
-	}
-
 	// Globe position for sun horizon calculation.
 	// This location is in eye space.
 	inline void SetGlobeLocation(float x, float y, float z)
@@ -6463,19 +6456,12 @@ public:
 		m_GLf->glUniform3f(m_sunPosition[sun], locX, locY, locZ);
 		m_GLf->glUniform1f(m_sunRadius[sun], diskRadius);
 	}
-
-	inline void SetTexture(GLuint texName) const
-	{
-		m_GLf->glUniform1i(m_tex, 0);									// Configure uniform 'tex' for texture unit 0.
-		m_GLf->glActiveTexture(GL_TEXTURE0);							// Select texture unit 0 as active.
-		m_GLf->glBindTexture(GL_TEXTURE_2D, texName);					// Bind the texture to the current texture unit.
-	}
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // AuGLSLFloraRingworld shader is used for rendering plants.
 
-class AUGL_DLL AuGLSLFloraRingworld : public AuGLSLProgram
+class AUGL_DLL AuGLSLFloraRingworld : public AuGLSLPlantProgram
 {
 	bool								m_LightsValid;			// True while this shader's lights are in sync with AuGLEffects.
 	AuMatrix4x4							m_Projection;			// Current projection matrix set.
@@ -6490,7 +6476,6 @@ private:
 	GLint								m_OldTexture0;			// Previous texture binding for restore upon deselect.
 	GLint								m_p;					// Location of 'p' uniform variable.
 	GLint								m_plantM;				// Location of 'plantM' uniform variable.
-	GLint								m_tex;					// Location of 'tex' uniform variable.
 	GLint								m_vForce;				// Location of 'vForce' uniform variable.
 
 	//--------------------
@@ -6531,7 +6516,6 @@ public:
 		m_p = -1;
 		m_ProjectionValid = false;
 		m_plantM = -1;
-		m_tex = -1;
 		m_vForce = -1;
 
 		m_LightsValid = false;
@@ -6718,19 +6702,12 @@ public:
 	{
 		m_GLf->glUniform1f(m_sunShadowAngle[sun], shadowAngle);
 	}
-
-	inline void SetTexture(GLuint texName) const
-	{
-		m_GLf->glUniform1i(m_tex, 0);									// Configure uniform 'tex' for texture unit 0.
-		m_GLf->glActiveTexture(GL_TEXTURE0);							// Select texture unit 0 as active.
-		m_GLf->glBindTexture(GL_TEXTURE_2D, texName);					// Bind the texture to the current texture unit.
-	}
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // AuGLSLAquaticFlora shader is used for rendering plants.
 
-class AUGL_DLL AuGLSLAquaticFlora : public AuGLSLProgram
+class AUGL_DLL AuGLSLAquaticFlora : public AuGLSLPlantProgram
 {
 	bool								m_LightsValid;			// True while this shader's lights are in sync with AuGLEffects.
 	AuMatrix4x4							m_Projection;			// Current projection matrix set.
@@ -6745,7 +6722,6 @@ private:
 	GLint								m_OldTexture0;			// Previous texture binding for restore upon deselect.
 	GLint								m_p;					// Location of 'p' uniform variable.
 	GLint								m_plantM;				// Location of 'plantM' uniform variable.
-	GLint								m_tex;					// Location of 'tex' uniform variable.
 	GLint								m_vForce;				// Location of 'vForce' uniform variable.
 
 	//--------------------
@@ -6783,7 +6759,6 @@ public:
 		m_p = -1;
 		m_ProjectionValid = false;
 		m_plantM = -1;
-		m_tex = -1;
 		m_vForce = -1;
 
 		m_LightsValid = false;
@@ -6965,19 +6940,12 @@ public:
 		m_GLf->glUniform3f(m_sunPosition[sun], locX, locY, locZ);
 		m_GLf->glUniform1f(m_sunRadius[sun], diskRadius);
 	}
-
-	inline void SetTexture(GLuint texName) const
-	{
-		m_GLf->glUniform1i(m_tex, 0);									// Configure uniform 'tex' for texture unit 0.
-		m_GLf->glActiveTexture(GL_TEXTURE0);							// Select texture unit 0 as active.
-		m_GLf->glBindTexture(GL_TEXTURE_2D, texName);					// Bind the texture to the current texture unit.
-	}
 };
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 // AuGLSLAquaticFloraRingworld shader is used for rendering plants.
 
-class AUGL_DLL AuGLSLAquaticFloraRingworld : public AuGLSLProgram
+class AUGL_DLL AuGLSLAquaticFloraRingworld : public AuGLSLPlantProgram
 {
 	bool								m_LightsValid;			// True while this shader's lights are in sync with AuGLEffects.
 	AuMatrix4x4							m_Projection;			// Current projection matrix set.
@@ -6992,7 +6960,6 @@ private:
 	GLint								m_OldTexture0;			// Previous texture binding for restore upon deselect.
 	GLint								m_p;					// Location of 'p' uniform variable.
 	GLint								m_plantM;				// Location of 'plantM' uniform variable.
-	GLint								m_tex;					// Location of 'tex' uniform variable.
 	GLint								m_vForce;				// Location of 'vForce' uniform variable.
 
 	//--------------------
@@ -7033,7 +7000,6 @@ public:
 		m_p = -1;
 		m_ProjectionValid = false;
 		m_plantM = -1;
-		m_tex = -1;
 		m_vForce = -1;
 
 		m_LightsValid = false;
@@ -7219,13 +7185,6 @@ public:
 	inline void SetSunShadowAngle(int sun, float shadowAngle) const
 	{
 		m_GLf->glUniform1f(m_sunShadowAngle[sun], shadowAngle);
-	}
-
-	inline void SetTexture(GLuint texName) const
-	{
-		m_GLf->glUniform1i(m_tex, 0);									// Configure uniform 'tex' for texture unit 0.
-		m_GLf->glActiveTexture(GL_TEXTURE0);							// Select texture unit 0 as active.
-		m_GLf->glBindTexture(GL_TEXTURE_2D, texName);					// Bind the texture to the current texture unit.
 	}
 };
 
@@ -19334,19 +19293,14 @@ public:
 	}
 };
 
-class AUGL_DLL AuGLSLFloraDepth : public AuGLSLProgram
+class AUGL_DLL AuGLSLFloraDepth : public AuGLSLPlantProgram
 {
 private:
 	GLint								m_mv;
 	GLint								m_OldTexture0;
 	GLint								m_p;
 	GLint								m_plantM;
-	GLint								m_tex;
 	GLint								m_vForce;
-	GLint								m_instanced;
-	GLint								m_instanceBase;
-	GLint								m_instances;
-	GLint								m_vForces;
 
 public:
 	AuGLSLFloraDepth()
@@ -19355,12 +19309,7 @@ public:
 		m_OldTexture0 = 0;
 		m_p = -1;
 		m_plantM = -1;
-		m_tex = -1;
 		m_vForce = -1;
-		m_instanced = -1;
-		m_instanceBase = -1;
-		m_instances = -1;
-		m_vForces = -1;
 	}
 
 	virtual void Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt);
@@ -19381,7 +19330,6 @@ public:
 	{
 		AuGLSLProgram::Select();
 		SetUniformMatrix(m_GLf, m_p, projection);
-		m_GLf->glUniform1i(m_tex, 0);
 		m_GLf->glActiveTexture(GL_TEXTURE0);
 		m_GLf->glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_OldTexture0);
 	}
@@ -19389,25 +19337,6 @@ public:
 	inline void SetForceVector(float x, float y, float z) const
 	{
 		m_GLf->glUniform3f(m_vForce, x, y, z);
-	}
-
-	enum { InstanceUnit = 18 };
-	inline void SetInstanced(bool on, int base=0) const
-	{
-		m_GLf->glUniform1i(m_instanced, on ? 1 : 0);
-		m_GLf->glUniform1i(m_instanceBase, base);
-	}
-
-	inline void SetForceVectors(const AuPoint* v) const
-	{
-		GLfloat f[30];
-		for(int i=0; i<10; i++)
-		{
-			f[i*3] = v[i].x;
-			f[i*3+1] = v[i].y;
-			f[i*3+2] = v[i].z;
-		}
-		m_GLf->glUniform3fv(m_vForces, 10, f);
 	}
 
 	inline void SetModelView(const AuMatrix4x4& mv) const
@@ -19418,12 +19347,6 @@ public:
 	inline void SetPlantMatrix(const AuMatrix4x4& m) const
 	{
 		SetUniformMatrix(m_GLf, m_plantM, m);
-	}
-
-	inline void SetTexture(GLuint texName) const
-	{
-		m_GLf->glActiveTexture(GL_TEXTURE0);
-		m_GLf->glBindTexture(GL_TEXTURE_2D, texName);
 	}
 };
 
@@ -23236,6 +23159,9 @@ private:
 	AuOpenGLFunctions*					m_GLf;
 	unsigned int						m_MaxLights;
 	unsigned int						m_VariantSerial;
+	GLuint m_PlantInstanceBuffer = 0;
+	GLuint m_PlantInstanceTexture = 0;
+	int m_MaxPlantInstances = 0;
 	float								m_ShadowBodies[4*MAX_SHADOW_BODIES];
 	int									m_ShadowBodyCount;
 	unsigned int						m_ShadowBodySerial;
@@ -23308,7 +23234,6 @@ private:
 	AuGLSLFarStar*						m_FarStar;
 	AuGLSLFlag*							m_Flag;
 	AuGLSLFlora*						m_Flora;
-	AuGLSLFlora*						m_FloraShade;
 	AuGLSLFloraRingworld*				m_FloraRingworld;
 	AuGLSLGalaxyCloud*					m_GalaxyCloud;
 	AuGLSLGalaxyStar*					m_GalaxyStar;
@@ -23723,10 +23648,8 @@ public:
 		return *m_Flora;
 	}
 
-	inline AuGLSLFlora& FloraShadeShader()
-	{
-		return *m_FloraShade;
-	}
+	int MaxPlantInstances() const { return m_MaxPlantInstances; }
+	void UploadPlantInstances(const AuGLPlantInstance* data, int count);
 
 	inline AuGLSLFloraRingworld& FloraRingworldShader()
 	{

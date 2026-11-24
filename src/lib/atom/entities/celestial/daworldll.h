@@ -1756,6 +1756,16 @@ public:
 
 protected:
 	DaWorldLL(const DaWorldLL& c);
+
+	AuPoint m_PlantShadowWind[10];
+	virtual void CreateWoodyPlantMesh(AuGLEffects& re, AuGLVAO& mesh, const DePlanetFlora& flora, const AuGlobeFlora& plant,
+			AuFloraDNA::ZONE region, const AuDice& dice, bool tree, int lod);
+	void RenderPlantInstances(AuGLEffects& re, AuGLModelMaker& mm, AuGLSLPlantProgram& shader, const AuMatrix4x4& model,
+			const AuViewFrustum& frustum, const AuPoint& groundPos, const AuPoint* forces, DePlanetFlora* flora,
+			AuGLVAO** meshes, const QMap<AuResKey, AuGlobeFlora>& grass, bool aquatic, AuGLVAO** distantMeshes = 0);
+	void RenderPlantShadowInstances(AuGLEffects& re, const AuMatrix4x4& model, AuSunShadowPass& sp,
+			const DePlanetFlora* flora, AuGLVAO** meshes, const QMap<AuResKey, AuGlobeFlora>& grass,
+			AuGLVAO** distantMeshes = 0);
 	bool m_HasLegacyCitySurface = false; // Rendering only; never used by gameplay/terrain queries.
 
 public:	// Operators

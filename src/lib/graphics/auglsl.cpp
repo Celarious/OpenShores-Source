@@ -13,6 +13,7 @@
 #include "hashpack.h"
 #include <QCursor>
 #include <QGuiApplication>
+#include <QDir>
 #include <QFile>
 #include <QCoreApplication>
 #include <QThread>
@@ -1097,7 +1098,6 @@ void AuGLSL::CreatePrograms()
 	m_FarStar = new AuGLSLFarStar;
 	m_Flag = new AuGLSLFlag;
 	m_Flora = new AuGLSLFlora;
-	m_FloraShade = new AuGLSLFlora(true);
 	m_FloraRingworld = new AuGLSLFloraRingworld;
 	m_GalaxyCloud = new AuGLSLGalaxyCloud;
 	m_GalaxyStar = new AuGLSLGalaxyStar;
@@ -1192,6 +1192,11 @@ void AuGLSL::DestroyPrograms(bool deleteGLPrograms)
 {
 	if(deleteGLPrograms)
 	{
+		if(m_PlantInstanceTexture) m_GLf->glDeleteTextures(1, &m_PlantInstanceTexture);
+		if(m_PlantInstanceBuffer) m_GLf->glDeleteBuffers(1, &m_PlantInstanceBuffer);
+		m_PlantInstanceTexture = 0;
+		m_PlantInstanceBuffer = 0;
+
 		m_Animal->DeleteProgram();
 		m_AnimalFog->DeleteProgram();
 		m_AnimalGlobe->DeleteProgram();
@@ -1235,7 +1240,6 @@ void AuGLSL::DestroyPrograms(bool deleteGLPrograms)
 		m_FarStar->DeleteProgram();
 		m_Flag->DeleteProgram();
 		m_Flora->DeleteProgram();
-		m_FloraShade->DeleteProgram();
 		m_FloraRingworld->DeleteProgram();
 		m_GalaxyCloud->DeleteProgram();
 		m_GalaxyStar->DeleteProgram();
@@ -1364,7 +1368,6 @@ void AuGLSL::DestroyPrograms(bool deleteGLPrograms)
 	delete m_FarStar;
 	delete m_Flag;
 	delete m_Flora;
-	delete m_FloraShade;
 	delete m_FloraRingworld;
 	delete m_GalaxyCloud;
 	delete m_GalaxyStar;
@@ -1626,10 +1629,20 @@ void AuGLSL::Initialize(AuOpenGLFunctions& GLf, unsigned int maxLights)
 	// The source code is compressed so it is not easily visible in the final executable to the idly curious.
 	Hashpack::ReadFiles(":glsl.har", s_GLSLProgramSrc);
 	LoadLegacySurfaceShaders();
+	const QDir plantShaders(QStringLiteral(":/plant-shaders"));
+	for(const QString& name : plantShaders.entryList(QDir::Files))
+	{
+		QFile source(plantShaders.filePath(name));
+		if(source.open(QIODevice::ReadOnly)) s_GLSLProgramSrc.insert(name, qCompress(source.readAll()));
+	}
 	if(s_DebugGLSL)
 		qDebug() << "GLSL shader source loaded from hash archive" << s_GLSLProgramSrc.size() << "files";
 	if(s_GLSLProgramSrc.empty())
 		return;
+
+	GLint bufferTexels = 0;
+	GLf.glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &bufferTexels);
+	m_MaxPlantInstances = bufferTexels / AuGLPlantInstance::Texels;
 
 	GLint textureUnits = 0;
 	GLf.glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &textureUnits);
@@ -1681,7 +1694,6 @@ void AuGLSL::Initialize(AuOpenGLFunctions& GLf, unsigned int maxLights)
 	m_FarStar->Build(GLf, opt);
 	m_Flag->Build(GLf, opt);
 	m_Flora->Build(GLf, opt);
-	m_FloraShade->Build(GLf, opt);
 	m_FloraRingworld->Build(GLf, opt);
 	m_GalaxyCloud->Build(GLf, opt);
 	m_GalaxyStar->Build(GLf, opt);
@@ -1832,7 +1844,6 @@ void AuGLSL::InvalidateLights()
 	//m_FarStar->InvalidateLights();
 	m_Flag->InvalidateLights();
 	m_Flora->InvalidateLights();
-	m_FloraShade->InvalidateLights();
 	m_FloraRingworld->InvalidateLights();
 	//m_GalaxyCloud->InvalidateLights();
 	//m_GalaxyStar->InvalidateLights();
@@ -1952,7 +1963,6 @@ void AuGLSL::InvalidateSuns()
 	//m_FarStar->InvalidateSuns();
 	m_Flag->InvalidateSuns();
 	m_Flora->InvalidateSuns();
-	m_FloraShade->InvalidateSuns();
 	m_FloraRingworld->InvalidateSuns();
 	//m_GalaxyCloud->InvalidateSuns();
 	//m_GalaxyStar->InvalidateSuns();
@@ -2330,6 +2340,9 @@ AuGLSLShader::AuGLSLShader(AuOpenGLFunctions& GLf, GLenum shaderType, const QStr
 	}
 
 	// Resolve our special includes.
+	if(src.contains("#FloraVertex"))
+		src.replace("#FloraVertex", qUncompress(s_GLSLProgramSrc.value(QStringLiteral("H_FloraVertex.glsl"))));
+	src.replace("FLORA_INSTANCE_TEXELS", QByteArray::number(AuGLPlantInstance::Texels));
 	if(src.contains("#SunLightGlobe"))
 	{
 		QHash<QString, QByteArray>::const_iterator lsi = s_GLSLProgramSrc.find(QString("H_SunLightGlobe.glsl"));
@@ -6710,6 +6723,46 @@ void AuGLSLFarRingworldLitClouds::Build(AuOpenGLFunctions& GLf, const AuGLSLProg
 
 //-+---+---+---+---+---+---+---+---+---|---+---+---+---+---+---+-==+---+---+---|---+---+---+---+---+---+---+---+---+---+---+---+---|
 
+void AuGLSLPlantProgram::InitPlantInstances()
+{
+	m_InstanceBase = GetUniformLoc("instanceBase");
+	m_Forces = GetUniformLoc("vForces[0]");
+	m_GLf->glUniform1i(GetUniformLoc("tex"), 0);
+	m_GLf->glUniform1i(GetUniformLoc("instances"), InstanceUnit);
+	SetInstanceBase(-1);
+}
+
+void AuGLSLPlantProgram::SetForceVectors(const AuPoint* forces) const
+{
+	GLfloat values[30];
+	for(int i=0; i<10; ++i)
+	{
+		values[i*3] = forces[i].x;
+		values[i*3+1] = forces[i].y;
+		values[i*3+2] = forces[i].z;
+	}
+	m_GLf->glUniform3fv(m_Forces, 10, values);
+}
+
+void AuGLSL::UploadPlantInstances(const AuGLPlantInstance* data, int count)
+{
+	Q_ASSERT(count > 0 && count <= m_MaxPlantInstances);
+	const bool create = !m_PlantInstanceBuffer;
+	if(create)
+	{
+		m_GLf->glGenBuffers(1, &m_PlantInstanceBuffer);
+		m_GLf->glGenTextures(1, &m_PlantInstanceTexture);
+	}
+	m_GLf->glBindBuffer(GL_TEXTURE_BUFFER, m_PlantInstanceBuffer);
+	m_GLf->glBufferData(GL_TEXTURE_BUFFER, GLsizeiptr(count) * sizeof(*data), data, GL_STREAM_DRAW);
+	m_GLf->glBindBuffer(GL_TEXTURE_BUFFER, 0);
+	m_GLf->glActiveTexture(GL_TEXTURE0 + AuGLSLPlantProgram::InstanceUnit);
+	m_GLf->glBindTexture(GL_TEXTURE_BUFFER, m_PlantInstanceTexture);
+	if(create)
+		m_GLf->glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, m_PlantInstanceBuffer);
+	m_GLf->glActiveTexture(GL_TEXTURE0);
+}
+
 void AuGLSLFlora::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 {
 	AuGLSLProgram::Build(GLf, opt);
@@ -6724,8 +6777,7 @@ void AuGLSLFlora::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 	AuGLSLShader vs(*m_GLf, GL_VERTEX_SHADER, "Flora.v", opt.MaxLights());
 	m_GLf->glAttachShader(m_Program, vs.Id());
 
-	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, "Flora.f", opt.MaxLights(),
-			m_ShadePass ? QByteArray("#define FLORA_SHADE_PASS 1\n") : QByteArray());
+	AuGLSLShader fs(*m_GLf, GL_FRAGMENT_SHADER, "Flora.f", opt.MaxLights());
 	m_GLf->glAttachShader(m_Program, fs.Id());
 
 	// Bind user defined 'in' variables to vertex attribute indices.
@@ -6772,17 +6824,8 @@ void AuGLSLFlora::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)
 	m_mv = GetUniformLoc("mv");
 	m_p = GetUniformLoc("p");
 	m_plantM = GetUniformLoc("plantM");
-	m_tex = GetUniformLoc("tex");
 	m_vForce = GetUniformLoc("vForce");
-	m_instanced = GetUniformLoc("instanced");
-	m_instanceBase = GetUniformLoc("instanceBase");
-	m_instances = GetUniformLoc("instances");
-	m_vForces = GetUniformLoc("vForces");
-	m_GLf->glUniform1i(m_instances, InstanceUnit);
-	m_GLf->glUniform1i(m_instanced, 0);
-	m_depthPass = m_ShadePass ? -1 : GetUniformLoc("depthPass");
-	if(m_depthPass >= 0)
-		m_GLf->glUniform1i(m_depthPass, 0);
+	InitPlantInstances();
 
 	m_ambient = GetUniformLoc("light.ambient");
 	m_ambientUp = GetUniformLoc("light.ambientUp");
@@ -6907,8 +6950,8 @@ void AuGLSLFloraRingworld::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt&
 	m_mv = GetUniformLoc("mv");
 	m_p = GetUniformLoc("p");
 	m_plantM = GetUniformLoc("plantM");
-	m_tex = GetUniformLoc("tex");
 	m_vForce = GetUniformLoc("vForce");
+	InitPlantInstances();
 
 	m_ambient = GetUniformLoc("light.ambient");
 	m_ambientUp = GetUniformLoc("light.ambientUp");
@@ -7037,8 +7080,8 @@ void AuGLSLAquaticFlora::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& o
 	m_mv = GetUniformLoc("mv");
 	m_p = GetUniformLoc("p");
 	m_plantM = GetUniformLoc("plantM");
-	m_tex = GetUniformLoc("tex");
 	m_vForce = GetUniformLoc("vForce");
+	InitPlantInstances();
 
 	m_ambient = GetUniformLoc("light.ambient");
 	m_ambientUp = GetUniformLoc("light.ambientUp");
@@ -7163,8 +7206,8 @@ void AuGLSLAquaticFloraRingworld::Build(AuOpenGLFunctions& GLf, const AuGLSLProg
 	m_mv = GetUniformLoc("mv");
 	m_p = GetUniformLoc("p");
 	m_plantM = GetUniformLoc("plantM");
-	m_tex = GetUniformLoc("tex");
 	m_vForce = GetUniformLoc("vForce");
+	InitPlantInstances();
 
 	m_ambient = GetUniformLoc("light.ambient");
 	m_ambientUp = GetUniformLoc("light.ambientUp");
@@ -13974,14 +14017,8 @@ void AuGLSLFloraDepth::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt
 	m_mv = GetUniformLoc("mv");
 	m_p = GetUniformLoc("p");
 	m_plantM = GetUniformLoc("plantM");
-	m_tex = GetUniformLoc("tex");
 	m_vForce = GetUniformLoc("vForce");
-	m_instanced = GetUniformLoc("instanced");
-	m_instanceBase = GetUniformLoc("instanceBase");
-	m_instances = GetUniformLoc("instances");
-	m_vForces = GetUniformLoc("vForces");
-	m_GLf->glUniform1i(m_instances, InstanceUnit);
-	m_GLf->glUniform1i(m_instanced, 0);
+	InitPlantInstances();
 }
 
 void AuGLSLScDepth::Build(AuOpenGLFunctions& GLf, const AuGLSLProgramOpt& opt)

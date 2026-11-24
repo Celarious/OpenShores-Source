@@ -275,7 +275,7 @@ void computePointLight(PointLight light,
 
 vec3 computeLighting(LightSources light,
 			vec3 P,
-			vec3 N)
+			vec3 N, vec3 cityLight)
 {
 	vec3 diffuseLight = vec3(0,0,0);
 	vec3 diffuseSum = vec3(0,0,0);
@@ -322,7 +322,8 @@ vec3 computeLighting(LightSources light,
 		}
 	}
 
-	vec3 ambient = mix(light.ambient * .15, light.ambient, (dot(N, light.ambientUp) + 1.)/2.);
+	vec3 localAmbient = light.ambient + cityLight;
+	vec3 ambient = mix(localAmbient * .15, localAmbient, (dot(N, light.ambientUp) + 1.)/2.);
 
 	vec3 color = ambient + diffuseSum;
 
@@ -330,7 +331,6 @@ vec3 computeLighting(LightSources light,
 }
 
 uniform LightSources					light;
-uniform vec4							glowAlpha;
 #endif
 
 uniform vec3							fogColor;				// Fog color
@@ -340,6 +340,7 @@ uniform sampler2D						tex;					// Texture.
 in vec4									vertLitScale;
 in vec3									vertLitP;
 in vec3									vertLitN;
+flat in vec3 vertGlow, vertCityLight;
 #else
 in vec4									vertColor;				// Incoming fragment color interpolated from the vertex color.
 #endif
@@ -354,8 +355,8 @@ void main()
 	if(fragColor.a * vertLitScale.a < .15)
 		discard;
 
-	vec4 vertColor = vec4(computeLighting(light, vertLitP, normalize(vertLitN)), 1) * vertLitScale;
-	vertColor.rgb = min(vertColor.rgb+glowAlpha.rgb, vec3(1.5, 1.5, 1.5));
+	vec4 vertColor = vec4(computeLighting(light, vertLitP, normalize(vertLitN), vertCityLight), 1) * vertLitScale;
+	vertColor.rgb = min(vertColor.rgb+vertGlow, vec3(1.5, 1.5, 1.5));
 	fragColor *= vertColor;
 #else
 	fragColor = texture(tex, vertTexCoordFog.xy).grba * vertColor;

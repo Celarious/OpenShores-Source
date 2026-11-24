@@ -2,6 +2,18 @@
 <qresource>
 	<file>glsl.har</file>
 </qresource>
+<qresource prefix="/plant-shaders">
+	<file alias="H_FloraVertex.glsl">shaders/H_FloraVertex.glsl</file>
+	<file alias="FloraDepth.v.glsl">shaders/FloraDepth.v.glsl</file>
+	<file alias="Flora.v.glsl">shaders/Flora.v.glsl</file>
+	<file alias="Flora.f.glsl">shaders/Flora.f.glsl</file>
+	<file alias="FloraRingworld.v.glsl">shaders/FloraRingworld.v.glsl</file>
+	<file alias="FloraRingworld.f.glsl">shaders/FloraRingworld.f.glsl</file>
+	<file alias="AquaticFlora.v.glsl">shaders/AquaticFlora.v.glsl</file>
+	<file alias="AquaticFlora.f.glsl">shaders/AquaticFlora.f.glsl</file>
+	<file alias="AquaticFloraRingworld.v.glsl">shaders/AquaticFloraRingworld.v.glsl</file>
+	<file alias="AquaticFloraRingworld.f.glsl">shaders/AquaticFloraRingworld.f.glsl</file>
+</qresource>
 <qresource prefix="/legacy-surface-shaders">
 	<file alias="LegacyPavement.glsl">shaders/LegacyPavement.glsl</file>
 	<file alias="TerrainLit.f.glsl">shaders/TerrainLit.f.glsl</file>

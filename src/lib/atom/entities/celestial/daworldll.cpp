@@ -56,6 +56,247 @@
 
 static constexpr qint64 CaptureAlertFlashIntervalMs = 250;
 
+namespace
+{
+class AuFloraInstances
+{
+	struct Group
+	{
+		AuGLVAO* mesh;
+		GLuint texture;
+		QVector<AuGLPlantInstance> plants;
+	};
+	QMap<QPair<GLuint, GLuint>, Group> m_Opaque;
+	QVector<Group> m_Blended;
+	int m_Count = 0;
+
+public:
+	void Add(AuGLVAO* mesh, GLuint texture, const AuGlobeFlora& plant, float alpha = 1.f, bool cityLight = false,
+			float lodFade = 0.f, bool distant = false)
+	{
+		Group* group;
+		if(alpha >= 1.f)
+			group = &m_Opaque[qMakePair(texture, mesh->VAO())];
+		else
+		{
+			// Source-alpha blending depends on order. Merge consecutive compatible plants in traversal order.
+			if(m_Blended.isEmpty() || m_Blended.last().mesh != mesh || m_Blended.last().texture != texture)
+				m_Blended.append(Group());
+			group = &m_Blended.last();
+		}
+		group->mesh = mesh;
+		group->texture = texture;
+		AuGLPlantInstance instance = {};
+		const double* matrix = plant.Transform().GLMatrix();
+		std::copy(matrix, matrix + 16, instance.placement);
+		instance.glowWind[0] = plant.m_GlowR;
+		instance.glowWind[1] = plant.m_GlowG;
+		instance.glowWind[2] = plant.m_GlowB;
+		instance.glowWind[3] = plant.m_WindIndex < 10 ? plant.m_WindIndex : 0;
+		if(cityLight)
+		{
+			instance.cityAlpha[0] = plant.m_CityR;
+			instance.cityAlpha[1] = plant.m_CityG;
+			instance.cityAlpha[2] = plant.m_CityB;
+		}
+		instance.cityAlpha[3] = alpha;
+		instance.lod[0] = lodFade;
+		instance.lod[1] = distant ? 1.f : 0.f;
+		group->plants.append(instance);
+		++m_Count;
+	}
+
+	void Draw(AuGLEffects& re, AuGLSLPlantProgram& shader, const AuPoint* forces, bool colorPass) const
+	{
+		if(!m_Count) return;
+		const int capacity = re.GLSL().MaxPlantInstances();
+		Q_ASSERT(capacity > 0);
+		if(capacity <= 0) return;
+
+		QVector<AuGLPlantInstance> data;
+		data.reserve(m_Count);
+		struct DrawRange { AuGLVAO* mesh; GLuint texture; int end; };
+		QVector<DrawRange> ranges;
+		auto append = [&](const Group& group)
+		{
+			data += group.plants;
+			ranges.append(DrawRange{group.mesh, group.texture, data.size()});
+		};
+		for(const Group& group : m_Opaque) append(group);
+		const int firstBlended = ranges.size();
+		for(const Group& group : m_Blended) append(group);
+
+		shader.SetForceVectors(forces);
+		if(colorPass) re.glDisable(GL_BLEND);
+		GLuint texture = 0;
+		int range = 0;
+		for(int start = 0; start < m_Count;)
+		{
+			const int count = qMin(capacity, m_Count - start);
+			re.GLSL().UploadPlantInstances(data.constData() + start, count);
+			const int end = start + count;
+			for(int pos = start; pos < end;)
+			{
+				const DrawRange& draw = ranges.at(range);
+				if(range == firstBlended) re.glEnable(GL_BLEND);
+				if(texture != draw.texture)
+				{
+					texture = draw.texture;
+					shader.SetTexture(texture);
+				}
+				shader.SetInstanceBase(pos - start);
+				draw.mesh->SelectGL();
+				const int next = qMin(draw.end, end);
+				draw.mesh->DrawGLInstanced(next - pos);
+				draw.mesh->DeselectGL();
+				pos = next;
+				if(pos == draw.end) ++range;
+			}
+			start = end;
+		}
+		shader.SetInstanceBase(-1);
+		if(!m_Blended.isEmpty()) re.glDisable(GL_BLEND);
+	}
+};
+
+float FloraLodFt(bool tree)
+{
+	return tree ? qMax(200.f, sqrtf((float)g_Au.TreeViewRangeFt2()) * .25f)
+			: qMax(80.f, sqrtf((float)g_Au.ShrubViewRangeFt2()) * .2f);
+}
+
+float FloraLodBlend(float dist, float lodFt)
+{
+	const float band = lodFt * .2f;
+	return qBound(0.f, (dist - (lodFt - band * .5f)) / band, 1.f);
+}
+
+template<class PLANT>
+void CollectPlantShadows(AuFloraInstances& instances, const QMap<AuResKey, PLANT>& plants, const DePlanetFlora* flora,
+		AuGLVAO** meshes, const AuMatrix4x4& model, AuSunShadowPass& sp, double reach, double range2,
+		AuGLVAO** distantMeshes = 0, float lodFt = 0.f)
+{
+	for(const PLANT& plant : plants)
+	{
+		const AuPoint pv = model.Project(plant.Location());
+		const double dist2 = pv.Length2();
+		if(dist2 > range2 || !sp.Asked(pv.x, pv.y, pv.z, reach) || !sp.Reaches(pv.x, pv.y, pv.z, reach)) continue;
+		AuGLVAO* mesh = meshes[plant.m_VAOIndex];
+		if(distantMeshes && dist2 > double(lodFt) * lodFt)
+		{
+			AuGLVAO* distant = distantMeshes[plant.m_VAOIndex];
+			if(distant && distant->VAO()) mesh = distant;
+		}
+		const GLuint texture = flora[plant.m_ResourceZone].Texture();
+		if(!mesh || !mesh->VAO() || !texture) continue;
+		instances.Add(mesh, texture, plant);
+		sp.Drew();
+	}
+}
+}
+
+void DaWorldLL::RenderPlantShadowInstances(AuGLEffects& re, const AuMatrix4x4& model, AuSunShadowPass& sp,
+		const DePlanetFlora* flora, AuGLVAO** meshes, const QMap<AuResKey, AuGlobeFlora>& grass, AuGLVAO** distantMeshes)
+{
+	AuFloraInstances instances;
+	CollectPlantShadows(instances, m_Trees, flora, meshes, model, sp, 80, g_Au.TreeViewRangeFt2(), distantMeshes, FloraLodFt(true));
+	if(!distantMeshes || sp.m_Cascade < SUN_SHADOW_CASCADES - 1)
+		CollectPlantShadows(instances, m_Shrubs, flora, meshes, model, sp, 25, g_Au.ShrubViewRangeFt2(), distantMeshes, FloraLodFt(false));
+	if(g_Au.ShadowGrassDistance() > 0)
+	{
+		double grassFt = g_Au.ShadowGrassDistance() * FeetPerMeter();
+		CollectPlantShadows(instances, grass, flora, meshes, model, sp, 5, qMin(grassFt * grassFt, g_Au.GrassViewRangeFt2() * .64));
+	}
+	instances.Draw(re, re.GLSL().FloraDepthShader(), m_PlantShadowWind, false);
+}
+
+void DaWorldLL::CreateWoodyPlantMesh(AuGLEffects& re, AuGLVAO& mesh, const DePlanetFlora& flora, const AuGlobeFlora& plant,
+		AuFloraDNA::ZONE region, const AuDice& dice, bool tree, int lod)
+{
+	if(tree) flora.CreateTreeVAO(re, mesh, region, plant.m_CID, dice, lod);
+	else flora.CreateShrubVAO(re, mesh, region, plant.m_CID, dice, lod);
+}
+
+void DaWorldLL::RenderPlantInstances(AuGLEffects& re, AuGLModelMaker& mm, AuGLSLPlantProgram& shader, const AuMatrix4x4& model,
+		const AuViewFrustum& frustum, const AuPoint& groundPos, const AuPoint* forces, DePlanetFlora* flora,
+		AuGLVAO** meshes, const QMap<AuResKey, AuGlobeFlora>& grass, bool aquatic, AuGLVAO** distantMeshes)
+{
+	AuFloraInstances instances;
+	const bool cull = re.FrustumCulling();
+	auto queue = [&](const AuGlobeFlora& plant, AuFloraDNA::ZONE region, DeFlora::TYPE type, float alpha, bool distant, float fade)
+	{
+		DePlanetFlora& zone = flora[plant.m_ResourceZone];
+		if(!zone.Texture())
+		{
+			CreateFloraTextures(re, mm, plant.m_ResourceZone);
+			if(!zone.Texture()) return;
+		}
+		// The zone texture establishes the atlas dimensions used when generating this mesh.
+		AuGLVAO*& mesh = (distant ? distantMeshes : meshes)[plant.m_VAOIndex];
+		if(!mesh || !mesh->VAO())
+		{
+			if(!mm.LegacyDecorationStep()) return;
+			if(!mesh) mesh = new AuGLVAO;
+			AuDice dice;
+			dice.Seed(GenSeed() + plant.m_VAOIndex);
+			if(type == DeFlora::GroundCover)
+				zone.CreateGroundCoverVAO(re, *mesh, region, dice, 2);
+			else if(aquatic)
+				zone.CreateShrubVAO(re, *mesh, region, plant.m_CID, dice, 2);
+			else
+				CreateWoodyPlantMesh(re, *mesh, zone, plant, region, dice, type == DeFlora::Tree, distant ? 1 : 2);
+			if(!mesh->VAO()) return;
+		}
+		if(cull && !mesh->IntersectsFrustum(frustum, model * plant.Transform(), 2 * mesh->VertexMovement())) return;
+		instances.Add(mesh, zone.Texture(), plant, alpha, type != DeFlora::GroundCover, fade, distant);
+	};
+
+	const double grassRange = g_Au.GrassViewRangeFt();
+	const double fadeStart = grassRange * .8;
+	for(auto it = grass.cbegin(); it != grass.cend(); ++it)
+	{
+		const AuGlobeFlora& plant = it.value();
+		const double dist2 = plant.Location().Distance2(groundPos);
+		if(dist2 > g_Au.GrassViewRangeFt2()) continue;
+		if(!cull && dist2 > 4*4)
+		{
+			const AuPoint view = model.Project(plant.Location());
+			if(view.z > 0 || (distantMeshes && !frustum.IntersectsSphere(view, 8))) continue;
+		}
+		const double distance = sqrt(dist2);
+		const float alpha = distance > fadeStart ? (grassRange - distance) / (grassRange - fadeStart) : 1.f;
+		queue(plant, it.key().LatitudeRegion(), DeFlora::GroundCover, alpha, false, 0.f);
+	}
+
+	auto woodyPlant = [&](AuGlobeFlora& plant, AuFloraDNA::ZONE region, bool tree, float lodDistance)
+	{
+		const AuPoint view = model.Project(plant.Location());
+		const double range2 = tree ? g_Au.TreeViewRangeFt2() : g_Au.ShrubViewRangeFt2();
+		const float alpha = plant.ViewAlpha(33, view, groundPos, range2, tree ? 250 : 50, cull);
+		if(alpha <= 0.f || (distantMeshes && !frustum.IntersectsSphere(view, tree ? 140 : 40))) return;
+		const DeFlora::TYPE type = tree ? DeFlora::Tree : DeFlora::Shrub;
+		const float blend = distantMeshes ? FloraLodBlend(sqrtf((float)view.Length2()), lodDistance) : 0.f;
+		if(blend > 0.f && blend < 1.f && alpha >= 1.f && !plant.m_CityR && !plant.m_CityG && !plant.m_CityB)
+		{
+			queue(plant, region, type, alpha, false, blend);
+			queue(plant, region, type, alpha, true, -blend);
+		}
+		else
+			queue(plant, region, type, alpha, blend >= .5f, 0.f);
+	};
+	const float shrubLod = FloraLodFt(false);
+	auto& shrubs = aquatic ? m_AquaticShrubs : m_Shrubs;
+	for(auto it = shrubs.begin(); it != shrubs.end(); ++it)
+		woodyPlant(it.value(), it.key().LatitudeRegion(), false, shrubLod);
+	if(!aquatic)
+	{
+		const float treeLod = FloraLodFt(true);
+		for(auto it = m_Trees.begin(); it != m_Trees.end(); ++it)
+			woodyPlant(it.value(), it.key().LatitudeRegion(), true, treeLod);
+	}
+	instances.Draw(re, shader, forces, true);
+}
+
 bool AuGlobeTerrainTriCen::OverlapsDetailRange(const DaWorldLL& world, const AuPoint& groundPos, double range) const
 {
 	if(!std::isfinite(range) || range < 0 || !std::isfinite(groundPos.x)

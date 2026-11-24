@@ -1187,6 +1187,9 @@ protected:
 			const AuPoint& viewerPos, float ambientLight, float fogDensity, float fogR, float fogG, float fogB);
 
 	// Render local plants relative to the viewer's position.
+	virtual void CreateWoodyPlantMesh(AuGLEffects& re, AuGLVAO& mesh, const DePlanetFlora& flora, const AuGlobeFlora& plant,
+			AuFloraDNA::ZONE region, const AuDice& dice, bool tree, int lod) override;
+
 	void RenderFlora(const AuMatrix4x4& projection, const AuMatrix4x4& model, AuGLEffects& re, AuGLModelMaker& mm,
 			const AuPoint& viewerPos, float ambientLight, float fogDensity, float fogR, float fogG, float fogB);
 
