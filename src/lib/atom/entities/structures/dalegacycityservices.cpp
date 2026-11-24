@@ -54,7 +54,7 @@ quint32 SiteAt(const DaWorldLL& world, const AuLegacyCity::State& state, const A
 	for(const AuLegacyCity::Development& development : state.developments)
 	{
 		if(development.industryId != industry || development.demolished || !development.completedLevels
-			|| (slabOnly && !development.roadSlab)) continue;
+			|| (slabOnly && (!development.roadSlab || development.IsLandscaper()))) continue;
 		AuMatrix4x4 placement;
 		world.BuildingConstructionTransform(world.LocOfLL(development.location, development.altitudeMSL),
 			development.facingRadians, nullptr, AuPoint(), placement);

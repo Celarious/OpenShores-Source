@@ -12313,25 +12313,17 @@ void DaSc::ApplyLegacySolarRadiation(const DaStar* parentStar)
 bool DaSc::LegacyDecaySheltered() const
 {
 	if(!IsOnGround() || !HasOfficers()) return false;
-	// AuAtom13:1800cf9c0 / 1802049a0: only completed road SLABS shelter
-	// occupied ships. EB_AtGeo alone also includes ordinary roads and worksites.
-	if(IsAtGeo() && InIndustry() == IID_Road)
-	{
-		const DaWorldLL* world = dynamic_cast<const DaWorldLL*>(FindParentPlanetInEnv());
-		if(world)
-		{
-			const AuGlobeLLF location = InIndustryLL();
-			const AuGeologicalFeatures& features = world->LockGeologicalFeatures();
-			const AuGeologicalFeature* feature = features.Find(location);
-			const bool slab = feature && feature->IsSlab() && feature->IsRoad() && !feature->IsUnderConstruction();
-			world->UnlockGeologicalFeatures();
-			if(slab) return true;
-		}
-	}
-	// Native airport sites are the current representation of sheltered landing
-	// facilities; retain their existing protection alongside recovered slabs.
-	const INDUSTRYID industry = InIndustry();
-	return industry == IID_AirportTerminal || industry == IID_BaseAirTerminal || industry == IID_AirportRepairShop;
+
+	const AuQueryEnvironment* environment = LockEnvironmentQuery();
+	const AuId cityId = environment->LegacyCityId();
+	UnlockEnvironmentQuery();
+	if(cityId.IsNull()) return false;
+
+	const DaWorld* world = FindParentPlanetInEnv();
+	if(!world) return false;
+	
+	const auto* city = dynamic_cast<const DaLegacyCity*>(world->FindSubatomId(cityId));
+	return city && !city->IsDead() && city->IsSpacecraftOnSlab(*this) && city->StationsPowered();
 }
 
 void DaSc::ApplyLegacyEnvironmentalDamage(const AuTime& last, const AuTime& now)
