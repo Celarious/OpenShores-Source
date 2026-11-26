@@ -1620,9 +1620,9 @@ public:
 		loadingToolsVisible = !toolDock->isHidden();
 		loadingMargins = window->centralWidget()->layout()->contentsMargins();
 		renderView->SetLoadingScreen(true);
+		window->setEnabled(false);
 		toolDock->hide();
 		window->centralWidget()->layout()->setContentsMargins(0, 0, 0, 0);
-		renderView->setFocus();
 	}
 
 	void EndStartup()
@@ -1631,6 +1631,10 @@ public:
 		toolDock->setVisible(loadingToolsVisible);
 		renderView->SetLoadingScreen(false);
 		startingDesigner = false;
+		if(AuDesignerFrame* frame = qobject_cast<AuDesignerFrame*>(window->parentWidget()))
+			frame->ClearActiveKeys();
+		window->setEnabled(true);
+		renderView->setFocus();
 		if(window->isVisible()) renderView->repaint();
 	}
 

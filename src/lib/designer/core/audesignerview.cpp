@@ -2279,9 +2279,12 @@ void AuDesignerView::paintGL()
 	showWait = showWait || (g_Au.IsLegacyGeneration() && m_WaitingForScenery);
 	m_LoadingScreenShown = showWait;
 	if(auApp->Sound()) auApp->Sound()->SetMuted(showWait);
-	window()->setEnabled(!showWait);
 	if(wasLoading && !showWait && frame)
+	{
+		frame->ClearActiveKeys();
 		QTimer::singleShot(0, frame, [frame]() { frame->FinishSceneLoading(); });
+	}
+	window()->setEnabled(!showWait);
 
 	if(showWait)
 	{

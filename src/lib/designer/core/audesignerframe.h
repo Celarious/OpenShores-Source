@@ -904,6 +904,7 @@ private:
 	void CreateModernBuildingDock();
 	void ContinueDockInitialization();
 	std::deque<std::function<bool()> > m_DockInitSteps;
+	bool m_FrameGeometryReady = false;
 	bool m_DockWidgetsReady = false;
 	std::function<void()> m_RestoreSceneWindows;
 	bool m_DockInitRunning = false;

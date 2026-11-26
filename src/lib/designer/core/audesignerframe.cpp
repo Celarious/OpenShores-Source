@@ -1817,25 +1817,26 @@ void AuDesignerFrame::closeEvent(QCloseEvent* event)
 	auApp->TerminateSound();
 	StopThreads();
 
-	g_Au.Settings().setValue("/Widget/MainFrame/Geometry", saveGeometry());
+	const bool saveDockLayout = m_DockWidgetsReady && !m_RestoreSceneWindows;
+	const char* dockLayoutKey = "/Widget/MainFrame/WindowState1";
+	const char* fullScreenKey = "/Widget/MainFrame/FullScreen";
 	if(auApp->RunState() == AuApp::Designer)
 	{
-		if(m_DockWidgetsReady)
-			g_Au.Settings().setValue("/Widget/MainFrame/DesignerWindowState", saveState());
-		g_Au.Settings().setValue("/Widget/MainFrame/DesignerFullScreen", isFullScreen());
+		dockLayoutKey = "/Widget/MainFrame/DesignerWindowState";
+		fullScreenKey = "/Widget/MainFrame/DesignerFullScreen";
 	}
 	else if(auApp->RunState() == AuApp::Solitaire)
 	{
-		if(m_DockWidgetsReady)
-			g_Au.Settings().setValue("/Widget/MainFrame/SoloWindowState", saveState());
-		g_Au.Settings().setValue("/Widget/MainFrame/SoloFullScreen", isFullScreen());
+		dockLayoutKey = "/Widget/MainFrame/SoloWindowState";
+		fullScreenKey = "/Widget/MainFrame/SoloFullScreen";
 	}
-	else
+	if(m_FrameGeometryReady)
 	{
-		if(m_DockWidgetsReady)
-			g_Au.Settings().setValue("/Widget/MainFrame/WindowState1", saveState());
-		g_Au.Settings().setValue("/Widget/MainFrame/FullScreen", isFullScreen());
+		g_Au.Settings().setValue("/Widget/MainFrame/Geometry", saveGeometry());
+		g_Au.Settings().setValue(fullScreenKey, isFullScreen());
 	}
+	if(saveDockLayout)
+		g_Au.Settings().setValue(dockLayoutKey, saveState());
 
 	if(m_Agent)
 		m_Agent->close();
@@ -1843,7 +1844,7 @@ void AuDesignerFrame::closeEvent(QCloseEvent* event)
 		m_Settings->close();
 
 	// Store the visibility states of all our docking toolbars if any are currently visible.
-	if(m_DockWidgetsReady && m_DockBars.AnyVisible())
+	if(saveDockLayout && m_DockBars.AnyVisible())
 	{
 		// At least one toolbar is visible.
 		m_DockBars.SaveVisibilityStates();
@@ -3494,6 +3495,10 @@ void AuDesignerFrame::ProcessControlInput(const DiControlInputArray& aActiveCont
 {
 	for(DiControlInputArray::const_iterator ci = aActiveControls.cbegin(); ci != aActiveControls.cend(); ci++)
 	{
+		// The application-wide key filter also receives events while the loading screen disables the UI.
+		const bool loading = m_LegacyDesigner ? !m_LegacyDesigner->isEnabled() : m_View && m_View->IsSceneLoading();
+		if(loading && (*ci).GetId() != CI_ExitGame && (*ci).GetId() != CI_FullScreenToggle)
+			continue;
 		if(m_LegacyDesigner || m_LegacyStudioSceneSuspended)
 		{
 			// Keep the normal window bindings available without dispatching
@@ -3768,7 +3773,7 @@ void AuDesignerFrame::setVisible(bool visible)
 		if(!m_Timer)
 		{
 			// This is the first time we are becoming visible.
-			QTimer::singleShot(0, [=](){RestoreGeometry();});
+			QTimer::singleShot(0, this, &AuDesignerFrame::RestoreGeometry);
 
 			// Start the timer.
 			m_Timer = new QTimer(this);
@@ -3797,6 +3802,7 @@ void AuDesignerFrame::RestoreGeometry()
 	}
 	*/
 	restoreGeometry(g_Au.Settings().value("/Widget/MainFrame/Geometry").toByteArray());
+	m_FrameGeometryReady = true;
 }
 
 void AuDesignerFrame::OrdnanceReceived(AuId loaderId, QByteArray ord)
