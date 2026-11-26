@@ -10150,8 +10150,8 @@ float DpBody::SizeFactor() const
 		1.82833f,
 		1.93716f,
 		2.05891f,
-		2.19663f,
-		2.35435f,
+		// 2.19663f,
+		// 2.35435f,
 		/*
 		0.290245f,
 		0.369436f,
@@ -10182,10 +10182,9 @@ float DpBody::SizeFactor() const
 		2.96511f,
 		3.36571f,
 		3.91768f,
-		4.73474f,
+		4.73474f, */
 		6.08219f,
 		8.75582f,
-		*/
 	};
 	return sizeFactors[m_DNA.OverallSize];
 }
