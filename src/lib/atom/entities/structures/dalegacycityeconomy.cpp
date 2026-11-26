@@ -1104,19 +1104,7 @@ void DaLegacyCity::TockEconomy(qint64 previous, qint64 now)
 						}
 						else process.lastQuantity = -1; // Keep applied materials for another spawn attempt.
 					}
-					else switch(output.commodityId)
-					{
-					case 70: // Commercial ship
-						// DpBuilding::Tick 0x5f22c0 registers these without
-						// spawning an atom, then consumes their applied inputs.
-						if(!production.vehicles.contains(output.commodityId)) production.vehicles.append(output.commodityId);
-						ConsumeProductionComponents(process);
-						break;
-					case 71:  // Naval ship
-					default:
-						process.lastQuantity = -99;
-						break;
-					}
+					else process.lastQuantity = -99;
 				}
 				else if(output.commodityId == 157)
 				{

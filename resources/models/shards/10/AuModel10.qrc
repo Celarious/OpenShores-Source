@@ -6,5 +6,7 @@
 	<file>data/mTank.png</file>
 	<file>data/mMineMachinery.3ds</file>
 	<file>data/mMineMachinery.png</file>
+	<file>data/mCommercialShip.3dsN</file>
+	<file>data/mCommercialShip.png</file>
 </qresource>
 </RCC>

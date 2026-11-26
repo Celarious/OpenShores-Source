@@ -405,6 +405,9 @@ public:
 		case CID_MineMachinery:
 			fuelMax = 60;
 			break;
+		case CID_CommercialShip:
+			fuelMax = 80;
+			break;
 		case CID_SailBoat:
 		default:
 			fuelMax = 0;	// no fuel required
@@ -425,6 +428,7 @@ public:
 		case CID_FarmMachinery:
 		case CID_MineMachinery:
 		case CID_Helicopter:
+		case CID_CommercialShip:
 			return CID_Gasoline;
 		case CID_SailBoat:
 		default:
@@ -773,6 +777,7 @@ public:
 		case CID_SpaceRocket:
 		case CID_Helicopter:
 		case CID_SpaceTransport:
+		case CID_CommercialShip:
 			return (seatIndex == 0) ? true : false;
 		case CID_SailBoat:
 			if(IsSeatOccupied(0, true))
@@ -1144,6 +1149,8 @@ public:
 			return 1000;
 		case CID_Tank:
 			return 2500;
+		case CID_CommercialShip:
+			return 1000;
 		default:
 			return 0;
 		}
@@ -1360,6 +1367,9 @@ public:
 				return true;
 			break;
 
+		case CID_CommercialShip:
+			return IsInVisibleWater() && (IsEngineOn() || fabs(ForwardSpeed()) > 1);
+
 		default:
 			break;
 		}
@@ -1388,6 +1398,7 @@ public:
 		case CID_APC:
 		case CID_FarmMachinery:
 		case CID_MineMachinery:
+		case CID_CommercialShip:
 			return true;
 		default:
 			return false;
@@ -1488,23 +1499,7 @@ public:
 
 	inline bool IsWaterCraft() const
 	{
-		switch(m_cid)
-		{
-		case CID_SailBoat:
-		case CID_Submarine:
-			return true;
-		case CID_APC:
-		case CID_AdvSpaceFighter:
-		case CID_DirtBike:
-		case CID_FarmMachinery:
-		case CID_Helicopter:
-		case CID_SUV:
-		case CID_SpaceFighter:
-		case CID_SpaceRocket:
-		case CID_SpaceTransport:
-		default:
-			return false;
-		}
+		return IsWaterVehicle();
 	}
 
 	// Used for animal perception.
@@ -1641,6 +1636,8 @@ public:
 		case CID_Tank:
 			return 45000.f * (float)PoundsPerKilogram();
 
+		case CID_CommercialShip:
+			return 5000.f * (float)PoundsPerKilogram();
 		default:
 			break;
 		}

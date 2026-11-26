@@ -129,12 +129,7 @@ bool ProductionLandSpawnFits(const DaWorldLL& world, const AuLegacyCityCatalogue
 
 bool IsSpawnedProductionVehicle(quint16 commodity)
 {
-	switch(commodity)
-	{
-	case 6: case 7: case 8: case 9: case 28: case 54: case 77:
-	case 82: case 103: case 104: case 132: case 133: case 231: return true;
-	default: return false;
-	}
+	return IsProductionUnit(commodity) && commodity != 71; // Naval ship has no vehicle implementation.
 }
 
 struct VehicleProductionBatch::Data
@@ -276,7 +271,8 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 		if(maximum.x <= minimum.x || maximum.y <= minimum.y || maximum.z <= minimum.z) continue;
 		const float height = attempt.vehicle->GroundHeightAboveCG();
 		const double facing = g_Au.Dice().Roll(1, 360, -1) * DEG2RAD;
-		const bool boat = result.commodityId == 77 || result.commodityId == 132;
+		const bool boat = attempt.vehicle->IsWaterVehicle();
+		const bool commercialShip = runtime == CID_CommercialShip;
 		const AuPoint center = world.LocOfLL(found->location, boat ? 0 : found->altitudeMSL);
 		AuMatrix4x4 building;
 		world.BuildingConstructionTransform(world.LocOfLL(found->location, found->altitudeMSL),
@@ -312,7 +308,7 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 				// Include developed terrain, so neighboring sites and slabs
 				// cannot turn a naturally wet sample into a launch onto land.
 				const double bottom = world.TerrainAltitudeMSL(AuGlobeLL(ll.Longitude(), ll.Latitude()));
-				const double minimumDepth = FeetPerMeter() * (result.commodityId == 132 ? .5 : 1);
+				const double minimumDepth = commercialShip ? height : FeetPerMeter() * (result.commodityId == 132 ? .5 : 1);
 				if(bottom > -minimumDepth) continue;
 				// Undersea submarine factories launch above the sea floor;
 				// other boats start on the water surface (SpawnBoat 0x52d6a0).
@@ -330,7 +326,8 @@ bool PrepareVehicleProduction(DaLegacyCity& city, DaWorldLL& world, const State&
 			}
 			candidate.placement.Translate(candidate.ground);
 			candidate.placement *= AuPoint(0, 0, 1).GetAlignmentTransform(-world.GravityDir(candidate.ground));
-			candidate.placement.Translate(0, 0, height);
+			// The commercial ship's model origin is on its waterline.
+			if(!commercialShip) candidate.placement.Translate(0, 0, height);
 			candidate.placement.RotateZ(facing);
 			if(attempt.vehicle->LandingOrientation() == LORI_Tail)
 				candidate.placement.RotateX(PI / 2); // Rockets park on their tail, not their belly.

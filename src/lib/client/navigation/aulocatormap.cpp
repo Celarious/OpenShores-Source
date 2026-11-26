@@ -580,6 +580,7 @@ void AuLocatorMapWidget::paintEvent(QPaintEvent* pe)
 
 							case CID_SailBoat:
 							case CID_Submarine:
+							case CID_CommercialShip:
 								{
 									const char* icons[] =
 									{

@@ -2052,6 +2052,7 @@ public:	// Methods
 		{
 		case CID_SailBoat:
 		case CID_Submarine:
+		case CID_CommercialShip:
 			return true;
 		case CID_APC:
 		case CID_AdvSpaceFighter:

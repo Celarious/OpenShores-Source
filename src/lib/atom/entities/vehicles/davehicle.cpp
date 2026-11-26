@@ -2016,6 +2016,7 @@ void DaVehicle::DecayMoveActions()
 	case CID_MineMachinery:
 	case CID_APC:
 	case CID_FarmMachinery:
+	case CID_CommercialShip:
 		// Decay throttle after it has not been held for a bit.
 		// Lateral and vertical throttles are not used.
 		if(m_ThrustLong)
@@ -2665,6 +2666,8 @@ float DaVehicle::TurnRate() const
 		else if(OkToOrient())
 			return 22.5f * DEG2RADf;
 		break;
+	case CID_CommercialShip:
+		return 30.f * DEG2RADf;	// CanTurn requires water.
 	default:
 		break;
 	}
@@ -2793,6 +2796,7 @@ double DaVehicle::OrientationSpeed() const
 	case CID_SpaceFighter:
 	case CID_SpaceTransport:
 	case CID_Helicopter:
+	case CID_CommercialShip:
 		return PI/4;
 
 	default:
@@ -3547,8 +3551,9 @@ void DaVehicle::RenderHud(float sightXpos, float sightYpos, int hudIntensity, Au
 		}
 		break;
 	case CID_SailBoat:
+	case CID_CommercialShip:
 		// Throttle indicated with a sail.
-		if(ThrustLongitudinal())
+		if(m_cid == CID_SailBoat && ThrustLongitudinal())
 		{
 			// Size of sail is based on throttle.
 			const float sailWid = ThrustLongitudinal()/75.f;
@@ -3728,6 +3733,7 @@ void DaVehicle::SensorScan(AuSensorBlipList& blips, const AuPoint& scannerLoc, c
 		break;
 	case CID_SailBoat:
 	case CID_Submarine:
+	case CID_CommercialShip:
 		blips.Add(AuBlipBoat(CommodityId(), Quality(), IsNew(), EmpireId(), stance, Id(), EnvLocation()));
 		break;
 	case CID_AdvSpaceFighter:
@@ -4502,6 +4508,7 @@ void DaVehicle::ConfigureControls(const DiControlInputArray &aAllControls)
 	case CID_SUV:
 	case CID_FarmMachinery:
 	case CID_MineMachinery:
+	case CID_CommercialShip:
 		myControls = &s_SUVControls;
 		break;
 	}
@@ -4566,6 +4573,7 @@ void DaVehicle::RestoreDefaultControls()
 	case CID_Tank:
 	case CID_FarmMachinery:
 	case CID_MineMachinery:
+	case CID_CommercialShip:
 		s_SUVControls.clear();
 		for(int ic=0; ic<s_NumSUVDefaults; ic++)
 			s_SUVControls.append(s_SUVDefaults[ic]);
@@ -4633,6 +4641,7 @@ void DaVehicle::LoadControls() const
 	case CID_APC:
 	case CID_FarmMachinery:
 	case CID_MineMachinery:
+	case CID_CommercialShip:
 		settingsSection = "Controls/SUV";
 		s_SUVControls.clear();
 		for(int ic=0; ic<s_NumSUVDefaults; ic++)
@@ -4686,6 +4695,7 @@ void DaVehicle::SaveControls() const
 	case CID_APC:
 	case CID_FarmMachinery:
 	case CID_MineMachinery:
+	case CID_CommercialShip:
 		settingsSection = "Controls/SUV";
 		myControls = &s_SUVControls;
 		break;
@@ -4728,6 +4738,7 @@ void DaVehicle::EnumControlInputs(DiControlInputArray& aAllControls) const
 	case CID_APC:
 	case CID_FarmMachinery:
 	case CID_MineMachinery:
+	case CID_CommercialShip:
 		myControls = &s_SUVControls;
 		break;
 	}
@@ -4944,6 +4955,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_APC:
 				case CID_FarmMachinery:
 				case CID_MineMachinery:
+				case CID_CommercialShip:
 					if(m_Throttle < 10)
 					{
 						if(m_Throttle < 9)
@@ -5016,6 +5028,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_APC:
 				case CID_FarmMachinery:
 				case CID_MineMachinery:
+				case CID_CommercialShip:
 					if(m_Throttle > -9)
 						m_Throttle--;
 					break;
@@ -5101,6 +5114,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_APC:
 				case CID_FarmMachinery:
 				case CID_MineMachinery:
+				case CID_CommercialShip:
 					if(m_Throttle < -9)
 						m_Throttle = -9;
 					else if(m_Throttle > 10)
@@ -5169,6 +5183,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_APC:
 				case CID_FarmMachinery:
 				case CID_MineMachinery:
+				case CID_CommercialShip:
 					if(m_ThrustLong < 10)
 					{
 						if(m_ThrustLong < 9)
@@ -5210,6 +5225,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_APC:
 				case CID_FarmMachinery:
 				case CID_MineMachinery:
+				case CID_CommercialShip:
 					if(m_ThrustLong > -9)
 					{
 						m_ThrustLong--;
@@ -5479,6 +5495,7 @@ void DaVehicle::ProcessControlInput(const DiControlInputArray &aActiveControls, 
 				case CID_APC:
 				case CID_FarmMachinery:
 				case CID_MineMachinery:
+				case CID_CommercialShip:
 					m_wActions |= ACT_Brake;
 					tt = true;
 					break;
@@ -5753,6 +5770,13 @@ void DaVehicle::ChangeSeats(DaPerson* occupant, int fromSeat, int toSeat)
 
 	AuPoint fromSeatLoc = m_Model->SeatLoc(fromSeat);
 	AuPoint toSeatLoc = m_Model->SeatLoc(toSeat);
+	// The commercial ship has a seated helm and two standing passenger stations.
+	if(m_cid == CID_CommercialShip && !IsValidSeatPose(toSeat, occupant->CurrentGeneralPose()))
+	{
+		const float oldHeight = occupant->CGHeight();
+		occupant->SetGeneralPose(SeatPose(toSeat), false);
+		toSeatLoc.z += occupant->CGHeight() - oldHeight;
+	}
 	if(IsTankGunnerSeat(fromSeat))
 		PositionTankTurret(*occupant);
 	AuPoint moveVec = toSeatLoc - fromSeatLoc;
@@ -5771,10 +5795,6 @@ void DaVehicle::ChangeSeats(DaPerson* occupant, int fromSeat, int toSeat)
 	occupant->ChangePosAndOrient(AuAtomPos(Id(), t));
 	occupant->InvalidateEnvironment();
 	occupant->SetModified();
-
-	//DHH Probably need to verify the pose of the occupant is valid for the
-	//DHH nu seat. So far, none of the vehicle models has seats with different
-	//DHH requirements.
 }
 
 bool DaVehicle::IsValidSeatPose(int seatIndex, const AuPose& pose) const
@@ -5862,11 +5882,12 @@ void DaVehicle::RenderAudioSources(const DaPerson* sceneAtom, const AuMatrix4x4&
 		case CID_SUV:
 		case CID_APC:
 		case CID_FarmMachinery:
+		case CID_CommercialShip:
 			if(!IsEngineOn())
 				break;
 			engineSnd = SOUND_SUVIdle;
 			gain *= 2;	// sound file is quiet
-			if(!IsFuzzyZero(vec.y))
+			if(m_cid != CID_CommercialShip && !IsFuzzyZero(vec.y))
 			{
 				// Lots of transmission choices for this guy from 4 to 6 speeds.
 				// Last gearSpeed entry is "top" speed.
@@ -6093,8 +6114,9 @@ const double s_SubmarineAccel = VEHICLE_ACCELERATION(35, 15);
 const double s_SUVAccel = VEHICLE_ACCELERATION(60, 10.5);
 const double s_TankAccel = VEHICLE_ACCELERATION(40, 12);
 const double s_MineMachineryAccel = VEHICLE_ACCELERATION(100, 10);
+const double s_CommercialShipAccel = VEHICLE_ACCELERATION(50, 15);
 
-// Some vehicle max speeds are limited by gearing, not by air resistance.
+// Vehicle maximum speeds in feet per second. Some are limited by gearing.
 const double s_APCMaxSpeed = 120. * 5280./3600.;
 const double s_APCMaxSpeedInWater = s_APCMaxSpeed/3.;
 const double s_APCMaxSpeedUnderWater = 4. * 5280./3600.;
@@ -6113,6 +6135,7 @@ const double s_TankMaxSpeedUnderWater = 2. * 5280./3600.;
 const double s_MineMachineryMaxSpeed = 25. * 5280./3600.;
 const double s_MineMachineryMaxSpeedInWater = s_FarmMachineryMaxSpeed/5.;
 const double s_MineMachineryMaxSpeedUnderWater = 2. * 5280./3600.;
+const double s_CommercialShipMaxSpeed = 50. * 5280./3600.;
 
 // Nominal Friction Force
 // Friction force in ideal movement environment for vehicle.
@@ -6131,6 +6154,7 @@ const double s_SubmarineFric = 3;
 const double s_SUVFric = 5;
 const double s_TankFric = 5;
 const double s_MineMachineryFric = 5;
+const double s_CommercialShipFric = 1;
 
 // Drag Force in a fluid.
 //
@@ -6182,6 +6206,8 @@ float DaVehicle::DragCoefficient() const
 		return DRAG_COEFFICIENT((float)s_FarmMachineryAccel, (float)s_FarmMachineryFric, .05f, 55,	(float)s_FarmMachineryMaxSpeed*4);
 	case CID_MineMachinery:
 		return DRAG_COEFFICIENT((float)s_MineMachineryAccel, (float)s_MineMachineryFric, .05f, 55,	(float)s_MineMachineryMaxSpeed*4);
+	case CID_CommercialShip:
+		return DRAG_COEFFICIENT(s_CommercialShipAccel, s_CommercialShipFric, .5, CrossSectionalArea().y, s_CommercialShipMaxSpeed);
 	default:
 		return DaAtom::DragCoefficient();
 	}
@@ -6214,6 +6240,8 @@ AuPoint DaVehicle::CrossSectionalArea() const
 	case CID_FarmMachinery:
 	case CID_MineMachinery:
 		return AuPoint(208,55,153);
+	case CID_CommercialShip:
+		return AuPoint(556,188,709);	// Projected areas of the Hull mesh in square feet.
 	default:
 		return DaAtom::CrossSectionalArea();
 	}
@@ -6726,6 +6754,13 @@ AuPoint DaVehicle::Acceleration() const
 			}
 		}
 		break;
+	case CID_CommercialShip:
+		if(IsEngineOn() && IsInVisibleWater() && !brake)
+		{
+			const int throttle = ThrustLongitudinal();
+			accel.y = s_CommercialShipAccel * engineThrust[abs(throttle)] * (throttle < 0 ? -1 : 1);
+		}
+		break;
 	default:
 		break;
 	}
@@ -6903,10 +6938,13 @@ AuPoint DaVehicle::Friction() const
 	switch(m_cid)
 	{
 	case CID_SailBoat:
+	case CID_CommercialShip:
 		// Add drag induced by sliding across the terrain.
 		if(WaterDepth() > 3.f/12.f)
 		{
-			fricFwd = s_SailBoatFric;
+			fricFwd = m_cid == CID_CommercialShip ? s_CommercialShipFric : s_SailBoatFric;
+			if(m_cid == CID_CommercialShip && brake)
+				fricFwd += 10;
 			fricLat = 10;
 			fricVrt = 40;
 
@@ -6953,7 +6991,7 @@ AuPoint DaVehicle::Friction() const
 				// Allow minimal movement on land out of water so the boat can
 				// get back into the water. When below 2 fps, set the forward
 				// friction to that of the boat's normal water environ.
-				if(ThrustLongitudinal() && fabs(vec.y) < 2)
+				if(m_cid == CID_SailBoat && ThrustLongitudinal() && fabs(vec.y) < 2)
 					fricFwd = s_SailBoatFric;
 				break;
 			}
@@ -7868,6 +7906,9 @@ void DaVehicle::GetRenderLightsRecursive(const DaPerson& person, const AuMatrix4
 			// Centered just ahead of the hull, three feet above its base.
 			lpos = model.Project(0, 10.75, 3.0);
 			break;
+		case CID_CommercialShip:
+			lpos = model.Project(0, 20, 13.75);	// Bow lamp on the Lights mesh.
+			break;
 		}
 
 // Attenuation range of lights.
@@ -8035,6 +8076,8 @@ float DaVehicle::Density() const
 	case CID_APC:
 	case CID_Tank:
 		return Mass(m_cid)/(2.f*(float)CubicFeetPerCubicMeter());	
+	case CID_CommercialShip:
+		return Mass(m_cid) / 4234.f;	// Enclosed volume of the Hull mesh in cubic feet.
 	default:
 		return (float)DensityOfWater();
 	}
@@ -10989,9 +11032,10 @@ bool DaVehicle::CanBdFetch(VEHICLE_SPOT_TYPE spotType, const DaBd* fetcher) cons
 	case CID_Submarine:
 		return true;					// Ok for military or civilians.
 	default:
-	case CID_CommercialShip:
 	case CID_NavalShip:
 		return false;					// Not implemented.
+	case CID_CommercialShip:
+		return g_Au.IsLegacyGeneration() && !fetcher->IsMilitary();
 	}
 	return false;
 }
@@ -11049,9 +11093,10 @@ bool DaVehicle::CanFetch(VEHICLE_SPOT_TYPE spotType) const
 	case CID_FarmMachinery:
 	case CID_MineMachinery:
 		return false;					// Not wanted.
-	case CID_CommercialShip:
 	case CID_NavalShip:
 		return false;					// Not implemented.
+	case CID_CommercialShip:
+		return g_Au.IsLegacyGeneration();
 	}
 	return true;
 }
@@ -11106,6 +11151,10 @@ bool DaVehicle::RepairDamage(COMMODITYID tool)
 	case CID_SpaceRocket:
 		// Fitting Wrench, Screw Driver, Wrench, Torque Wrench
 		if(tool != CID_FittingWrench && tool != CID_ScrewDriver && tool != CID_Wrench && tool != CID_TorqueWrench)
+			return false;
+		break;
+	case CID_CommercialShip:
+		if(tool != CID_GlueGun && tool != CID_ScrewDriver && tool != CID_Wrench && tool != CID_TorqueWrench)
 			return false;
 		break;
 	default:
@@ -11382,6 +11431,7 @@ AuSkill::SKILL DaVehicle::DriverSkill() const
 	case CID_MineMachinery:
 	case CID_SailBoat:
 	case CID_SUV:
+	case CID_CommercialShip:
 		return AuSkill::VehicleDriver;	// 2D movement
 	case CID_AdvSpaceFighter:
 	case CID_Helicopter:
