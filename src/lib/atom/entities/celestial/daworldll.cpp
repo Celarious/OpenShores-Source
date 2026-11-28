@@ -195,6 +195,25 @@ void CollectPlantShadows(AuFloraInstances& instances, const QMap<AuResKey, PLANT
 }
 }
 
+AuMatrix4x4 DaWorldLL::BeginCloudDepthRange(AuGLEffects& re, const AuMatrix4x4& projection, const AuMatrix4x4& model)
+{
+	const double cloudClipFeet = 3.;
+	// Window depth of a point three feet in front of the eye (clip w = -eye z).
+	const double depthAtClip = .5 * (1. - projection[10] + projection[14] / cloudClipFeet);
+	if(projection[11] != -1. || projection[15] != 0. || !(depthAtClip > 0. && depthAtClip < 1.))
+		return projection * model;
+
+	// Expand [depthAtClip, 1] before the float vertex transform. The viewport undoes
+	// that expansion after clipping so cloud depths still compare against ships and terrain.
+	AuMatrix4x4 cloudProjection(projection);
+	cloudProjection[10] = (projection[10] + depthAtClip) / (1. - depthAtClip);
+	cloudProjection[14] /= 1. - depthAtClip;
+	// Favor the cloud when independently rounded surfaces differ by a couple of depth units.
+	const double cloudBias = qMin(depthAtClip, 2. / (1 << 24));
+	re.glDepthRange(depthAtClip - cloudBias, 1. - cloudBias);
+	return cloudProjection * model;
+}
+
 void DaWorldLL::RenderPlantShadowInstances(AuGLEffects& re, const AuMatrix4x4& model, AuSunShadowPass& sp,
 		const DePlanetFlora* flora, AuGLVAO** meshes, const QMap<AuResKey, AuGlobeFlora>& grass, AuGLVAO** distantMeshes)
 {

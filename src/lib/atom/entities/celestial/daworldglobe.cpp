@@ -2928,7 +2928,7 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 
 				// Configure cloud shader.
 				re.GLSL().CloudShader().Select();
-				re.GLSL().CloudShader().SetProjectionModelView(projection * model);
+				re.GLSL().CloudShader().SetProjectionModelView(BeginCloudDepthRange(re, projection, model));
 				re.GLSL().CloudShader().SetCloudColor(cloudColor);
 				re.GLSL().CloudShader().SetWxOffset(m_WxSPOffset, m_WxVPOffset);
 
@@ -3042,6 +3042,7 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 				re.glEnable(GL_CULL_FACE);
 				re.glDepthFunc(GL_LESS);
 
+				re.glDepthRange(0., 1.);
 				re.GLSL().CloudShader().Deselect();
 			}
 
@@ -3080,7 +3081,7 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 
 				// Configure cloud shader.
 				re.GLSL().CloudShader().Select();
-				re.GLSL().CloudShader().SetProjectionModelView(projection * model);
+				re.GLSL().CloudShader().SetProjectionModelView(BeginCloudDepthRange(re, projection, model));
 				re.GLSL().CloudShader().SetCloudColor(cloudColor);
 				re.GLSL().CloudShader().SetWxOffset(m_WxSPOffset, m_WxVPOffset);
 
@@ -3159,6 +3160,7 @@ void DaWorldGlobe::RenderAtmosphere(const AuMatrix4x4& projection, const AuMatri
 				re.glEnable(GL_CULL_FACE);
 				re.glDepthFunc(GL_LESS);
 
+				re.glDepthRange(0., 1.);
 				re.GLSL().CloudShader().Deselect();
 			}
 

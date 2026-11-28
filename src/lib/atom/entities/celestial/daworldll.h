@@ -1757,6 +1757,8 @@ public:
 protected:
 	DaWorldLL(const DaWorldLL& c);
 
+	static AuMatrix4x4 BeginCloudDepthRange(AuGLEffects& re, const AuMatrix4x4& projection, const AuMatrix4x4& model);
+
 	AuPoint m_PlantShadowWind[10];
 	virtual void CreateWoodyPlantMesh(AuGLEffects& re, AuGLVAO& mesh, const DePlanetFlora& flora, const AuGlobeFlora& plant,
 			AuFloraDNA::ZONE region, const AuDice& dice, bool tree, int lod);

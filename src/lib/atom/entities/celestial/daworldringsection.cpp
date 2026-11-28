@@ -2393,7 +2393,7 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 
 				// Configure cloud shader.
 				re.GLSL().CloudRingworldShader().Select();
-				re.GLSL().CloudRingworldShader().SetProjectionModelView(projection * model);
+				re.GLSL().CloudRingworldShader().SetProjectionModelView(BeginCloudDepthRange(re, projection, model));
 				re.GLSL().CloudRingworldShader().SetCloudColor(cloudColor);
 				re.GLSL().CloudRingworldShader().SetWxOffset(m_WxSPOffset, m_WxVPOffset);
 
@@ -2505,6 +2505,7 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 				re.glEnable(GL_CULL_FACE);
 				re.glDepthFunc(GL_LESS);
 
+				re.glDepthRange(0., 1.);
 				re.GLSL().CloudRingworldShader().Deselect();
 			}
 
@@ -2543,7 +2544,7 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 
 				// Configure cloud shader.
 				re.GLSL().CloudRingworldShader().Select();
-				re.GLSL().CloudRingworldShader().SetProjectionModelView(projection * model);
+				re.GLSL().CloudRingworldShader().SetProjectionModelView(BeginCloudDepthRange(re, projection, model));
 				re.GLSL().CloudRingworldShader().SetCloudColor(cloudColor);
 				re.GLSL().CloudRingworldShader().SetWxOffset(m_WxSPOffset, m_WxVPOffset);
 
@@ -2624,6 +2625,7 @@ void DaWorldRingSection::RenderAtmosphere(const AuMatrix4x4& projection, const A
 				re.glEnable(GL_CULL_FACE);
 				re.glDepthFunc(GL_LESS);
 
+				re.glDepthRange(0., 1.);
 				re.GLSL().CloudRingworldShader().Deselect();
 			}
 
